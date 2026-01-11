@@ -60,8 +60,13 @@ class UnifiedPathCache:
             cache_file: Optional custom cache file location
         """
         if cache_file is None:
-            from openhcs.core.xdg_paths import get_data_file_path
-            cache_file = get_data_file_path("path_cache.json")
+            from pyqt_formgen.protocols import get_form_config
+
+            config = get_form_config()
+            if getattr(config, "path_cache_file", None):
+                cache_file = Path(config.path_cache_file)
+            else:
+                cache_file = Path.home() / ".cache" / "pyqt_formgen" / "path_cache.json"
 
         self.cache_file = cache_file
         self._cache: Dict[str, str] = {}

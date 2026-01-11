@@ -1,8 +1,10 @@
 """
-Shared widgets and utilities for PyQt6 GUI.
-
-Provides reusable components for parameter editing, type-based form generation,
-and other common UI patterns.
+Shared widget utilities and components.
 """
 
-__all__ = []
+from .scrollable_form_mixin import ScrollableFormMixin
+
+__all__ = [
+    "ScrollableFormMixin",
+]
+

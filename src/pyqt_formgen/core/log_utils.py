@@ -1,8 +1,8 @@
 """
-Core Log Utilities for OpenHCS
+Core Log Utilities for pyqt-formgen.
 
 Unified log discovery, classification, and monitoring utilities
-shared between TUI and PyQt GUI implementations.
+shared between UI implementations.
 """
 
 import logging
@@ -11,7 +11,31 @@ from pathlib import Path
 from typing import Optional, List
 from dataclasses import dataclass
 
+from pyqt_formgen.protocols import get_form_config
+
 logger = logging.getLogger(__name__)
+
+
+def _get_log_dir() -> Path:
+    """Return configured log directory or default."""
+    config = get_form_config()
+    if config.log_dir:
+        return Path(config.log_dir)
+    return Path.home() / ".local" / "share" / "pyqt_formgen" / "logs"
+
+
+def _get_log_prefixes() -> List[str]:
+    """Return configured log prefixes or default."""
+    config = get_form_config()
+    return config.log_prefixes or ["pyqt_formgen_"]
+
+
+def _match_prefixed(file_name: str, suffix: str) -> Optional[str]:
+    """Return matching prefix for a file name if it starts with prefix+suffix."""
+    for prefix in _get_log_prefixes():
+        if file_name.startswith(f"{prefix}{suffix}"):
+            return prefix
+    return None
 
 
 def get_current_log_file_path() -> str:
@@ -23,16 +47,19 @@ def get_current_log_file_path() -> str:
             if isinstance(handler, logging.FileHandler):
                 return handler.baseFilename
 
-        # Fallback: try to get from openhcs logger
-        openhcs_logger = logging.getLogger("openhcs")
-        for handler in openhcs_logger.handlers:
-            if isinstance(handler, logging.FileHandler):
-                return handler.baseFilename
+        # Fallback: try to get from configured logger name
+        config = get_form_config()
+        if config.log_root_logger_name:
+            root_named_logger = logging.getLogger(config.log_root_logger_name)
+            for handler in root_named_logger.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    return handler.baseFilename
 
         # Last resort: create a default path
-        log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+        log_dir = _get_log_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
-        return str(log_dir / f"openhcs_subprocess_{int(time.time())}.log")
+        prefix = (_get_log_prefixes() or ["pyqt_formgen_"])[0]
+        return str(log_dir / f"{prefix}subprocess_{int(time.time())}.log")
 
     except Exception as e:
         logger.error(f"Failed to get current log file path: {e}")
@@ -63,12 +90,12 @@ class LogFileInfo:
 def discover_logs(base_log_path: Optional[str] = None, include_main_log: bool = True,
                  log_directory: Optional[Path] = None) -> List[LogFileInfo]:
     """
-    Discover OpenHCS log files and return as classified LogFileInfo objects.
+    Discover application log files and return as classified LogFileInfo objects.
 
     Args:
         base_log_path: Base path for specific subprocess logs (optional)
         include_main_log: Whether to include the current main process log
-        log_directory: Directory to search (defaults to standard OpenHCS log directory)
+        log_directory: Directory to search (defaults to configured log directory)
 
     Returns:
         List of LogFileInfo objects for discovered log files
@@ -96,14 +123,14 @@ def discover_logs(base_log_path: Optional[str] = None, include_main_log: bool = 
                     log_info = classify_log_file(log_file, base_log_path, include_main_log)
                     discovered_logs.append(log_info)
 
-    # Discover all OpenHCS logs if no specific base_log_path
+    # Discover all logs if no specific base_log_path
     elif log_directory or not base_log_path:
         if log_directory is None:
-            log_directory = Path.home() / ".local" / "share" / "openhcs" / "logs"
+            log_directory = _get_log_dir()
 
         if log_directory.exists():
             for log_file in log_directory.glob("*.log"):
-                if is_openhcs_log_file(log_file) and log_file not in [log.path for log in discovered_logs]:
+                if is_app_log_file(log_file) and log_file not in [log.path for log in discovered_logs]:
                     # Infer base_log_path for proper classification
                     inferred_base = infer_base_log_path(log_file) if 'subprocess_' in log_file.name else None
                     log_info = classify_log_file(log_file, inferred_base, include_main_log)
@@ -135,10 +162,11 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
         except RuntimeError:
             pass  # TUI log not found, continue with other classification
 
-    # Check for ZMQ server logs (openhcs_zmq_server_port_{port}_{timestamp}.log)
-    if file_name.startswith('openhcs_zmq_server_port_'):
+    # Check for ZMQ server logs (<prefix>zmq_server_port_{port}_{timestamp}.log)
+    prefix = _match_prefixed(file_name, "zmq_server_port_")
+    if prefix:
         # Extract port from filename
-        parts = file_name.replace('openhcs_zmq_server_port_', '').replace('.log', '').split('_')
+        parts = file_name.replace(f'{prefix}zmq_server_port_', '').replace('.log', '').split('_')
         port = parts[0] if parts else 'unknown'
         return LogFileInfo(log_path, "zmq_server", display_name=f"ZMQ Server (port {port})")
 
@@ -203,37 +231,31 @@ def is_relevant_log_file(file_path: Path, base_log_path: Optional[str]) -> bool:
     return False
 
 
-def is_openhcs_log_file(file_path: Path) -> bool:
+def is_app_log_file(file_path: Path) -> bool:
     """
-    Check if a file is an OpenHCS log file.
+    Check if a file is a recognized application log file.
 
     Args:
         file_path: Path to file to check
 
     Returns:
-        bool: True if file is an OpenHCS log file
+        bool: True if file matches configured log prefixes
     """
     if not file_path.name.endswith('.log'):
         return False
 
     file_name = file_path.name
 
-    # OpenHCS log patterns:
-    # - openhcs_unified_*.log (main UI process)
-    # - openhcs_subprocess_*.log (subprocess runner)
-    # - openhcs_zmq_server_port_*.log (ZMQ execution server)
-    # - pyqt_gui_subprocess_*.log (PyQt subprocess runner)
-    # - zmq_worker_exec_*.log (ZMQ worker processes)
-    # - napari_detached_port_*.log (Napari viewer)
-
-    openhcs_patterns = [
-        'openhcs_',
-        'pyqt_gui_subprocess_',
-        'zmq_worker_',
-        'napari_detached_'
+    # App log patterns based on configured prefixes, plus common auxiliary logs
+    prefixes = _get_log_prefixes()
+    extra_patterns = [
+        "pyqt_gui_subprocess_",
+        "zmq_worker_",
+        "napari_detached_",
     ]
+    patterns = [*prefixes, *extra_patterns]
 
-    return any(file_name.startswith(pattern) for pattern in openhcs_patterns)
+    return any(file_name.startswith(pattern) for pattern in patterns)
 
 
 def infer_base_log_path(file_path: Path) -> str:
@@ -258,7 +280,5 @@ def infer_base_log_path(file_path: Path) -> str:
     return str(file_path.parent / base_name)
 
 
-
-
-
-
+# Backward compatibility alias
+is_openhcs_log_file = is_app_log_file

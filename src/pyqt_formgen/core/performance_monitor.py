@@ -1,4 +1,4 @@
-"""Performance monitoring utilities for OpenHCS.
+"""Performance monitoring utilities for pyqt-formgen.
 
 Provides decorators and context managers for timing operations and
 logging performance metrics.
@@ -11,12 +11,16 @@ from contextlib import contextmanager
 from typing import Optional, Callable
 from pathlib import Path
 
+from pyqt_formgen.protocols import get_form_config
+
 # Create performance logger
-perf_logger = logging.getLogger('openhcs.performance')
+_config = get_form_config()
+perf_logger = logging.getLogger(_config.performance_logger_name)
 perf_logger.setLevel(logging.INFO)
 
 # Add file handler for performance logs
-perf_log_file = Path.home() / '.local' / 'share' / 'openhcs' / 'logs' / 'performance.log'
+_log_dir = Path(_config.log_dir) if _config.log_dir else Path.home() / '.local' / 'share' / 'pyqt_formgen' / 'logs'
+perf_log_file = _log_dir / _config.performance_log_filename
 perf_log_file.parent.mkdir(parents=True, exist_ok=True)
 
 file_handler = logging.FileHandler(perf_log_file)
@@ -218,4 +222,3 @@ def disable_performance_logging():
 def is_performance_logging_enabled() -> bool:
     """Check if performance logging is enabled."""
     return _enabled
-

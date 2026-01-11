@@ -1,20 +1,24 @@
 """
-OpenHCS PyQt6 Widgets
+Extended widget implementations.
 
-Widget components for the OpenHCS PyQt6 GUI application.
-All widgets migrated from Textual TUI with full feature parity.
+Specialized widget subclasses that build on the protocol layer
+with enhanced behavior.
 """
 
-from openhcs.pyqt_gui.widgets.system_monitor import SystemMonitorWidget
-from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
-from openhcs.pyqt_gui.widgets.function_pane import FunctionPaneWidget
-from openhcs.pyqt_gui.widgets.status_bar import StatusBarWidget
+from .no_scroll_spinbox import (
+    NoScrollSpinBox,
+    NoScrollDoubleSpinBox,
+    NoScrollComboBox,
+    NoneAwareCheckBox,
+)
+from .status_indicator import StatusIndicator, StatusState, get_status_color
 
 __all__ = [
-    "SystemMonitorWidget",
-    "PlateManagerWidget", 
-    "PipelineEditorWidget",
-    "FunctionPaneWidget",
-    "StatusBarWidget"
+    "NoScrollSpinBox",
+    "NoScrollDoubleSpinBox",
+    "NoScrollComboBox",
+    "NoneAwareCheckBox",
+    "StatusIndicator",
+    "StatusState",
+    "get_status_color",
 ]

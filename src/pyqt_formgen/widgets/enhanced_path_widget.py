@@ -14,9 +14,17 @@ from typing import Any, List, Optional
 from PyQt6.QtWidgets import QWidget, QLineEdit, QPushButton, QHBoxLayout, QFileDialog
 from PyQt6.QtCore import pyqtSignal
 
-from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
-from openhcs.core.path_cache import PathCacheKey, get_cached_dialog_path, cache_dialog_path
-from openhcs.introspection.signature_analyzer import ParameterInfo
+from pyqt_formgen.theming import ColorScheme
+
+# Optional path cache - stub if not available
+try:
+    from pyqt_formgen.core.path_cache import PathCacheKey, get_cached_dialog_path, cache_dialog_path
+except ImportError:
+    PathCacheKey = None  # type: ignore
+    get_cached_dialog_path = lambda *args, **kwargs: None  # type: ignore
+    cache_dialog_path = lambda *args, **kwargs: None  # type: ignore
+
+from python_introspect import ParameterInfo
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +170,7 @@ class EnhancedPathWidget(QWidget):
         """
         super().__init__()
         self.behavior = PathBehaviorDetector.detect_behavior(param_name, param_info)
-        self.color_scheme = color_scheme or PyQt6ColorScheme()
+        self.color_scheme = color_scheme or ColorScheme()
 
         # Layout: [QLineEdit] [Browse Button]
         layout = QHBoxLayout(self)
@@ -278,6 +286,6 @@ class EnhancedPathWidget(QWidget):
 
 
 # Register EnhancedPathWidget as implementing ValueGettable and ValueSettable
-from openhcs.ui.shared.widget_protocols import ValueGettable, ValueSettable
+from pyqt_formgen.protocols import ValueGettable, ValueSettable
 ValueGettable.register(EnhancedPathWidget)
 ValueSettable.register(EnhancedPathWidget)

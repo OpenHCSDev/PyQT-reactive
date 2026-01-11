@@ -23,11 +23,12 @@ PYQTGRAPH_AVAILABLE = None  # None = not checked, True = available, False = not 
 pg = None  # Will be set when pyqtgraph is imported
 
 # Import the SystemMonitorCore service (framework-agnostic)
-from openhcs.ui.shared.system_monitor_core import SystemMonitorCore
-from openhcs.pyqt_gui.services.persistent_system_monitor import PersistentSystemMonitor
-from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
-from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
-from openhcs.pyqt_gui.config import PyQtGUIConfig, get_default_pyqt_gui_config
+from pyqt_formgen.theming import StyleSheetGenerator
+from pyqt_formgen.theming import ColorScheme
+
+from pyqt_formgen.services.system_monitor_core import SystemMonitorCore
+from pyqt_formgen.services.persistent_system_monitor import PersistentSystemMonitor
+from pyqt_formgen.protocols import get_form_config
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,8 @@ class SystemMonitorWidget(QWidget):
     _pyqtgraph_failed = pyqtSignal()  # Internal signal for async pyqtgraph loading failure
     
     def __init__(self,
-                 color_scheme: Optional[PyQt6ColorScheme] = None,
-                 config: Optional[PyQtGUIConfig] = None,
+                 color_scheme: Optional[ColorScheme] = None,
+                 config: Optional[object] = None,
                  parent=None):
         """
         Initialize the system monitor widget.
@@ -60,11 +61,11 @@ class SystemMonitorWidget(QWidget):
         super().__init__(parent)
 
         # Initialize configuration
-        self.config = config or get_default_pyqt_gui_config()
-        self.monitor_config = self.config.performance_monitor
+        self.config = config or get_form_config()
+        self.monitor_config = self._build_monitor_config(self.config)
 
         # Initialize color scheme and style generator
-        self.color_scheme = color_scheme or PyQt6ColorScheme()
+        self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         # Calculate monitoring parameters from configuration
@@ -92,6 +93,56 @@ class SystemMonitorWidget(QWidget):
         self.setup_connections()
 
         logger.debug("System monitor widget initialized")
+
+    def _build_monitor_config(self, config):
+        """Build a safe monitor config with defaults for missing attributes."""
+        from types import SimpleNamespace
+
+        default_colors = {
+            "cpu": "cyan",
+            "ram": "lime",
+            "gpu": "orange",
+            "vram": "magenta",
+        }
+        monitor = getattr(config, "performance_monitor", None)
+        if monitor is None:
+            update_fps = 5.0
+            history_duration_seconds = 60.0
+            update_interval_seconds = 1.0 / update_fps
+            calculated_max_data_points = int(history_duration_seconds / update_interval_seconds)
+            return SimpleNamespace(
+                update_fps=update_fps,
+                history_duration_seconds=history_duration_seconds,
+                update_interval_seconds=update_interval_seconds,
+                calculated_max_data_points=calculated_max_data_points,
+                antialiasing=True,
+                show_grid=True,
+                line_width=2.0,
+                chart_colors=default_colors,
+            )
+
+        update_fps = getattr(monitor, "update_fps", 5.0)
+        history_duration_seconds = getattr(monitor, "history_duration_seconds", 60.0)
+        update_interval_seconds = getattr(
+            monitor,
+            "update_interval_seconds",
+            1.0 / update_fps if update_fps else 1.0,
+        )
+        calculated_max_data_points = getattr(
+            monitor,
+            "calculated_max_data_points",
+            int(history_duration_seconds / update_interval_seconds) if update_interval_seconds else 60,
+        )
+        return SimpleNamespace(
+            update_fps=update_fps,
+            history_duration_seconds=history_duration_seconds,
+            update_interval_seconds=update_interval_seconds,
+            calculated_max_data_points=calculated_max_data_points,
+            antialiasing=getattr(monitor, "antialiasing", True),
+            show_grid=getattr(monitor, "show_grid", True),
+            line_width=getattr(monitor, "line_width", 2.0),
+            chart_colors=getattr(monitor, "chart_colors", default_colors),
+        )
 
     def create_loading_placeholder(self) -> QWidget:
         """
@@ -798,7 +849,7 @@ class SystemMonitorWidget(QWidget):
         interval_seconds = interval_ms / 1000.0
         self.persistent_monitor.set_update_interval(interval_seconds)
 
-    def update_config(self, new_config: PyQtGUIConfig):
+    def update_config(self, new_config):
         """
         Update the widget configuration and apply changes.
 
@@ -806,15 +857,19 @@ class SystemMonitorWidget(QWidget):
             new_config: New configuration to apply
         """
         old_config = self.config
+        old_monitor_config = self._build_monitor_config(old_config)
         self.config = new_config
-        self.monitor_config = new_config.performance_monitor
+        self.monitor_config = self._build_monitor_config(new_config)
 
         # Check if we need to restart monitoring with new parameters
-        if (old_config.performance_monitor.update_fps != new_config.performance_monitor.update_fps or
-            old_config.performance_monitor.history_duration_seconds != new_config.performance_monitor.history_duration_seconds):
+        if (old_monitor_config.update_fps != self.monitor_config.update_fps or
+            old_monitor_config.history_duration_seconds != self.monitor_config.history_duration_seconds):
 
-            logger.info(f"Updating performance monitor: {new_config.performance_monitor.update_fps} FPS, "
-                       f"{new_config.performance_monitor.history_duration_seconds}s history")
+            logger.info(
+                "Updating performance monitor: %.2f FPS, %.2fs history",
+                self.monitor_config.update_fps,
+                self.monitor_config.history_duration_seconds,
+            )
 
             # Stop current monitoring
             self.stop_monitoring()

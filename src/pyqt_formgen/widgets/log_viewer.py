@@ -25,15 +25,9 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QTextCharFormat, QColor, QAction, QFont, QTextCursor, QPalette, QAbstractTextDocumentLayout, QKeySequence
 
-from openhcs.io.filemanager import FileManager
-from openhcs.core.log_utils import LogFileInfo
-from openhcs.pyqt_gui.utils.log_detection_utils import (
-    get_current_tui_log_path, discover_logs, discover_all_logs
-)
-from openhcs.core.log_utils import (
-    classify_log_file, is_openhcs_log_file, infer_base_log_path
-)
-from openhcs.pyqt_gui.utils.process_tracker import (
+from pyqt_formgen.core.log_utils import LogFileInfo
+from pyqt_formgen.protocols import get_log_discovery_provider, get_server_scan_provider
+from pyqt_formgen.services.process_tracker import (
     ProcessTracker, extract_pid_from_log_filename, get_log_display_name, get_log_tooltip
 )
 
@@ -1455,6 +1449,21 @@ class LogFileDetector(QObject):
         self._previous_files = current_files
         return new_files
 
+    def _classify_log_path(self, file_path: Path) -> LogFileInfo:
+        """Classify a log path using the discovery provider."""
+        try:
+            logs = self._log_discovery_provider.discover_logs(
+                log_directory=file_path.parent,
+                include_main_log=True,
+            )
+            for log_info in logs:
+                if log_info.path == file_path:
+                    return log_info
+        except Exception as e:
+            logger.debug(f"Provider classification failed for {file_path}: {e}")
+
+        return LogFileInfo(path=file_path, log_type="unknown")
+
 
 
     def _on_directory_changed(self, directory_path: str) -> None:
@@ -1475,16 +1484,9 @@ class LogFileDetector(QObject):
 
         # Process new files
         for file_path in new_files:
-            if file_path.exists() and is_openhcs_log_file(file_path):
+            if file_path.exists():
                 try:
-                    # For general watching, try to infer base_log_path from the file name
-                    effective_base_log_path = self._base_log_path
-                    if not effective_base_log_path and 'subprocess_' in file_path.name:
-                        effective_base_log_path = infer_base_log_path(file_path)
-
-                    log_info = classify_log_file(file_path, effective_base_log_path,
-                                                include_tui_log=False)
-
+                    log_info = self._classify_log_path(file_path)
                     logger.info(f"New relevant log file detected: {file_path} (type: {log_info.log_type})")
                     self.new_log_detected.emit(log_info)
                 except Exception as e:
@@ -1612,8 +1614,8 @@ class LogHighlighter(QSyntaxHighlighter):
         timestamp_pattern = QRegularExpression(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}")
         self.highlighting_rules.append((timestamp_pattern, self.token_formats['timestamp']))
 
-        # Logger names (e.g., openhcs.core.orchestrator)
-        logger_pattern = QRegularExpression(r"openhcs\.[a-zA-Z0-9_.]+")
+        # Logger names (module paths)
+        logger_pattern = QRegularExpression(r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+\b")
         self.highlighting_rules.append((logger_pattern, self.token_formats['logger_name']))
 
         # Memory addresses (e.g., 0x7f1640dd8e00)
@@ -1650,7 +1652,7 @@ class LogHighlighter(QSyntaxHighlighter):
         function_repr_pattern = QRegularExpression(r"<function [^>]+ at 0x[0-9a-fA-F]+>")
         self.highlighting_rules.append((function_repr_pattern, self.token_formats['function_representation']))
 
-        # Extended module paths (beyond just openhcs)
+        # Extended module paths
         module_path_pattern = QRegularExpression(r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*){2,}")
         self.highlighting_rules.append((module_path_pattern, self.token_formats['module_path']))
 
@@ -1835,10 +1837,14 @@ class LogViewerWindow(QMainWindow):
     _subprocess_scan_complete = pyqtSignal(list)  # Internal signal for async subprocess scan
     _server_scan_complete = pyqtSignal(list)  # Internal signal for async server scan
 
-    def __init__(self, file_manager: FileManager, service_adapter, parent=None):
+    def __init__(self, file_manager, service_adapter, parent=None):
         super().__init__(parent)
         self.file_manager = file_manager
         self.service_adapter = service_adapter
+        self._log_discovery_provider = get_log_discovery_provider()
+        self._server_scan_provider = get_server_scan_provider()
+        if self._log_discovery_provider is None:
+            raise RuntimeError("No log discovery provider registered. Call register_log_discovery_provider(...).")
 
         # State
         self.current_log_path: Optional[Path] = None
@@ -2030,18 +2036,29 @@ class LogViewerWindow(QMainWindow):
             self.switch_to_log(self._pending_log_to_load)
             self._pending_log_to_load = None
 
+    def _classify_log_path(self, file_path: Path) -> LogFileInfo:
+        """Classify a log path using the discovery provider."""
+        try:
+            logs = self._log_discovery_provider.discover_logs(
+                log_directory=file_path.parent,
+                include_main_log=True,
+            )
+            for log_info in logs:
+                if log_info.path == file_path:
+                    return log_info
+        except Exception as e:
+            logger.debug(f"Provider classification failed for {file_path}: {e}")
+
+        return LogFileInfo(path=file_path, log_type="unknown")
+
     def initialize_logs(self) -> None:
         """Initialize with main log only, then scan for subprocess logs in background."""
         # Only discover the main log initially (fast startup)
         initial_logs = []
         try:
-            from openhcs.core.log_utils import get_current_log_file_path, classify_log_file
-            from pathlib import Path
-
-            main_log_path = get_current_log_file_path()
-            main_log = Path(main_log_path)
+            main_log = self._log_discovery_provider.get_current_log_path()
             if main_log.exists():
-                log_info = classify_log_file(main_log, None, True)
+                log_info = self._classify_log_path(main_log)
                 initial_logs.append(log_info)
                 logger.debug("Discovered main log")
         except Exception as e:
@@ -2142,60 +2159,23 @@ class LogViewerWindow(QMainWindow):
         Uses os.scandir() and filters by mtime FIRST before parsing.
         Returns list of LogFileInfo for discovered subprocess log files.
         """
-        from openhcs.core.log_utils import classify_log_file, is_openhcs_log_file
-        from pathlib import Path
-        import os
-
         logger.debug("Scanning for subprocess logs from current session...")
 
         try:
-            # Get log directory
-            log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
-
-            if not log_dir.exists():
-                return []
-
-            # Use os.scandir() for efficiency - it's faster than glob and gives us stat info
             session_logs = []
-            total_scanned = 0
-            filtered_by_time = 0
 
             # Calculate cutoff time (session start - 5 second buffer)
             cutoff_time = self._session_start_time - 5.0
 
-            # Scan directory efficiently
-            with os.scandir(log_dir) as entries:
-                for entry in entries:
-                    total_scanned += 1
-
-                    # Skip non-.log files immediately
-                    if not entry.name.endswith('.log'):
-                        continue
-
-                    # Filter by mtime FIRST (cheap filesystem check)
-                    # This avoids parsing thousands of old log files
-                    try:
-                        stat_info = entry.stat()
-                        if stat_info.st_mtime < cutoff_time:
-                            filtered_by_time += 1
-                            continue
-                    except OSError:
-                        continue
-
-                    # Now check if it's an OpenHCS log (still just filename check, no file I/O)
-                    log_path = Path(entry.path)
-                    if not is_openhcs_log_file(log_path):
-                        continue
-
-                    # Finally, classify it (this is the expensive part, but we only do it for recent files)
-                    try:
-                        log_info = classify_log_file(log_path, None, include_tui_log=False)
+            logs = self._log_discovery_provider.discover_logs(include_main_log=False)
+            for log_info in logs:
+                try:
+                    if log_info.path.exists() and log_info.path.stat().st_mtime >= cutoff_time:
                         session_logs.append(log_info)
-                    except Exception as e:
-                        logger.debug(f"Failed to classify {log_path}: {e}")
+                except OSError:
+                    continue
 
-            logger.info(f"Found {len(session_logs)} subprocess logs from current session "
-                       f"(scanned {total_scanned} files, filtered {filtered_by_time} by time)")
+            logger.info(f"Found {len(session_logs)} subprocess logs from current session")
 
             return session_logs
         except Exception as e:
@@ -2207,63 +2187,14 @@ class LogViewerWindow(QMainWindow):
         Scan for running ZMQ servers and Napari viewers by pinging common ports.
         Returns list of LogFileInfo for discovered server log files.
         """
-        from openhcs.core.log_utils import classify_log_file
-        from pathlib import Path
-        import zmq
-        import pickle
-
         logger.debug("Scanning for running ZMQ/streaming servers...")
-        discovered_logs = []
-
-        # Scan all streaming ports using current global config
-        # This ensures we find viewers launched with custom ports
-        from openhcs.core.config import get_all_streaming_ports
-        ports_to_scan = get_all_streaming_ports(num_ports_per_type=10)  # Uses global config by default
-
-        def ping_server(port: int) -> dict:
-            """Ping a server and return pong response, or None if no response."""
-            from openhcs.constants.constants import CONTROL_PORT_OFFSET
-            from openhcs.runtime.zmq_base import get_zmq_transport_url, get_default_transport_mode
-
-            control_port = port + CONTROL_PORT_OFFSET
-            try:
-                context = zmq.Context()
-                socket = context.socket(zmq.REQ)
-                socket.setsockopt(zmq.LINGER, 0)
-                socket.setsockopt(zmq.RCVTIMEO, 1000)  # 1 second timeout (servers may be busy)
-
-                # Use transport mode-aware URL (IPC or TCP)
-                transport_mode = get_default_transport_mode()
-                control_url = get_zmq_transport_url(control_port, transport_mode, 'localhost')
-                socket.connect(control_url)
-
-                # Send ping
-                socket.send(pickle.dumps({'type': 'ping'}))
-
-                # Wait for pong
-                response = socket.recv()
-                pong = pickle.loads(response)
-
-                socket.close()
-                context.term()
-                logger.debug(f"Port {port} responded: {pong}")
-                return pong
-            except Exception as e:
-                logger.debug(f"Port {port} no response: {e}")
-                return None
-
-        # Scan all ports (execution server + all streaming types)
-        for port in ports_to_scan:
-            pong = ping_server(port)
-            if pong and pong.get('log_file_path'):
-                log_path = Path(pong['log_file_path'])
-                if log_path.exists():
-                    log_info = classify_log_file(log_path, None, False)
-                    discovered_logs.append(log_info)
-                    viewer_type = pong.get('viewer', 'ZMQ server')
-                    logger.debug(f"Discovered {viewer_type} log: {log_path}")
-
-        return discovered_logs
+        if self._server_scan_provider is None:
+            return []
+        try:
+            return self._server_scan_provider.scan_for_server_logs()
+        except Exception as e:
+            logger.debug(f"Server scan provider failed: {e}")
+            return []
 
     # Dropdown Management Methods
     def populate_log_dropdown(self, log_files: List[LogFileInfo]) -> None:
@@ -2801,7 +2732,13 @@ class LogViewerWindow(QMainWindow):
             self.file_detector.stop_watching()
 
         # Get log directory
-        log_directory = Path(base_log_path).parent if base_log_path else Path.home() / ".local" / "share" / "openhcs" / "logs"
+        if base_log_path:
+            log_directory = Path(base_log_path).parent
+        else:
+            try:
+                log_directory = self._log_discovery_provider.get_current_log_path().parent
+            except Exception:
+                log_directory = Path.cwd()
 
         # Start file watching
         self.file_detector = LogFileDetector(base_log_path)

@@ -1,30 +1,27 @@
 """
-OpenHCS PyQt6 GUI Implementation
+pyqt-formgen: React-quality reactive form generation framework for PyQt6.
 
-Complete PyQt6 migration of the OpenHCS Textual TUI with full feature parity.
-Provides native desktop integration while preserving all existing functionality.
+A comprehensive UI framework for building type-safe, reactive forms with PyQt6.
+Extracted from OpenHCS for general-purpose use.
+
+Architecture:
+- Tier 1 (Core): Pure PyQt6 utilities with zero external deps beyond PyQt6
+- Tier 2 (Protocols): Widget ABCs and adapters
+- Tier 3 (Services): Reusable service layer
+- Tier 4 (Forms): ParameterFormManager with ObjectState integration
+
+Key Features:
+- Type-based widget creation from dataclasses
+- ObjectState integration for lazy configuration
+- ABC-based widget protocols (no duck typing)
+- Game-engine inspired flash animation system
+- React-style lifecycle hooks
+- Cross-window reactive updates
 """
 
-import sys
-import logging
+__version__ = "0.1.0"
 
-# CRITICAL: Check for SILENT mode BEFORE any OpenHCS imports
-# This must be at MODULE LEVEL to run before main.py is imported
-if '--log-level' in sys.argv:
-    log_level_idx = sys.argv.index('--log-level')
-    if log_level_idx + 1 < len(sys.argv) and sys.argv[log_level_idx + 1] == 'SILENT':
-        # Disable ALL logging before any imports
-        logging.disable(logging.CRITICAL)
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.CRITICAL + 1)
-
-__version__ = "1.0.0"
-__author__ = "OpenHCS Development Team"
-
-from openhcs.pyqt_gui.main import OpenHCSMainWindow
-from openhcs.pyqt_gui.app import OpenHCSPyQtApp
-
+# Public API will be populated as modules are added
 __all__ = [
-    "OpenHCSMainWindow",
-    "OpenHCSPyQtApp"
+    "__version__",
 ]
