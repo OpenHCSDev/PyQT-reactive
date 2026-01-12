@@ -782,12 +782,12 @@ class GroupBoxWithHelp(FlashableGroupBox):
         """Set scope color scheme for border rendering."""
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"🎨 GroupBoxWithHelp.set_scope_color_scheme: title='{self.title()}', scheme={scheme is not None}")
+        logger.debug(f"🎨 GroupBoxWithHelp.set_scope_color_scheme: title='{self.title()}', scheme={scheme is not None}")
         self._scope_color_scheme = scheme
         # Add margin for border layers if needed
         if scheme and hasattr(scheme, 'step_border_layers') and scheme.step_border_layers:
             total_width = sum(layer[0] for layer in scheme.step_border_layers)
-            logger.info(f"🎨 GroupBoxWithHelp: Setting margins to {total_width} for border layers")
+            logger.debug(f"🎨 GroupBoxWithHelp: Setting margins to {total_width} for border layers")
             self.setContentsMargins(total_width, total_width, total_width, total_width)
         self.update()
 

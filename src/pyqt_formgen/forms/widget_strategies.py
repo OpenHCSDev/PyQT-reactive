@@ -597,12 +597,12 @@ def _apply_checkbox_group_placeholder(widget: Any, placeholder_text: str) -> Non
     logger = logging.getLogger(__name__)
 
     try:
-        logger.info(f"🔍 Applying checkbox group placeholder: {placeholder_text}")
+        logger.debug(f"🔍 Applying checkbox group placeholder: {placeholder_text}")
 
         # Extract the list of enum values from placeholder text
         # Format: "Pipeline default: [SITE, CHANNEL]" or "Pipeline default: []"
         default_value_str = _extract_default_value(placeholder_text)
-        logger.info(f"📋 Extracted default value: {default_value_str}")
+        logger.debug(f"📋 Extracted default value: {default_value_str}")
 
         # Parse the list - remove brackets and split by comma
         if default_value_str.startswith('[') and default_value_str.endswith(']'):
@@ -611,7 +611,7 @@ def _apply_checkbox_group_placeholder(widget: Any, placeholder_text: str) -> Non
         else:
             inherited_values = []
 
-        logger.info(f"✅ Parsed inherited values: {inherited_values}")
+        logger.debug(f"✅ Parsed inherited values: {inherited_values}")
 
         # Apply placeholder to each checkbox in the group
         for enum_value, checkbox in widget._checkboxes.items():
@@ -619,7 +619,7 @@ def _apply_checkbox_group_placeholder(widget: Any, placeholder_text: str) -> Non
             # Compare using uppercase enum name (e.g., 'SITE') not lowercase value (e.g., 'site')
             is_checked = enum_value.name in inherited_values
 
-            logger.info(f"  📌 {enum_value.value}: is_checked={is_checked} (comparing {enum_value.name} in {inherited_values})")
+            logger.debug(f"  📌 {enum_value.value}: is_checked={is_checked} (comparing {enum_value.name} in {inherited_values})")
 
             # Create individual placeholder text for this checkbox
             individual_placeholder = f"Pipeline default: {is_checked}"
@@ -1035,4 +1035,3 @@ class PyQt6WidgetEnhancer:
                 widget.value = value
         finally:
             widget.blockSignals(False)
-
