@@ -34,7 +34,7 @@ from .log_providers import (
     register_server_scan_provider,
     get_server_scan_provider,
 )
-from .window_factory import WindowFactoryProtocol, register_window_factory, get_window_factory
+from .window_factory import WindowFactoryProtocol, WindowFactoryABC, register_window_factory, get_window_factory
 from .component_selection import (
     ComponentSelectionProvider,
     FunctionSelectionProvider,
@@ -78,6 +78,7 @@ __all__ = [
     "register_server_scan_provider",
     "get_server_scan_provider",
     "WindowFactoryProtocol",
+    "WindowFactoryABC",
     "register_window_factory",
     "get_window_factory",
     "ComponentSelectionProvider",
