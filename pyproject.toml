@@ -49,6 +49,7 @@ magicgui = [
 
 [project.urls]
 Homepage = "https://github.com/trissim/pyqt-formgen"
+Documentation = "https://pyqt-formgen.readthedocs.io"
 Repository = "https://github.com/trissim/pyqt-formgen"
 Issues = "https://github.com/trissim/pyqt-formgen/issues"
 
