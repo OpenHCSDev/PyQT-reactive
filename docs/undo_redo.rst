@@ -1,49 +1,54 @@
 Undo / Redo
 ===========
 
-The undo/redo system in ``ObjectStateRegistry`` is a git-like DAG of snapshots, not just a
-linear stack. Snapshots capture *all* ObjectStates at a point in time.
+pyqt-reactor integrates with ObjectState's git-like undo/redo system. When forms are bound
+to ObjectState, all user edits are automatically recorded in the history.
 
-Data model
-----------
-- ``_snapshots: Dict[str, Snapshot]``: all snapshots (UUID → Snapshot)
-- ``_timelines: Dict[str, Timeline]``: named branches; each has a ``head_id``
-- ``_current_timeline`` / ``_current_head``: current branch and cursor for time travel
-- Snapshots store ``all_states`` (scope_id → StateSnapshot) plus parent links for branching
-
-Core operations
----------------
-- ``record_snapshot(label, triggering_scope=None)`` (internal): create a new snapshot, prune unreachable
-- ``undo()``: move to parent snapshot in the current branch
-- ``redo()``: move to child if unique; otherwise stay
-- ``time_travel_to_snapshot(id)`` / ``time_travel_to(index)``: jump arbitrarily in history
-- ``create_branch(name)`` / ``switch_branch(name)``: multi-branch history
-- ``atomic(label)`` context manager: batch multiple changes into one undo step
-- ``export_history_to_dict()`` / ``import_history_from_dict()``: serialize/restore history
-- ``save_history_to_file(path)`` / ``load_history_from_file(path)``: JSON persistence
-
-Behavior
+Overview
 --------
-- Recording from a non-head position creates a new branch (preserves old future as an auto-branch).
-- Undo/redo/time travel rewires the live registry: registers/unregisters ObjectStates to match the snapshot and restores saved/live resolved values.
-- History size is bounded by ``_max_history_size``; unreachable snapshots are pruned.
+
+ObjectState provides a DAG-based history system (not just a linear stack). When you edit
+form fields, changes are recorded as snapshots. You can:
+
+- **Undo/Redo**: Navigate back and forth through changes
+- **Time Travel**: Jump to any point in history
+- **Branching**: Create alternative timelines for experimentation
+- **Atomic Operations**: Group multiple changes into a single undo step
+
+Integration with Forms
+----------------------
+
+When a form is bound to ObjectState:
+
+1. **Automatic Recording**: Each field change triggers a snapshot
+2. **Dirty Tracking**: Unsaved changes are tracked automatically
+3. **Restore**: Undo restores the form to previous state
+4. **Branching**: Create experiment branches without losing original work
 
 Example
 -------
 
 .. code-block:: python
 
-   from objectstate import ObjectStateRegistry
+   from pyqt_reactor.forms import ParameterFormManager
+   from objectstate import ObjectStateRegistry, config_context
 
-   # Single undo step for a grouped change
-   with ObjectStateRegistry.atomic("add item"):
-       ObjectStateRegistry.register(item_state)
-       parent_state.update_parameter("items", new_items)
+   @dataclass
+   class ProcessingConfig:
+       threshold: float = 0.5
+       iterations: int = 10
 
-   # Undo/redo
-   ObjectStateRegistry.undo()
-   ObjectStateRegistry.redo()
+   # Create form with ObjectState context
+   with config_context(global_config):
+       form = ParameterFormManager(ProcessingConfig)
+       form.show()
 
-   # Persist history
-   history = ObjectStateRegistry.export_history_to_dict()
-   ObjectStateRegistry.import_history_from_dict(history)
+       # User edits are automatically recorded
+       # Undo/redo available through ObjectStateRegistry
+       ObjectStateRegistry.undo()
+       ObjectStateRegistry.redo()
+
+       # Create experiment branch
+       ObjectStateRegistry.create_branch("experiment_v2")
+       # ... make changes ...
+       ObjectStateRegistry.switch_branch("main")  # Back to original

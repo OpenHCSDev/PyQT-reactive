@@ -39,7 +39,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest --cov=pyqt_formgen --cov-report=xml --cov-report=html --cov-report=term-missing -v
+          pytest --cov=pyqt_reactor --cov-report=xml --cov-report=html --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

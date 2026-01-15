@@ -1,4 +1,4 @@
-"""pytest configuration and fixtures for pyqt-formgen tests."""
+"""pytest configuration and fixtures for pyqt-reactor tests."""
 
 import pytest
 from PyQt6.QtWidgets import QApplication

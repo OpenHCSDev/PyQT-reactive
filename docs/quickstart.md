@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-pip install pyqt-formgen
+pip install pyqt-reactor
 ```
 
 ## Basic Form from Dataclass
@@ -11,7 +11,7 @@ pip install pyqt-formgen
 ```python
 from dataclasses import dataclass
 from PyQt6.QtWidgets import QApplication
-from pyqt_formgen.forms import ParameterFormManager
+from pyqt_reactor.forms import ParameterFormManager
 
 @dataclass
 class MyConfig:
@@ -30,7 +30,7 @@ app.exec()
 ```python
 from dataclasses import dataclass
 from objectstate import ObjectState
-from pyqt_formgen.forms import ParameterFormManager, FormManagerConfig
+from pyqt_reactor.forms import ParameterFormManager, FormManagerConfig
 
 @dataclass
 class MyConfig:

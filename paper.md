@@ -1,5 +1,5 @@
 ---
-title: 'pyqt-formgen: A Reactive Application Framework for PyQt6 Desktop Software'
+title: 'pyqt-reactor: A Reactive Application Framework for PyQt6 Desktop Software'
 tags:
   - Python
   - PyQt6
@@ -22,7 +22,7 @@ bibliography: paper.bib
 
 Every PyQt application with configuration forms eventually reimplements the same patterns: list managers with add/edit/delete, cross-window state synchronization, hierarchical settings inheritance, visual feedback for unsaved changes. These patterns are tedious to build correctly and painful to maintain.
 
-`pyqt-formgen` eliminates this work. Declare what your UI should do; the framework handles how:
+`pyqt-reactor` eliminates this work. Declare what your UI should do; the framework handles how:
 
 ```python
 class PipelineEditor(AbstractManagerWidget):
@@ -38,7 +38,7 @@ This configuration inherits complete CRUD infrastructure, cross-window reactivit
 
 Desktop applications with complex state share a common fate: teams rebuild the same infrastructure repeatedly. Cross-window synchronization. Hierarchical configuration. CRUD list managers. Visual feedback systems. Each project reimplements these patterns from scratch because no framework provides them.
 
-| Capability | Qt Designer | magicgui | Streamlit | React | pyqt-formgen |
+| Capability | Qt Designer | magicgui | Streamlit | React | pyqt-reactor |
 |------------|:-----------:|:--------:|:---------:|:-----:|:------------:|
 | Cross-window sync | — | — | — | ✓ | ✓ |
 | Hierarchical config | — | — | — | ✓¹ | ✓ |
@@ -51,7 +51,7 @@ Desktop applications with complex state share a common fate: teams rebuild the s
 
 **Qt Designer** handles layout, not behavior. **magicgui** [@magicgui] generates widgets from signatures but stops there—no synchronization, no CRUD patterns. **Streamlit** [@streamlit] is reactive but web-only. **React** [@react] pioneered declarative UI but JavaScript cannot introspect types at runtime the way Python can.
 
-`pyqt-formgen` fills the gap: the framework layer that PyQt6 lacks.
+`pyqt-reactor` fills the gap: the framework layer that PyQt6 lacks.
 
 # Software Design
 
@@ -61,7 +61,7 @@ Change a value in Window A; Window B updates. No save button. No reload. No expl
 
 The mechanism: `FieldChangeDispatcher` routes changes with reentrancy guards. `ObjectStateRegistry` notifies listeners via `contextvars` isolation. `CrossWindowPreviewMixin` debounces updates to prevent storms during rapid typing. Windows refresh only affected fields based on type-hierarchy matching.
 
-This is what React does for web components. `pyqt-formgen` brings it to PyQt6 desktop applications.
+This is what React does for web components. `pyqt-reactor` brings it to PyQt6 desktop applications.
 
 ## CRUD Abstractions
 
@@ -100,7 +100,7 @@ Widget creation uses discriminated unions. `ParameterInfo` subclasses define `ma
 
 # Research Application
 
-`pyqt-formgen` powers OpenHCS, an open-source high-content screening platform for automated microscopy. Multiple synchronized windows. Deeply nested configuration hierarchies. Multi-level scopes (Global → Plate → Pipeline → Step). Real-time inherited value preview. Git-style undo/redo with branching timelines.
+`pyqt-reactor` powers OpenHCS, an open-source high-content screening platform for automated microscopy. Multiple synchronized windows. Deeply nested configuration hierarchies. Multi-level scopes (Global → Plate → Pipeline → Step). Real-time inherited value preview. Git-style undo/redo with branching timelines.
 
 Step-level settings inherit from pipeline defaults, which inherit from global configuration. Function editors generate forms from any callable signature—arbitrary Python functions become pipeline steps. Responsive updates across all windows during active editing. No perceptible lag.
 
@@ -108,7 +108,7 @@ Step-level settings inherit from pipeline defaults, which inherit from global co
 
 The patterns generalize. Video editors need timeline sync and effect parameter inheritance. Game engines need entity inspectors with prefab hierarchies. CAD software needs assembly parameters flowing to child components. Audio DAWs need track configs inheriting from master settings.
 
-These are the same patterns. `pyqt-formgen` provides them once.
+These are the same patterns. `pyqt-reactor` provides them once.
 
 # AI Usage Disclosure
 

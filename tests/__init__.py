@@ -1,1 +1,1 @@
-"""Tests for pyqt-formgen."""
+"""Tests for pyqt-reactor."""

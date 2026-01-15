@@ -1,7 +1,7 @@
 API Reference
 =============
 
-This section contains the complete API documentation for objectstate.
+This section contains the complete API documentation for pyqt-reactor.
 
 Core Modules
 ------------
@@ -10,114 +10,105 @@ Core Modules
    :toctree: generated
    :recursive:
 
-   objectstate.config
-   objectstate.lazy_factory
-   objectstate.context_manager
-   objectstate.dual_axis_resolver
-   objectstate.global_config
-   objectstate.placeholder
-   objectstate.live_context_resolver
-   objectstate.token_cache
-   objectstate.object_state
-   objectstate.snapshot_model
-   objectstate.parametric_axes
-   objectstate.reified_generics
+   pyqt_reactor.core
+   pyqt_reactor.protocols
+   pyqt_reactor.services
+   pyqt_reactor.forms
+   pyqt_reactor.widgets
+   pyqt_reactor.theming
+   pyqt_reactor.animation
+   pyqt_reactor.windows
+   pyqt_reactor.dialogs
 
 Module Documentation
 --------------------
 
-objectstate.config
+pyqt_reactor.core
+~~~~~~~~~~~~~~~~~
+
+Core PyQt6 utilities with zero external dependencies.
+
+.. automodule:: pyqt_reactor.core
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pyqt_reactor.protocols
+~~~~~~~~~~~~~~~~~~~~~~
+
+Widget protocol definitions and adapters for type-safe widget contracts.
+
+.. automodule:: pyqt_reactor.protocols
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pyqt_reactor.services
+~~~~~~~~~~~~~~~~~~~~~
+
+Service layer for form management and cross-cutting concerns.
+
+.. automodule:: pyqt_reactor.services
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pyqt_reactor.forms
 ~~~~~~~~~~~~~~~~~~
 
-.. automodule:: objectstate.config
+Form generation and management from dataclasses.
+
+.. automodule:: pyqt_reactor.forms
    :members:
    :undoc-members:
    :show-inheritance:
 
-objectstate.lazy_factory
-~~~~~~~~~~~~~~~~~~~~~~~~~
+pyqt_reactor.widgets
+~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: objectstate.lazy_factory
+Extended widget implementations with enhanced behavior.
+
+.. automodule:: pyqt_reactor.widgets
    :members:
    :undoc-members:
    :show-inheritance:
 
-objectstate.context_manager
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+pyqt_reactor.theming
+~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: objectstate.context_manager
+Color schemes and styling system for dynamic theme switching.
+
+.. automodule:: pyqt_reactor.theming
    :members:
    :undoc-members:
    :show-inheritance:
 
-objectstate.dual_axis_resolver
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+pyqt_reactor.animation
+~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: objectstate.dual_axis_resolver
+Flash animations and visual feedback system.
+
+.. automodule:: pyqt_reactor.animation
    :members:
    :undoc-members:
    :show-inheritance:
 
-objectstate.global_config
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+pyqt_reactor.windows
+~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: objectstate.global_config
+Window management and scoped window registry.
+
+.. automodule:: pyqt_reactor.windows
    :members:
    :undoc-members:
    :show-inheritance:
 
-objectstate.placeholder
-~~~~~~~~~~~~~~~~~~~~~~~~
+pyqt_reactor.dialogs
+~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: objectstate.placeholder
-   :members:
-   :undoc-members:
-   :show-inheritance:
+Dialog components and utilities.
 
-objectstate.live_context_resolver
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. automodule:: objectstate.live_context_resolver
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-objectstate.token_cache
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. automodule:: objectstate.token_cache
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-objectstate.object_state
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. automodule:: objectstate.object_state
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-objectstate.snapshot_model
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. automodule:: objectstate.snapshot_model
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-objectstate.parametric_axes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. automodule:: objectstate.parametric_axes
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-objectstate.reified_generics
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. automodule:: objectstate.reified_generics
+.. automodule:: pyqt_reactor.dialogs
    :members:
    :undoc-members:
    :show-inheritance:

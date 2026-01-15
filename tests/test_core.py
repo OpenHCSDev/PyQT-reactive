@@ -5,7 +5,7 @@ import pytest
 
 def test_debounce_timer_basic(qapp):
     """Test DebounceTimer basic functionality."""
-    from pyqt_formgen.core import DebounceTimer
+    from pyqt_reactor.core import DebounceTimer
     
     called = []
     def handler():
@@ -20,7 +20,7 @@ def test_debounce_timer_basic(qapp):
 
 def test_reorderable_list_widget(qapp):
     """Test ReorderableListWidget creation."""
-    from pyqt_formgen.core import ReorderableListWidget
+    from pyqt_reactor.core import ReorderableListWidget
     
     widget = ReorderableListWidget()
     assert widget is not None

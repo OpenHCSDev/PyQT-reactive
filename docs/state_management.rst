@@ -1,62 +1,98 @@
 State Management
 ================
 
-This page documents the core state primitives: :class:`objectstate.object_state.ObjectState`
-and :class:`objectstate.object_state.ObjectStateRegistry`. The API is generic—no OpenHCS
-references—and reflects the current implementation in ``objectstate/object_state.py``.
+This page documents how pyqt-reactor manages form state and integrates with ObjectState
+for hierarchical configuration management.
 
-ObjectState
------------
-
-Purpose
-~~~~~~~
-A UI-friendly model extracted from a backing object (dataclass, callable, etc.) that
-authoritatively stores working parameters and resolved values across a window's lifecycle.
-
-Core attributes
-~~~~~~~~~~~~~~~
-- ``object_instance``: the backing object (updated on save via ``to_object()``)
-- ``parameters``: flat dict of user-editable values (dotted paths for nested dataclasses)
-- ``_live_resolved``: last resolved values using the *current* ancestor stack
-- ``_saved_resolved``: resolved values at the last explicit save (baseline)
-- ``_saved_parameters``: immutable snapshot of raw parameters at save time
-- ``scope_id``: unique key for registry lookup
-
-Saved vs Live
-~~~~~~~~~~~~~
-- ``_saved_resolved`` represents "on disk" (after last save).
-- ``_live_resolved`` represents "on screen" (after every edit and ancestor change).
-- ``mark_saved()`` updates saved baselines from current live values.
-- ``restore_saved()`` resets working values back to the saved snapshot.
-- ``is_dirty()`` compares current parameters to ``_saved_parameters`` to detect unsaved work.
-
-Key methods
-~~~~~~~~~~~
-- ``mark_saved()``: set current state as the new baseline
-- ``restore_saved()``: revert parameters/resolved values to saved baseline
-- ``is_dirty()``: true if parameters differ from saved parameters
-- ``to_object()``: materialize a concrete object from the current parameters
-
-Lifecycle
-~~~~~~~~~
-ObjectStates are created when an object is added, persist independently of UI windows, and
-are removed when unregistered from the registry.
-
-ObjectStateRegistry
--------------------
+Form State Management
+---------------------
 
 Purpose
 ~~~~~~~
-Singleton registry of all ObjectStates, keyed by ``scope_id``. Supports lookup, ancestry
-traversal, and history management.
+pyqt-reactor manages form state through the ``ParameterFormManager`` and ``FieldChangeDispatcher``.
+Forms are automatically generated from dataclasses and maintain bidirectional binding with
+the underlying data model.
 
-Registration
+Key Components
+~~~~~~~~~~~~~~
+
+**ParameterFormManager**
+  - Generates PyQt6 forms from dataclass definitions
+  - Manages widget creation and layout
+  - Collects and validates user input
+  - Integrates with ObjectState for lazy configuration
+
+**FieldChangeDispatcher**
+  - Broadcasts field changes across the form
+  - Enables reactive updates when one field changes
+  - Supports conditional field visibility and enablement
+  - Triggers validation and preview updates
+
+**ValueCollectionService**
+  - Gathers current values from all widgets
+  - Handles type conversion and validation
+  - Returns typed dataclass instances
+
+ObjectState Integration
+----------------------
+
+Purpose
+~~~~~~~
+pyqt-reactor integrates with ObjectState to support lazy configuration and hierarchical
+inheritance. Forms can display placeholder text showing inherited values from parent contexts.
+
+Key Features
 ~~~~~~~~~~~~
-- ``register(state)`` / ``unregister(scope_id)``
-- ``get_by_scope(scope_id)``
-- ``get_ancestor_objects(scope_id)`` / ``get_ancestor_objects_with_scopes(scope_id)``
+- **Lazy Resolution**: Fields with ``None`` values inherit from context hierarchy
+- **Provenance Tracking**: UI shows where each value comes from (global, pipeline, step)
+- **Placeholder Text**: Empty fields display inherited values as placeholders
+- **Dirty Tracking**: Automatic detection of unsaved changes
+- **Undo/Redo**: Git-style history with branching timelines
 
-Saved vs Live pattern (registry-wide)
+Integration Pattern
+~~~~~~~~~~~~~~~~~~~
+When a form is created from a dataclass with ObjectState context:
+
+1. Form widgets are created for each field
+2. Placeholder text shows inherited values from parent scopes
+3. User edits update ObjectState's live parameters
+4. Dirty fields are tracked automatically
+5. Save commits changes to ObjectState baseline
+
+Widget Protocols
+----------------
+
+Purpose
+~~~~~~~
+pyqt-reactor uses ABC-based protocols to define type-safe widget contracts. This eliminates
+duck typing in favor of explicit, fail-loud inheritance-based architecture.
+
+Core Protocols
+~~~~~~~~~~~~~~
+
+**ValueGettable**
+  - Widgets that can return their current value
+  - Method: ``get_value() -> Any``
+
+**ValueSettable**
+  - Widgets that can accept a new value
+  - Method: ``set_value(value: Any) -> None``
+
+**PlaceholderCapable**
+  - Widgets that display placeholder text for inherited values
+  - Method: ``set_placeholder_text(text: str) -> None``
+
+**RangeConfigurable**
+  - Widgets with min/max constraints (spinboxes, sliders)
+  - Methods: ``set_minimum()``, ``set_maximum()``
+
+**EnumSelectable**
+  - Widgets that display enum options (comboboxes)
+  - Method: ``set_enum_values(values: List[str]) -> None``
+
+**ChangeSignalEmitter**
+  - Widgets that emit signals when values change
+  - Signal: ``value_changed``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 The registry coordinates saved/live baselines across all ObjectStates so that
 application code can distinguish "proposed" vs "committed" values while showing

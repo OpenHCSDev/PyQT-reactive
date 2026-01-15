@@ -1,4 +1,4 @@
-pyqt-formgen
+pyqt-reactor
 ============
 
 **React-quality reactive form generation framework for PyQt6**
@@ -6,7 +6,7 @@ pyqt-formgen
 Overview
 --------
 
-``pyqt-formgen`` is a Python framework for generating reactive, data-driven forms from dataclass definitions. It provides a clean, type-safe way to create PyQt6 user interfaces with automatic widget generation, theming, and animation support.
+``pyqt-reactor`` is a Python framework for generating reactive, data-driven forms from dataclass definitions. It provides a clean, type-safe way to create PyQt6 user interfaces with automatic widget generation, theming, and animation support.
 
 Key Features
 ------------
@@ -34,7 +34,7 @@ Installation
 
 .. code-block:: bash
 
-   pip install pyqt-formgen
+   pip install pyqt-reactor
 
 Quick Example
 -------------
@@ -42,8 +42,8 @@ Quick Example
 .. code-block:: python
 
    from dataclasses import dataclass
-   from pyqt_formgen.forms import ParameterFormManager
-   from pyqt_formgen.theming import ColorScheme
+   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactor.theming import ColorScheme
 
    @dataclass
    class ProcessingConfig:

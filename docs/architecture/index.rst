@@ -1,7 +1,7 @@
 Architecture Documentation
 ==========================
 
-This section contains detailed architecture documentation for pyqt-formgen's
+This section contains detailed architecture documentation for pyqt-reactor's
 core systems and design patterns.
 
 Core Form System

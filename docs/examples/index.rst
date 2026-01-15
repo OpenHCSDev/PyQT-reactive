@@ -1,12 +1,9 @@
 Examples
 ========
 
-This section provides practical examples of using objectstate.
+This section provides practical examples of using pyqt-reactor.
 
 .. toctree::
    :maxdepth: 2
 
-   basic
-   dual_axis
    ui
-   atomic_operations
