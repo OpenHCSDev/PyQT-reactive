@@ -32,7 +32,7 @@ class PipelineEditor(AbstractManagerWidget):
     # ~50 lines of hooks replace ~1,500 lines of manual CRUD implementation
 ```
 
-This declarative configuration inherits 2,200+ lines of CRUD infrastructure, cross-window reactivity, flash animations, dirty tracking, undo/redo integration, and list item formatting—automatically.
+This declarative configuration inherits complete CRUD infrastructure, cross-window reactivity, flash animations, dirty tracking, undo/redo integration, and list item formatting—automatically.
 
 # Statement of Need
 
@@ -89,7 +89,7 @@ This eliminates explicit save/reload cycles while preventing update storms durin
 
 ## CRUD Abstractions
 
-`AbstractManagerWidget` (2,257 lines) provides complete list management infrastructure through declarative configuration:
+`AbstractManagerWidget` provides complete list management infrastructure through declarative configuration:
 
 - **BUTTON_CONFIGS**: Toolbar buttons with actions, icons, tooltips
 - **ITEM_HOOKS**: Selection tracking, backing list access, signal emission
@@ -105,7 +105,7 @@ Subclasses implement only domain-specific hooks (`action_add`, `_perform_delete`
 - Flash animations for modified items
 - Dirty field tracking and visual indicators
 
-**Quantified savings**: OpenHCS's `PipelineEditorWidget` uses ~120 lines of subclass code to gain ~2,200 lines of inherited functionality—an 18:1 ratio.
+Subclass implementations typically require only declarative configuration and domain-specific hooks; the base class handles all UI infrastructure.
 
 ## Hierarchical Configuration (ObjectState Integration)
 
@@ -118,7 +118,7 @@ Placeholder text shows inherited values in real-time ("Pipeline default: 4"). Wh
 
 ## Protocol-Based Extensibility
 
-Ten protocol classes enable domain-agnostic integration:
+Protocol classes enable domain-agnostic integration:
 
 | Protocol | Purpose |
 |----------|---------|
@@ -157,9 +157,9 @@ The factory iterates registered types; the first matching predicate wins. Servic
 
 `pyqt-formgen` powers OpenHCS, an open-source high-content screening platform for automated microscopy. The application demonstrates framework capabilities at scale:
 
-- **20+ windows** with synchronized state
-- **50+ nested configuration fields** per experiment
-- **4 scope levels**: Global → Plate → Pipeline → Step
+- **Multiple synchronized windows** across the application
+- **Deeply nested configuration hierarchies** per experiment
+- **Multi-level scopes**: Global → Plate → Pipeline → Step
 - **Real-time preview** of inherited values during editing
 - **Git-style undo/redo** with branching timeline support
 
