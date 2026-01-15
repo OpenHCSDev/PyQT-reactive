@@ -20,7 +20,9 @@ bibliography: paper.bib
 
 # Summary
 
-`pyqt-formgen` is a reactive application framework for PyQt6 providing CRUD abstractions, cross-window state synchronization, and hierarchical configuration—patterns typically requiring thousands of lines of manual code. The framework enables declarative UI development where complex multi-window applications are built from composable abstractions rather than imperative widget management.
+Every PyQt application with configuration forms eventually reimplements the same patterns: list managers with add/edit/delete, cross-window state synchronization, hierarchical settings inheritance, visual feedback for unsaved changes. These patterns are tedious to build correctly and painful to maintain.
+
+`pyqt-formgen` eliminates this work. Declare what your UI should do; the framework handles how:
 
 ```python
 class PipelineEditor(AbstractManagerWidget):
@@ -28,22 +30,13 @@ class PipelineEditor(AbstractManagerWidget):
     BUTTON_CONFIGS = [("Add", "add_step"), ("Del", "del_step"), ("Edit", "edit_step")]
     ITEM_HOOKS = {'backing_attr': 'steps', 'selection_signal': 'step_selected'}
     PREVIEW_FIELD_CONFIGS = ['streaming_config', 'output_config']
-
-    # ~50 lines of hooks replace ~1,500 lines of manual CRUD implementation
 ```
 
-This declarative configuration inherits complete CRUD infrastructure, cross-window reactivity, flash animations, dirty tracking, undo/redo integration, and list item formatting—automatically.
+This configuration inherits complete CRUD infrastructure, cross-window reactivity, flash animations, dirty tracking, undo/redo, and live preview formatting. When a value changes in one window, every related window updates. When a user clears a field, it inherits from the parent scope. When an item is modified, it flashes. The framework composes these behaviors; applications declare their structure.
 
 # Statement of Need
 
-Desktop applications with complex state—scientific pipelines, video editors, game engine inspectors, CAD tools—share common infrastructure requirements:
-
-1. **Cross-window state synchronization**: When a user edits configuration in Window A, related windows must update without explicit save/reload cycles
-2. **Hierarchical configuration inheritance**: Child components inherit parent defaults with visual indication of inherited vs. overridden values
-3. **CRUD list management**: Add, edit, delete, reorder operations with selection tracking, undo/redo, and visual feedback
-4. **Responsive animations**: Visual feedback (flashes, dirty indicators) that scales with animating elements, not total widget count
-
-Existing tools address fragments of these requirements:
+Desktop applications with complex state share a common fate: teams rebuild the same infrastructure repeatedly. Cross-window synchronization. Hierarchical configuration. CRUD list managers. Visual feedback systems. Each project reimplements these patterns from scratch because no framework provides them.
 
 | Capability | Qt Designer | magicgui | Streamlit | React | pyqt-formgen |
 |------------|:-----------:|:--------:|:---------:|:-----:|:------------:|
@@ -54,125 +47,64 @@ Existing tools address fragments of these requirements:
 | Type-driven widgets | — | ✓ | ✓ | — | ✓ |
 | O(1) animations | — | — | — | — | ✓ |
 
-¹ React Context provides hierarchy but requires manual implementation of inheritance semantics.
+¹ React Context provides hierarchy but requires manual inheritance implementation.
 
-**Qt Designer** provides visual layout but no runtime generation or state management. **magicgui** [@magicgui] generates widgets from function signatures for napari but provides no cross-window synchronization or CRUD patterns. **Streamlit** [@streamlit] offers reactive patterns but targets web applications. **React** [@react] pioneered declarative UI but JavaScript limitations preclude the introspection-based patterns possible in Python.
+**Qt Designer** handles layout, not behavior. **magicgui** [@magicgui] generates widgets from signatures but stops there—no synchronization, no CRUD patterns. **Streamlit** [@streamlit] is reactive but web-only. **React** [@react] pioneered declarative UI but JavaScript cannot introspect types at runtime the way Python can.
 
-`pyqt-formgen` provides the framework layer missing from PyQt6: application-level patterns that compose into complex desktop software.
+`pyqt-formgen` fills the gap: the framework layer that PyQt6 lacks.
 
 # Software Design
 
 ## Cross-Window Reactivity
 
-The framework's central innovation is automatic state propagation across windows. When any value changes:
+Change a value in Window A; Window B updates. No save button. No reload. No explicit synchronization code.
 
-1. `FieldChangeDispatcher` routes the change with reentrancy guards preventing infinite loops
-2. `ObjectStateRegistry` notifies all connected listeners via `contextvars`-based isolation
-3. `CrossWindowPreviewMixin` schedules debounced updates (100ms trailing debounce)
-4. Affected windows refresh only relevant fields based on type-hierarchy matching
+The mechanism: `FieldChangeDispatcher` routes changes with reentrancy guards. `ObjectStateRegistry` notifies listeners via `contextvars` isolation. `CrossWindowPreviewMixin` debounces updates to prevent storms during rapid typing. Windows refresh only affected fields based on type-hierarchy matching.
 
-```python
-class CrossWindowPreviewMixin:
-    def _on_live_context_changed(self) -> None:
-        self._schedule_preview_update()  # Debounced, coalesced
-
-    def _schedule_preview_update(self) -> None:
-        # Trailing debounce: timer restarts on each change
-        if self._preview_update_timer:
-            self._preview_update_timer.stop()
-        self._preview_update_timer = QTimer()
-        self._preview_update_timer.timeout.connect(self._handle_full_preview_refresh)
-        self._preview_update_timer.start(100)
-```
-
-This eliminates explicit save/reload cycles while preventing update storms during rapid editing.
+This is what React does for web components. `pyqt-formgen` brings it to PyQt6 desktop applications.
 
 ## CRUD Abstractions
 
-`AbstractManagerWidget` provides complete list management infrastructure through declarative configuration:
+`AbstractManagerWidget` is a template-method base class for list managers. Declare your structure:
 
-- **BUTTON_CONFIGS**: Toolbar buttons with actions, icons, tooltips
-- **ITEM_HOOKS**: Selection tracking, backing list access, signal emission
-- **PREVIEW_FIELD_CONFIGS**: Fields to display in list item previews
-- **LIST_ITEM_FORMAT**: Multiline item display with field formatters
+- **BUTTON_CONFIGS**: Toolbar buttons mapping to actions
+- **ITEM_HOOKS**: Selection tracking, backing storage, signal emission
+- **PREVIEW_FIELD_CONFIGS**: Fields shown in list item previews
+- **LIST_ITEM_FORMAT**: Multiline display with formatters
 
-Subclasses implement only domain-specific hooks (`action_add`, `_perform_delete`, `format_item_for_display`). The base class handles:
+Implement the domain hooks. The base class provides everything else: list widget creation, selection with dirty-check prevention, drag-and-drop with undo, cross-window preview updates, flash animations, dirty tracking. Build a complete list manager by declaring what it manages.
 
-- List widget creation and styling
-- Selection change with dirty-check prevention
-- Drag-and-drop reordering with undo integration
-- Cross-window preview label updates
-- Flash animations for modified items
-- Dirty field tracking and visual indicators
+## Hierarchical Configuration
 
-Subclass implementations typically require only declarative configuration and domain-specific hooks; the base class handles all UI infrastructure.
+Forms integrate with ObjectState [@objectstate] for dual-axis inheritance. Values resolve through both context hierarchy (Step → Pipeline → Global) and class hierarchy (StepConfig → PipelineConfig → BaseConfig).
 
-## Hierarchical Configuration (ObjectState Integration)
-
-Forms integrate with ObjectState [@objectstate] for dual-axis configuration inheritance:
-
-- **Context hierarchy**: Step → Pipeline → Global → Defaults
-- **Class hierarchy**: StepConfig → PipelineConfig → BaseConfig
-
-Placeholder text shows inherited values in real-time ("Pipeline default: 4"). When a user clears a field, it reverts to inherited resolution. This enables hierarchical configuration without manual propagation code.
+The key insight: `None` means "inherit." Placeholder text shows the inherited value in real-time. Users see what they'll get. Clear a field to restore inheritance. Type a value to override. The UI model and data model are unified—no synchronization bugs, no hidden state.
 
 ## Protocol-Based Extensibility
 
-Protocol classes enable domain-agnostic integration:
-
-| Protocol | Purpose |
-|----------|---------|
-| `FunctionRegistryProtocol` | Discover callable functions for form generation |
-| `LLMServiceProtocol` | AI-assisted code generation |
-| `CodegenProvider` | Python source generation from configurations |
-| `PreviewFormatterRegistry` | Custom field display formatting |
-| `WidgetProtocol` ABCs | Normalize Qt widget APIs |
-
-Applications register implementations at startup; the framework calls protocol methods without coupling to concrete types.
+The framework knows nothing about your domain. Protocol classes (`FunctionRegistryProtocol`, `LLMServiceProtocol`, `CodegenProvider`, `PreviewFormatterRegistry`) define integration points. Register implementations at startup; the framework calls them without knowing concrete types. Swap AI providers, function registries, or code generators without touching framework code.
 
 ## Flash Animation Architecture
 
-Game-engine patterns achieve O(1) per-window rendering regardless of total widget count:
+Visual feedback matters. Modified items flash. Dirty fields highlight. But naive implementations scale O(n) with widget count—unacceptable for complex UIs.
 
-1. **GlobalFlashCoordinator**: Single timer pre-computes interpolated colors for all active flashes
-2. **WindowFlashOverlay**: Transparent overlay renders all flash rectangles in one `paintEvent`
-3. **FlashMixin**: Per-widget API registers scope-keyed flash targets
+Game-engine solution: `GlobalFlashCoordinator` runs a single timer, pre-computes all interpolated colors. `WindowFlashOverlay` renders every flash rectangle in one `paintEvent`. Cost scales with animating elements, not total widgets.
 
-Flash state updates occur once per frame; rendering occurs once per window. This scales to hundreds of animated elements without performance degradation.
+## Type Dispatch
 
-## Discriminated Union Type Dispatch
-
-Parameter types use metaclass-registered discriminated unions for type-safe widget creation:
-
-```python
-class OptionalDataclassInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
-    @staticmethod
-    def matches(param_type: Type) -> bool:
-        return is_optional(param_type) and is_dataclass(get_inner_type(param_type))
-```
-
-The factory iterates registered types; the first matching predicate wins. Services dispatch by class name (`_reset_OptionalDataclassInfo`), enabling exhaustive handling without dispatch tables.
+Widget creation uses discriminated unions. `ParameterInfo` subclasses define `matches()` predicates; the factory selects the first match. Services dispatch by class name (`_reset_OptionalDataclassInfo`). No dispatch tables. Exhaustive handling. Type-safe throughout.
 
 # Research Application
 
-`pyqt-formgen` powers OpenHCS, an open-source high-content screening platform for automated microscopy. The application demonstrates framework capabilities at scale:
+`pyqt-formgen` powers OpenHCS, an open-source high-content screening platform for automated microscopy. Multiple synchronized windows. Deeply nested configuration hierarchies. Multi-level scopes (Global → Plate → Pipeline → Step). Real-time inherited value preview. Git-style undo/redo with branching timelines.
 
-- **Multiple synchronized windows** across the application
-- **Deeply nested configuration hierarchies** per experiment
-- **Multi-level scopes**: Global → Plate → Pipeline → Step
-- **Real-time preview** of inherited values during editing
-- **Git-style undo/redo** with branching timeline support
-
-Pipeline configuration uses hierarchical forms where step-level settings inherit from pipeline defaults, which inherit from global configuration. Function editors generate forms from any callable signature, making arbitrary Python functions into pipeline steps. The framework handles responsive updates across all windows during active editing with no perceptible lag.
+Step-level settings inherit from pipeline defaults, which inherit from global configuration. Function editors generate forms from any callable signature—arbitrary Python functions become pipeline steps. Responsive updates across all windows during active editing. No perceptible lag.
 
 ## Broader Applicability
 
-The patterns in `pyqt-formgen` apply to any domain requiring complex desktop UI:
+The patterns generalize. Video editors need timeline sync and effect parameter inheritance. Game engines need entity inspectors with prefab hierarchies. CAD software needs assembly parameters flowing to child components. Audio DAWs need track configs inheriting from master settings.
 
-- **Video editors**: Timeline panels, effect parameter sync, multi-view coordination
-- **Game engines**: Entity inspectors, component editors, prefab hierarchy inheritance
-- **CAD software**: Assembly parameter inheritance, cross-view synchronization
-- **Audio DAWs**: Track configuration, plugin parameter chains, mixer state sync
+These are the same patterns. `pyqt-formgen` provides them once.
 
 # AI Usage Disclosure
 
