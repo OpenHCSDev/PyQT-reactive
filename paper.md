@@ -116,6 +116,6 @@ Generative AI (Claude claude-sonnet-4-5) assisted with code generation and docum
 
 # Acknowledgements
 
-This work was supported by [TODO: Add funding sources].
+This work was supported in part by the Fournier lab at the Montreal Neurological Institute, McGill University.
 
 # References
