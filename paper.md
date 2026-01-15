@@ -61,6 +61,8 @@ Change a value in Window A; Window B updates. No save button. No reload. No expl
 
 The mechanism: `FieldChangeDispatcher` routes changes with reentrancy guards. `ObjectStateRegistry` notifies listeners via `contextvars` isolation. `CrossWindowPreviewMixin` debounces updates to prevent storms during rapid typing. Windows refresh only affected fields based on type-hierarchy matching.
 
+**Example**: A user opens two windows—one editing a Pipeline's global settings, another editing a Step's settings. The Step inherits from the Pipeline. When the user changes `num_workers=8` in the Pipeline window, the Step window immediately shows the new inherited value in its placeholder text. No explicit synchronization code. The framework detects that both windows reference the same configuration hierarchy and updates both.
+
 This is what React does for web components. `pyqt-reactor` brings it to PyQt6 desktop applications.
 
 ## CRUD Abstractions
@@ -73,6 +75,24 @@ This is what React does for web components. `pyqt-reactor` brings it to PyQt6 de
 - **LIST_ITEM_FORMAT**: Multiline display with formatters
 
 Implement the domain hooks. The base class provides everything else: list widget creation, selection with dirty-check prevention, drag-and-drop with undo, cross-window preview updates, flash animations, dirty tracking. Build a complete list manager by declaring what it manages.
+
+**Example**: A pipeline editor needs to manage a list of processing steps. Without `AbstractManagerWidget`, the developer would write:
+- A `QListWidget` subclass with selection handling
+- Add/delete/edit button handlers
+- Dirty tracking (mark as modified when items change)
+- Undo/redo integration
+- Cross-window updates when steps are modified elsewhere
+- Flash animations when items are added/removed
+
+With `AbstractManagerWidget`, the developer declares:
+```python
+class StepListManager(AbstractManagerWidget):
+    ITEM_HOOKS = {'backing_attr': 'steps', 'selection_signal': 'step_selected'}
+    BUTTON_CONFIGS = [("Add", "add_step"), ("Delete", "del_step"), ("Edit", "edit_step")]
+    PREVIEW_FIELD_CONFIGS = ['function_name', 'parameters']
+```
+
+And implements three methods: `add_step()`, `del_step()`, `edit_step()`. The base class handles everything else.
 
 ## Hierarchical Configuration
 
