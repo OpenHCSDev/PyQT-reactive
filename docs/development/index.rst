@@ -2,7 +2,7 @@ Development Guide
 =================
 
 This section contains development guides and best practices for working with
-pyqt-reactor.
+pyqt-reactive.
 
 .. toctree::
    :maxdepth: 1

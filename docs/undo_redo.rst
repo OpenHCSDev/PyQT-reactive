@@ -1,7 +1,7 @@
 Time Travel and Branching
 =========================
 
-pyqt-reactor integrates with ObjectState's git-like time-travel system. When forms are bound
+pyqt-reactive integrates with ObjectState's git-like time-travel system. When forms are bound
 to ObjectState, all user edits are automatically recorded in a DAG-based history.
 
 Overview

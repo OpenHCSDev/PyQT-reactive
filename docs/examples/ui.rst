@@ -1,7 +1,7 @@
 UI Integration
 ==============
 
-Examples of building reactive forms with pyqt-reactor.
+Examples of building reactive forms with pyqt-reactive.
 
 Basic Form Generation
 ---------------------
@@ -200,7 +200,7 @@ Manage multiple windows with WindowManager:
 Service Registration
 --------------------
 
-Register custom providers with pyqt-reactor:
+Register custom providers with pyqt-reactive:
 
 .. code-block:: python
 

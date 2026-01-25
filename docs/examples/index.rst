@@ -1,7 +1,7 @@
 Examples
 ========
 
-This section provides practical examples of using pyqt-reactor.
+This section provides practical examples of using pyqt-reactive.
 
 .. toctree::
    :maxdepth: 2

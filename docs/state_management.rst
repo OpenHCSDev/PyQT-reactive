@@ -1,7 +1,7 @@
 State Management
 ================
 
-This page documents how pyqt-reactor manages form state and integrates with ObjectState
+This page documents how pyqt-reactive manages form state and integrates with ObjectState
 for hierarchical configuration management.
 
 Form State Management
@@ -9,7 +9,7 @@ Form State Management
 
 Purpose
 ~~~~~~~
-pyqt-reactor manages form state through the ``ParameterFormManager`` and ``FieldChangeDispatcher``.
+pyqt-reactive manages form state through the ``ParameterFormManager`` and ``FieldChangeDispatcher``.
 Forms are automatically generated from dataclasses and maintain bidirectional binding with
 the underlying data model.
 
@@ -38,7 +38,7 @@ ObjectState Integration
 
 Purpose
 ~~~~~~~
-pyqt-reactor integrates with ObjectState to support lazy configuration and hierarchical
+pyqt-reactive integrates with ObjectState to support lazy configuration and hierarchical
 inheritance. Forms can display placeholder text showing inherited values from parent contexts.
 
 Key Features
@@ -64,7 +64,7 @@ Widget Protocols
 
 Purpose
 ~~~~~~~
-pyqt-reactor uses ABC-based protocols to define type-safe widget contracts. This eliminates
+pyqt-reactive uses ABC-based protocols to define type-safe widget contracts. This eliminates
 duck typing in favor of explicit, fail-loud inheritance-based architecture.
 
 Core Protocols

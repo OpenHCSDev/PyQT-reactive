@@ -1,7 +1,7 @@
 Architecture Documentation
 ==========================
 
-This section contains detailed architecture documentation for pyqt-reactor's
+This section contains detailed architecture documentation for pyqt-reactive's
 core systems and design patterns.
 
 Core Form System

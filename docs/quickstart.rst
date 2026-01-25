@@ -1,16 +1,16 @@
 Quick Start Guide
 ==================
 
-This guide will help you get started with pyqt-reactor in minutes.
+This guide will help you get started with pyqt-reactive in minutes.
 
 Installation
 ------------
 
-Install pyqt-reactor using pip:
+Install pyqt-reactive using pip:
 
 .. code-block:: bash
 
-   pip install pyqt-reactor
+   pip install pyqt-reactive
 
 Basic Form from Dataclass
 --------------------------

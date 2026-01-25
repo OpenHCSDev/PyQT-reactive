@@ -1,4 +1,4 @@
-pyqt-reactor
+pyqt-reactive
 ============
 
 **React-quality reactive form generation framework for PyQt6**
@@ -6,7 +6,7 @@ pyqt-reactor
 Overview
 --------
 
-``pyqt-reactor`` is a Python framework for generating reactive, data-driven forms from dataclass definitions. It provides a clean, type-safe way to create PyQt6 user interfaces with automatic widget generation, theming, and animation support.
+``pyqt-reactive`` is a Python framework for generating reactive, data-driven forms from dataclass definitions. It provides a clean, type-safe way to create PyQt6 user interfaces with automatic widget generation, theming, and animation support.
 
 Key Features
 ------------
@@ -34,7 +34,7 @@ Installation
 
 .. code-block:: bash
 
-   pip install pyqt-reactor
+   pip install pyqt-reactive
 
 Quick Example
 -------------

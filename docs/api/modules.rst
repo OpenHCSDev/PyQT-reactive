@@ -1,7 +1,7 @@
 API Reference
 =============
 
-This section contains the complete API documentation for pyqt-reactor.
+This section contains the complete API documentation for pyqt-reactive.
 
 Core Modules
 ------------
