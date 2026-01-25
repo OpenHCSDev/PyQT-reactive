@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pyqt-reactor"
+name = "qt-reactive"
 version = "0.1.0"
 description = "React-quality reactive form generation framework for PyQt6"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
