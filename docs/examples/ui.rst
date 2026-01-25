@@ -12,7 +12,7 @@ Create a form from a dataclass:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactive.forms import ParameterFormManager
 
    @dataclass
    class ProcessingConfig:
@@ -43,7 +43,7 @@ Bind a form to ObjectState for lazy configuration and inheritance:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactive.forms import ParameterFormManager
    from objectstate import config_context, ObjectStateRegistry
 
    @dataclass
@@ -81,8 +81,8 @@ Use FieldChangeDispatcher to react to field changes:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
-   from pyqt_reactor.services import FieldChangeDispatcher
+   from pyqt_reactive.forms import ParameterFormManager
+   from pyqt_reactive.services import FieldChangeDispatcher
 
    @dataclass
    class ImageConfig:
@@ -114,8 +114,8 @@ Apply themes to forms:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
-   from pyqt_reactor.theming import ColorScheme, apply_theme
+   from pyqt_reactive.forms import ParameterFormManager
+   from pyqt_reactive.theming import ColorScheme, apply_theme
 
    @dataclass
    class AppConfig:
@@ -141,7 +141,7 @@ Visual feedback when values change:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactive.forms import ParameterFormManager
 
    @dataclass
    class Config:
@@ -166,8 +166,8 @@ Manage multiple windows with WindowManager:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton
-   from pyqt_reactor.services import WindowManager
-   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactive.services import WindowManager
+   from pyqt_reactive.forms import ParameterFormManager
 
    @dataclass
    class Config:
@@ -204,7 +204,7 @@ Register custom providers with pyqt-reactor:
 
 .. code-block:: python
 
-   from pyqt_reactor.protocols import (
+   from pyqt_reactive.protocols import (
        set_form_config,
        register_llm_service,
        register_codegen_provider,
@@ -239,7 +239,7 @@ Create custom widgets that work with ParameterFormManager:
 
    from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSlider
    from PyQt6.QtCore import Qt, pyqtSignal
-   from pyqt_reactor.protocols import ValueGettable, ValueSettable
+   from pyqt_reactive.protocols import ValueGettable, ValueSettable
 
    class CustomSliderWidget(QWidget, ValueGettable, ValueSettable):
        """Custom slider widget with label."""

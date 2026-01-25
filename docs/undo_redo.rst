@@ -30,7 +30,7 @@ Example
 
 .. code-block:: python
 
-   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactive.forms import ParameterFormManager
    from objectstate import ObjectStateRegistry, config_context
 
    @dataclass

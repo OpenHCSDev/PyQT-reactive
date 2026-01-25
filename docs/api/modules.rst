@@ -10,105 +10,105 @@ Core Modules
    :toctree: generated
    :recursive:
 
-   pyqt_reactor.core
-   pyqt_reactor.protocols
-   pyqt_reactor.services
-   pyqt_reactor.forms
-   pyqt_reactor.widgets
-   pyqt_reactor.theming
-   pyqt_reactor.animation
-   pyqt_reactor.windows
-   pyqt_reactor.dialogs
+   pyqt_reactive.core
+   pyqt_reactive.protocols
+   pyqt_reactive.services
+   pyqt_reactive.forms
+   pyqt_reactive.widgets
+   pyqt_reactive.theming
+   pyqt_reactive.animation
+   pyqt_reactive.windows
+   pyqt_reactive.dialogs
 
 Module Documentation
 --------------------
 
-pyqt_reactor.core
+pyqt_reactive.core
 ~~~~~~~~~~~~~~~~~
 
 Core PyQt6 utilities with zero external dependencies.
 
-.. automodule:: pyqt_reactor.core
+.. automodule:: pyqt_reactive.core
    :members:
    :undoc-members:
    :show-inheritance:
 
-pyqt_reactor.protocols
+pyqt_reactive.protocols
 ~~~~~~~~~~~~~~~~~~~~~~
 
 Widget protocol definitions and adapters for type-safe widget contracts.
 
-.. automodule:: pyqt_reactor.protocols
+.. automodule:: pyqt_reactive.protocols
    :members:
    :undoc-members:
    :show-inheritance:
 
-pyqt_reactor.services
+pyqt_reactive.services
 ~~~~~~~~~~~~~~~~~~~~~
 
 Service layer for form management and cross-cutting concerns.
 
-.. automodule:: pyqt_reactor.services
+.. automodule:: pyqt_reactive.services
    :members:
    :undoc-members:
    :show-inheritance:
 
-pyqt_reactor.forms
+pyqt_reactive.forms
 ~~~~~~~~~~~~~~~~~~
 
 Form generation and management from dataclasses.
 
-.. automodule:: pyqt_reactor.forms
+.. automodule:: pyqt_reactive.forms
    :members:
    :undoc-members:
    :show-inheritance:
 
-pyqt_reactor.widgets
+pyqt_reactive.widgets
 ~~~~~~~~~~~~~~~~~~~~
 
 Extended widget implementations with enhanced behavior.
 
-.. automodule:: pyqt_reactor.widgets
+.. automodule:: pyqt_reactive.widgets
    :members:
    :undoc-members:
    :show-inheritance:
 
-pyqt_reactor.theming
+pyqt_reactive.theming
 ~~~~~~~~~~~~~~~~~~~~
 
 Color schemes and styling system for dynamic theme switching.
 
-.. automodule:: pyqt_reactor.theming
+.. automodule:: pyqt_reactive.theming
    :members:
    :undoc-members:
    :show-inheritance:
 
-pyqt_reactor.animation
+pyqt_reactive.animation
 ~~~~~~~~~~~~~~~~~~~~~
 
 Flash animations and visual feedback system.
 
-.. automodule:: pyqt_reactor.animation
+.. automodule:: pyqt_reactive.animation
    :members:
    :undoc-members:
    :show-inheritance:
 
-pyqt_reactor.windows
+pyqt_reactive.windows
 ~~~~~~~~~~~~~~~~~~~~
 
 Window management and scoped window registry.
 
-.. automodule:: pyqt_reactor.windows
+.. automodule:: pyqt_reactive.windows
    :members:
    :undoc-members:
    :show-inheritance:
 
-pyqt_reactor.dialogs
+pyqt_reactive.dialogs
 ~~~~~~~~~~~~~~~~~~~~
 
 Dialog components and utilities.
 
-.. automodule:: pyqt_reactor.dialogs
+.. automodule:: pyqt_reactive.dialogs
    :members:
    :undoc-members:
    :show-inheritance:

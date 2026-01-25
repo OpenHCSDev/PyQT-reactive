@@ -5,7 +5,7 @@ import pytest
 
 def test_line_edit_adapter(qapp):
     """Test LineEditAdapter implements protocols."""
-    from pyqt_reactor.protocols import LineEditAdapter, ValueGettable, ValueSettable
+    from pyqt_reactive.protocols import LineEditAdapter, ValueGettable, ValueSettable
     
     adapter = LineEditAdapter()
     assert isinstance(adapter, ValueGettable)

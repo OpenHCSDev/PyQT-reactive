@@ -21,7 +21,7 @@ The simplest way to create a UI is from a dataclass:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactive.forms import ParameterFormManager
 
    @dataclass
    class ProcessingConfig:
@@ -51,7 +51,7 @@ Get the user's input back as a typed dataclass:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication, QPushButton
-   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactive.forms import ParameterFormManager
 
    @dataclass
    class Config:
@@ -77,7 +77,7 @@ For hierarchical configuration with lazy resolution:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
+   from pyqt_reactive.forms import ParameterFormManager
    from objectstate import config_context
 
    @dataclass
@@ -109,8 +109,8 @@ React to field changes with FieldChangeDispatcher:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
-   from pyqt_reactor.services import FieldChangeDispatcher
+   from pyqt_reactive.forms import ParameterFormManager
+   from pyqt_reactive.services import FieldChangeDispatcher
 
    @dataclass
    class ImageConfig:
@@ -138,8 +138,8 @@ Apply themes to your forms:
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactor.forms import ParameterFormManager
-   from pyqt_reactor.theming import ColorScheme, apply_theme
+   from pyqt_reactive.forms import ParameterFormManager
+   from pyqt_reactive.theming import ColorScheme, apply_theme
 
    @dataclass
    class Config:

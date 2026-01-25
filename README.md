@@ -22,7 +22,7 @@
 ```python
 from dataclasses import dataclass
 from PyQt6.QtWidgets import QApplication
-from pyqt_reactor.forms import ParameterFormManager
+from pyqt_reactive.forms import ParameterFormManager
 
 @dataclass
 class ProcessingConfig:
@@ -55,7 +55,7 @@ pip install -e ".[dev]"
 The package is organized in layers:
 
 ```
-pyqt_reactor/
+pyqt_reactive/
 ├── core/        # Tier 1: Pure PyQt6 utilities
 ├── protocols/   # Tier 2: Widget ABCs and adapters
 ├── services/    # Tier 3: Reusable service layer
@@ -72,7 +72,7 @@ pyqt_reactor/
 Auto-generates forms from dataclasses with full type support:
 
 ```python
-from pyqt_reactor.forms import ParameterFormManager
+from pyqt_reactive.forms import ParameterFormManager
 
 form = ParameterFormManager(MyConfig)
 config = form.collect_values()  # Get typed config back
@@ -83,7 +83,7 @@ config = form.collect_values()  # Get typed config back
 Singleton window registry with scope-based navigation:
 
 ```python
-from pyqt_reactor.services import WindowManager
+from pyqt_reactive.services import WindowManager
 
 window = WindowManager.show_or_focus("config:plate1", lambda: ConfigWindow(...))
 WindowManager.navigate_to("config:plate1", field="exposure_time")
@@ -94,7 +94,7 @@ WindowManager.navigate_to("config:plate1", field="exposure_time")
 Dynamic theme switching with consistent styling:
 
 ```python
-from pyqt_reactor.theming import ColorScheme, apply_theme
+from pyqt_reactive.theming import ColorScheme, apply_theme
 
 apply_theme(widget, ColorScheme.DARK)
 ```

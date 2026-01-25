@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "qt-reactive"
+name = "pyqt-reactive"
 version = "0.1.0"
 description = "React-quality reactive form generation framework for PyQt6"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
@@ -48,20 +48,20 @@ magicgui = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/OpenHCSDev/PyQT-reactor"
-Documentation = "https://pyqt-reactor.readthedocs.io"
-Repository = "https://github.com/OpenHCSDev/PyQT-reactor"
-Issues = "https://github.com/OpenHCSDev/PyQT-reactor/issues"
+Homepage = "https://github.com/OpenHCSDev/pyqt-reactive"
+Documentation = "https://pyqt-reactive.readthedocs.io"
+Repository = "https://github.com/OpenHCSDev/pyqt-reactive"
+Issues = "https://github.com/OpenHCSDev/pyqt-reactive/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pyqt_reactor"]
+packages = ["src/pyqt_reactive"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=pyqt_reactor --cov-report=term-missing --cov-report=html"
+addopts = "--cov=pyqt_reactive --cov-report=term-missing --cov-report=html"
 
 [tool.black]
 line-length = 100

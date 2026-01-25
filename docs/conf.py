@@ -1,4 +1,4 @@
-"""Sphinx configuration for pyqt_reactor."""
+"""Sphinx configuration for pyqt_reactive."""
 import os
 import sys
 
@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, os.path.abspath("../src"))
 
 # Project information
-project = "pyqt_reactor"
+project = "pyqt_reactive"
 copyright = "2024, Tristan Simas"
 author = "Tristan Simas"
 version = "0.1.0"

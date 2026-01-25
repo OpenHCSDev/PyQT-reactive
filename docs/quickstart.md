@@ -11,7 +11,7 @@ pip install pyqt-reactor
 ```python
 from dataclasses import dataclass
 from PyQt6.QtWidgets import QApplication
-from pyqt_reactor.forms import ParameterFormManager
+from pyqt_reactive.forms import ParameterFormManager
 
 @dataclass
 class MyConfig:
@@ -30,7 +30,7 @@ app.exec()
 ```python
 from dataclasses import dataclass
 from objectstate import ObjectState
-from pyqt_reactor.forms import ParameterFormManager, FormManagerConfig
+from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
 
 @dataclass
 class MyConfig:
