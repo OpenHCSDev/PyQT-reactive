@@ -86,9 +86,21 @@ class PreviewSegmentBuilder:
         self.group_order: List[str] = []  # Preserve insertion order
 
     def add_field(self, field_path: str, value: Any, label: str, container_type: type):
-        """Add a field to its config type's group."""
-         # Use config type for grouping (not path)
-        container_key = container_type.__name__ if container_type else "root"
+        """Add a field to its config type's group.
+
+        Groups all fields by their container type.
+        - Dataclass configs: use type name as group (e.g., 'PathPlanningConfig')
+        - Primitive types (int, str, etc.): group as 'root'
+
+        This ensures consistent grouping behavior for all fields.
+        """
+        from dataclasses import is_dataclass
+
+        # Use config type name for dataclass configs, 'root' for primitives
+        if is_dataclass(container_type):
+            container_key = container_type.__name__
+        else:
+            container_key = "root"
 
         if container_key not in self.groups:
             self.groups[container_key] = PreviewGroup(container_type=container_type, field_data=[])
@@ -110,16 +122,23 @@ class PreviewSegmentBuilder:
         return segments
 
     def _render_group(self, group: PreviewGroup, is_first_group: bool) -> List[Tuple]:
-        """Render a single group using config."""
+        """Render a single group using config.
+
+        Root group (primitive types) is rendered without braces or labels.
+        Dataclass groups use abbreviation with braces.
+        """
         import logging
         logger = logging.getLogger(__name__)
 
         segments = []
+        container_key = group.container_type.__name__ if group.container_type else "root"
+        is_root_group = container_key == "root"
+
         # Group separator BEFORE abbreviation (not after)
         group_sep_before_abbr = "" if is_first_group else self.config.group_separator
 
-        # Group opening label (if configured)
-        if self.config.show_group_labels:
+        # Group opening label (if configured and not root group)
+        if self.config.show_group_labels and not is_root_group:
             abbr = self.config.container_abbr_func(group.container_type)
             # Add separator before abbreviation (for non-first groups)
             segments.append((abbr, str(group.container_type), group_sep_before_abbr))
@@ -129,7 +148,7 @@ class PreviewSegmentBuilder:
 
         # Fields in group
         for j, (field_path, value, label) in enumerate(group.field_data):
-            if self.config.show_group_labels:
+            if self.config.show_group_labels and not is_root_group:
                 # First field: no separator (already in group label format "*{")
                 # Subsequent fields: comma separator
                 field_sep = "" if j == 0 else ", "
@@ -140,8 +159,8 @@ class PreviewSegmentBuilder:
             segments.append((label, field_path, field_sep))
             logger.debug(f"    Field: {field_path} -> {label}")
 
-        # Closing brace for group (if showing group labels) - no styling
-        if self.config.show_group_labels and group.field_data:
+        # Closing brace for group (if showing group labels and not root group) - no styling
+        if self.config.show_group_labels and not is_root_group and group.field_data:
             segments.append(("}", None, self.config.closing_brace_separator))
             logger.debug(f"  Closing brace: }}")
 
