@@ -43,6 +43,7 @@ Animation & Performance
    :maxdepth: 1
 
    flash_animation_system
+   flash_callback_system
    gui_performance_patterns
    cross_window_update_optimization
 

@@ -1955,7 +1955,8 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, ABC, m
             if first_line_segments:
                 existing_paths.update(seg[1] for seg in first_line_segments if len(seg) > 1 and seg[1])
 
-            # Add sig-diff fields using strategy
+            # Collect sig-diff field paths that need to be added
+            sig_diff_paths_to_add = []
             for field_path in sig_diff_fields:
                 # Skip 'name' - it's already shown as item title
                 if field_path == 'name':
@@ -1963,13 +1964,18 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, ABC, m
                 # Skip if already covered by existing segment (exact or prefix)
                 if any(field_path == p or field_path.startswith(p + '.') for p in existing_paths):
                     continue
-                # Read resolved value from ObjectState cache
-                value = state.get_resolved_value(field_path)
-                if value is None:
-                    continue
-                label = self._format_field_value(field_path, value)
-                if label:
-                    segments.append((label, field_path, None))  # No separator, handled by conversion
+                sig_diff_paths_to_add.append(field_path)
+
+            # Add sig-diff fields using strategy for consistent grouping
+            if sig_diff_paths_to_add:
+                sig_diff_segments = self._preview_formatting_strategy.collect_and_render(
+                    state, sig_diff_paths_to_add, {}, self._format_field_value
+                )
+                # If there are existing segments, prepend separator to first sig-diff segment
+                if segments and sig_diff_segments:
+                    first_label, first_path, _ = sig_diff_segments[0]
+                    sig_diff_segments[0] = (first_label, first_path, " | ")
+                segments.extend(sig_diff_segments)
 
         # Convert tuples to Segment objects with preview grouping support
         def _create_segments_with_grouping(segments_list, sep_before_first=None):

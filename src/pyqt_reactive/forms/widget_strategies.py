@@ -636,6 +636,59 @@ def _apply_checkbox_group_placeholder(widget: Any, placeholder_text: str) -> Non
         widget.setToolTip(placeholder_text)
 
 
+def _apply_checkbox_group_placeholder_with_value(widget: Any, resolved_value: Any, placeholder_text: str) -> None:
+    """Apply placeholder to checkbox group using actual value (type-safe).
+
+    This function uses the resolved value directly instead of parsing placeholder text,
+    eliminating string parsing and ensuring type safety.
+
+    Args:
+        widget: CheckboxGroupAdapter with _checkboxes dict
+        resolved_value: The actual List[Enum] value (or None)
+        placeholder_text: Formatted text for tooltips/display
+    """
+    if not hasattr(widget, '_checkboxes'):
+        return
+
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        logger.debug(f"🔍 Applying checkbox group placeholder (type-safe): {placeholder_text}")
+
+        # Use actual value directly - no parsing!
+        if resolved_value is None:
+            inherited_enums = []
+        elif isinstance(resolved_value, list):
+            inherited_enums = resolved_value
+        else:
+            logger.warning(f"Unexpected resolved_value type: {type(resolved_value)}")
+            inherited_enums = []
+
+        logger.debug(f"✅ Using inherited enums directly: {inherited_enums}")
+
+        # Apply placeholder to each checkbox in the group
+        for enum_value, checkbox in widget._checkboxes.items():
+            # Type-safe membership check using actual enum objects
+            is_checked = enum_value in inherited_enums
+
+            logger.debug(f"  📌 {enum_value.value}: is_checked={is_checked}")
+
+            # Create individual placeholder text for this checkbox
+            individual_placeholder = f"Pipeline default: {is_checked}"
+
+            # Reuse existing checkbox placeholder logic
+            _apply_checkbox_placeholder(checkbox, individual_placeholder)
+
+        # Mark the group widget itself as being in placeholder state
+        widget.setProperty("is_placeholder_state", True)
+        widget.setToolTip(f"{placeholder_text} (click any checkbox to set your own value)")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to apply checkbox group placeholder: {e}", exc_info=True)
+        widget.setToolTip(placeholder_text)
+
+
 def _apply_path_widget_placeholder(widget: Any, placeholder_text: str) -> None:
     """Apply placeholder to Path widget by targeting the inner QLineEdit."""
     try:
@@ -816,6 +869,33 @@ class PyQt6WidgetEnhancer:
         )
         strategy(widget, placeholder_text)
         widget._cached_placeholder_text = placeholder_text
+
+    @staticmethod
+    def apply_placeholder_with_value(widget: Any, resolved_value: Any, placeholder_text: str) -> None:
+        """Apply placeholder using actual resolved value for type-safe handling.
+        
+        This method passes the actual value (not just formatted text) to enable
+        type-safe widget updates without string parsing.
+        
+        Args:
+            widget: The widget to apply placeholder to
+            resolved_value: The actual resolved value (e.g., List[Enum], bool, etc.)
+            placeholder_text: Formatted placeholder text for display/tooltip
+        """
+        # PERFORMANCE OPTIMIZATION: Skip if placeholder text is unchanged
+        cached_placeholder = getattr(widget, '_cached_placeholder_text', None)
+        if cached_placeholder == placeholder_text:
+            return  # No change needed
+
+        # Check for checkbox group (QGroupBox with _checkboxes attribute)
+        # Use type-safe value directly instead of parsing text
+        if hasattr(widget, '_checkboxes'):
+            _apply_checkbox_group_placeholder_with_value(widget, resolved_value, placeholder_text)
+            widget._cached_placeholder_text = placeholder_text
+            return
+
+        # For other widgets, fall back to text-based placeholder
+        PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
 
     @staticmethod
     def apply_global_config_placeholder(widget: Any, field_name: str, global_config: Any = None) -> None:

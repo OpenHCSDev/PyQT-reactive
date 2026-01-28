@@ -140,6 +140,7 @@ rendering via instanced draw calls. Falls back to QPainter automatically.
 See Also
 --------
 
+- :doc:`flash_callback_system` - How ObjectState triggers flash callbacks
 - :doc:`gui_performance_patterns` - Cross-window preview system
 - :doc:`abstract_manager_widget` - AbstractManagerWidget uses FlashMixin
 

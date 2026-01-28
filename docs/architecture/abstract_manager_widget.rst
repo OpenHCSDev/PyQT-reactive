@@ -150,9 +150,30 @@ Optional hooks with default implementations:
 - ``_get_code_editor_title() -> str``: Code editor title (default: "Code Editor")
 - ``_apply_extracted_variables(vars: Dict[str, Any])``: Apply code execution results
 
+Flash Callback Integration
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+AbstractManagerWidget subscribes to ObjectState change notifications to trigger flash
+animations when parameters change:
+
+.. code-block:: python
+
+    # In _subscribe_flash_for_item()
+    state = ObjectStateRegistry.get_by_scope(scope_id)
+
+    def on_change(changed_paths: Set[str]):
+        self.queue_flash(scope_id)  # Trigger flash in all windows
+        self.queue_visual_update()   # Refresh list item text
+
+    state.on_resolved_changed(on_change)
+
+See :doc:`flash_callback_system` for details on how the flash callback mechanism works.
+
 See Also
 --------
 
+- :doc:`flash_callback_system` - How ObjectState triggers flash callbacks
+- :doc:`flash_animation_system` - Flash animation rendering
 - :doc:`widget_protocol_system` - ABC contracts for widget operations
 - :doc:`ui_services_architecture` - Service layer for ParameterFormManager
 - :doc:`gui_performance_patterns` - Cross-window preview system

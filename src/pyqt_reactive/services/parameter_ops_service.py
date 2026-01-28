@@ -249,7 +249,8 @@ class ParameterOpsService(ParameterServiceABC):
 
         if placeholder_text:
             widget = manager.widgets[field_name]
-            PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+            # Use type-safe method that passes actual value for checkbox groups
+            PyQt6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
             logger.debug(f"        ✅ Applied placeholder to widget")
 
             # Keep enabled-field styling in sync when placeholder changes the visual state
@@ -341,5 +342,6 @@ class ParameterOpsService(ParameterServiceABC):
                             resolved_value, manager.config.placeholder_prefix
                         )
                         if placeholder_text:
-                            PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+                            # Use type-safe method that passes actual value for checkbox groups
+                            PyQt6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
 

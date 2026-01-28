@@ -169,25 +169,40 @@ class PreviewSegmentBuilder:
         group_sep_before_abbr = "" if is_first_group else self.config.group_separator
         logger.info(f"  group_sep_before_abbr='{group_sep_before_abbr}'")
 
-        # Group opening label (if configured and not root group)
-        if self.config.show_group_labels and not is_root_group:
-            abbr = self.config.container_abbr_func(group.container_type)
-            logger.info(f"  Adding abbr '{abbr}' with field_path={str(group.container_type)}")
-            # Add separator before abbreviation (for non-first groups)
-            segments.append((abbr, str(group.container_type), group_sep_before_abbr))
+        # Group opening label (if configured)
+        if self.config.show_group_labels:
+            if is_root_group:
+                # Root group gets 'root' label
+                abbr = "root"
+                abbr_field_path = None  # Root fields have varied paths, no single prefix
+                logger.info(f"  Adding root abbr with field_path={abbr_field_path}")
+            else:
+                # Config groups get their abbreviation
+                abbr = self.config.container_abbr_func(group.container_type)
+                
+                # Extract the field prefix from the first field in the group
+                # e.g., from 'path_planning_config.sub_dir' -> 'path_planning_config'
+                # This matches the format used by dirty_fields/sig_diff_fields
+                if group.field_data:
+                    first_field_path = group.field_data[0][0]
+                    abbr_field_path = first_field_path.split('.')[0] if '.' in first_field_path else first_field_path
+                else:
+                    abbr_field_path = None
+                
+                logger.info(f"  Adding abbr '{abbr}' with field_path={abbr_field_path}")
+            
+            segments.append((abbr, abbr_field_path, group_sep_before_abbr))
+            
             # Add opening brace (no separator before or after)
             segments.append(("{", None, ""))
             logger.info(f"  Added opening brace")
         else:
-            if is_root_group:
-                logger.info(f"  SKIPPING abbr/brace for root group")
-            else:
-                logger.info(f"  SKIPPING abbr/brace: show_group_labels={self.config.show_group_labels}")
+            logger.info(f"  SKIPPING abbr/brace: show_group_labels={self.config.show_group_labels}")
 
         # Fields in group
         logger.info(f"  Rendering {len(group.field_data)} fields")
         for j, (field_path, value, label) in enumerate(group.field_data):
-            if self.config.show_group_labels and not is_root_group:
+            if self.config.show_group_labels:
                 # First field: no separator (already in group label format "*{")
                 # Subsequent fields: comma separator
                 field_sep = "" if j == 0 else ", "
@@ -198,14 +213,12 @@ class PreviewSegmentBuilder:
             logger.info(f"    Field {j+1}: {field_path}, sep_before='{field_sep}'")
             segments.append((label, field_path, field_sep))
 
-        # Closing brace for group (if showing group labels and not root group) - no styling
-        if self.config.show_group_labels and not is_root_group and group.field_data:
+        # Closing brace for group (if showing group labels) - no styling
+        if self.config.show_group_labels and group.field_data:
             segments.append(("}", None, self.config.closing_brace_separator))
             logger.info(f"  Added closing brace")
         else:
-            if is_root_group:
-                logger.info(f"  SKIPPING closing brace for root group")
-            elif not self.config.show_group_labels:
+            if not self.config.show_group_labels:
                 logger.info(f"  SKIPPING closing brace: show_group_labels=False")
             elif not group.field_data:
                 logger.info(f"  SKIPPING closing brace: no fields")

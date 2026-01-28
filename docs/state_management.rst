@@ -159,6 +159,14 @@ Key Methods
   - ``get_dirty_states()``: Get all modified scopes
   - ``is_dirty(scope_id)``: Check if scope has unsaved changes
 
+Flash Callbacks
+~~~~~~~~~~~~~~~
+
+ObjectState notifies pyqt-reactive of parameter changes through the ``on_resolved_changed``
+callback mechanism. This enables visual feedback (flash animations) when values change.
+
+See :doc:`architecture/flash_callback_system` for details on how the flash callback system works.
+
 Notes
 ~~~~~
 - Registry methods are classmethods; the registry is effectively a singleton.

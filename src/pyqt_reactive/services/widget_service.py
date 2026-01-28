@@ -309,7 +309,12 @@ class WidgetService:
                 placeholder_text = manager.service.get_placeholder_text(param_name, type(manager.object_instance))
                 logger.info(f"        📝 Placeholder text: {repr(placeholder_text)[:50]}")
                 if placeholder_text:
-                    self.widget_enhancer.apply_placeholder_text(widget, placeholder_text)
+                    # Get the resolved value directly for type-safe placeholder application
+                    try:
+                        resolved_value = getattr(manager.object_instance, param_name)
+                    except AttributeError:
+                        resolved_value = None
+                    self.widget_enhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
                     logger.info(f"        ✅ Applied placeholder")
                 else:
                     logger.warning(f"        ⚠️  No placeholder text returned")
