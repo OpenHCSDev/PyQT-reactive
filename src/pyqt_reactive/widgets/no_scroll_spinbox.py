@@ -191,24 +191,23 @@ class NoneAwareCheckBox(QCheckBox):
         option = QStyleOptionButton()
         self.initStyleOption(option)
 
+        # Get the indicator rectangle (used for placeholder visualization)
+        indicator_rect = self.style().subElementRect(
+            QStyle.SubElement.SE_CheckBoxIndicator,
+            option,
+            self
+        )
+
         if self.isChecked():
-            # Placeholder True: Draw with dimmer checkmark
-            painter.setOpacity(0.4)
+            # Placeholder True: keep checkmark fully visible; tint the indicator background
+            painter.fillRect(indicator_rect, QColor(255, 255, 255, 60))
             self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
         else:
             # Placeholder False: Draw normal checkbox first, then add dark overlay
             self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
 
-            # Get the indicator rectangle
-            indicator_rect = self.style().subElementRect(
-                QStyle.SubElement.SE_CheckBoxIndicator,
-                option,
-                self
-            )
-
             # Draw a darker semi-transparent overlay on the indicator background
-            painter.setOpacity(0.6)
-            painter.fillRect(indicator_rect, QColor("#222222"))
+            painter.fillRect(indicator_rect, QColor(0, 0, 0, 90))
 
         painter.end()
 
