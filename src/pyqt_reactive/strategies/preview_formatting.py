@@ -94,31 +94,53 @@ class PreviewSegmentBuilder:
 
         This ensures consistent grouping behavior for all fields.
         """
+        import logging
+        logger = logging.getLogger(__name__)
         from dataclasses import is_dataclass
+
+        logger.info(f"add_field: field_path={field_path}, container_type={container_type.__name__ if container_type else None}")
 
         # Use config type name for dataclass configs, 'root' for primitives
         if is_dataclass(container_type):
             container_key = container_type.__name__
+            logger.info(f"  Decision: is_dataclass -> container_key='{container_key}'")
         else:
             container_key = "root"
+            logger.info(f"  Decision: NOT is_dataclass -> container_key='root'")
 
         if container_key not in self.groups:
             self.groups[container_key] = PreviewGroup(container_type=container_type, field_data=[])
             self.group_order.append(container_key)
+            logger.info(f"  Created new group: '{container_key}' (total groups: {len(self.groups)})")
+        else:
+            logger.info(f"  Using existing group: '{container_key}'")
 
         self.groups[container_key].field_data.append((field_path, value, label))
+        logger.info(f"  Added field to group '{container_key}' (now has {len(self.groups[container_key].field_data)} fields)")
 
     def build(self) -> List[Tuple[str, str, Optional[str]]]:
         """Render all groups using formatting config."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info("=" * 60)
+        logger.info(f"BUILD: Rendering {len(self.group_order)} groups")
+        logger.info(f"group_order={self.group_order}")
+
         segments = []
 
         for i, container_key in enumerate(self.group_order):
             group = self.groups[container_key]
+            logger.info(f"--- Rendering group {i+1}/{len(self.group_order)}: '{container_key}' ---")
+            logger.info(f"  container_type={group.container_type.__name__ if group.container_type else None}")
+            logger.info(f"  field_count={len(group.field_data)}")
 
             # Render group
             group_segments = self._render_group(group, i == 0)
+            logger.info(f"  Generated {len(group_segments)} segments")
             segments.extend(group_segments)
 
+        logger.info(f"BUILD COMPLETE: Total {len(segments)} segments")
         return segments
 
     def _render_group(self, group: PreviewGroup, is_first_group: bool) -> List[Tuple]:
@@ -134,19 +156,30 @@ class PreviewSegmentBuilder:
         container_key = group.container_type.__name__ if group.container_type else "root"
         is_root_group = container_key == "root"
 
+        logger.info(f"  container_key='{container_key}', is_root_group={is_root_group}")
+        logger.info(f"  show_group_labels={self.config.show_group_labels}, is_first_group={is_first_group}")
+
         # Group separator BEFORE abbreviation (not after)
         group_sep_before_abbr = "" if is_first_group else self.config.group_separator
+        logger.info(f"  group_sep_before_abbr='{group_sep_before_abbr}'")
 
         # Group opening label (if configured and not root group)
         if self.config.show_group_labels and not is_root_group:
             abbr = self.config.container_abbr_func(group.container_type)
+            logger.info(f"  Adding abbr '{abbr}' with field_path={str(group.container_type)}")
             # Add separator before abbreviation (for non-first groups)
             segments.append((abbr, str(group.container_type), group_sep_before_abbr))
             # Add opening brace (no separator before or after)
             segments.append(("{", None, ""))
-            logger.debug(f"  Group: {group.container_type.__name__} -> {abbr}{{")
+            logger.info(f"  Added opening brace")
+        else:
+            if is_root_group:
+                logger.info(f"  SKIPPING abbr/brace for root group")
+            else:
+                logger.info(f"  SKIPPING abbr/brace: show_group_labels={self.config.show_group_labels}")
 
         # Fields in group
+        logger.info(f"  Rendering {len(group.field_data)} fields")
         for j, (field_path, value, label) in enumerate(group.field_data):
             if self.config.show_group_labels and not is_root_group:
                 # First field: no separator (already in group label format "*{")
@@ -156,14 +189,22 @@ class PreviewSegmentBuilder:
                 # No group labels: use default separator between all fields
                 field_sep = None if j == 0 else self.config.field_separator
 
+            logger.info(f"    Field {j+1}: {field_path}, sep_before='{field_sep}'")
             segments.append((label, field_path, field_sep))
-            logger.debug(f"    Field: {field_path} -> {label}")
 
         # Closing brace for group (if showing group labels and not root group) - no styling
         if self.config.show_group_labels and not is_root_group and group.field_data:
             segments.append(("}", None, self.config.closing_brace_separator))
-            logger.debug(f"  Closing brace: }}")
+            logger.info(f"  Added closing brace")
+        else:
+            if is_root_group:
+                logger.info(f"  SKIPPING closing brace for root group")
+            elif not self.config.show_group_labels:
+                logger.info(f"  SKIPPING closing brace: show_group_labels=False")
+            elif not group.field_data:
+                logger.info(f"  SKIPPING closing brace: no fields")
 
+        logger.info(f"  Total segments from this group: {len(segments)}")
         return segments
 
 
@@ -217,29 +258,42 @@ class DefaultPreviewFormattingStrategy(PreviewFormattingStrategy):
         # Phase 1: Collect data using builder
         builder = PreviewSegmentBuilder(self.config, state)
 
-        for field_path in field_paths:
+        logger.info("=" * 60)
+        logger.info(f"PREVIEW STRATEGY: Processing {len(field_paths)} field_paths")
+        logger.info(f"show_group_labels={self.config.show_group_labels}")
+
+        for i, field_path in enumerate(field_paths):
+            logger.info(f"--- Field {i+1}/{len(field_paths)}: {field_path} ---")
+
             value = state.get_resolved_value(field_path)
             if value is None:
-                logger.debug(f"  ⏭️  Skipping {field_path}: value is None")
+                logger.info(f"  ⏭️  SKIPPED: value is None")
                 continue
+
+            logger.info(f"  Value type: {type(value).__name__}, value={value}")
 
             # Get container type from state
             container_path = field_path.rsplit('.', 1)[0] if '.' in field_path else ""
+            logger.info(f"  container_path='{container_path}'")
+            logger.info(f"  state._path_to_type.keys()={list(state._path_to_type.keys())[:10]}")
+
             container_type = state._path_to_type.get(container_path, type(value))
             if container_type is None:
                 container_type = type(value)
-                logger.debug(f"  ⚠️  Container type from type(value) for {field_path}: {container_type.__name__}")
+                logger.info(f"  ⚠️  FALLBACK: Container type from type(value)={container_type.__name__}")
             else:
-                logger.debug(f"  ✓ Container type from state for {field_path}: {container_type.__name__}")
+                logger.info(f"  ✓ LOOKUP: Container type from state={container_type.__name__}")
 
             # Get label
             if field_path in formatters:
                 label = self._apply_formatter(formatters[field_path], value, state, field_path)
+                logger.info(f"  Using formatter for {field_path}: {label}")
             else:
                 label = field_value_formatter(field_path, value)
+                logger.info(f"  Using field_value_formatter for {field_path}: {label}")
 
             if label:
-                logger.debug(f"  ✓ Added {field_path}: {label}, container_type={container_type.__name__}")
+                logger.info(f"  ✓ CALLING builder.add_field({field_path}, {type(value).__name__}, {container_type.__name__})")
                 builder.add_field(field_path, value, label, container_type)
 
         # Phase 2: Render
