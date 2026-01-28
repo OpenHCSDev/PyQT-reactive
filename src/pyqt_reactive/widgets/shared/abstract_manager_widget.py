@@ -1975,10 +1975,13 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, ABC, m
                     sep = None
                 else:
                     label, path, sep = item
-                if i == 0 and sep_before_first is not None:
+                # Use strategy's sep_before if provided, otherwise use default
+                if sep is not None:
+                    seg = Segment(text=label, field_path=path, sep_before=sep)
+                elif i > 0:
                     seg = Segment(text=label, field_path=path, sep_before=sep_before_first)
                 else:
-                    seg = Segment(text=label, field_path=path, sep_before=sep)
+                    seg = Segment(text=label, field_path=path, sep_before=None)
                 result.append(seg)
             return result
 
