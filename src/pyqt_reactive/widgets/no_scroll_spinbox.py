@@ -157,9 +157,29 @@ class NoneAwareCheckBox(QCheckBox):
         if value is None:
             # Don't change state - placeholder system will set the preview value
             self._is_placeholder = True
+            # Set grey palette for placeholder checkmark
+            self._apply_placeholder_palette()
         else:
             self._is_placeholder = False
             self.setChecked(bool(value))
+            # Restore normal palette
+            self._apply_concrete_palette()
+
+    def _apply_placeholder_palette(self):
+        """Apply grey palette to make checkmark dim like placeholder text."""
+        from PyQt6.QtGui import QPalette
+        palette = self.palette()
+        # Set text color to grey - this affects the checkmark color
+        palette.setColor(QPalette.ColorRole.Text, QColor(136, 136, 136))  # Grey like placeholder text
+        self.setPalette(palette)
+
+    def _apply_concrete_palette(self):
+        """Restore normal palette for concrete values."""
+        from PyQt6.QtGui import QPalette
+        palette = self.palette()
+        # Restore default text color (black)
+        palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))
+        self.setPalette(palette)
 
     def mousePressEvent(self, event):
         """On click, switch from placeholder to explicit value."""
@@ -167,53 +187,18 @@ class NoneAwareCheckBox(QCheckBox):
             self._is_placeholder = False
             # Clear placeholder property so get_value returns actual boolean
             self.setProperty("is_placeholder_state", False)
+            # Restore normal palette
+            self._apply_concrete_palette()
         super().mousePressEvent(event)
 
     def paintEvent(self, event):
-        """Draw with distinct placeholder styling based on inherited value.
+        """Draw with placeholder styling.
 
-        - Placeholder True: Dimmer/semi-transparent checkmark
-        - Placeholder False: Darker background on checkbox indicator
-        - Concrete True/False: Normal styling unchanged
+        The grey checkmark for placeholder state is handled by QPalette
+        set in _apply_placeholder_palette(). This method just draws
+        normally - the palette does the work.
         """
-        if not self._is_placeholder:
-            # Concrete value: Normal styling
-            super().paintEvent(event)
-            return
-
-        # Placeholder styling
-        from PyQt6.QtWidgets import QStyle, QStyleOptionButton
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Get the checkbox style option
-        option = QStyleOptionButton()
-        self.initStyleOption(option)
-
-        # Get the indicator rectangle (used for placeholder visualization)
-        indicator_rect = self.style().subElementRect(
-            QStyle.SubElement.SE_CheckBoxIndicator,
-            option,
-            self
-        )
-
-        if self.isChecked():
-            # Placeholder True: Draw normal checkbox first
-            self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
-            
-            # Dim just the checkmark by drawing semi-transparent overlay over indicator
-            # This makes the placeholder checkmark visibly dimmer than concrete
-            # Use a gray overlay that only covers the checkmark area (indicator_rect)
-            painter.fillRect(indicator_rect, QColor(150, 150, 150, 100))
-        else:
-            # Placeholder False: Draw normal checkbox first, then add dark overlay
-            self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
-
-            # Draw a darker semi-transparent overlay on the indicator background
-            painter.fillRect(indicator_rect, QColor(0, 0, 0, 90))
-
-        painter.end()
+        super().paintEvent(event)
 
 
 # Register NoneAwareCheckBox as implementing ValueGettable and ValueSettable
