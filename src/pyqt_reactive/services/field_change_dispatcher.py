@@ -72,10 +72,6 @@ class FieldChangeDispatcher:
                 reset_note = " (reset to None)" if event.is_reset else ""
                 logger.info(f"  ✅ Updated state.parameters[{full_path}]{reset_note}")
 
-            # 2. Mark parent chain as modified BEFORE refreshing siblings
-            # This ensures root.state.parameters includes this field on first keystroke
-            self._mark_parents_modified(source)
-
             # 3. Refresh siblings that have the same field
             parent = source._parent_manager
             if parent:
@@ -149,38 +145,6 @@ class FieldChangeDispatcher:
 
         finally:
             source._dispatching = False
-
-    def _mark_parents_modified(self, source: 'ParameterFormManager') -> None:
-        """Mark parent chain as having modified nested config.
-
-        This ensures root.state.parameters includes nested changes.
-        Also updates parent.parameters with the nested dataclass value.
-        """
-        logger.debug(f"  📝 MARK_PARENTS: Starting for {source.field_id}")
-
-        current = source
-        level = 0
-        while current._parent_manager is not None:
-            parent = current._parent_manager
-            level += 1
-            logger.debug(f"    L{level}: parent={parent.field_id}")
-            # Find the field name in parent that points to current
-            for field_name, nested_mgr in parent.nested_managers.items():
-                if nested_mgr is current:
-                    logger.debug(f"    L{level}: Found field_name={field_name} in parent")
-                    # Collect nested value and update parent's parameters
-                    nested_value = parent._value_collection_service.collect_nested_value(
-                        parent, field_name, nested_mgr
-                    )
-                    logger.debug(f"    L{level}: Collected nested_value type={type(nested_value).__name__}")
-                    # CRITICAL: Compute full dotted path for nested PFMs
-                    parent_full_path = f"{parent.field_id}.{field_name}" if parent.field_id else field_name
-                    parent.state.update_parameter(parent_full_path, nested_value)
-                    logger.debug(f"    L{level}: ✅ {parent.field_id}.{field_name} updated (path={parent_full_path})")
-                    break
-            current = parent
-
-        logger.debug(f"  ✅ MARK_PARENTS: Complete")
 
     def _get_root_manager(self, manager: 'ParameterFormManager') -> 'ParameterFormManager':
         """Walk up to root manager."""
