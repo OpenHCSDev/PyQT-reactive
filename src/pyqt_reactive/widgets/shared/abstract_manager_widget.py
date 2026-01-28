@@ -1888,8 +1888,16 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, ABC, m
             if not segments_list:
                 return []
             result = []
-            for label, path in segments_list:
-                result.append(Segment(text=label, field_path=path))
+            for i, item in enumerate(segments_list):
+                # Handle both 2-tuple (label, path) and 3-tuple (label, path, sep_before)
+                if len(item) == 2:
+                    label, path = item
+                    sep = None
+                else:
+                    label, path, sep = item
+                # Use sep if provided, otherwise None for first item
+                segment_sep = sep if i > 0 else None
+                result.append(Segment(text=label, field_path=path, sep_before=segment_sep))
             return result
 
         layout = StyledTextLayout(
