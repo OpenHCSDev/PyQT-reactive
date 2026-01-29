@@ -108,6 +108,42 @@ class ScopeColorService(QObject):
             step_border_width=0,
         )
 
+    def get_accent_color(self, scope_id: Optional[str], step_index: Optional[int] = None):
+        """Return a QColor to be used as the scope accent color for UI elements.
+
+        This mirrors the logic in ScopedBorderMixin.get_scope_accent_color so the
+        same tint is used for borders and for help button accenting.
+
+        Args:
+            scope_id: scope identifier
+            step_index: optional explicit step index
+
+        Returns:
+            PyQt6.QtGui.QColor or None
+        """
+        try:
+            from PyQt6.QtGui import QColor
+            from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
+        except Exception:
+            return None
+
+        scheme = self.get_color_scheme(scope_id, step_index=step_index)
+        if scheme is None:
+            return None
+
+        base_rgb = getattr(scheme, 'base_color_rgb', None)
+        layers = getattr(scheme, 'step_border_layers', None)
+        if not base_rgb:
+            return None
+
+        if layers:
+            _, tint_idx, _ = (layers[0] + ("solid",))[:3]
+        else:
+            tint_idx = 1
+
+        color = tint_color_perceptual(base_rgb, tint_idx)
+        return color.darker(120)
+
     def set_manual_color(self, scope_id: str, rgb: Tuple[int, int, int]) -> None:
         manual = self._strategies[ColorStrategyType.MANUAL]
         if isinstance(manual, ManualColorStrategy):
