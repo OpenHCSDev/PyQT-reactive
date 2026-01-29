@@ -937,6 +937,12 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         # (during time-travel, user didn't type - widgets need to be updated from state)
         if ObjectStateRegistry._in_time_travel:
             self._refresh_widgets_for_paths(changed_paths)
+            # CRITICAL: Refresh enabled styling for all managers after time-travel
+            # Widget updates bypass the FieldChangeDispatcher (signals blocked), so styling
+            # isn't triggered automatically. We must manually sync styling to match restored state.
+            self._apply_to_nested_managers(
+                lambda _, manager: manager._enabled_field_styling_service.refresh_enabled_styling(manager)
+            )
 
         # For each changed path, register and queue a LEAF flash
         for path in changed_paths:
