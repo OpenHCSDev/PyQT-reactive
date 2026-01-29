@@ -113,15 +113,8 @@ class SignalService:
 
         DISPATCHER ARCHITECTURE: Most signal handling moved to FieldChangeDispatcher.
         This method now only handles:
-        - Initial enabled styling setup (on form build complete)
         - Cleanup on destroy
         """
-        # Enabled styling initial setup (after placeholders are refreshed)
-        if 'enabled' in manager.parameters:
-            manager._on_placeholder_refresh_complete_callbacks.append(
-                lambda: manager._enabled_field_styling_service.apply_initial_enabled_styling(manager)
-            )
-
         manager.destroyed.connect(manager.unregister_from_cross_window_updates)
 
     @staticmethod

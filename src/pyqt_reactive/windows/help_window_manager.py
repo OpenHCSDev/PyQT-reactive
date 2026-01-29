@@ -46,12 +46,28 @@ class BaseHelpWindow(QDialog):
         self.content_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         layout.addWidget(self.content_area)
         
-        # Close button
+        # Close button - styled like other buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_normal_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.button_text)};
+                border: none;
+                padding: 6px 12px;
+                border-radius: 3px;
+                font-weight: normal;
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
+            }}
+        """)
         button_layout.addWidget(close_btn)
         
         layout.addLayout(button_layout)
@@ -82,6 +98,15 @@ class DocstringHelpWindow(BaseHelpWindow):
         import logging
         logger = logging.getLogger(__name__)
 
+        logger.info(f"🔍 populate_content() CALLED")
+        logger.info(f"🔍 docstring_info.summary: {bool(self.docstring_info.summary)}")
+        logger.info(f"🔍 docstring_info.description: {bool(self.docstring_info.description)}")
+        logger.info(f"🔍 docstring_info.parameters: {bool(self.docstring_info.parameters)}")
+        logger.info(f"🔍 docstring_info.returns: {bool(self.docstring_info.returns)}")
+        logger.info(f"🔍 docstring_info.examples: {bool(self.docstring_info.examples)}")
+        logger.info(f"🔍 Window parent: {self.parent()}, type: {type(self.parent()).__name__ if self.parent() else 'None'}")
+        logger.info(f"🔍 Color scheme: {self.color_scheme}")
+
         content_widget = QWidget()
         layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -93,8 +118,9 @@ class DocstringHelpWindow(BaseHelpWindow):
             summary_label = QLabel(self.docstring_info.summary)
             summary_label.setWordWrap(True)
             summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            summary_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px;")
+            summary_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px; background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)}; padding: 5px;")
             layout.addWidget(summary_label)
+            logger.info(f"🔍 Added summary_label with style: {summary_label.styleSheet()}")
 
         # Full description
         if self.docstring_info.description:
@@ -102,7 +128,7 @@ class DocstringHelpWindow(BaseHelpWindow):
             desc_label = QLabel(self.docstring_info.description)
             desc_label.setWordWrap(True)
             desc_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            desc_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px;")
+            desc_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px; background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)}; padding: 5px;")
             layout.addWidget(desc_label)
             
         # Parameters section
@@ -168,6 +194,9 @@ class DocstringHelpWindow(BaseHelpWindow):
             
         layout.addStretch()
         self.content_area.setWidget(content_widget)
+        
+        logger.info(f"🔍 populate_content() COMPLETED - content_widget children: {content_widget.children()}")
+        logger.info(f"🔍 Window stylesheet: {self.styleSheet()[:200]}...")
 
         # Auto-size to content
         self.adjustSize()
@@ -185,11 +214,18 @@ class HelpWindowManager:
     @classmethod
     def show_docstring_help(cls, target: Union[Callable, type], title: Optional[str] = None, parent=None):
         """Show help for a function or class - reuses Textual TUI extraction logic."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"🔍 show_docstring_help() CALLED - target={target}, title={title}")
+        logger.info(f"🔍 show_docstring_help() parent={parent}, parent_type={type(parent).__name__ if parent else 'None'}")
+        
         try:
             # Check if existing window is still valid
             if cls._help_window and hasattr(cls._help_window, 'isVisible'):
                 try:
                     if not cls._help_window.isHidden():
+                        logger.info(f"🔍 Reusing existing help window")
                         cls._help_window.target = target
                         cls._help_window.docstring_info = DocstringExtractor.extract(target)
                         cls._help_window.setWindowTitle(title or f"Help: {getattr(target, '__name__', 'Unknown')}")
@@ -202,8 +238,11 @@ class HelpWindowManager:
                     cls._help_window = None
 
             # Create new window
+            logger.info(f"🔍 Creating new DocstringHelpWindow")
             cls._help_window = DocstringHelpWindow(target, title=title, parent=parent)
+            logger.info(f"🔍 DocstringHelpWindow created, calling show()")
             cls._help_window.show()
+            logger.info(f"🔍 DocstringHelpWindow shown")
 
         except Exception as e:
             logger.error(f"Failed to show docstring help: {e}")
@@ -227,11 +266,12 @@ class HelpWindowManager:
                 returns: str = ""
                 examples: str = ""
 
-            # Build parameter display
+            # Build parameter display - combine everything into summary to create single QLabel
             type_str = f" ({getattr(param_type, '__name__', str(param_type))})" if param_type else ""
+            param_desc = param_description or "No description available"
             fake_info = FakeDocstringInfo(
-                summary=f"• {param_name}{type_str}",
-                description=param_description or "No description available",
+                summary=f"• {param_name}{type_str}\n\n{param_desc}",
+                description="",  # Empty description so only 1 QLabel is created
                 parameters={},
                 returns="",
                 examples=""

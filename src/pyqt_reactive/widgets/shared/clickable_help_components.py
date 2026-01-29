@@ -150,8 +150,9 @@ class HelpIndicator(QLabel):
     
     def __init__(self, help_target: Union[Callable, type] = None,
                  param_name: str = None, param_description: str = None,
-                 param_type: type = None, color_scheme: Optional[ColorScheme] = None, parent=None):
-        super().__init__("(?)", parent)
+                 param_type: type = None, color_scheme: Optional[ColorScheme] = None,
+                 scope_accent_color=None, parent=None):
+        super().__init__("?", parent)
 
         # Initialize color scheme
         self.color_scheme = color_scheme or ColorScheme()
@@ -160,24 +161,33 @@ class HelpIndicator(QLabel):
         self.param_name = param_name
         self.param_description = param_description
         self.param_type = param_type
-        
+
         # Style as clickable help indicator
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setStyleSheet(f"""
-            QLabel {{
-                color: {self.color_scheme.to_hex(self.color_scheme.border_light)};
-                font-size: 10px;
-                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
-                border-radius: 8px;
-                padding: 2px 4px;
-                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
-            }}
-            QLabel:hover {{
-                color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
-                border-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
-                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
-            }}
-        """)
+
+        # CRITICAL: Set initial color - use scope_accent_color if provided, otherwise default
+        # NOTE: setStyleSheet must be called AFTER set_scope_accent_color if using scope color
+        import logging
+        logger = logging.getLogger(__name__)
+        if scope_accent_color:
+            logger.debug(f"[HELP_INDICATOR] param_name={param_name}, scope_accent_color={scope_accent_color.name()}, RGB=({scope_accent_color.red()},{scope_accent_color.green()},{scope_accent_color.blue()})")
+            self.set_scope_accent_color(scope_accent_color)
+        else:
+            logger.debug(f"[HELP_INDICATOR] param_name={param_name}, using default color")
+            # Only set default stylesheet if no scope_accent_color provided
+            self.setStyleSheet(f"""
+                QLabel {{
+                    color: white;
+                    font-size: 10px;
+                    border: none;
+                    border-radius: 3px;
+                    padding: 2px 4px;
+                    background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+                }}
+                QLabel:hover {{
+                    background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+                }}
+            """)
         
         # Set fixed size for consistent appearance
         self.setFixedSize(20, 16)
@@ -192,16 +202,14 @@ class HelpIndicator(QLabel):
 
         self.setStyleSheet(f"""
             QLabel {{
-                color: {self.color_scheme.to_hex(self.color_scheme.border_light)};
+                color: white;
                 font-size: 10px;
-                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
-                border-radius: 8px;
+                border: none;
+                border-radius: 3px;
                 padding: 2px 4px;
-                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
+                background-color: {hex_color};
             }}
             QLabel:hover {{
-                color: white;
-                border-color: {hex_color};
                 background-color: {hex_color};
             }}
         """)
@@ -243,8 +251,12 @@ class HelpButton(QPushButton):
     def __init__(self, help_target: Union[Callable, type] = None,
                  param_name: str = None, param_description: str = None,
                  param_type: type = None, text: str = "Help",
-                 color_scheme: Optional[ColorScheme] = None, parent=None):
+                 color_scheme: Optional[ColorScheme] = None, parent=None,
+                 scope_accent_color=None):
         super().__init__(text, parent)
+
+        import logging
+        logger = logging.getLogger(__name__)
 
         # Initialize color scheme
         self.color_scheme = color_scheme or ColorScheme()
@@ -259,7 +271,46 @@ class HelpButton(QPushButton):
 
         # Style as help button
         self.setMaximumWidth(60)
-        self._apply_color(self.color_scheme.selection_bg)
+
+        # CRITICAL: Use scope_accent_color passed as parameter during creation
+        # This ensures help buttons are created with the correct color from the start
+        # instead of trying to discover it from parent chain (which doesn't work during __init__)
+        fallback_color = self.color_scheme.selection_bg
+        initial_color = scope_accent_color or fallback_color
+
+        logger.debug(f"[HELP_BUTTON] __init__: param_name={param_name}, scope_accent_color={scope_accent_color}, fallback_color={fallback_color}, using={initial_color}")
+
+        self._apply_color(initial_color)
+
+    def _get_scope_accent_color(self):
+        """Get scope accent color from parent dialog if available."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Walk up the widget hierarchy to find a dialog with _scope_accent_color
+        widget = self.parent()
+        depth = 0
+        logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: Starting search, parent={widget}, parent_class={widget.__class__.__name__ if widget else None}")
+        while widget is not None:
+            logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: depth={depth}, widget={widget.__class__.__name__}, has_scope_accent={hasattr(widget, '_scope_accent_color')}")
+            accent_color = getattr(widget, '_scope_accent_color', None)
+            if accent_color:
+                logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: FOUND _scope_accent_color at depth={depth}, widget={widget.__class__.__name__}, color={accent_color}")
+                return accent_color
+            # Also check for get_scope_accent_color method
+            if hasattr(widget, 'get_scope_accent_color'):
+                color = widget.get_scope_accent_color()
+                if color:
+                    logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: FOUND via get_scope_accent_color at depth={depth}, widget={widget.__class__.__name__}, color={color}")
+                    return color
+            widget = widget.parent()
+            depth += 1
+            if depth > 20:  # Safety check to avoid infinite loops
+                logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: Stopping after depth 20")
+                break
+
+        logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: NOT FOUND after walking up hierarchy")
+        return None
 
     def _apply_color(self, color) -> None:
         """Apply a color to this button (for scope accent styling)."""
@@ -293,6 +344,9 @@ class HelpButton(QPushButton):
 
     def set_scope_accent_color(self, color) -> None:
         """Set scope accent color (QColor). Called by parent window for scope styling."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"[HELP_BUTTON] set_scope_accent_color CALLED with color={color}")
         self._apply_color(color)
 
     def show_help(self):
@@ -300,12 +354,20 @@ class HelpButton(QPushButton):
         try:
             # Import inside method to avoid circular imports (same pattern as Textual TUI)
             from pyqt_reactive.windows.help_window_manager import HelpWindowManager
+            import logging
+            logger = logging.getLogger(__name__)
+
+            logger.info(f"🔍 HelpButton.show_help() CALLED - help_target={self.help_target}, param_name={self.param_name}")
+            logger.info(f"🔍 HelpButton parent class: {type(self.parent()).__name__ if self.parent() else 'None'}")
+            logger.info(f"🔍 HelpButton parent widget: {self.parent()}")
 
             if self.help_target:
                 # Show function/class help using unified manager
+                logger.info(f"🔍 Calling show_docstring_help with target={self.help_target}")
                 HelpWindowManager.show_docstring_help(self.help_target, parent=self)
             elif self.param_name:
                 # Show parameter help using the description passed from parameter analysis
+                logger.info(f"🔍 Calling show_parameter_help with param_name={self.param_name}")
                 HelpWindowManager.show_parameter_help(
                     self.param_name, self.param_description or "No description available", self.param_type, parent=self
                 )
@@ -599,11 +661,17 @@ class LabelWithHelp(QWidget):
     def __init__(self, text: str, help_target: Union[Callable, type] = None,
                  param_name: str = None, param_description: str = None,
                  param_type: type = None, color_scheme: Optional[ColorScheme] = None,
-                 parent=None, state=None, dotted_path: str = None):
+                 parent=None, state=None, dotted_path: str = None, scope_accent_color=None):
         super().__init__(parent)
 
         # Initialize color scheme
         self.color_scheme = color_scheme or ColorScheme()
+
+        # DEBUG: Log what scope_accent_color was received
+        if scope_accent_color:
+            logger.debug(f"[LABEL_WITH_HELP] param_name={param_name}, scope_accent_color={scope_accent_color.name()}, RGB=({scope_accent_color.red()},{scope_accent_color.green()},{scope_accent_color.blue()})")
+        else:
+            logger.debug(f"[LABEL_WITH_HELP] param_name={param_name}, scope_accent_color=None (will use default)")
 
         # Fixed size policy prevents horizontal stretching
         # This fixes flash area blocking for widgets to the right (e.g., checkbox groups)
@@ -626,7 +694,8 @@ class LabelWithHelp(QWidget):
             param_name=param_name,
             param_description=param_description,
             param_type=param_type,
-            color_scheme=self.color_scheme
+            color_scheme=self.color_scheme,
+            scope_accent_color=scope_accent_color
         )
         layout.addWidget(help_indicator)
 
@@ -662,7 +731,8 @@ class FunctionTitleWithHelp(QWidget):
     """PyQt6 function title with integrated help - mirrors Textual TUI ClickableFunctionTitle."""
 
     def __init__(self, func: Callable, index: int = None,
-                 color_scheme: Optional[ColorScheme] = None, parent=None):
+                 color_scheme: Optional[ColorScheme] = None, parent=None,
+                 scope_accent_color=None):
         super().__init__(parent)
 
         # Initialize color scheme
@@ -687,7 +757,8 @@ class FunctionTitleWithHelp(QWidget):
         layout.addWidget(title_label)
 
         # Help button
-        help_btn = HelpButton(help_target=func, text="?", color_scheme=self.color_scheme)
+        help_btn = HelpButton(help_target=func, text="?", color_scheme=self.color_scheme,
+                             scope_accent_color=scope_accent_color, parent=self)
         help_btn.setMaximumWidth(25)
         help_btn.setMaximumHeight(20)
         layout.addWidget(help_btn)
@@ -713,7 +784,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
 
     def __init__(self, title: str, help_target: Union[Callable, type] = None,
                  color_scheme: Optional[ColorScheme] = None, parent=None,
-                 flash_key: str = "", flash_manager=None):
+                 flash_key: str = "", flash_manager=None, scope_accent_color=None):
         super().__init__("", parent, flash_key=flash_key, flash_manager=flash_manager)
 
         # Initialize color scheme
@@ -739,7 +810,13 @@ class GroupBoxWithHelp(FlashableGroupBox):
 
         # Help button for dataclass (left-aligned, next to title)
         if help_target:
-            help_btn = HelpButton(help_target=help_target, text="?", color_scheme=self.color_scheme)
+            help_btn = HelpButton(
+                help_target=help_target,
+                text="?",
+                color_scheme=self.color_scheme,
+                scope_accent_color=scope_accent_color,  # Pass scope accent color!
+                parent=self
+            )
             help_btn.setMaximumWidth(25)
             help_btn.setMaximumHeight(20)
             title_layout.addWidget(help_btn)

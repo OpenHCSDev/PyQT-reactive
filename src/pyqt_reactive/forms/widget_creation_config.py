@@ -96,12 +96,32 @@ def _create_nested_form(manager, param_info, display_info, field_ids, current_va
     if is_enableable(unwrapped_type):
         logger.debug(f"🔍 _create_nested_form: Registering callback to move enabled widget for {param_info.name}")
         logger.debug(f"🔍 _create_nested_form: nested_manager._on_build_complete_callbacks count BEFORE: {len(nested_manager._on_build_complete_callbacks)}")
-        callback = lambda: _move_enabled_widget_to_title(nested_manager, manager, param_info.name, ENABLED_FIELD)
-        nested_manager._on_build_complete_callbacks.append(callback)
-        logger.debug(f"🔍 _create_nested_form: nested_manager._on_build_complete_callbacks count AFTER: {len(nested_manager._on_build_complete_callbacks)}")
-        logger.debug(f"🔍 _create_nested_form: Callback function ID: {id(callback)}")
 
-    return nested_manager.build_form()
+        # Register callback to move enabled widget AND apply initial styling
+        def on_build_complete():
+            import logging
+            log = logging.getLogger(__name__)
+            log.debug(f"[BUILD_COMPLETE] FIRED for {nested_manager.field_id}, widget_count={len(nested_manager.widgets)}, widgets={list(nested_manager.widgets.keys())}")
+
+            _move_enabled_widget_to_title(nested_manager, manager, param_info.name, ENABLED_FIELD)
+
+            log.debug(f"[BUILD_COMPLETE] After move_enabled_widget: enabled_widget exists={'enabled' in nested_manager.widgets}, widget_count={len(nested_manager.widgets)}")
+
+            # After enabled widget is moved, apply initial enabled styling
+            if 'enabled' in nested_manager.parameters:
+                log.debug(f"[BUILD_COMPLETE] Applying initial enabled styling to {nested_manager.field_id}")
+                nested_manager._enabled_field_styling_service.apply_initial_enabled_styling(nested_manager)
+
+            # NOTE: Scope accent color is already applied during widget creation via scope_accent_color parameter
+            # No need to discover and re-apply it here
+
+        nested_manager._on_build_complete_callbacks.append(on_build_complete)
+        logger.debug(f"🔍 _create_nested_form: nested_manager._on_build_complete_callbacks count AFTER: {len(nested_manager._on_build_complete_callbacks)}")
+
+    logger.debug(f"🔍 _create_nested_form: Calling build_form() for {nested_manager.field_id}")
+    result = nested_manager.build_form()
+    logger.debug(f"🔍 _create_nested_form: build_form() returned for {nested_manager.field_id}, widgets={len(nested_manager.widgets)}")
+    return result
 
 
 def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_name: str, enabled_field: str) -> None:
@@ -266,8 +286,13 @@ def _create_optional_title_widget(manager, param_info, display_info, field_ids, 
         reset_all_button.setToolTip(f"Reset all parameters in {display_info['checkbox_label']} to defaults")
         title_layout.addWidget(reset_all_button)
 
+    # CRITICAL: Use scope_accent_color from manager config (passed from parent window)
+    # No need to walk parent chain - it's stored directly in the manager
+    scope_accent_color = getattr(manager, '_scope_accent_color', None)
+
     # Help button
-    help_btn = HelpButton(help_target=unwrapped_type, text="?", color_scheme=manager.color_scheme)
+    help_btn = HelpButton(help_target=unwrapped_type, text="?", color_scheme=manager.color_scheme,
+                         scope_accent_color=scope_accent_color, parent=title_widget)
     help_btn.setMaximumWidth(25)
     help_btn.setMaximumHeight(20)
     title_layout.addWidget(help_btn)
@@ -348,6 +373,7 @@ def _create_nested_container(manager: ParameterFormManager, param_info: Paramete
     """Create container for NESTED widget type."""
     from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp as GBH
     from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
+    from pyqt_reactive.forms.form_init_service import FormBuildOrchestrator
 
     color_scheme = manager.config.color_scheme or PCS()
     # Get root manager for flash - nested managers share root's _flash_colors dict
@@ -357,10 +383,20 @@ def _create_nested_container(manager: ParameterFormManager, param_info: Paramete
     # Flash keys must identify the *section* via a canonical dotted path.
     # Example: "processing_config.path_planning_config" (not just "path_planning_config").
     flash_key = f"{manager.field_id}.{param_info.name}" if manager.field_id else param_info.name
+
+    # CRITICAL: Use scope_accent_color from manager config (passed from parent window)
+    # No need to walk parent chain - it's stored directly in the manager
+    scope_accent_color = getattr(manager, '_scope_accent_color', None)
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"[CREATE_NESTED] field_id={manager.field_id}, manager._scope_accent_color={scope_accent_color}")
+
     return GBH(
         title=display_info['field_label'],
         help_target=unwrapped_type,
         color_scheme=color_scheme,
+        scope_accent_color=scope_accent_color,  # Pass scope accent color
         flash_key=flash_key,
         flash_manager=root_manager
     )
@@ -564,7 +600,8 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
 
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"🔍 create_widget_parametric: Creating LabelWithHelp for param_name={param_info.name}, description={display_info['description'][:50] if display_info.get('description') else 'None'}")
+        scope_accent_color = getattr(manager, '_scope_accent_color', None)
+        logger.debug(f"🔍 create_widget_parametric: Creating LabelWithHelp for param_name={param_info.name}, scope_accent_color={scope_accent_color}")
         label = LabelWithHelp(
             text=display_info['field_label'],
             param_name=param_info.name,
@@ -572,7 +609,8 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
             param_type=param_info.type,
             color_scheme=manager.config.color_scheme or PyQt6ColorScheme(),
             state=manager.state,
-            dotted_path=dotted_path
+            dotted_path=dotted_path,
+            scope_accent_color=scope_accent_color
         )
         layout.addWidget(label)
         # Store label for bold styling updates

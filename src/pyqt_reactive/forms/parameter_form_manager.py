@@ -55,6 +55,7 @@ class FormManagerConfig:
     state: Optional[Any] = None  # ObjectState instance - if provided, PFM delegates to it
     field_id: str = ''  # Canonical dotted path id for this form (e.g., 'well_filter_config')
     render_enabled_in_header: bool = False  # If True, 'enabled' checkbox is rendered in container header, not as a form row
+    scope_accent_color: Optional[Any] = None  # Scope accent color for help buttons (QColor or None)
 
 
 class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metaclass=_CombinedMeta):
@@ -234,6 +235,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                     state=config.state,
                     field_id=config.field_id,
                     render_enabled_in_header=True,
+                    scope_accent_color=config.scope_accent_color,
                 )
         except ImportError:
             pass
@@ -257,6 +259,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             self.read_only = config.read_only
             self._parent_manager = config.parent_manager
             self.render_enabled_in_header = config.render_enabled_in_header
+            self._scope_accent_color = config.scope_accent_color  # Store for widget creation
 
             # Track completion callbacks for async widget creation
             self._on_build_complete_callbacks = []
@@ -477,12 +480,17 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             on_complete: Optional callback to run when all widgets are created
             on_batch_complete: Optional callback to run after each batch (receives list of widgets)
         """
+        logger.debug(f"[ASYNC_CREATE] Starting async widget creation for {self.field_id}, param_count={len(param_infos)}")
         # Create widgets in batches using QTimer to yield to event loop
         batch_size = 3  # Create 3 widgets at a time
         index = 0
 
         def create_next_batch():
             nonlocal index
+
+            batch_start = index
+            batch_end = min(index + batch_size, len(param_infos))
+            logger.debug(f"[ASYNC_CREATE] Creating batch for {self.field_id}: params {batch_start}-{batch_end} of {len(param_infos)}")
 
             # Guard: Check if layout's parent widget was deleted (window closed during async build)
             try:
@@ -495,7 +503,6 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                 logger.warning("Async widget creation aborted: layout was deleted")
                 return
 
-            batch_end = min(index + batch_size, len(param_infos))
             batch_widgets = []
 
             for i in range(index, batch_end):
@@ -511,6 +518,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             index = batch_end
 
             # Apply styling to this batch immediately
+            logger.debug(f"[ASYNC_CREATE] Batch complete: field_id={self.field_id}, batch_widgets={len(batch_widgets)}, on_batch_complete={'set' if on_batch_complete else None}")
             if on_batch_complete and batch_widgets:
                 try:
                     on_batch_complete(batch_widgets)
@@ -523,6 +531,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             elif on_complete:
                 # All widgets created - defer completion callback to next event loop tick
                 # This ensures Qt has processed all layout updates and widgets are findable
+                logger.debug(f"[ASYNC_CREATE] All widgets created for {self.field_id}, scheduling on_complete callback")
                 QTimer.singleShot(0, on_complete)
 
         # Start creating widgets
@@ -548,6 +557,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             parent_manager=self,
             color_scheme=self.config.color_scheme,
             field_id=nested_id,  # Scope access to nested fields
+            scope_accent_color=getattr(self, '_scope_accent_color', None),  # Inherit scope accent color
         )
         nested_manager = ParameterFormManager(
             state=self.state,  # CRITICAL: Share the same ObjectState instance

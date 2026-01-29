@@ -317,6 +317,7 @@ class FormBuildOrchestrator:
         """Build widgets using unified async/sync path."""
         pass  # timer decorator - optional
 
+        logger.debug(f"[BUILD_WIDGETS] {manager.field_id}, use_async={use_async}, param_count={len(param_infos)}")
         if use_async:
             self._build_widgets_async(manager, content_layout, param_infos)
         else:
@@ -364,10 +365,14 @@ class FormBuildOrchestrator:
         def on_batch_complete(batch_widgets):
             # Apply scope accent styling to batch widgets (progressive, so user sees colored borders immediately)
             dialog = self._get_dialog_from_layout(content_layout)
+            logger.debug(f"[BATCH_COMPLETE] batch_widgets={len(batch_widgets)}, dialog={dialog.__class__.__name__ if dialog else None}, has_apply_method={hasattr(dialog, '_apply_scope_accent_to_widgets') if dialog else False}")
             if dialog and hasattr(dialog, '_apply_scope_accent_to_widgets'):
+                logger.debug(f"[BATCH_COMPLETE] Calling _apply_scope_accent_to_widgets")
                 dialog._apply_scope_accent_to_widgets(batch_widgets)
 
         def on_async_complete():
+            logger.debug(f"[ASYNC_COMPLETE] FIRED for {manager.field_id}, widgets={len(manager.widgets)}, is_nested={self.is_nested_manager(manager)}")
+
             # Then notify parent (if this is nested) to track completion
             if self.is_nested_manager(manager):
                 self._notify_root_of_completion(manager)
@@ -412,6 +417,7 @@ class FormBuildOrchestrator:
         pass  # timer decorator - optional
 
         if self.is_nested_manager(manager):
+            logger.debug(f"[POST_BUILD] NESTED manager={manager.field_id}, widgets={len(manager.widgets)}, callback_count={len(manager._on_build_complete_callbacks)}")
             for callback in manager._on_build_complete_callbacks:
                 callback()
             manager._on_build_complete_callbacks.clear()
@@ -431,8 +437,11 @@ class FormBuildOrchestrator:
             for nested_manager in manager.nested_managers.values():
                 self._apply_callbacks(nested_manager._on_placeholder_refresh_complete_callbacks)
 
-        with timer("  Enabled styling refresh", threshold_ms=5.0):
-            manager._apply_to_nested_managers(lambda name, mgr: mgr._enabled_field_styling_service.refresh_enabled_styling(mgr))
+        with timer("  Apply initial enabled styling", threshold_ms=5.0):
+            # CRITICAL: Initial enabled styling is now handled by showEvent in the widget
+            # (e.g., StepParameterEditorWidget.showEvent)
+            # This ensures styling is applied AFTER the widget is visible and painted
+            pass
 
         # Initialize dirty indicators for all labels based on current state
         # This handles the case where the form opens with pre-existing dirty state

@@ -27,36 +27,43 @@ class EnabledFieldStylingService:
     def apply_initial_enabled_styling(self, manager) -> None:
         """
         Apply initial enabled field styling based on resolved value from widget.
-        
+
         This is called once after all widgets are created to ensure initial styling matches the enabled state.
-        
+
         CRITICAL: This should NOT be called for optional dataclass nested managers when instance is None.
         The None state dimming is handled by the optional dataclass checkbox handler.
-        
+
         Args:
             manager: ParameterFormManager instance
         """
         # Check if this is a nested manager inside an optional dataclass with None instance
         if self._should_skip_optional_dataclass_styling(manager, "INITIAL ENABLED STYLING"):
             return
-        
+
+        # CRITICAL: Clear the cache to ensure initial styling is always applied
+        # The cache may have been set during widget initialization when setChecked() was called
+        cache_attr = '_last_enabled_value'
+        if hasattr(manager, cache_attr):
+            delattr(manager, cache_attr)
+            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, cleared cache to force initial styling")
+
         # Get the enabled widget
         enabled_widget = manager.widgets.get('enabled')
         if not enabled_widget:
-            logger.debug(f"[INITIAL ENABLED STYLING] field_id={manager.field_id}, no enabled widget found")
+            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, no enabled widget found")
             return
 
         # Get resolved value from checkbox
         if isinstance(enabled_widget, QCheckBox):
             resolved_value = enabled_widget.isChecked()
-            logger.debug(f"[INITIAL ENABLED STYLING] field_id={manager.field_id}, resolved_value={resolved_value} (from checkbox)")
+            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, resolved_value={resolved_value} (from checkbox)")
         else:
             # Fallback to parameter value
             resolved_value = manager.parameters.get('enabled')
             if resolved_value is None:
                 resolved_value = True  # Default to enabled if we can't resolve
-            logger.debug(f"[INITIAL ENABLED STYLING] field_id={manager.field_id}, resolved_value={resolved_value} (from parameter)")
-        
+            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, resolved_value={resolved_value} (from parameter)")
+
         # Call the enabled handler with the resolved value
         self.on_enabled_field_changed(manager, 'enabled', resolved_value)
     
@@ -113,7 +120,7 @@ class EnabledFieldStylingService:
         if param_name != 'enabled':
             return
 
-        logger.debug(f"[ENABLED HANDLER CALLED] field_id={manager.field_id}, param_name={param_name}, value={value}")
+        logger.debug(f"[ENABLED_HANDLER] >>> CALLED for field_id={manager.field_id}, value={value}")
 
         # Resolve lazy value
         if value is None:
@@ -131,16 +138,15 @@ class EnabledFieldStylingService:
         cache_attr = '_last_enabled_value'
         last_value = getattr(manager, cache_attr, None)
         if last_value == resolved_value:
-            logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, SKIP (value unchanged: {resolved_value})")
+            logger.debug(f"[ENABLED_HANDLER] field_id={manager.field_id}, SKIP (value unchanged: {resolved_value})")
             return
         setattr(manager, cache_attr, resolved_value)
 
-        logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, resolved_value={resolved_value}")
+        logger.debug(f"[ENABLED_HANDLER] field_id={manager.field_id}, resolved_value={resolved_value}")
 
         # Get direct widgets (excluding nested managers) - CACHED
         direct_widgets = self._get_direct_widgets(manager)
-        widget_names = [f"{w.__class__.__name__}({w.objectName() or 'no-name'})" for w in direct_widgets[:5]]
-        logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, found {len(direct_widgets)} direct widgets, first 5: {widget_names}")
+        logger.debug(f"[ENABLED_HANDLER] field_id={manager.field_id}, direct_widgets count={len(direct_widgets)}")
 
         # Check if this is a nested config
         is_nested_config = manager._parent_manager is not None and any(
@@ -289,6 +295,13 @@ class EnabledFieldStylingService:
                 effect.setOpacity(0.4)
                 widget.setGraphicsEffect(effect)
 
+        # CRITICAL: Trigger a visual update so opacity effects are rendered
+        # Qt doesn't automatically render QGraphicsOpacityEffect changes
+        # Use repaint() for immediate synchronous update, not update() which is async
+        group_box.repaint()
+        for widget in self.widget_ops.get_all_value_widgets(group_box):
+            widget.repaint()
+
     def _apply_top_level_styling(self, manager, resolved_value: bool, direct_widgets: list) -> None:
         """
         Apply styling to a top-level form (step, function).
@@ -303,6 +316,7 @@ class EnabledFieldStylingService:
             logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, removing dimming (enabled=True)")
             for widget in direct_widgets:
                 widget.setGraphicsEffect(None)
+                widget.repaint()
 
             # Trigger refresh of all nested configs' enabled styling
             logger.debug(f"[ENABLED HANDLER] Refreshing nested configs' enabled styling")
@@ -318,6 +332,7 @@ class EnabledFieldStylingService:
                 effect = QGraphicsOpacityEffect()
                 effect.setOpacity(0.4)
                 widget.setGraphicsEffect(effect)
+                widget.repaint()
 
             # Also dim all nested configs
             logger.debug(f"[ENABLED HANDLER] Dimming nested configs, found {len(manager.nested_managers)} nested managers")
@@ -339,4 +354,8 @@ class EnabledFieldStylingService:
                     effect = QGraphicsOpacityEffect()
                     effect.setOpacity(0.4)
                     widget.setGraphicsEffect(effect)
+                    widget.repaint()
+
+                # Update the group box itself
+                group_box.repaint()
 
