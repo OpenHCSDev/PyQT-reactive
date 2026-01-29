@@ -283,33 +283,31 @@ class HelpButton(QPushButton):
         self._apply_color(initial_color)
 
     def _get_scope_accent_color(self):
-        """Get scope accent color from parent dialog if available."""
-        import logging
-        logger = logging.getLogger(__name__)
+        """Deprecated: retained for compatibility but prefers ScopeColorService.
 
-        # Walk up the widget hierarchy to find a dialog with _scope_accent_color
+        Historically HelpButton walked the widget tree to find a parent's
+        _scope_accent_color. Prefer using ScopeColorService/get_accent_color by
+        scope_id for deterministic behavior. This shim still attempts the old
+        lookup as a fallback.
+        """
+        # Fallback legacy behavior - attempt quick parent attribute lookup
         widget = self.parent()
         depth = 0
-        logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: Starting search, parent={widget}, parent_class={widget.__class__.__name__ if widget else None}")
         while widget is not None:
-            logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: depth={depth}, widget={widget.__class__.__name__}, has_scope_accent={hasattr(widget, '_scope_accent_color')}")
             accent_color = getattr(widget, '_scope_accent_color', None)
-            if accent_color:
-                logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: FOUND _scope_accent_color at depth={depth}, widget={widget.__class__.__name__}, color={accent_color}")
+            if accent_color is not None:
                 return accent_color
-            # Also check for get_scope_accent_color method
             if hasattr(widget, 'get_scope_accent_color'):
-                color = widget.get_scope_accent_color()
-                if color:
-                    logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: FOUND via get_scope_accent_color at depth={depth}, widget={widget.__class__.__name__}, color={color}")
-                    return color
+                try:
+                    color = widget.get_scope_accent_color()
+                    if color is not None:
+                        return color
+                except Exception:
+                    pass
             widget = widget.parent()
             depth += 1
-            if depth > 20:  # Safety check to avoid infinite loops
-                logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: Stopping after depth 20")
+            if depth > 10:
                 break
-
-        logger.debug(f"[HELP_BUTTON] _get_scope_accent_color: NOT FOUND after walking up hierarchy")
         return None
 
     def _apply_color(self, color) -> None:
