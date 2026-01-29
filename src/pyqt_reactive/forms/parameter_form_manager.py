@@ -203,6 +203,20 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         # Unpack config or use defaults
         config = config or FormManagerConfig()
 
+        # If no explicit scope_accent_color provided, derive it from the state's scope_id
+        # using the centralized ScopeColorService. This avoids widget-tree traversal and
+        # ensures every widget created by this manager receives the proper accent color.
+        if config.scope_accent_color is None and getattr(state, 'scope_id', None):
+            try:
+                from pyqt_reactive.services.scope_color_service import ScopeColorService
+                svc = ScopeColorService.instance()
+                accent = svc.get_accent_color(state.scope_id)
+                if accent is not None:
+                    config.scope_accent_color = accent
+            except Exception:
+                # Be conservative: if service lookup fails, fall back to None
+                pass
+
         # Store field_id EARLY - needed for target_obj navigation
         self.field_id = config.field_id
 
