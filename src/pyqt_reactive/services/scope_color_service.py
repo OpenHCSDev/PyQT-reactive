@@ -127,14 +127,11 @@ class ScopeColorService(QObject):
         except Exception:
             return None
 
+        # Always return a QColor. If no scheme exists, fall back to neutral scheme.
         scheme = self.get_color_scheme(scope_id, step_index=step_index)
-        if scheme is None:
-            return None
 
-        base_rgb = getattr(scheme, 'base_color_rgb', None)
+        base_rgb = getattr(scheme, 'base_color_rgb', (128, 128, 128))
         layers = getattr(scheme, 'step_border_layers', None)
-        if not base_rgb:
-            return None
 
         if layers:
             _, tint_idx, _ = (layers[0] + ("solid",))[:3]
