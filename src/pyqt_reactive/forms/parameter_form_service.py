@@ -107,6 +107,10 @@ class ParameterFormService:
         """
         debug_param("analyze_parameters", f"field_id={input.field_id}, parameter_count={len(input.default_value)}")
 
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔍 analyze_parameters: field_id={input.field_id}, param_type.keys()={list(input.param_type.keys())}")
+
         param_infos = []
         nested_forms = {}
         has_optional_dataclasses = False

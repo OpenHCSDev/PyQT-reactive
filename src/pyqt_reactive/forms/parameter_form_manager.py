@@ -300,7 +300,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                     )
                 from python_introspect import UnifiedParameterAnalyzer, ENABLED_FIELD
 
-                param_info_dict = UnifiedParameterAnalyzer.analyze(target_obj)
+                param_info_dict = UnifiedParameterAnalyzer.analyze(target_obj, exclude_params=config.exclude_params)
                 # self.parameters property already filters/strips keys for our prefix
                 derived_param_types = {name: info.param_type for name, info in param_info_dict.items() if name in self.parameters}
 

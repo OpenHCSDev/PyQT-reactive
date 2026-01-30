@@ -272,6 +272,11 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for tab widget styling
         """
         cs = self.color_scheme
+        # Use grey shades for tabs instead of blue selection color
+        # Lighter grey for inactive tabs, darker grey for selected tab
+        inactive_tab_bg = cs.button_normal_bg  # Lighter grey
+        selected_tab_bg = cs.panel_bg  # Darker grey (same as panel background)
+
         return f"""
             QTabWidget::pane {{
                 border: 1px solid {cs.to_hex(cs.border_color)};
@@ -279,7 +284,7 @@ class StyleSheetGenerator:
                 background-color: {cs.to_hex(cs.panel_bg)};
             }}
             QTabBar::tab {{
-                background-color: {cs.to_hex(cs.button_normal_bg)};
+                background-color: {cs.to_hex(inactive_tab_bg)};
                 color: {cs.to_hex(cs.text_secondary)};
                 border: none;
                 border-top-left-radius: 3px;
@@ -288,9 +293,10 @@ class StyleSheetGenerator:
                 margin-right: 2px;
             }}
             QTabBar::tab:selected {{
-                background-color: {cs.to_hex(cs.selection_bg)};
-                color: {cs.to_hex(cs.selection_text)};
+                background-color: {cs.to_hex(selected_tab_bg)};
+                color: {cs.to_hex(cs.text_primary)};
                 font-weight: bold;
+                border-bottom: 2px solid {cs.to_hex(cs.text_accent)};
             }}
             QTabBar::tab:hover {{
                 background-color: {cs.to_hex(cs.button_hover_bg)};
