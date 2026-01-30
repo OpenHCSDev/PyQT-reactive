@@ -563,6 +563,20 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
         if hasattr(root_manager, 'register_flash_groupbox'):
             root_manager.register_flash_groupbox(flash_key, container)
 
+    # Apply scope color scheme to nested containers for proper background/border styling
+    if config.is_nested and isinstance(container, GroupBoxWithHelp):
+        # Get scope color scheme from manager or root manager
+        scope_color_scheme = getattr(manager, '_scope_color_scheme', None)
+        if scope_color_scheme is None:
+            # Try to get from root manager
+            root_manager = manager
+            while getattr(root_manager, '_parent_manager', None) is not None:
+                root_manager = root_manager._parent_manager
+            scope_color_scheme = getattr(root_manager, '_scope_color_scheme', None)
+        
+        if scope_color_scheme:
+            container.set_scope_color_scheme(scope_color_scheme)
+
     # Setup layout - polymorphic dispatch
     # Each setup_layout function handles its own container type
     layout_type = config.layout_type

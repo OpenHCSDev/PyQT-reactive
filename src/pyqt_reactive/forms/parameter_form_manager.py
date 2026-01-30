@@ -275,6 +275,12 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             self.render_enabled_in_header = config.render_enabled_in_header
             self._scope_accent_color = config.scope_accent_color  # Store for widget creation
 
+            # Store full scope color scheme for nested GroupBox borders/backgrounds
+            self._scope_color_scheme = None
+            if self.scope_id:
+                from pyqt_reactive.services.scope_color_service import ScopeColorService
+                self._scope_color_scheme = ScopeColorService.instance().get_color_scheme(self.scope_id)
+
             # Track completion callbacks for async widget creation
             self._on_build_complete_callbacks = []
             self._on_placeholder_refresh_complete_callbacks = []

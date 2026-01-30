@@ -168,7 +168,11 @@ class ScopedBorderMixin:
         self._init_scope_border()
 
     def paintEvent(self, event) -> None:
-        super().paintEvent(event)
+        # Safe super() call for multiple inheritance - only call if parent has paintEvent
+        # QDialog doesn't have paintEvent, but QWidget does
+        if hasattr(super(), 'paintEvent'):
+            super().paintEvent(event)
+
         if not self._scope_color_scheme:
             return
         layers = getattr(self._scope_color_scheme, "step_border_layers", None)

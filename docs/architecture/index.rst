@@ -15,6 +15,7 @@ Core Form System
    parametric_widget_creation
    widget_protocol_system
    field_change_dispatcher
+   tabbed_form_registry_pattern
 
 Service Layer
 -------------

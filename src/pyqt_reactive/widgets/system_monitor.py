@@ -211,29 +211,29 @@ class SystemMonitorWidget(QWidget):
 
     def _switch_to_pyqtgraph_ui(self):
         """Switch from loading placeholder to PyQtGraph UI (called in main thread)."""
-        # Remove loading placeholder
+        # Remove loading placeholder from graphs container
         old_widget = self.monitoring_widget
-        layout = self.layout()
-        layout.removeWidget(old_widget)
+        self.graphs_layout.removeWidget(old_widget)
         old_widget.deleteLater()
 
         # Create PyQtGraph section
         self.monitoring_widget = self.create_pyqtgraph_section()
-        layout.addWidget(self.monitoring_widget, 1)
+        # Add to graphs container layout
+        self.graphs_layout.addWidget(self.monitoring_widget)
 
         logger.info("Switched to PyQtGraph UI")
 
     def _switch_to_fallback_ui(self):
         """Switch from loading placeholder to fallback UI (called in main thread)."""
-        # Remove loading placeholder
+        # Remove loading placeholder from graphs container
         old_widget = self.monitoring_widget
-        layout = self.layout()
-        layout.removeWidget(old_widget)
+        self.graphs_layout.removeWidget(old_widget)
         old_widget.deleteLater()
 
         # Create fallback section
         self.monitoring_widget = self.create_fallback_section()
-        layout.addWidget(self.monitoring_widget, 1)
+        # Add to graphs container layout
+        self.graphs_layout.addWidget(self.monitoring_widget)
 
         logger.info("Switched to fallback UI (PyQtGraph not available)")
 
@@ -309,47 +309,65 @@ class SystemMonitorWidget(QWidget):
     def setup_ui(self):
         """Setup the user interface."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins
+        layout.setSpacing(2)  # Minimal spacing
 
-        # Header section
-        header_layout = self.create_header_section()
-        layout.addLayout(header_layout)
-
-        # Monitoring section - start with loading placeholder
-        # PyQtGraph will be loaded asynchronously to avoid blocking startup
-        self.monitoring_widget = self.create_loading_placeholder()
-        layout.addWidget(self.monitoring_widget, 1)  # Stretch factor = 1 to expand
+        # System Info (left) + Graphs (right) in horizontal layout
+        top_section = self.create_top_section()
+        layout.addLayout(top_section)
 
         # Apply centralized styling
         self.setStyleSheet(self.style_generator.generate_system_monitor_style())
 
         # Load PyQtGraph asynchronously
         self._load_pyqtgraph_async()
+        
+        # Set fixed height for the system monitor
+        self.setFixedHeight(200)
     
-    def create_header_section(self) -> QHBoxLayout:
+    def create_top_section(self) -> QHBoxLayout:
         """
-        Create the header section with title and system info.
+        Create the top section with system info (left) and graphs (right).
 
         Returns:
-            Header layout
+            Top section layout
         """
-        header_layout = QHBoxLayout()
+        top_layout = QHBoxLayout()
 
-        # ASCII header (left side) - only takes space it needs
+        # System info panel (left side)
+        self.info_widget = self.create_info_panel()
+        top_layout.addWidget(self.info_widget, 1)  # Stretch factor = 1
+
+        # Graphs container (right side) - holds the graphs
+        self.graphs_container = QWidget()
+        self.graphs_layout = QVBoxLayout(self.graphs_container)
+        self.graphs_layout.setContentsMargins(0, 0, 0, 0)
+        self.graphs_layout.setSpacing(0)
+        
+        # Start with loading placeholder in the graphs container
+        self.monitoring_widget = self.create_loading_placeholder()
+        self.graphs_layout.addWidget(self.monitoring_widget)
+        
+        top_layout.addWidget(self.graphs_container, 2)  # Stretch factor = 2 (graphs need more space)
+
+        return top_layout
+
+    def create_ascii_widget(self) -> QWidget:
+        """Create the ASCII art widget for the bottom."""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # ASCII header
         self.header_label = QLabel(self.get_ascii_header())
         self.header_label.setObjectName("header_label")
         font = QFont("Courier", 10)
         font.setBold(True)
         self.header_label.setFont(font)
-        self.header_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-        header_layout.addWidget(self.header_label)
-
-        # System info panel (right side) - styled widget instead of plain text
-        self.info_widget = self.create_info_panel()
-        header_layout.addWidget(self.info_widget, 1)  # Stretch factor = 1 to fill space
-
-        return header_layout
+        self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.header_label)
+        
+        return widget
 
     def create_info_panel(self) -> QWidget:
         """Create a styled system information panel with two-column layout."""
@@ -441,7 +459,8 @@ class SystemMonitorWidget(QWidget):
         # Container for graphs that we can re-layout
         self.graph_container = QWidget()
         self.graph_layout = QGridLayout(self.graph_container)
-        self.graph_layout.setSpacing(10)
+        self.graph_layout.setSpacing(2)  # Minimal spacing between graphs
+        self.graph_layout.setContentsMargins(0, 0, 0, 0)  # No margins
 
         # Configure PyQtGraph based on config settings
         pg.setConfigOption('background', self.color_scheme.to_hex(self.color_scheme.window_bg))
@@ -470,27 +489,43 @@ class SystemMonitorWidget(QWidget):
         self.ram_curve = self.ram_vram_plot.plot(pen=pg.mkPen(colors['ram'], width=line_width), name='RAM')
         self.vram_curve = self.ram_vram_plot.plot(pen=pg.mkPen(colors['vram'], width=line_width), name='VRAM')
 
-        # Style CPU/GPU plot
+        # Style CPU/GPU plot - minimal padding
         self.cpu_gpu_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
         self.cpu_gpu_plot.setYRange(0, 100)
         self.cpu_gpu_plot.setXRange(0, self.monitor_config.history_duration_seconds)
-        self.cpu_gpu_plot.setLabel('left', 'Usage (%)')
-        self.cpu_gpu_plot.setLabel('bottom', 'Time (seconds)')
         self.cpu_gpu_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
-        self.cpu_gpu_plot.getAxis('left').setTextPen('white')
-        self.cpu_gpu_plot.getAxis('bottom').setTextPen('white')
-        self.cpu_gpu_plot.addLegend()
 
-        # Style RAM/VRAM plot
+        # Minimize left axis
+        self.cpu_gpu_plot.getAxis('left').setTextPen('white')
+        self.cpu_gpu_plot.getAxis('left').setStyle(tickLength=-5)
+        self.cpu_gpu_plot.getAxis('left').setWidth(35)  # Minimal width for y-axis
+
+        # Hide bottom axis completely
+        self.cpu_gpu_plot.getAxis('bottom').setHeight(0)
+        self.cpu_gpu_plot.getAxis('bottom').setStyle(showValues=False)
+
+        # Minimize all margins and padding
+        self.cpu_gpu_plot.getPlotItem().setContentsMargins(0, 0, 0, 0)
+        self.cpu_gpu_plot.getViewBox().setDefaultPadding(0)
+
+        # Style RAM/VRAM plot - minimal padding
         self.ram_vram_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
         self.ram_vram_plot.setYRange(0, 100)
         self.ram_vram_plot.setXRange(0, self.monitor_config.history_duration_seconds)
-        self.ram_vram_plot.setLabel('left', 'Usage (%)')
-        self.ram_vram_plot.setLabel('bottom', 'Time (seconds)')
         self.ram_vram_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
+
+        # Minimize left axis
         self.ram_vram_plot.getAxis('left').setTextPen('white')
-        self.ram_vram_plot.getAxis('bottom').setTextPen('white')
-        self.ram_vram_plot.addLegend()
+        self.ram_vram_plot.getAxis('left').setStyle(tickLength=-5)
+        self.ram_vram_plot.getAxis('left').setWidth(35)  # Minimal width for y-axis
+
+        # Hide bottom axis completely
+        self.ram_vram_plot.getAxis('bottom').setHeight(0)
+        self.ram_vram_plot.getAxis('bottom').setStyle(showValues=False)
+
+        # Minimize all margins and padding
+        self.ram_vram_plot.getPlotItem().setContentsMargins(0, 0, 0, 0)
+        self.ram_vram_plot.getViewBox().setDefaultPadding(0)
 
         # Add plots to grid layout (side-by-side by default)
         self._update_graph_layout()
