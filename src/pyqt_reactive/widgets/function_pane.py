@@ -405,9 +405,10 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Float parameters
         elif param_type == float:
+            from pyqt_reactive.forms.widget_strategies import WidgetConfig
             widget = NoScrollDoubleSpinBox()
             widget.setRange(-999999.0, 999999.0)
-            widget.setDecimals(6)
+            widget.setDecimals(WidgetConfig.FLOAT_PRECISION)
             widget.setValue(float(current_value) if current_value is not None else 0.0)
             widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
             return widget

@@ -147,10 +147,11 @@ if PYQT6_AVAILABLE:
         _widget_id = "double_spin_box"
         
         def __init__(self, parent=None):
+            from pyqt_reactive.forms.widget_strategies import WidgetConfig
             super().__init__(parent)
             self.setSpecialValueText(" ")
             self.setRange(-1e308, 1e308)  # Default float range
-            self.setDecimals(6)  # Default precision
+            self.setDecimals(WidgetConfig.FLOAT_PRECISION)  # Use configured precision
         
         def get_value(self) -> Any:
             """Implement ValueGettable ABC."""

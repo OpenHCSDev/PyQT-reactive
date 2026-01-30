@@ -100,7 +100,7 @@ class WidgetConfig:
     """Immutable widget configuration constants."""
     NUMERIC_RANGE_MIN: int = -999999
     NUMERIC_RANGE_MAX: int = 999999
-    FLOAT_PRECISION: int = 6
+    FLOAT_PRECISION: int = 15  # Practical limit for double precision (effectively unlimited)
 
 
 def create_enhanced_path_widget(param_name: str = "", current_value: Any = None, parameter_info: Any = None):
