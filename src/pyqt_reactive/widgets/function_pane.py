@@ -7,7 +7,7 @@ and enableable support.
 """
 
 import logging
-from typing import Any, Dict, Callable, Optional, Tuple, List
+from typing import Any, Dict, Callable, Optional, Tuple, List, Set
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -21,6 +21,8 @@ from python_introspect import SignatureAnalyzer, is_enableable, ENABLED_FIELD
 # Import PyQt6 help components (using same pattern as Textual TUI)
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
+from pyqt_reactive.forms import ParameterFormManager
+from pyqt_reactive.animation import FlashMixin
 
 logger = logging.getLogger(__name__)
 
@@ -102,17 +104,20 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             self.param_defaults = {}
 
         # Form manager will be created in create_parameter_form() when UI is built
-        self.form_manager = None
+        self.form_manager: Optional[ParameterFormManager] = None
         
         # Internal kwargs tracking
         self._internal_kwargs = self.kwargs.copy()
         
         # UI components
         self.parameter_widgets: Dict[str, QWidget] = {}
-        self._enabled_checkbox = None
+        self._enabled_checkbox: Optional[Any] = None
 
         # Scope color scheme
-        self._scope_color_scheme = None
+        self._scope_color_scheme: Optional[Any] = None
+
+        # Track if enabled widget was moved to title (prevents race conditions)
+        self._enabled_widget_moved: bool = False
 
         # Setup UI
         self.setup_ui()
@@ -135,8 +140,16 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             self.content_layout.addWidget(parameter_frame)
             
             # For enableable functions: move enabled widget to title after form is built
-            if is_enableable(self.func):
-                self._move_enabled_widget_to_title()
+            # CRITICAL: Must use callback because form manager builds widgets asynchronously
+            if is_enableable(self.func) and self.form_manager is not None:
+                # Check if form is already built (sync path) - move immediately
+                if len(self.form_manager.widgets) > 0 and ENABLED_FIELD in self.form_manager.widgets:
+                    # Form already built, move enabled widget now
+                    self._move_enabled_widget_to_title()
+                else:
+                    # Form not built yet (async path) - register callback
+                    callbacks: list = self.form_manager._on_build_complete_callbacks
+                    callbacks.append(lambda: self._move_enabled_widget_to_title())
 
         # Set size policy to only take minimum vertical space needed
         size_policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
@@ -159,13 +172,14 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
     def _add_control_buttons_to_title(self):
         """Add control buttons (move, add, delete, reset) to the title area."""
-        # Button configurations
+        # Button configurations: (symbol, action, tooltip)
+        # Using symbols only for cleaner UI, tooltips provide context
         button_configs = [
-            ("↑", "move_up", "Move function up"),
-            ("↓", "move_down", "Move function down"),
-            ("Add", "add_func", "Add new function"),
-            ("Del", "remove_func", "Delete this function"),
-            ("Reset", "reset_all", "Reset all parameters"),
+            ("↑", "move_up", None),  # Removed "Move function up" label
+            ("↓", "move_down", None),  # Removed "Move function down" label
+            ("Add", "add_func", None),  # Removed "Add new function" label
+            ("Del", "remove_func", None),  # Removed "Delete this function" label
+            ("Reset", "reset_all", None),  # Removed "Reset all parameters" label
         ]
 
         button_style = f"""
@@ -200,20 +214,27 @@ class FunctionPaneWidget(GroupBoxWithHelp):
     def _move_enabled_widget_to_title(self):
         """
         Move the enabled widget from the form to the title area.
-        
+
         This follows the same pattern as _move_enabled_widget_to_title in widget_creation_config.py
         for enableable dataclasses in GroupBoxWithHelp containers.
         """
         from PyQt6.QtCore import Qt
         from PyQt6.QtWidgets import QLabel
         from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
-        
+
+        # Prevent multiple moves (can be called from callback multiple times)
+        if hasattr(self, '_enabled_widget_moved') and self._enabled_widget_moved:
+            return
+
         if not self.form_manager:
             return
-        
+
         if ENABLED_FIELD not in self.form_manager.widgets:
-            logger.debug(f"No enabled field found in form_manager.widgets")
+            logger.debug(f"No enabled field found in form_manager.widgets for {self.func.__name__ if self.func else 'unknown'}")
             return
+
+        # Mark as moved first to prevent race conditions
+        self._enabled_widget_moved = True
         
         enabled_widget = self.form_manager.widgets[ENABLED_FIELD]
         enabled_reset_button = self.form_manager.reset_buttons.get(ENABLED_FIELD)
@@ -249,10 +270,14 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         if isinstance(enabled_widget, NoneAwareCheckBox):
             enabled_widget.setMaximumWidth(20)
         
-        # Add the enabled widget and reset button to the title layout
-        self.addTitleInlineWidget(enabled_widget)
-        if enabled_reset_button:
-            self.addTitleInlineWidget(enabled_reset_button)
+        # Add the enabled widget and reset button to the title layout using clean API
+        if hasattr(self, 'addEnableableWidgets'):
+            self.addEnableableWidgets(enabled_widget, enabled_reset_button)
+        else:
+            # Fallback for backwards compatibility
+            self.addTitleInlineWidget(enabled_widget)
+            if enabled_reset_button:
+                self.addTitleInlineWidget(enabled_reset_button)
         
         # Clean up the empty row layout if possible
         if enabled_widget_layout.count() == 0:
@@ -350,6 +375,16 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 use_scroll_area=False,            # Let outer FunctionListWidget manage scrolling
             )
         )
+
+        # Forward function parameter changes to parent step state for list item flash
+        # Uses ObjectState.forward_to_parent_state('func') to notify parent its 'func' field changed
+        # Note: Per-parameter flashing is handled automatically by the PFM
+        if func_state._parent_state is not None:
+            def forward_to_step(changed_paths):
+                # Notify parent state that its 'func' field conceptually changed
+                func_state.forward_to_parent_state('func')
+            func_state.on_resolved_changed(forward_to_step)
+            logger.info(f"[FUNCTION_PANE] Registered parent notification: {func_scope_id} → {step_scope}")
 
         # Connect parameter changes
         self.form_manager.parameter_changed.connect(

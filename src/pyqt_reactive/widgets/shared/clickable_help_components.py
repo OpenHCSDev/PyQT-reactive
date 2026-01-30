@@ -7,18 +7,19 @@ from PyQt6.QtCore import Qt, pyqtSignal, pyqtProperty, QRect, QRectF
 from PyQt6.QtGui import QFont, QCursor, QColor, QPainter, QPen
 
 from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.animation import FlashMixin
 
 logger = logging.getLogger(__name__)
 
 
-class FlashableGroupBox(QGroupBox):
+class FlashableGroupBox(QGroupBox, FlashMixin):
     """QGroupBox that supports flash animation via overlay.
 
     GAME ENGINE ARCHITECTURE: Flash effects are rendered by a single
     WindowFlashOverlay per window, NOT by individual groupbox paintEvents.
     This scales O(1) per window regardless of how many items are animating.
 
-    The groupbox just stores its flash_key for the overlay to look up.
+    Inherits from FlashMixin to provide flash registration and queueing methods.
     """
 
     def __init__(self, title: str = "", parent: Optional[QWidget] = None,
@@ -26,6 +27,8 @@ class FlashableGroupBox(QGroupBox):
         super().__init__(title, parent)
         self._flash_key = flash_key  # Key for overlay to look up geometry
         self._flash_manager = flash_manager  # Kept for backwards compat
+        # Initialize FlashMixin state
+        self._init_visual_update_mixin()
 
     # NOTE: paintEvent flash rendering REMOVED - now handled by WindowFlashOverlay
     # This eliminates O(n) paintEvent calls per frame
@@ -792,37 +795,71 @@ class GroupBoxWithHelp(FlashableGroupBox):
         # Scope border state (set via set_scope_color_scheme)
         self._scope_color_scheme = None
 
-        # Create custom title widget with help
-        title_widget = QWidget()
-        title_layout = QHBoxLayout(title_widget)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(5)
+        # Check if responsive wrapping is enabled
+        from pyqt_reactive.widgets.shared.responsive_groupbox_title import is_wrapping_enabled as is_gb_wrapping_enabled
+        
+        if is_gb_wrapping_enabled():
+            # Use responsive title that wraps when narrow
+            from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
+            title_widget = ResponsiveGroupBoxTitle(parent=self, width_threshold=120)
+            
+            # Title label
+            self._title_label = QLabel(title)
+            self._base_title = title
+            title_font = QFont()
+            title_font.setBold(True)
+            self._title_label.setFont(title_font)
+            title_widget.set_title_widget(self._title_label)
+            
+            # Help button
+            help_btn = None
+            if help_target:
+                help_btn = HelpButton(
+                    help_target=help_target,
+                    text="?",
+                    color_scheme=self.color_scheme,
+                    scope_accent_color=scope_accent_color,
+                    parent=self
+                )
+                help_btn.setMaximumWidth(25)
+                help_btn.setMaximumHeight(20)
+                title_widget.set_help_widget(help_btn)
+            
+            self.title_layout = title_widget
+        else:
+            # Use plain QHBoxLayout (old non-wrapping style)
+            title_widget = QWidget()
+            title_layout = QHBoxLayout(title_widget)
+            title_layout.setContentsMargins(0, 0, 0, 0)
+            title_layout.setSpacing(5)
+            
+            # Title label
+            self._title_label = QLabel(title)
+            self._base_title = title
+            title_font = QFont()
+            title_font.setBold(True)
+            self._title_label.setFont(title_font)
+            title_layout.addWidget(self._title_label)
+            
+            # Help button
+            help_btn = None
+            if help_target:
+                help_btn = HelpButton(
+                    help_target=help_target,
+                    text="?",
+                    color_scheme=self.color_scheme,
+                    scope_accent_color=scope_accent_color,
+                    parent=self
+                )
+                help_btn.setMaximumWidth(25)
+                help_btn.setMaximumHeight(20)
+                title_layout.addWidget(help_btn)
+            
+            title_layout.addStretch()
+            self.title_layout = title_layout
 
-        # Title label - store as instance variable for dirty marker updates
-        self._title_label = QLabel(title)
-        self._base_title = title  # Store original title without dirty marker
-        title_font = QFont()
-        title_font.setBold(True)
-        self._title_label.setFont(title_font)
-        title_layout.addWidget(self._title_label)
-
-        # Help button for dataclass (left-aligned, next to title)
-        if help_target:
-            help_btn = HelpButton(
-                help_target=help_target,
-                text="?",
-                color_scheme=self.color_scheme,
-                scope_accent_color=scope_accent_color,  # Pass scope accent color!
-                parent=self
-            )
-            help_btn.setMaximumWidth(25)
-            help_btn.setMaximumHeight(20)
-            title_layout.addWidget(help_btn)
-
-        title_layout.addStretch()
-
-        # Store title_layout so we can add more widgets later (e.g., reset button)
-        self.title_layout = title_layout
+        # Store reference to help button for later insertion
+        self._help_button = help_btn
 
         # Create main layout and add title widget at top
         # Use CURRENT_LAYOUT as single source of truth for margins/spacing
@@ -1005,29 +1042,53 @@ class GroupBoxWithHelp(FlashableGroupBox):
         self.content_layout.addLayout(layout)
 
     def addTitleWidget(self, widget):
-        """Add widget to the title area, right-aligned (after the stretch)."""
-        # Add at the end (right-aligned, after the stretch)
-        self.title_layout.addWidget(widget)
+        """Add widget to the title area, right-aligned (moves to row2 when narrow)."""
+        # Add as right widget - will move to second row when narrow
+        if hasattr(self.title_layout, 'add_right_widget'):
+            self.title_layout.add_right_widget(widget)
+        else:
+            self.title_layout.addWidget(widget)
 
     def addTitleInlineWidget(self, widget):
-        """Add widget next to the title (before the stretch).
+        """Add widget next to the title (stays in row1 always).
 
-        This keeps the widget left-aligned with the title/help button rather
-        than being pushed to the far right.
+        This keeps the widget left-aligned with the title/help button.
         """
-        # Find the first stretch/spacer item and insert before it.
-        insert_at = None
-        for i in range(self.title_layout.count()):
-            item = self.title_layout.itemAt(i)
-            if item is not None and item.spacerItem() is not None:
-                insert_at = i
-                break
-        if insert_at is None:
-            self.title_layout.addWidget(widget)
+        # For responsive title, add inline
+        if hasattr(self.title_layout, 'add_inline_widget'):
+            self.title_layout.add_inline_widget(widget)
         else:
-            self.title_layout.insertWidget(insert_at, widget)
+            self.title_layout.addWidget(widget)
 
     def addTitleWidgetAfterLabel(self, widget):
         """Add widget immediately after the title label."""
-        # Title label is always the first item in the layout.
-        self.title_layout.insertWidget(1, widget)
+        # For responsive title, this adds inline
+        if hasattr(self.title_layout, 'add_inline_widget'):
+            self.title_layout.add_inline_widget(widget)
+        else:
+            self.title_layout.addWidget(widget)
+
+    def addEnableableWidgets(self, enabled_checkbox, reset_button=None):
+        """Add enableable widgets (checkbox + reset) right after help button.
+
+        This is the clean API for adding enableable widgets in the correct position:
+        Title → Help → [Enabled Checkbox] → [Reset Button] → Other Controls
+        """
+        # Find insert position after help button
+        insert_pos = 0
+        if self._help_button:
+            for i in range(self.title_layout.count()):
+                if self.title_layout.itemAt(i).widget() == self._help_button:
+                    insert_pos = i + 1
+                    break
+
+        # Insert checkbox after help button
+        if hasattr(self.title_layout, 'insertWidget'):
+            self.title_layout.insertWidget(insert_pos, enabled_checkbox)
+            if reset_button:
+                self.title_layout.insertWidget(insert_pos + 1, reset_button)
+        else:
+            # Fallback: just add inline
+            self.addTitleInlineWidget(enabled_checkbox)
+            if reset_button:
+                self.addTitleInlineWidget(reset_button)

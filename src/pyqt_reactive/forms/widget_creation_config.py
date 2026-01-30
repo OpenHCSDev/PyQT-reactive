@@ -27,6 +27,7 @@ from .widget_creation_types import (
 )
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 from pyqt_reactive.services.widget_service import WidgetService
+from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveParameterRow
 
 logger = logging.getLogger(__name__)
 
@@ -222,11 +223,15 @@ def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_n
         logger.debug(f"🔍 _move_enabled_widget_to_title: set max width to 20")
 
     logger.debug(f"🔍 _move_enabled_widget_to_title: adding enabled widget to title_layout (count={container.title_layout.count()})")
-    container.addTitleInlineWidget(enabled_widget)
-
-    if enabled_reset_button:
-        logger.debug(f"🔍 _move_enabled_widget_to_title: adding reset button to title_layout")
-        container.addTitleInlineWidget(enabled_reset_button)
+    
+    # Use clean API to add enableable widgets after help button
+    if hasattr(container, 'addEnableableWidgets'):
+        container.addEnableableWidgets(enabled_widget, enabled_reset_button)
+    else:
+        # Fallback for backwards compatibility
+        container.addTitleInlineWidget(enabled_widget)
+        if enabled_reset_button:
+            container.addTitleInlineWidget(enabled_reset_button)
 
     # Clean up the empty row layout if possible
     if enabled_widget_layout.count() == 0:
@@ -361,8 +366,26 @@ def _create_regular_container(manager: ParameterFormManager, param_info: Paramet
                              unwrapped_type: Optional[Type], layout=None, CURRENT_LAYOUT=None,
                              QWidget=None, GroupBoxWithHelp=None, PyQt6ColorScheme=None) -> Any:
     """Create container for REGULAR widget type."""
-    from PyQt6.QtWidgets import QWidget as QtWidget
-    container = QtWidget()
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        ResponsiveParameterRow, is_wrapping_enabled as is_row_wrapping_enabled
+    )
+    
+    # Use parent from manager if available
+    parent = getattr(manager, 'parent', lambda: None)()
+    
+    # Check if responsive wrapping is enabled
+    if is_row_wrapping_enabled():
+        # Use responsive row that wraps when narrow
+        container = ResponsiveParameterRow(
+            width_threshold=150, 
+            parent=parent,
+            layout_config=CURRENT_LAYOUT
+        )
+    else:
+        # Use plain QWidget with QHBoxLayout (old non-wrapping style)
+        from PyQt6.QtWidgets import QWidget as QtWidget
+        container = QtWidget(parent)
+    
     return container
 
 
@@ -419,7 +442,13 @@ def _setup_regular_layout(manager: ParameterFormManager, param_info: ParameterIn
 
     For REGULAR widgets, container is a QWidget with a layout already set.
     We need to configure the layout, not the container.
+    
+    If container is ResponsiveParameterRow, it manages its own layout so we skip setup.
     """
+    # Skip layout setup for ResponsiveParameterRow - it manages its own layout
+    if isinstance(container, ResponsiveParameterRow):
+        return
+    
     layout = container.layout()
     # QLayout.__bool__ returns False even when the layout exists, so we do not
     # use a truthiness check here. For REGULAR rows we *require* that a layout
@@ -581,7 +610,11 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
     # Each setup_layout function handles its own container type
     layout_type = config.layout_type
     if layout_type == 'QHBoxLayout':
-        layout = QHBoxLayout(container)
+        # Check if container is ResponsiveParameterRow - it manages its own layout
+        if isinstance(container, ResponsiveParameterRow):
+            layout = None  # ResponsiveParameterRow manages its own layout
+        else:
+            layout = QHBoxLayout(container)
     elif layout_type == 'QVBoxLayout':
         layout = QVBoxLayout(container)
     elif layout_type == 'QGroupBox':
@@ -626,7 +659,11 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
             dotted_path=dotted_path,
             scope_accent_color=scope_accent_color
         )
-        layout.addWidget(label)
+        # Check if using ResponsiveParameterRow
+        if isinstance(container, ResponsiveParameterRow):
+            container.set_label(label)
+        else:
+            layout.addWidget(label)
         # Store label for bold styling updates
         manager.labels[param_info.name] = label
 
@@ -641,14 +678,18 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
     )
 
     # For nested widgets, add to container
-    # For regular widgets, add to layout
+    # For regular widgets, add to layout or use ResponsiveParameterRow
     if config.is_nested:
         if config.is_optional:
             # OPTIONAL_NESTED: set enabled state based on current_value
             main_widget.setEnabled(current_value is not None)
         layout.addWidget(main_widget)
     else:
-        layout.addWidget(main_widget, 1)
+        # Check if using ResponsiveParameterRow
+        if isinstance(container, ResponsiveParameterRow):
+            container.set_input(main_widget)
+        else:
+            layout.addWidget(main_widget, 1)
 
     # Add reset button if needed
     if config.needs_reset_button and not manager.read_only:
@@ -676,11 +717,15 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
                 param_info.name,
                 lambda: manager.reset_parameter(param_info.name)
             )
-            # Add stretch before reset button to push it to the right
-            # This only applies to REGULAR widgets (label + widget + reset button rows)
-            if not config.is_nested:
-                layout.addStretch()
-            layout.addWidget(reset_button)
+            # Check if using ResponsiveParameterRow
+            if isinstance(container, ResponsiveParameterRow):
+                container.set_reset_button(reset_button)
+            else:
+                # Add stretch before reset button to push it to the right
+                # This only applies to REGULAR widgets (label + widget + reset button rows)
+                if not config.is_nested:
+                    layout.addStretch()
+                layout.addWidget(reset_button)
             manager.reset_buttons[param_info.name] = reset_button
 
     # Connect checkbox logic if needed (OPTIONAL_NESTED only)

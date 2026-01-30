@@ -7,7 +7,8 @@ shows one or more ParameterFormManagers, all sharing the same ObjectState.
 
 from dataclasses import dataclass, field
 from typing import List, Optional, Any
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QScrollArea
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea
+from pyqt_reactive.widgets.shared.tear_off_tab_widget import TearOffTabWidget
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QIcon
 
@@ -97,12 +98,12 @@ class TabbedFormWidget(QWidget):
         # Create shared forms (above tabs)
         if self.config.shared_field_ids:
             for field_id in self.config.shared_field_ids:
-                form = self._create_form(field_id)
+                form = self._create_form([field_id])
                 self.shared_forms.append(form)
                 layout.addWidget(form)
 
-        # Create tab widget
-        self.tab_widget = QTabWidget()
+        # Create tab widget with tear-off support
+        self.tab_widget = TearOffTabWidget()
 
         # Apply styling if color_scheme provided
         if self.config.color_scheme:

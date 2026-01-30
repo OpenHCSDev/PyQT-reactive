@@ -1026,43 +1026,49 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         """
         # Find the prefix (groupbox) and leaf field name
         prefix = self._find_matching_prefix(path)
-        if not prefix:
-            logger.debug(f"[FLASH] No prefix found for path={path}")
-            return
-
         leaf_field = path.split('.')[-1] if '.' in path else path
 
-        # Find the groupbox for the prefix
-        groupbox = self._get_groupbox_for_prefix(prefix)
-        if not groupbox:
-            logger.debug(f"[FLASH] No groupbox found for prefix={prefix}")
-            return
+        if prefix:
+            # Nested dataclass case: find groupbox and nested manager
+            groupbox = self._get_groupbox_for_prefix(prefix)
+            if not groupbox:
+                logger.debug(f"[FLASH] No groupbox found for prefix={prefix}")
+                return
+            nested_manager = self._find_nested_manager_for_prefix(prefix)
+            if not nested_manager:
+                logger.debug(f"[FLASH] No nested manager found for prefix={prefix}")
+                return
+            leaf_widget = nested_manager.widgets.get(leaf_field)
+            leaf_flash_key = f"{prefix}.{leaf_field}"
+            tree_key = f"tree::{prefix}"
+        else:
+            # Flat parameter case (e.g., function parameters): use this manager directly
+            # Parent widget (GroupBoxWithHelp) serves as the groupbox container
+            groupbox = self.parent()
+            leaf_widget = self.widgets.get(leaf_field)
+            leaf_flash_key = f"param_{leaf_field}"
+            tree_key = None  # No tree item for flat parameters
 
-        # Find the leaf widget in the nested manager
-        nested_manager = self._find_nested_manager_for_prefix(prefix)
-        if not nested_manager:
-            logger.debug(f"[FLASH] No nested manager found for prefix={prefix}")
-            return
-
-        leaf_widget = nested_manager.widgets.get(leaf_field)
         if not leaf_widget:
             # Fallback to groupbox flash if leaf widget not found
-            logger.debug(f"[FLASH] No leaf widget for {leaf_field}, falling back to groupbox flash")
-            self.queue_flash_local(prefix)
+            if prefix:
+                logger.debug(f"[FLASH] No leaf widget for {leaf_field}, falling back to groupbox flash")
+                self.queue_flash_local(prefix)
+            else:
+                logger.debug(f"[FLASH] No leaf widget for flat param {leaf_field}")
             return
 
         # Register leaf flash element (dynamic registration for this specific change)
-        # Use a unique key that includes the leaf path to avoid conflicts
-        # Use '.' for attribute access (not '::' which is for scope hierarchy)
-        leaf_flash_key = f"{prefix}.{leaf_field}"
         self.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget)
 
-        # Queue BOTH flashes so they're in sync:
-        # 1. Leaf flash for groupbox (inverse masking)
-        # 2. Tree item flash (uses tree:: prefix to avoid groupbox collision)
-        self.queue_flash_local(leaf_flash_key)  # Groupbox with inverse masking
-        self.queue_flash_local(f"tree::{prefix}")  # Tree item has separate key namespace
-        logger.debug(f"[FLASH] Queued leaf flash: key={leaf_flash_key}, tree_key={prefix}, leaf={leaf_field}")
+        # Queue leaf flash (groupbox with inverse masking for the specific widget)
+        self.queue_flash_local(leaf_flash_key)
+        
+        # Also queue tree item flash if this is a nested parameter
+        if tree_key:
+            self.queue_flash_local(tree_key)
+            
+        logger.debug(f"[FLASH] Queued leaf flash: key={leaf_flash_key}, leaf={leaf_field}")
 
     def _find_nested_manager_for_prefix(self, prefix: str) -> Optional['ParameterFormManager']:
         """Find the nested manager for a given field_id."""

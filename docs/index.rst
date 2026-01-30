@@ -99,6 +99,8 @@ Contents
    architecture/abstract_table_browser
    architecture/list_item_preview_system
    architecture/scope_visual_feedback_system
+   responsive_layout_widgets
+   tear_off_tabs
 
 .. toctree::
    :maxdepth: 2

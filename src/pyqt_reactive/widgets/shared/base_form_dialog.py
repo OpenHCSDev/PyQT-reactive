@@ -7,8 +7,9 @@ Generic base class for managed dialogs with WindowManager integration.
 import logging
 from typing import Optional, Callable
 
-from PyQt6.QtWidgets import QDialog, QPushButton
+from PyQt6.QtWidgets import QDialog, QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QWidget
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.animation import WindowFlashOverlay
 from pyqt_reactive.widgets.shared.scoped_border_mixin import ScopedBorderMixin
@@ -52,6 +53,64 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
             save_callback(close_window=not is_shift)
 
         button.clicked.connect(on_save_clicked)
+
+    def _create_compact_header(self, parent_layout: QVBoxLayout, title_text: str,
+                               title_color: Optional[str] = None) -> tuple[QLabel, QHBoxLayout]:
+        """
+        Create a compact two-row header for narrow windows.
+
+        Row 1: Title only (full width, centered or left-aligned)
+        Row 2: Button row (for caller to add buttons to)
+
+        This layout allows windows to be narrower by separating the title
+        from action buttons, preventing horizontal crowding.
+
+        Args:
+            parent_layout: The parent QVBoxLayout to add headers to
+            title_text: The header title text
+            title_color: Optional hex color for title (uses text_accent if None)
+
+        Returns:
+            Tuple of (title_label, button_layout) - add your buttons to button_layout
+
+        Usage:
+            title_label, button_layout = self._create_compact_header(layout, "My Title")
+            button_layout.addWidget(save_button)
+            button_layout.addWidget(cancel_button)
+        """
+        from pyqt_reactive.theming import ColorScheme
+
+        # Row 1: Title only
+        title_widget = QWidget()
+        title_layout = QHBoxLayout(title_widget)
+        title_layout.setContentsMargins(4, 4, 4, 4)
+        title_layout.setSpacing(0)
+
+        title_label = QLabel(title_text)
+        title_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+
+        # Use provided color or get from color scheme
+        if title_color is None:
+            color_scheme = ColorScheme()
+            title_color = color_scheme.to_hex(color_scheme.text_accent)
+        title_label.setStyleSheet(f"color: {title_color};")
+
+        title_layout.addWidget(title_label)
+        title_layout.addStretch()  # Push title to left
+
+        parent_layout.addWidget(title_widget)
+
+        # Row 2: Button row
+        button_widget = QWidget()
+        button_layout = QHBoxLayout(button_widget)
+        button_layout.setContentsMargins(4, 2, 4, 2)
+        button_layout.setSpacing(8)
+
+        button_layout.addStretch()  # Push buttons to right
+
+        parent_layout.addWidget(button_widget)
+
+        return title_label, button_layout
 
     def show(self) -> None:
         """Override show to enforce singleton-per-scope behavior."""
