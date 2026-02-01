@@ -10,6 +10,7 @@ import logging
 import sys
 import json
 import re
+import re
 from typing import Optional, List, Set, Tuple
 from pathlib import Path
 
@@ -174,11 +175,14 @@ class LogListModel(QAbstractListModel):
 
     MAX_LINES = 100_000
 
+    _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._lines: List[str] = []
         self._html_lines: List[Optional[str]] = []
         self._max_line_width: int = 0
+        self._max_line_text: str = ""
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # type: ignore[override]
         if parent.isValid():
@@ -203,7 +207,15 @@ class LogListModel(QAbstractListModel):
         self._lines.clear()
         self._html_lines.clear()
         self._max_line_width = 0
+        self._max_line_text = ""
         self.endResetModel()
+
+    @classmethod
+    def _visible_text_for_width(cls, text: str) -> str:
+        if not text:
+            return ""
+        stripped = cls._ANSI_RE.sub("", text)
+        return stripped.replace("\t", "    ")
 
     def append_lines(self, lines: List) -> None:
         """Append new lines, enforcing the MAX_LINES ring buffer constraint."""
@@ -227,7 +239,9 @@ class LogListModel(QAbstractListModel):
                 self.beginResetModel()
                 self._lines = [item[0] for item in normalized[-self.MAX_LINES :]]
                 self._html_lines = [item[1] for item in normalized[-self.MAX_LINES :]]
-                self._max_line_width = max((len(line) for line in self._lines), default=0)
+                visible_lines = [self._visible_text_for_width(line) for line in self._lines]
+                self._max_line_text = max(visible_lines, key=len, default="")
+                self._max_line_width = len(self._max_line_text)
                 self.endResetModel()
                 return
 
@@ -235,6 +249,9 @@ class LogListModel(QAbstractListModel):
             self.beginRemoveRows(QModelIndex(), 0, remove_count - 1)
             del self._lines[:remove_count]
             self.endRemoveRows()
+            visible_lines = [self._visible_text_for_width(line) for line in self._lines]
+            self._max_line_text = max(visible_lines, key=len, default="")
+            self._max_line_width = len(self._max_line_text)
 
         start_row = len(self._lines)
         end_row = start_row + len(normalized) - 1
@@ -242,12 +259,17 @@ class LogListModel(QAbstractListModel):
         for text, html in normalized:
             self._lines.append(text)
             self._html_lines.append(html)
-            if len(text) > self._max_line_width:
-                self._max_line_width = len(text)
+            visible = self._visible_text_for_width(text)
+            if len(visible) > self._max_line_width:
+                self._max_line_width = len(visible)
+                self._max_line_text = visible
         self.endInsertRows()
 
     def max_line_width(self) -> int:
         return self._max_line_width
+
+    def max_line_text(self) -> str:
+        return self._max_line_text
 
     def html_for_row(self, row: int) -> Optional[str]:
         if row < 0 or row >= len(self._html_lines):
@@ -856,19 +878,24 @@ class LogItemDelegate(QStyledItemDelegate):
         painter.restore()
 
         # Check if this row has an interactive document with text selection
-        if self.hasInteractiveDocument(row):
+        view = self.parent() if isinstance(self.parent(), LogListView) else None
+        wrap_visible = view.is_row_visible(row) if view is not None else False
+
+        if self.hasInteractiveDocument(row) or wrap_visible:
             # Use the interactive document which has selection state
             doc = self.getInteractiveDocument(row)
             if doc is not None:
                 # For selected rows, wrap to viewport width
-                view = self.parent() if isinstance(self.parent(), QListView) else None
                 wrap_width = opt.rect.width()
                 if view is not None and view.viewport() is not None:
                     wrap_width = view.viewport().width()
                 doc.setTextWidth(wrap_width)
             else:
-                # Fallback to cached document rendering
-                doc = self._get_or_create_document(text, opt.font, opt.rect.width())
+                # Build a wrapped document just for visible rows
+                wrap_width = opt.rect.width()
+                if view is not None and view.viewport() is not None:
+                    wrap_width = view.viewport().width()
+                doc = self._get_or_create_document(text, opt.font, wrap_width)
         else:
             # Normal rendering: use cached document (avoids QTextDocument recreation!)
             doc = self._get_or_create_document(text, opt.font, opt.rect.width())
@@ -893,15 +920,37 @@ class LogItemDelegate(QStyledItemDelegate):
         This method is heavily optimized with caching since Qt calls it
         frequently during scrolling, resizing, and layout updates.
         """
+        view = self.parent() if isinstance(self.parent(), LogListView) else None
+        wrap_visible = view.is_row_visible(index.row()) if view is not None else False
+
+        if wrap_visible:
+            text = index.data(Qt.DisplayRole)
+            if text is None:
+                return super().sizeHint(option, index)
+
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+
+            wrap_width = opt.rect.width()
+            if view is not None and view.viewport() is not None:
+                wrap_width = view.viewport().width()
+            if wrap_width <= 0:
+                wrap_width = 800
+
+            doc = self._get_or_create_document(str(text), opt.font, wrap_width)
+            doc_size = doc.size()
+            height = int(doc_size.height())
+            return QSize(wrap_width, height + 4)
+
         if self._fixed_row_height is not None:
             row = index.row()
             if not self.hasInteractiveDocument(row):
                 width = option.rect.width() if option.rect.width() > 0 else 800
                 if self._log_model is not None:
-                    max_chars = self._log_model.max_line_width()
-                    if max_chars > 0:
+                    max_text = self._log_model.max_line_text()
+                    if max_text:
                         metrics = QFontMetrics(option.font)
-                        width = metrics.horizontalAdvance("M") * max_chars + 8
+                        width = metrics.boundingRect(max_text).width() + 8
                 return QSize(width, self._fixed_row_height)
 
         text = index.data(Qt.DisplayRole)
@@ -911,11 +960,19 @@ class LogItemDelegate(QStyledItemDelegate):
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
 
+        # FAST PATH: When word wrap is disabled, use single-line height
+        # Avoid expensive document layout calculation
+        parent = self.parent()
+        if isinstance(parent, LogListView) and not parent.wordWrap():
+            metrics = QFontMetrics(opt.font)
+            height = metrics.height() + 4
+            width = opt.rect.width() if opt.rect.width() > 0 else 800
+            return QSize(width, height)
+
         # Determine available width for wrapping. Prefer the parent
         # QListView viewport width when possible so row heights respond
         # to window resizing.
         width = opt.rect.width()
-        parent = self.parent()
         if width <= 0 and isinstance(parent, QListView) and parent.viewport() is not None:
             width = parent.viewport().width()
         if width <= 0:
@@ -926,7 +983,7 @@ class LogItemDelegate(QStyledItemDelegate):
         if cache_key in self._size_hint_cache:
             return self._size_hint_cache[cache_key]
 
-        # Not cached - calculate size
+        # Not cached - calculate wrapped size (expensive)
         # Reuse document from cache if available (avoids recreation)
         doc = self._get_or_create_document(text, opt.font, width)
         doc_size = doc.size()
@@ -982,6 +1039,46 @@ class LogListView(QListView):
 
         # Enable mouse tracking for cursor changes
         self.setMouseTracking(True)
+
+        # Track visible range for viewport-only wrapping
+        self._visible_start_row = 0
+        self._visible_end_row = -1
+
+    def updateGeometries(self) -> None:
+        super().updateGeometries()
+        model = self.model()
+        if model is not None and model.rowCount() > 0:
+            index = model.index(0, 0)
+            if index.isValid():
+                rect = self.visualRect(index)
+                self.horizontalScrollBar().setPageStep(max(1, rect.width()))
+        self._update_visible_range()
+
+    def viewportEvent(self, event):  # type: ignore[override]
+        self._update_visible_range()
+        return super().viewportEvent(event)
+
+    def _update_visible_range(self) -> None:
+        model = self.model()
+        if model is None or model.rowCount() == 0:
+            self._visible_start_row = 0
+            self._visible_end_row = -1
+            return
+
+        top_index = self.indexAt(QPoint(1, 1))
+        bottom_index = self.indexAt(QPoint(1, self.viewport().height() - 2))
+        if top_index.isValid():
+            self._visible_start_row = top_index.row()
+        else:
+            self._visible_start_row = 0
+
+        if bottom_index.isValid():
+            self._visible_end_row = bottom_index.row()
+        else:
+            self._visible_end_row = model.rowCount() - 1
+
+    def is_row_visible(self, row: int) -> bool:
+        return self._visible_start_row <= row <= self._visible_end_row
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         """Handle mouse press to start text selection."""
@@ -2069,7 +2166,7 @@ class LogViewerWindow(QMainWindow):
         # Enable per-row word wrapping and variable item heights so long
         # log lines are fully visible instead of clipped or forcing
         # horizontal scrolling.
-        self.log_view.setUniformItemSizes(True)
+        self.log_view.setUniformItemSizes(False)
         self.log_view.setWordWrap(False)
         self.log_view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.log_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
