@@ -7,13 +7,14 @@ and enableable support.
 """
 
 import logging
+import inspect
 from typing import Any, Dict, Callable, Optional, Tuple, List, Set
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QScrollArea, QSizePolicy, QLayout
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 
 from python_introspect import SignatureAnalyzer, is_enableable, ENABLED_FIELD
@@ -22,6 +23,7 @@ from python_introspect import SignatureAnalyzer, is_enableable, ENABLED_FIELD
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
 from pyqt_reactive.forms import ParameterFormManager
+from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.animation import FlashMixin
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,24 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             parent=parent
         )
 
+
+
+        # Store explicit title container for flash masking (function panes only)
+        self._flash_title_container = None
+        if hasattr(self, "title_layout"):
+            if isinstance(self.title_layout, QWidget):
+                self._flash_title_container = self.title_layout
+            elif hasattr(self.title_layout, "parentWidget"):
+                self._flash_title_container = self.title_layout.parentWidget()
+
+        # Flash behavior: include title + module label in flash region
+        self._flash_include_title = True
+        self._flash_unmasked_widgets = set()
+        if isinstance(self._title_label, QLabel):
+            self._flash_unmasked_widgets.add(self._title_label)
+        if isinstance(getattr(self, "_help_button", None), QWidget):
+            self._flash_unmasked_widgets.add(self._help_button)
+
         # Initialize color scheme
         self.color_scheme = color_scheme or ColorScheme()
 
@@ -90,6 +110,21 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # CRITICAL: Store scope_id for cross-window live context updates
         self.scope_id = scope_id
+
+        # Register this pane for whole-pane flashing (after scope_id is set)
+        if not getattr(self, "_flash_key", ""):
+            self._flash_key = f"function_pane::{id(self)}"
+        self.register_flash_groupbox_full(self._flash_key, self)
+        try:
+            scoped_key = self._get_scoped_flash_key(self._flash_key)
+            logger.debug(
+                "[FLASH] FunctionPaneWidget register: flash_key=%s scoped_key=%s scope_id=%s",
+                self._flash_key,
+                scoped_key,
+                self.scope_id
+            )
+        except Exception:
+            pass
 
         # Business logic state
         self.index = index
@@ -161,8 +196,10 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         if func_module:
             # Show the full module path
             module_label = QLabel(func_module)
+            self._module_path_label = module_label
             module_label.setFont(QFont("Arial", 8))
             module_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; padding: 2px 0;")
+            self._flash_unmasked_widgets.add(module_label)
             
             # Find the main layout and insert module path at index 0 (before title)
             main_layout = self.layout()
@@ -184,11 +221,10 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         button_style = f"""
             QPushButton {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
-                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_normal_bg)};
                 border: none;
                 border-radius: 3px;
-                padding: 4px 8px;
+                padding: 2px 6px;
                 font-size: 11px;
             }}
             QPushButton:hover {{
@@ -204,87 +240,27 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             button.setToolTip(tooltip)
             button.setStyleSheet(button_style)
             button.setMaximumWidth(40 if len(name) <= 2 else 50)
-            button.setFixedHeight(22)
+            button.setFixedHeight(CURRENT_LAYOUT.button_height)
 
             # Connect button to action
             button.clicked.connect(lambda checked, a=action: self.handle_button_action(a))
 
             self.addTitleWidget(button)
+            self._flash_unmasked_widgets.add(button)
 
     def _move_enabled_widget_to_title(self):
-        """
-        Move the enabled widget from the form to the title area.
+        """Move enabled widget using shared groupbox machinery."""
+        from pyqt_reactive.forms.widget_creation_config import _move_enabled_widget_to_title
+        from python_introspect import ENABLED_FIELD
 
-        This follows the same pattern as _move_enabled_widget_to_title in widget_creation_config.py
-        for enableable dataclasses in GroupBoxWithHelp containers.
-        """
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtWidgets import QLabel
-        from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
-
-        # Prevent multiple moves (can be called from callback multiple times)
-        if hasattr(self, '_enabled_widget_moved') and self._enabled_widget_moved:
+        if self._enabled_widget_moved or not self.form_manager:
             return
-
-        if not self.form_manager:
-            return
-
         if ENABLED_FIELD not in self.form_manager.widgets:
             logger.debug(f"No enabled field found in form_manager.widgets for {self.func.__name__ if self.func else 'unknown'}")
             return
 
-        # Mark as moved first to prevent race conditions
         self._enabled_widget_moved = True
-        
-        enabled_widget = self.form_manager.widgets[ENABLED_FIELD]
-        enabled_reset_button = self.form_manager.reset_buttons.get(ENABLED_FIELD)
-        enabled_label = self.form_manager.labels.get(ENABLED_FIELD)
-        
-        # Find the row layout that contains the enabled widget
-        enabled_widget_parent = enabled_widget.parent()
-        if not enabled_widget_parent:
-            return
-        
-        enabled_widget_layout = enabled_widget_parent.layout()
-        if not enabled_widget_layout:
-            return
-        
-        # Remove the label (which contains the help button) from the row layout
-        if enabled_label:
-            enabled_widget_layout.removeWidget(enabled_label)
-            enabled_label.hide()
-        
-        # Remove the enabled widget from the row layout
-        enabled_widget_layout.removeWidget(enabled_widget)
-        
-        # Remove the enabled reset button from the row layout if it exists
-        if enabled_reset_button:
-            enabled_widget_layout.removeWidget(enabled_reset_button)
-        
-        # Make title clickable to toggle enabled checkbox
-        if hasattr(self, '_title_label') and isinstance(enabled_widget, NoneAwareCheckBox):
-            self._title_label.mousePressEvent = lambda e: enabled_widget.toggle()
-            self._title_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        # Compact checkbox for title
-        if isinstance(enabled_widget, NoneAwareCheckBox):
-            enabled_widget.setMaximumWidth(20)
-        
-        # Add the enabled widget and reset button to the title layout using clean API
-        if hasattr(self, 'addEnableableWidgets'):
-            self.addEnableableWidgets(enabled_widget, enabled_reset_button)
-        else:
-            # Fallback for backwards compatibility
-            self.addTitleInlineWidget(enabled_widget)
-            if enabled_reset_button:
-                self.addTitleInlineWidget(enabled_reset_button)
-        
-        # Clean up the empty row layout if possible
-        if enabled_widget_layout.count() == 0:
-            row_parent = enabled_widget_layout.parent()
-            if isinstance(row_parent, QWidget):
-                row_parent.setParent(None)
-        
+        _move_enabled_widget_to_title(self.form_manager, self, self.form_manager.field_id, ENABLED_FIELD)
         logger.debug(f"Moved enabled widget to title for function {self.func.__name__}")
 
     def set_scope_color_scheme(self, scheme) -> None:
@@ -294,9 +270,14 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         
         # Call parent class method to handle border/background
         super().set_scope_color_scheme(scheme)
-        
+        # Apply scheme to nested groupboxes inside the pane
+        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
+        for groupbox in self.findChildren(GroupBoxWithHelp):
+            if groupbox is self:
+                continue
+            groupbox.set_scope_color_scheme(scheme)
         # Update title label color
-        if hasattr(self, '_title_label') and scheme:
+        if scheme:
             from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
             accent_color = tint_color_perceptual(scheme.base_color_rgb, 1)
             logger.info(f"🎨 FunctionPaneWidget: Setting title color to {accent_color.name()}")
@@ -333,21 +314,15 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         #   disable the inner scroll area and let the outer FunctionListWidget
         #   handle scrolling for long forms.
 
-        # Optional imports - stub if not available
-        try:
-            from objectstate import ObjectState, ObjectStateRegistry
-        except ImportError:
-            ObjectState = None  # type: ignore
-            ObjectStateRegistry = None  # type: ignore
-
-        try:
-            from pyqt_reactive.services.scope_token_service import ScopeTokenService
-        except ImportError:
-            ScopeTokenService = None  # type: ignore
+        from objectstate import ObjectState, ObjectStateRegistry
+        from pyqt_reactive.services.scope_token_service import ScopeTokenService
 
         # Build function-specific scope: step_scope::func_N
         step_scope = self.scope_id or "no_scope"
         func_scope_id = ScopeTokenService.build_scope_id(step_scope, self.func)
+
+        reserved_param = self._get_reserved_param_name()
+        exclude_params = [reserved_param] if reserved_param else None
 
         # Check if ObjectState already exists (e.g., from time travel restore)
         # If so, reuse it to preserve restored state; otherwise create new
@@ -362,10 +337,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 object_instance=self.func,
                 scope_id=func_scope_id,
                 parent_state=parent_state,
+                exclude_params=exclude_params,
                 initial_values=self.kwargs,
             )
-            ObjectStateRegistry.register(func_state)
-            self._func_state = func_state  # Store for cleanup
+            # Register here if missing (legacy paths), but do not record snapshot
+            ObjectStateRegistry.register(func_state, _skip_snapshot=True)
+            self._func_state = None
 
         self.form_manager = PyQtParameterFormManager(
             state=func_state,
@@ -373,6 +350,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 parent=self,                      # Pass self as parent widget
                 color_scheme=self.color_scheme,   # Pass color_scheme for consistent theming
                 use_scroll_area=False,            # Let outer FunctionListWidget manage scrolling
+                exclude_params=exclude_params,
             )
         )
 
@@ -380,7 +358,13 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         # Uses ObjectState.forward_to_parent_state('func') to notify parent its 'func' field changed
         # Note: Per-parameter flashing is handled automatically by the PFM
         if func_state._parent_state is not None:
+            self._suppress_initial_resolved_forward = True
+            def allow_forward_after_init():
+                self._suppress_initial_resolved_forward = False
+            QTimer.singleShot(0, allow_forward_after_init)
             def forward_to_step(changed_paths):
+                if self._suppress_initial_resolved_forward:
+                    return
                 # Notify parent state that its 'func' field conceptually changed
                 func_state.forward_to_parent_state('func')
             func_state.on_resolved_changed(forward_to_step)
@@ -388,12 +372,30 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Connect parameter changes
         self.form_manager.parameter_changed.connect(
-            lambda param_name, value: self.handle_parameter_change(param_name, value)
+            lambda param_name, value: self.handle_parameter_change(param_name, value),
+            type=Qt.ConnectionType.DirectConnection
         )
 
         layout.addWidget(self.form_manager)
 
         return container
+
+    def _get_reserved_param_name(self) -> Optional[str]:
+        """Return the reserved first parameter name for functions, if any."""
+        if not self.func:
+            return None
+
+        try:
+            sig = inspect.signature(self.func)
+        except (TypeError, ValueError):
+            return None
+
+        for param_name, _param in sig.parameters.items():
+            if param_name in ("self", "cls"):
+                continue
+            return param_name
+
+        return None
 
     def cleanup_object_state(self) -> None:
         """Unregister ObjectState on widget destruction."""
@@ -403,7 +405,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 ObjectStateRegistry.unregister(self._func_state)
                 self._func_state = None
         except ImportError:
-            pass  # ObjectStateRegistry not available
+            raise
 
     def create_parameter_widget(self, param_name: str, param_type: type, current_value: Any) -> Optional[QWidget]:
         """
@@ -469,7 +471,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
     
     def setup_connections(self):
         """Setup signal/slot connections."""
-        pass  # Connections are set up in widget creation
+        return
     
     def handle_button_action(self, action: str):
         """
@@ -656,6 +658,7 @@ class FunctionListWidget(QWidget):
         
         # Add function button
         add_button = QPushButton("Add Function")
+        add_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         add_button.clicked.connect(lambda: self.add_function_at_index(len(self.functions)))
         layout.addWidget(add_button)
     
@@ -669,10 +672,7 @@ class FunctionListWidget(QWidget):
                 pane.cleanup_object_state()
             # Explicitly unregister the form manager before scheduling deletion
             if hasattr(pane, 'form_manager') and pane.form_manager is not None:
-                try:
-                    pane.form_manager.unregister_from_cross_window_updates()
-                except RuntimeError:
-                    pass  # Already deleted
+                pane.form_manager.unregister_from_cross_window_updates()
             pane.deleteLater()  # Schedule for deletion - triggers destroyed signal
         self.function_panes.clear()
         
@@ -681,7 +681,7 @@ class FunctionListWidget(QWidget):
             pane = FunctionPaneWidget(func_item, i, self.service_adapter, color_scheme=self.color_scheme)
             
             # Connect signals
-            pane.parameter_changed.connect(self.on_parameter_changed)
+            pane.parameter_changed.connect(self.on_parameter_changed, type=Qt.ConnectionType.DirectConnection)
             pane.add_function.connect(self.add_function_at_index)
             pane.remove_function.connect(self.remove_function_at_index)
             pane.move_function.connect(self.move_function)

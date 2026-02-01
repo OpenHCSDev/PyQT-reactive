@@ -5,6 +5,7 @@ Provides pluggable formatting strategies for list item previews.
 Separates data collection from presentation using builder pattern and config-driven styling.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Callable, TYPE_CHECKING, Dict, Any, Type, Union
@@ -13,6 +14,8 @@ if TYPE_CHECKING:
     from objectstate import ObjectState
 
 from pyqt_reactive.widgets.shared.list_item_delegate import Segment
+
+logging.getLogger(__name__).setLevel(logging.WARNING)
 
 
 def get_group_abbreviation(config_type: Union[str, type]) -> str:

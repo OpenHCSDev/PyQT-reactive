@@ -147,6 +147,7 @@ class ConfigHierarchyTreeHelper:
         minimum_width: int = 0,  # Allow collapsing to 0 for splitter
         flash_manager: Optional['ConfigWindow'] = None,
         state: Optional['ObjectState'] = None,
+        strip_config_suffix: bool = False,
     ) -> QTreeWidget:
         """Create a pre-configured QTreeWidget for hierarchy display.
 
@@ -164,6 +165,7 @@ class ConfigHierarchyTreeHelper:
         # Store flash manager for use during population
         self._flash_manager = flash_manager
         self._current_tree = tree
+        self._strip_config_suffix = strip_config_suffix
         # Fresh mapping per tree build to avoid stale item references
         self._path_to_item = {}
         # Track dirty callbacks per tree to allow rebuilding subscriptions on re-init
@@ -388,7 +390,7 @@ class ConfigHierarchyTreeHelper:
         self._current_tree = tree
         for field_name, obj_type in dataclass_mapping.items():
             base_type = self.get_base_type(obj_type)
-            label = getattr(base_type, "__name__", field_name)
+            label = self._format_label(getattr(base_type, "__name__", field_name))
             path = field_name
             alt_path = self._to_snake_case(base_type.__name__)
 
@@ -431,7 +433,7 @@ class ConfigHierarchyTreeHelper:
                 continue
 
             base_type = self.get_base_type(field_type)
-            display_name = getattr(base_type, "__name__", field.name)
+            display_name = self._format_label(getattr(base_type, "__name__", field.name))
             ui_hidden = self.is_field_ui_hidden(obj_type, field.name, field_type)
 
             if is_root and skip_root_ui_hidden and ui_hidden:
@@ -498,6 +500,12 @@ class ConfigHierarchyTreeHelper:
             return ""
         s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
         return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+    def _format_label(self, label: str) -> str:
+        """Optionally strip 'Config' suffix from labels for presentation only."""
+        if getattr(self, "_strip_config_suffix", False) and label.endswith("Config"):
+            return label[:-6]
+        return label
 
     def is_field_ui_hidden(
         self,

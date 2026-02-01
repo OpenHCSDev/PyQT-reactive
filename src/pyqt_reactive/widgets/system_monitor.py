@@ -11,7 +11,7 @@ from typing import Optional
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout, QSizePolicy, QPushButton
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout, QSizePolicy, QPushButton, QSplitter
 )
 from PyQt6.QtCore import QTimer, pyqtSignal, QMetaObject, Qt
 from PyQt6.QtGui import QFont, QResizeEvent
@@ -41,10 +41,25 @@ class SystemMonitorWidget(QWidget):
     Provides the same functionality as the Textual SystemMonitorTextual widget.
     """
     
+    # Declarative button configuration (matches AbstractManagerWidget pattern)
+    BUTTON_CONFIGS = [
+        ("Global Config", "global_config", "Open global configuration editor"),
+        ("Log Viewer", "log_viewer", "Open log viewer window"),
+        ("Custom Functions", "custom_functions", "Manage custom functions"),
+        ("Test Plate", "test_plate", "Generate synthetic test plate"),
+    ]
+    BUTTON_GRID_COLUMNS = 0  # Single row (all buttons next to each other)
+    
     # Signals
     metrics_updated = pyqtSignal(dict)  # Emitted when metrics are updated
     _pyqtgraph_loaded = pyqtSignal()  # Internal signal for async pyqtgraph loading
     _pyqtgraph_failed = pyqtSignal()  # Internal signal for async pyqtgraph loading failure
+    
+    # Button action signals
+    show_global_config = pyqtSignal()  # Request to show global config
+    show_log_viewer = pyqtSignal()  # Request to show log viewer
+    show_custom_functions = pyqtSignal()  # Request to show custom functions manager
+    show_test_plate_generator = pyqtSignal()  # Request to show synthetic plate generator
     
     def __init__(self,
                  color_scheme: Optional[ColorScheme] = None,
@@ -88,9 +103,22 @@ class SystemMonitorWidget(QWidget):
         # Delay monitoring start until widget is shown (fixes WSL2 hanging)
         self._monitoring_started = False
 
+        # Render-timer interpolation state
+        self._render_timer = QTimer(self)
+        self._render_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._render_timer.timeout.connect(self._render_frame)
+        self._last_metrics_time = None
+        self._last_metrics = None
+        self._next_metrics = None
+
         # Setup UI
         self.setup_ui()
         self.setup_connections()
+
+        # Set size policy to minimum - let surrounding widgets expand into this space
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        # Set minimum size for usability - more vertically compact
+        self.setMinimumSize(200, 160)
 
         logger.debug("System monitor widget initialized")
 
@@ -107,11 +135,13 @@ class SystemMonitorWidget(QWidget):
         monitor = getattr(config, "performance_monitor", None)
         if monitor is None:
             update_fps = 5.0
+            render_fps = 60.0
             history_duration_seconds = 60.0
             update_interval_seconds = 1.0 / update_fps
             calculated_max_data_points = int(history_duration_seconds / update_interval_seconds)
             return SimpleNamespace(
                 update_fps=update_fps,
+                render_fps=render_fps,
                 history_duration_seconds=history_duration_seconds,
                 update_interval_seconds=update_interval_seconds,
                 calculated_max_data_points=calculated_max_data_points,
@@ -122,6 +152,7 @@ class SystemMonitorWidget(QWidget):
             )
 
         update_fps = getattr(monitor, "update_fps", 5.0)
+        render_fps = getattr(monitor, "render_fps", 60.0)
         history_duration_seconds = getattr(monitor, "history_duration_seconds", 60.0)
         update_interval_seconds = getattr(
             monitor,
@@ -135,6 +166,7 @@ class SystemMonitorWidget(QWidget):
         )
         return SimpleNamespace(
             update_fps=update_fps,
+            render_fps=render_fps,
             history_duration_seconds=history_duration_seconds,
             update_interval_seconds=update_interval_seconds,
             calculated_max_data_points=calculated_max_data_points,
@@ -244,6 +276,7 @@ class SystemMonitorWidget(QWidget):
             # Start monitoring only when widget is actually shown
             # This prevents WSL2 hanging issues during initialization
             self.start_monitoring()
+            self._start_render_timer()
             self._monitoring_started = True
             logger.debug("System monitoring started on widget show")
 
@@ -276,19 +309,9 @@ class SystemMonitorWidget(QWidget):
         # Use the actual info panel width, not the whole widget width
         panel_width = self.info_widget.width()
 
-        # Conservative font sizes to prevent clipping
-        # Title font: 9-12pt based on panel width
-        title_size = max(9, min(12, panel_width // 50))
-
-        # Label font: 7-10pt based on panel width
-        # Conservative sizing to ensure no clipping
-        label_size = max(7, min(10, panel_width // 60))
-
-        # Update title font
-        if hasattr(self, 'info_title'):
-            title_font = QFont("Arial", title_size)
-            title_font.setBold(True)
-            self.info_title.setFont(title_font)
+        # Larger font sizes for better readability
+        # Label font: 10-13pt based on panel width
+        label_size = max(10, min(13, panel_width // 50))
 
         # Update all label fonts
         if hasattr(self, 'cpu_cores_label'):
@@ -307,51 +330,129 @@ class SystemMonitorWidget(QWidget):
                 label_pair[1].setFont(value_font)
     
     def setup_ui(self):
-        """Setup the user interface."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins
-        layout.setSpacing(2)  # Minimal spacing
+        """Setup the user interface with proper splitter hierarchy."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(2, 2, 2, 2)
+        main_layout.setSpacing(2)
 
-        # System Info (left) + Graphs (right) in horizontal layout
-        top_section = self.create_top_section()
-        layout.addLayout(top_section)
+        # Header (title + status) - similar to AbstractManagerWidget
+        header = self._create_header()
+        main_layout.addWidget(header)
+
+        # MAIN HSPLIT: Left side (with nested VSPLIT) | Right side (graphs)
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # LEFT SIDE: VSPLIT with System Info (top) and Buttons (bottom)
+        left_side = self._create_left_side_with_vsplit()
+        main_splitter.addWidget(left_side)
+
+        # RIGHT SIDE: Performance Monitor (graphs)
+        self.graphs_container = QWidget()
+        self.graphs_container.setMinimumSize(1, 1)  # Allow to shrink to minimum
+        self.graphs_layout = QVBoxLayout(self.graphs_container)
+        self.graphs_layout.setContentsMargins(0, 0, 0, 0)
+        self.graphs_layout.setSpacing(0)
+
+        # Start with loading placeholder
+        self.monitoring_widget = self.create_loading_placeholder()
+        self.graphs_layout.addWidget(self.monitoring_widget)
+
+        main_splitter.addWidget(self.graphs_container)
+
+        # Set sizes: smaller left side, larger graphs area
+        main_splitter.setSizes([80, 240])
+        main_splitter.setStretchFactor(0, 0)  # Don't expand left side
+        main_splitter.setStretchFactor(1, 1)  # Graphs can expand horizontally
+        # Cap maximum height for graphs to keep vertical compactness
+        self.graphs_container.setMaximumHeight(180)
+
+        main_layout.addWidget(main_splitter)
 
         # Apply centralized styling
         self.setStyleSheet(self.style_generator.generate_system_monitor_style())
 
         # Load PyQtGraph asynchronously
         self._load_pyqtgraph_async()
-        
-        # Set fixed height for the system monitor
-        self.setFixedHeight(200)
-    
-    def create_top_section(self) -> QHBoxLayout:
-        """
-        Create the top section with system info (left) and graphs (right).
 
-        Returns:
-            Top section layout
-        """
-        top_layout = QHBoxLayout()
+    def _create_header(self) -> QWidget:
+        """Create header with title and status label (similar to AbstractManagerWidget)."""
+        header = QWidget()
+        header.setMinimumHeight(30)  # Ensure title and status are visible
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(5, 5, 5, 5)
 
-        # System info panel (left side)
+        # Title label
+        title_label = QLabel("System Monitor")
+        title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title_label.setStyleSheet(
+            f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};"
+        )
+        header_layout.addWidget(title_label)
+
+        header_layout.addStretch()
+
+        # Status label
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet(
+            f"color: {self.color_scheme.to_hex(self.color_scheme.status_success)}; "
+            f"font-weight: bold;"
+        )
+        header_layout.addWidget(self.status_label)
+
+        return header
+
+    def _create_left_side_with_vsplit(self) -> QWidget:
+        """Create left side with VSPLIT: System Info on top, buttons on bottom."""
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # Top: System info panel
         self.info_widget = self.create_info_panel()
-        top_layout.addWidget(self.info_widget, 1)  # Stretch factor = 1
+        splitter.addWidget(self.info_widget)
 
-        # Graphs container (right side) - holds the graphs
-        self.graphs_container = QWidget()
-        self.graphs_layout = QVBoxLayout(self.graphs_container)
-        self.graphs_layout.setContentsMargins(0, 0, 0, 0)
-        self.graphs_layout.setSpacing(0)
+        # Bottom: Button panel - store reference for API access
+        self.button_panel = self._create_button_panel()
+        splitter.addWidget(self.button_panel)
+
+        # Set sizes: fixed sizes - don't expand
+        splitter.setSizes([200, 80])
+        splitter.setStretchFactor(0, 0)  # Info doesn't expand
+        splitter.setStretchFactor(1, 0)  # Buttons don't expand
+
+        return splitter
+
+    def _create_button_panel(self) -> QWidget:
+        """Create button panel using reusable ButtonPanel component."""
+        from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
+        from PyQt6.QtWidgets import QSizePolicy
         
-        # Start with loading placeholder in the graphs container
-        self.monitoring_widget = self.create_loading_placeholder()
-        self.graphs_layout.addWidget(self.monitoring_widget)
-        
-        top_layout.addWidget(self.graphs_container, 2)  # Stretch factor = 2 (graphs need more space)
-
-        return top_layout
-
+        panel = ButtonPanel(
+            button_configs=self.BUTTON_CONFIGS,
+            on_action=self.handle_button_action,
+            style_generator=self.style_generator,
+            grid_columns=self.BUTTON_GRID_COLUMNS,
+            parent=self
+        )
+        # Prevent panel from expanding vertically
+        panel.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        return panel
+    
+    def handle_button_action(self, action_id: str):
+        """Handle button actions declaratively."""
+        if action_id == "global_config":
+            self.show_global_config.emit()
+        elif action_id == "log_viewer":
+            self.show_log_viewer.emit()
+        elif action_id == "custom_functions":
+            self.show_custom_functions.emit()
+        elif action_id == "test_plate":
+            self.show_test_plate_generator.emit()
+    
+    def _force_refresh(self):
+        """Force an immediate refresh of system metrics."""
+        logger.debug("Force refresh requested")
+        # The persistent monitor updates automatically, but we could add
+        # immediate refresh logic here if needed
+    
     def create_ascii_widget(self) -> QWidget:
         """Create the ASCII art widget for the bottom."""
         widget = QWidget()
@@ -370,34 +471,23 @@ class SystemMonitorWidget(QWidget):
         return widget
 
     def create_info_panel(self) -> QWidget:
-        """Create a styled system information panel with two-column layout."""
-        panel = QFrame()
+        """Create a system information panel matching AbstractManagerWidget styling."""
+        panel = QWidget()
         panel.setObjectName("info_panel")
-        panel.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
+        panel.setMinimumSize(1, 1)  # Allow to shrink to minimum
 
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(20, 15, 20, 15)
-        layout.setSpacing(12)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
-        # Title with timestamp (font size set dynamically in resizeEvent)
-        self.info_title = QLabel("System Information")
-        self.info_title.setObjectName("info_title")
-        layout.addWidget(self.info_title)
-
-        # Separator line
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(separator)
-
-        # Two-column grid layout with compact labels
+        # Two-column grid layout with tighter spacing
         # Grid has 5 columns: [Label1, Value1, Spacer, Label2, Value2]
         info_grid = QGridLayout()
-        info_grid.setHorizontalSpacing(12)
-        info_grid.setVerticalSpacing(8)
-        info_grid.setColumnStretch(1, 2)  # Left value column stretches more
-        info_grid.setColumnMinimumWidth(2, 25)  # Spacer between columns
-        info_grid.setColumnStretch(4, 2)  # Right value column stretches more
+        info_grid.setHorizontalSpacing(8)
+        info_grid.setVerticalSpacing(10)
+        info_grid.setColumnStretch(1, 0)  # Left value column - no stretch
+        info_grid.setColumnMinimumWidth(2, 15)  # Minimal spacer between columns
+        info_grid.setColumnStretch(4, 0)  # Right value column - no stretch
 
         # Left column - CPU and RAM info (shorter labels)
         self.cpu_cores_label = self.create_info_row("Cores:", "—")
@@ -427,7 +517,7 @@ class SystemMonitorWidget(QWidget):
         info_grid.addWidget(self.vram_label[1], 2, 4)
 
         layout.addLayout(info_grid)
-        layout.addStretch()
+        # No stretch - panel takes only needed space
 
         # Schedule initial font size update after panel is shown
         QTimer.singleShot(100, self._update_font_sizes_from_panel)
@@ -467,9 +557,13 @@ class SystemMonitorWidget(QWidget):
         pg.setConfigOption('foreground', 'white')
         pg.setConfigOption('antialias', self.monitor_config.antialiasing)
 
-        # Create consolidated PyQtGraph plots
+        # Create consolidated PyQtGraph plots with minimal size constraints
         self.cpu_gpu_plot = pg.PlotWidget(title="CPU/GPU Usage")
         self.ram_vram_plot = pg.PlotWidget(title="RAM/VRAM Usage")
+        
+        # Allow plots to shrink to very small size
+        self.cpu_gpu_plot.setMinimumSize(1, 1)
+        self.ram_vram_plot.setMinimumSize(1, 1)
 
         # Disable mouse interaction on plots
         self.cpu_gpu_plot.setMouseEnabled(x=False, y=False)
@@ -530,7 +624,8 @@ class SystemMonitorWidget(QWidget):
         # Add plots to grid layout (side-by-side by default)
         self._update_graph_layout()
 
-        main_layout.addWidget(self.graph_container, 1)  # Stretch factor = 1
+        # No stretch - let container take minimum size
+        main_layout.addWidget(self.graph_container, 0)
 
         return widget
     
@@ -559,12 +654,12 @@ class SystemMonitorWidget(QWidget):
         self._graphs_side_by_side = not self._graphs_side_by_side
         self._update_graph_layout()
 
-        # Update button text
-        if hasattr(self, 'layout_toggle_button'):
+        # Update button text via ButtonPanel API
+        if hasattr(self, 'button_panel'):
             if self._graphs_side_by_side:
-                self.layout_toggle_button.setText("⬍ Stack")
+                self.button_panel.set_button_text("toggle_layout", "Stack")
             else:
-                self.layout_toggle_button.setText("⬌ Side")
+                self.button_panel.set_button_text("toggle_layout", "Side-by-Side")
 
     def _update_graph_layout(self):
         """Update the graph layout based on current mode."""
@@ -628,6 +723,7 @@ class SystemMonitorWidget(QWidget):
     def stop_monitoring(self):
         """Stop the persistent monitoring thread."""
         self.persistent_monitor.stop_monitoring()
+        self._stop_render_timer()
         logger.debug("System monitoring stopped")
 
     def cleanup(self):
@@ -709,19 +805,88 @@ class SystemMonitorWidget(QWidget):
             # Update system info
             self.update_system_info(metrics)
 
-            # Update plots or fallback display
-            if PYQTGRAPH_AVAILABLE is True:
-                # PyQtGraph loaded successfully - update graphs
-                self.update_pyqtgraph_plots()
-            elif PYQTGRAPH_AVAILABLE is False:
-                # PyQtGraph failed to load - update fallback display
+            # Queue metrics for render interpolation
+            self._queue_metrics(metrics)
+
+            # Update fallback display immediately if graphs are unavailable
+            if PYQTGRAPH_AVAILABLE is False:
                 self.update_fallback_display(metrics)
-            # else: PYQTGRAPH_AVAILABLE is None - still loading, skip update
+            # else: render timer handles plot updates for smooth interpolation
 
         except Exception as e:
             logger.warning(f"Failed to update display: {e}")
+
+    def _start_render_timer(self):
+        """Start high-FPS render timer for smooth graph updates."""
+        render_fps = max(1.0, float(getattr(self.monitor_config, "render_fps", 60.0)))
+        interval_ms = max(1, int(1000.0 / render_fps))
+        if not self._render_timer.isActive():
+            self._render_timer.start(interval_ms)
+
+    def _stop_render_timer(self):
+        """Stop render timer."""
+        if self._render_timer.isActive():
+            self._render_timer.stop()
+
+    def _queue_metrics(self, metrics: dict):
+        """Queue metrics for interpolation between data updates."""
+        now = time.time()
+        if self._next_metrics is None:
+            self._last_metrics = metrics
+            self._next_metrics = metrics
+            self._last_metrics_time = now
+            return
+
+        self._last_metrics = self._next_metrics
+        self._next_metrics = metrics
+        self._last_metrics_time = now
+
+    def _render_frame(self):
+        """Render a frame using interpolated metrics and plot data."""
+        if PYQTGRAPH_AVAILABLE is not True:
+            return
+
+        data_length = len(self.monitor.cpu_history)
+        if data_length == 0:
+            return
+
+        render_metrics = self._get_interpolated_metrics()
+        if render_metrics is None:
+            return
+
+        self.update_pyqtgraph_plots(render_metrics)
+
+    def _get_interpolated_metrics(self) -> Optional[dict]:
+        """Interpolate between last and next metrics for smooth rendering."""
+        if self._last_metrics is None or self._next_metrics is None:
+            return None
+
+        update_interval = self.monitor_config.update_interval_seconds
+        if update_interval <= 0:
+            return self._next_metrics
+
+        now = time.time()
+        elapsed = max(0.0, now - (self._last_metrics_time or now))
+        t = min(1.0, elapsed / update_interval)
+
+        interpolated = dict(self._next_metrics)
+        for key in (
+            "cpu_percent",
+            "ram_percent",
+            "gpu_percent",
+            "vram_percent",
+        ):
+            if key in self._last_metrics and key in self._next_metrics:
+                try:
+                    start = float(self._last_metrics[key])
+                    end = float(self._next_metrics[key])
+                    interpolated[key] = start + (end - start) * t
+                except (TypeError, ValueError):
+                    interpolated[key] = self._next_metrics.get(key)
+
+        return interpolated
     
-    def update_pyqtgraph_plots(self):
+    def update_pyqtgraph_plots(self, metrics: Optional[dict] = None):
         """Update consolidated PyQtGraph plots with current data - non-blocking and fast."""
         try:
             # Convert data point indices to time values in seconds
@@ -745,14 +910,17 @@ class SystemMonitorWidget(QWidget):
             # Handle GPU data (may not be available)
             if any(gpu_data):
                 self.gpu_curve.setData(x_time, gpu_data)
-                gpu_status = f'{gpu_data[-1]:.1f}%' if gpu_data else 'N/A'
             else:
                 self.gpu_curve.setData([], [])  # Clear data
-                gpu_status = 'Not Available'
 
             # Update CPU/GPU plot title with current values
-            cpu_status = f'{cpu_data[-1]:.1f}%' if cpu_data else 'N/A'
-            self.cpu_gpu_plot.setTitle(f'CPU/GPU Usage - CPU: {cpu_status}, GPU: {gpu_status}')
+            if metrics:
+                cpu_status = f"{metrics.get('cpu_percent', 0.0):.1f}%"
+                gpu_status = f"{metrics.get('gpu_percent', 0.0):.1f}%" if any(gpu_data) else "Not Available"
+            else:
+                cpu_status = f'{cpu_data[-1]:.1f}%' if cpu_data else 'N/A'
+                gpu_status = f'{gpu_data[-1]:.1f}%' if gpu_data else 'Not Available'
+            self.cpu_gpu_plot.setTitle(f'CPU: {cpu_status}, GPU: {gpu_status}')
 
             # Update RAM/VRAM consolidated plot
             self.ram_curve.setData(x_time, ram_data)
@@ -760,14 +928,17 @@ class SystemMonitorWidget(QWidget):
             # Handle VRAM data (may not be available)
             if any(vram_data):
                 self.vram_curve.setData(x_time, vram_data)
-                vram_status = f'{vram_data[-1]:.1f}%' if vram_data else 'N/A'
             else:
                 self.vram_curve.setData([], [])  # Clear data
-                vram_status = 'Not Available'
 
             # Update RAM/VRAM plot title with current values
-            ram_status = f'{ram_data[-1]:.1f}%' if ram_data else 'N/A'
-            self.ram_vram_plot.setTitle(f'RAM/VRAM Usage - RAM: {ram_status}, VRAM: {vram_status}')
+            if metrics:
+                ram_status = f"{metrics.get('ram_percent', 0.0):.1f}%"
+                vram_status = f"{metrics.get('vram_percent', 0.0):.1f}%" if any(vram_data) else "Not Available"
+            else:
+                ram_status = f'{ram_data[-1]:.1f}%' if ram_data else 'N/A'
+                vram_status = f'{vram_data[-1]:.1f}%' if vram_data else 'Not Available'
+            self.ram_vram_plot.setTitle(f'RAM: {ram_status}, VRAM: {vram_status}')
 
         except Exception as e:
             logger.warning(f"Failed to update PyQtGraph plots: {e}")
@@ -801,10 +972,6 @@ class SystemMonitorWidget(QWidget):
             metrics: Dictionary of system metrics
         """
         try:
-            # Update title with timestamp
-            self.info_title.setText(f"System Information — {datetime.now().strftime('%H:%M:%S')}")
-
-            # Update CPU info
             self.cpu_cores_label[1].setText(str(metrics.get('cpu_cores', 'N/A')))
             self.cpu_freq_label[1].setText(f"{metrics.get('cpu_freq_mhz', 0):.0f} MHz")
 
@@ -928,6 +1095,12 @@ class SystemMonitorWidget(QWidget):
 
             # Restart monitoring
             self.start_monitoring()
+
+        # Update render timer FPS if needed
+        if getattr(old_monitor_config, "render_fps", None) != getattr(self.monitor_config, "render_fps", None):
+            if self._render_timer.isActive():
+                self._stop_render_timer()
+                self._start_render_timer()
 
         # Update plot appearance if needed
         if (old_config.performance_monitor.chart_colors != new_config.performance_monitor.chart_colors or

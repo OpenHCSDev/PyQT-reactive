@@ -83,7 +83,7 @@ class StyleSheetGenerator:
                 color: {cs.to_hex(cs.text_primary)};
             }}
         """
-    
+
     def generate_tree_widget_style(self) -> str:
         """
         Generate QStyleSheet for tree widgets and list widgets.
@@ -149,6 +149,7 @@ class StyleSheetGenerator:
             QTableWidget::item {{
                 padding: 4px;
                 border: none;
+                qproperty-wordWrap: false;
             }}
             QTableWidget::item:hover {{
                 background-color: {cs.to_hex(cs.hover_bg)};
@@ -315,8 +316,6 @@ class StyleSheetGenerator:
             SystemMonitorWidget {{
                 background-color: {cs.to_hex(cs.window_bg)};
                 color: {cs.to_hex(cs.text_primary)};
-                border: 1px solid {cs.to_hex(cs.border_color)};
-                border-radius: 5px;
             }}
             QLabel {{
                 color: {cs.to_hex(cs.text_primary)};
@@ -328,21 +327,20 @@ class StyleSheetGenerator:
             }}
             #info_panel {{
                 background-color: {cs.to_hex(cs.panel_bg)};
-                border: 2px solid {cs.to_hex(cs.border_color)};
-                border-radius: 8px;
-                padding: 5px;
             }}
             #info_title {{
                 color: {cs.to_hex(cs.text_accent)};
                 font-weight: bold;
-                padding-bottom: 5px;
+                font-size: 11px;
             }}
             #info_label_key {{
                 color: {cs.to_hex(cs.text_secondary)};
+                font-size: 10px;
             }}
             #info_label_value {{
                 color: {cs.to_hex(cs.text_primary)};
                 font-weight: bold;
+                font-size: 11px;
             }}
         """
     
@@ -443,11 +441,43 @@ class StyleSheetGenerator:
         Generate individual button styles for config window buttons.
 
         Returns:
-            dict: Dictionary with button styles for reset, cancel, save
+            dict: Dictionary with button styles for generic, reset, cancel, save
         """
         cs = self.color_scheme
 
         return {
+            "generic": f"""
+                QPushButton {{
+                    background-color: {cs.to_hex(cs.button_normal_bg)};
+                    color: {cs.to_hex(cs.button_text)};
+                    border: 1px solid {cs.to_hex(cs.border_light)};
+                    border-radius: 3px;
+                    padding: 8px;
+                    font-size: 11px;
+                }}
+                QPushButton:hover {{
+                    background-color: {cs.to_hex(cs.button_hover_bg)};
+                }}
+                QPushButton:pressed {{
+                    background-color: {cs.to_hex(cs.button_pressed_bg)};
+                }}
+            """,
+            "compact": f"""
+                QPushButton {{
+                    background-color: {cs.to_hex(cs.button_normal_bg)};
+                    color: {cs.to_hex(cs.button_text)};
+                    border: none;
+                    border-radius: 3px;
+                    padding: 6px 10px;
+                    font-size: 11px;
+                }}
+                QPushButton:hover {{
+                    background-color: {cs.to_hex(cs.button_hover_bg)};
+                }}
+                QPushButton:pressed {{
+                    background-color: {cs.to_hex(cs.button_pressed_bg)};
+                }}
+            """,
             "reset": f"""
                 QPushButton {{
                     background-color: {cs.to_hex(cs.button_normal_bg)};

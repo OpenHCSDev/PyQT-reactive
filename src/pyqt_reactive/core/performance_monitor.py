@@ -16,7 +16,7 @@ from pyqt_reactive.protocols import get_form_config
 # Create performance logger
 _config = get_form_config()
 perf_logger = logging.getLogger(_config.performance_logger_name)
-perf_logger.setLevel(logging.DEBUG)
+perf_logger.setLevel(logging.WARNING)
 
 # Add file handler for performance logs
 _log_dir = Path(_config.log_dir) if _config.log_dir else Path.home() / '.local' / 'share' / 'pyqt_reactive' / 'logs'
@@ -32,7 +32,7 @@ perf_logger.addHandler(file_handler)
 
 # Also log to console
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
+console_handler.setLevel(logging.WARNING)
 console_handler.setFormatter(logging.Formatter(
     '⏱️  %(message)s'
 ))

@@ -8,7 +8,7 @@ import logging
 from typing import Optional, Callable
 
 from PyQt6.QtWidgets import QDialog, QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QWidget
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.animation import WindowFlashOverlay
@@ -126,6 +126,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
         WindowManager.register(scope_key, self)
         super().show()
+        QTimer.singleShot(0, lambda: WindowManager.position_window_near_cursor(self))
         logger.debug(f"[SINGLETON] Registered and showed new window for {scope_key}")
 
     def accept(self):

@@ -7,7 +7,7 @@ Displays a scrollable list of function panes with Add/Load/Save/Code controls.
 
 import logging
 import os
-from typing import List, Union, Dict, Optional, Any
+from typing import List, Union, Dict, Optional, Any, Callable
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
@@ -21,9 +21,12 @@ from pyqt_reactive.protocols import (
     get_function_selection_provider,
 )
 from pyqt_reactive.services.pattern_data_manager import PatternDataManager
+from python_introspect import SignatureAnalyzer
 from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
 from objectstate import ObjectStateRegistry
 from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.theming import StyleSheetGenerator
+from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.widget_strategies import _get_enum_display_text
 
 logger = logging.getLogger(__name__)
@@ -32,21 +35,70 @@ logger = logging.getLogger(__name__)
 class FunctionListEditorWidget(QWidget):
     """
     Function list editor widget that mirrors Textual TUI functionality.
-    
+
     Displays functions with parameter editing, Add/Delete/Reset buttons,
     and Load/Save/Code functionality.
     """
-    
+
     # Signals
     function_pattern_changed = pyqtSignal()
+
+    # No ObjectState - this widget manages data through function panes, not ParameterFormManager
+    state = None
     
     def __init__(self, initial_functions: Union[List, Dict, callable, None] = None,
-                 step_identifier: str = None, service_adapter=None, color_scheme: Optional[ColorScheme] = None,
-                 step_instance=None, scope_id: Optional[str] = None, parent=None):
+                  step_identifier: str = None, service_adapter=None, color_scheme: Optional[ColorScheme] = None,
+                  step_instance=None, scope_id: Optional[str] = None, parent=None, render_header: bool = True,
+                  button_style: Optional[str] = None):
         super().__init__(parent)
 
         # Initialize color scheme
         self.color_scheme = color_scheme or ColorScheme()
+        self._render_header = render_header
+        self.header_label: Optional[QLabel] = None
+        self._button_style = button_style  # Store centralized button style
+        self.style_generator = StyleSheetGenerator(self.color_scheme)
+
+        # Step configuration properties (mirrors Textual TUI)
+        self.current_group_by = None  # Current GroupBy setting from step editor
+        self.current_variable_components = []  # Current VariableComponents list from step editor
+        self.selected_channel = None  # Currently selected channel
+        self.available_channels = []  # Available channels from orchestrator
+        self.is_dict_mode = False  # Whether we're in channel-specific mode
+
+        # Component selection cache per GroupBy (mirrors Textual TUI)
+        self.component_selections = {}
+
+        # Create action buttons container (always, for external access)
+        self._action_buttons_container = QWidget()
+        self._action_buttons_container.setObjectName("func_action_buttons_container")
+        self._action_buttons_layout = QHBoxLayout(self._action_buttons_container)
+        self._action_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        self._action_buttons_layout.setSpacing(2)
+        self._action_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        
+        add_btn = QPushButton("Add")
+        add_btn.setMaximumWidth(60)
+        add_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
+        add_btn.setStyleSheet(self._get_button_style())
+        add_btn.clicked.connect(self.add_function)
+        self._action_buttons_layout.addWidget(add_btn)
+
+        code_btn = QPushButton("Code")
+        code_btn.setMaximumWidth(60)
+        code_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
+        code_btn.setStyleSheet(self._get_button_style())
+        code_btn.clicked.connect(self.edit_function_code)
+        self._action_buttons_layout.addWidget(code_btn)
+
+        # Component selection button
+        self.component_btn = QPushButton(self._get_component_button_text())
+        self.component_btn.setMaximumWidth(120)
+        self.component_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
+        self.component_btn.setStyleSheet(self._get_button_style())
+        self.component_btn.clicked.connect(self.show_component_selection_dialog)
+        self.component_btn.setEnabled(not self._is_component_button_disabled())
+        self._action_buttons_layout.addWidget(self.component_btn)
 
         # Initialize services (reuse existing business logic)
         self.function_registry = get_function_registry()
@@ -72,16 +124,6 @@ class FunctionListEditorWidget(QWidget):
         # Scope color scheme for styling newly created panes
         self._scope_color_scheme = None
 
-        # Step configuration properties (mirrors Textual TUI)
-        self.current_group_by = None  # Current GroupBy setting from step editor
-        self.current_variable_components = []  # Current VariableComponents list from step editor
-        self.selected_channel = None  # Currently selected channel
-        self.available_channels = []  # Available channels from orchestrator
-        self.is_dict_mode = False  # Whether we're in channel-specific mode
-
-        # Component selection cache per GroupBy (mirrors Textual TUI)
-        self.component_selections = {}
-
         # Initialize pattern data and mode
         self._initialize_pattern_data(initial_functions)
 
@@ -96,7 +138,41 @@ class FunctionListEditorWidget(QWidget):
         # and we need to refresh the component button to reflect the new value
         self._subscribe_to_step_state_changes()
 
+        # Time-travel: refresh function pane widgets after restore
+        self._time_travel_callback = None
+        self._subscribe_to_time_travel()
+
         logger.debug(f"Function list editor initialized with {len(self.functions)} functions")
+
+    def _subscribe_to_time_travel(self) -> None:
+        """Refresh function pane widgets after time-travel restores ObjectState."""
+        if not self.scope_id:
+            return
+
+        def on_time_travel_complete(dirty_states, triggering_scope):
+            # Time-travel restores can update function ObjectStates without marking them dirty.
+            # Refresh all panes to keep UI in sync.
+            logger.debug(
+                "[FUNC_EDITOR] Time-travel refresh: scope=%s dirty_count=%s",
+                self.scope_id,
+                len(dirty_states),
+            )
+            for pane in self.function_panes:
+                if getattr(pane, "form_manager", None) is not None:
+                    pane.form_manager.refresh_widgets_from_state()
+
+            # Re-apply current pattern so kwargs are pushed to panes
+            self.refresh_from_step_context()
+
+        ObjectStateRegistry.add_time_travel_complete_callback(on_time_travel_complete)
+        self._time_travel_callback = on_time_travel_complete
+
+        def cleanup_subscription():
+            if self._time_travel_callback:
+                ObjectStateRegistry.remove_time_travel_complete_callback(self._time_travel_callback)
+                self._time_travel_callback = None
+
+        self.destroyed.connect(cleanup_subscription)
 
     def _initialize_pattern_data(self, initial_functions):
         """Initialize pattern data from various input formats (mirrors Textual TUI logic)."""
@@ -173,56 +249,45 @@ class FunctionListEditorWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         
-        # Header with controls (mirrors Textual TUI)
-        header_layout = QHBoxLayout()
+        # Header with controls (only if render_header=True)
+        if self._render_header:
+            header_layout = QHBoxLayout()
+            
+            # Store as instance attribute for scope accent styling
+            self.header_label = QLabel("Functions")
+            self.header_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-weight: bold; font-size: 14px;")
+            header_layout.addWidget(self.header_label)
+            
+            header_layout.addStretch()
+            
+            # Add action buttons to header
+            header_layout.addWidget(self._action_buttons_container)
+            
+            # Navigation buttons are kept here since they're specific to function list navigation
+            # Channel navigation buttons (only in dict mode with multiple channels, mirrors Textual TUI)
+            self.prev_channel_btn = QPushButton("<")
+            self.prev_channel_btn.setMaximumWidth(30)
+            self.prev_channel_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
+            self.prev_channel_btn.setStyleSheet(self._get_button_style())
+            self.prev_channel_btn.clicked.connect(lambda: self._navigate_channel(-1))
+            header_layout.addWidget(self.prev_channel_btn)
 
-        # Store as instance attribute for scope accent styling
-        self.header_label = QLabel("Functions")
-        self.header_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-weight: bold; font-size: 14px;")
-        header_layout.addWidget(self.header_label)
-        
-        header_layout.addStretch()
-        
-        # Control buttons (mirrors Textual TUI)
-        add_btn = QPushButton("Add")
-        add_btn.setMaximumWidth(60)
-        add_btn.setStyleSheet(self._get_button_style())
-        add_btn.clicked.connect(self.add_function)
-        header_layout.addWidget(add_btn)
+            self.next_channel_btn = QPushButton(">")
+            self.next_channel_btn.setMaximumWidth(30)
+            self.next_channel_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
+            self.next_channel_btn.setStyleSheet(self._get_button_style())
+            self.next_channel_btn.clicked.connect(lambda: self._navigate_channel(1))
+            header_layout.addWidget(self.next_channel_btn)
 
-        # Code button supersedes Load/Save buttons (provides both functionality via text editor)
-        code_btn = QPushButton("Code")
-        code_btn.setMaximumWidth(60)
-        code_btn.setStyleSheet(self._get_button_style())
-        code_btn.clicked.connect(self.edit_function_code)
-        header_layout.addWidget(code_btn)
+            # Update navigation button visibility
+            self._update_navigation_buttons()
 
-        # Component selection button (mirrors Textual TUI)
-        self.component_btn = QPushButton(self._get_component_button_text())
-        self.component_btn.setMaximumWidth(120)
-        self.component_btn.setStyleSheet(self._get_button_style())
-        self.component_btn.clicked.connect(self.show_component_selection_dialog)
-        self.component_btn.setEnabled(not self._is_component_button_disabled())
-        header_layout.addWidget(self.component_btn)
+            header_layout.addStretch()
+            layout.addLayout(header_layout)
+        else:
+            # Header not rendered - buttons remain in _action_buttons_container for external use
+            pass
 
-        # Channel navigation buttons (only in dict mode with multiple channels, mirrors Textual TUI)
-        self.prev_channel_btn = QPushButton("<")
-        self.prev_channel_btn.setMaximumWidth(30)
-        self.prev_channel_btn.setStyleSheet(self._get_button_style())
-        self.prev_channel_btn.clicked.connect(lambda: self._navigate_channel(-1))
-        header_layout.addWidget(self.prev_channel_btn)
-
-        self.next_channel_btn = QPushButton(">")
-        self.next_channel_btn.setMaximumWidth(30)
-        self.next_channel_btn.setStyleSheet(self._get_button_style())
-        self.next_channel_btn.clicked.connect(lambda: self._navigate_channel(1))
-        header_layout.addWidget(self.next_channel_btn)
-
-        # Update navigation button visibility
-        self._update_navigation_buttons()
-
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
         
         # Scrollable function list (mirrors Textual TUI)
         self.scroll_area = QScrollArea()
@@ -250,21 +315,24 @@ class FunctionListEditorWidget(QWidget):
     
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
-        return """
-            QPushButton {
+        if self._button_style:
+            return self.style_generator.generate_config_button_styles().get(self._button_style, "")
+
+        return f"""
+            QPushButton {{
                 background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
-                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
+                border: none;
                 border-radius: 3px;
                 padding: 6px 12px;
                 font-size: 11px;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
-            }
+            }}
         """
     
     def _populate_function_list(self):
@@ -281,12 +349,9 @@ class FunctionListEditorWidget(QWidget):
         # Clear existing panes - CRITICAL: Manually unregister form managers BEFORE deleteLater()
         # This prevents RuntimeError when new widgets try to connect to deleted managers
         for pane in self.function_panes:
-            # Explicitly unregister the form manager before scheduling deletion
-            if hasattr(pane, 'form_manager') and pane.form_manager is not None:
-                try:
-                    pane.form_manager.unregister_from_cross_window_updates()
-                except RuntimeError:
-                    pass  # Already deleted
+            # Explicitly unregister form manager before scheduling deletion
+            if pane.form_manager is not None:
+                pane.form_manager.unregister_from_cross_window_updates()
             pane.deleteLater()  # Schedule for deletion - triggers destroyed signal
         self.function_panes.clear()
 
@@ -296,11 +361,8 @@ class FunctionListEditorWidget(QWidget):
             if child.widget():
                 # Unregister form manager if it exists
                 widget = child.widget()
-                if hasattr(widget, 'form_manager') and widget.form_manager is not None:
-                    try:
-                        widget.form_manager.unregister_from_cross_window_updates()
-                    except RuntimeError:
-                        pass  # Already deleted
+                if isinstance(widget, FunctionPaneWidget) and widget.form_manager is not None:
+                    widget.form_manager.unregister_from_cross_window_updates()
                 widget.deleteLater()  # Schedule for deletion instead of just orphaning
         
         if not self.functions:
@@ -320,22 +382,19 @@ class FunctionListEditorWidget(QWidget):
                 pane.move_function.connect(self._move_function)
                 pane.add_function.connect(self._add_function_at_index)
                 pane.remove_function.connect(self._remove_function)
-                pane.parameter_changed.connect(self._on_parameter_changed)
+                pane.parameter_changed.connect(self._on_parameter_changed, type=Qt.ConnectionType.DirectConnection)
 
                 self.function_panes.append(pane)
                 self.function_layout.addWidget(pane)
 
-                # Apply scope color scheme to new pane (for accent colors)
-                if self._scope_color_scheme:
-                    logger.info(f"🎨 Applying scope_color_scheme to pane {i}")
-                    pane.set_scope_color_scheme(self._scope_color_scheme)
-                else:
-                    logger.info(f"🎨 No scope_color_scheme set on FunctionListEditorWidget, pane {i} gets no styling")
+                # Note: Scope color scheme will be applied to all panes
+                # in set_scope_color_scheme() which is called after panes are created.
+                # This avoids duplicate styling calls.
 
                 # CRITICAL FIX: Apply initial enabled styling for function panes
-                # This ensures that when the function pattern editor opens, disabled functions
-                # show the correct dimmed styling immediately, not just after toggling
-                if hasattr(pane, 'form_manager') and pane.form_manager is not None:
+                # This ensures that when a function pattern editor opens, disabled functions
+                # show as correct dimmed styling immediately, not just after toggling
+                if pane.form_manager is not None:
                     # Use QTimer to ensure this runs after the widget is fully constructed
                     from PyQt6.QtCore import QTimer
                     QTimer.singleShot(0, lambda p=pane: self._apply_initial_enabled_styling_to_pane(p))
@@ -344,12 +403,14 @@ class FunctionListEditorWidget(QWidget):
         # This must be done AFTER all panes are created so findChildren() finds them all
         if self._scope_color_scheme:
             # Apply immediately for sync-created widgets
+            for pane in self.function_panes:
+                pane.set_scope_color_scheme(self._scope_color_scheme)
             self._apply_scope_styling_to_children(self._scope_color_scheme)
 
             # CRITICAL: Register callback on each pane's form_manager for async-created widgets
             # This hooks into FormBuildOrchestrator's async completion system properly
             for pane in self.function_panes:
-                if hasattr(pane, 'form_manager') and pane.form_manager is not None:
+                if pane.form_manager is not None:
                     # Capture scheme in closure
                     scheme = self._scope_color_scheme
                     pane.form_manager._on_build_complete_callbacks.append(
@@ -366,7 +427,7 @@ class FunctionListEditorWidget(QWidget):
             pane: FunctionPaneWidget instance to apply styling to
         """
         try:
-            if hasattr(pane, 'form_manager') and pane.form_manager is not None:
+            if pane.form_manager is not None:
                 # Check if the form manager has an enabled field
                 if 'enabled' in pane.form_manager.parameters:
                     # CRITICAL FIX: Call the service method, not a non-existent manager method
@@ -700,14 +761,47 @@ class FunctionListEditorWidget(QWidget):
         """Get the current pattern data (for parent widgets to access)."""
         self._update_pattern_data()  # Ensure it's up to date
 
+        def _prune_kwargs(func: Callable, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+            param_info = SignatureAnalyzer.analyze(func) if func else {}
+            pruned = {}
+            for key, value in kwargs.items():
+                if value is None:
+                    continue
+                default_info = param_info.get(key)
+                if default_info is not None and value == default_info.default_value:
+                    continue
+                pruned[key] = value
+            return pruned
+
         # Migration fix: Convert any integer keys to string keys for compatibility
         # with pattern detection system which always uses string component values
         if isinstance(self.pattern_data, dict):
             migrated_pattern = {}
             for key, value in self.pattern_data.items():
                 str_key = str(key)
-                migrated_pattern[str_key] = value
+                normalized_list = []
+                for item in value:
+                    func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
+                    if func is None:
+                        continue
+                    pruned_kwargs = _prune_kwargs(func, kwargs)
+                    normalized_list.append(func if not pruned_kwargs else (func, pruned_kwargs))
+                migrated_pattern[str_key] = normalized_list
             return migrated_pattern
+
+        if isinstance(self.pattern_data, list):
+            normalized_list = []
+            for item in self.pattern_data:
+                func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
+                if func is None:
+                    continue
+                pruned_kwargs = _prune_kwargs(func, kwargs)
+                normalized_list.append(func if not pruned_kwargs else (func, pruned_kwargs))
+
+            if len(normalized_list) == 1 and callable(normalized_list[0]):
+                return normalized_list[0]
+
+            return normalized_list
 
         return self.pattern_data
     
@@ -766,9 +860,11 @@ class FunctionListEditorWidget(QWidget):
             help_indicator.set_scope_accent_color(accent_color)
 
         # Apply to all GroupBoxWithHelp (scope border pattern)
+        # NOTE: Exclude function panes since they're already handled in set_scope_color_scheme()
         groupboxes = self.findChildren(GroupBoxWithHelp)
-        logger.info(f"🎨 _apply_scope_styling_to_children: found {len(groupboxes)} GroupBoxWithHelp")
-        for groupbox in groupboxes:
+        non_pane_groupboxes = [gb for gb in groupboxes if gb not in self.function_panes]
+        logger.info(f"🎨 _apply_scope_styling_to_children: found {len(groupboxes)} GroupBoxWithHelp, {len(non_pane_groupboxes)} non-pane")
+        for groupbox in non_pane_groupboxes:
             groupbox.set_scope_color_scheme(scheme)
 
     def refresh_from_step_context(self) -> None:
@@ -795,7 +891,7 @@ class FunctionListEditorWidget(QWidget):
             else:
                 # Fallback to step_instance if no ObjectState (shouldn't happen in normal use)
                 logger.warning(f"No ObjectState for scope {my_scope}, falling back to step_instance")
-                if not hasattr(self, 'step_instance') or self.step_instance is None:
+                if self.step_instance is None:
                     logger.warning("No step_instance available for context refresh")
                     return
 
@@ -852,7 +948,7 @@ class FunctionListEditorWidget(QWidget):
 
         # Cleanup on widget destruction
         def cleanup_subscription():
-            if hasattr(self, '_resolved_change_callback') and hasattr(self, '_subscribed_state'):
+            if self._resolved_change_callback is not None and self._subscribed_state is not None:
                 self._subscribed_state.off_resolved_changed(self._resolved_change_callback)
                 logger.debug(f"🔔 FUNC_EDITOR: Unsubscribed from ObjectState on destruction")
         self.destroyed.connect(cleanup_subscription)
@@ -909,8 +1005,29 @@ class FunctionListEditorWidget(QWidget):
             return
 
         # Get available components from provider
-        available_components = self.component_selection_provider.get_component_keys(self.current_group_by)
-        assert available_components, f"No {self.current_group_by} values found in current context"
+        try:
+            available_components = self.component_selection_provider.get_component_keys(self.current_group_by)
+        except Exception as e:
+            import traceback
+            raise RuntimeError(
+                f"CRITICAL: Failed to get component keys for {self.current_group_by}\n"
+                f"Exception: {type(e).__name__}: {e}\n\n"
+                f"TRACEBACK:\n{traceback.format_exc()}"
+            ) from e
+        
+        if not available_components:
+            import traceback
+            # Get the full exception info including where get_component_keys returned empty
+            raise RuntimeError(
+                f"CRITICAL: No {self.current_group_by} values found in current context\n"
+                f"Button should have been disabled but wasn't!\n\n"
+                f"Current group_by: {self.current_group_by}\n"
+                f"Component provider: {self.component_selection_provider}\n"
+                f"Step identifier: {self.step_identifier}\n\n"
+                f"GET_COMPONENT_KEYS returned empty list - this is the bug!\n"
+                f"Check reactor_providers.py _get_current_orchestrator()\n\n"
+                f"CURRENT STACK:\n{traceback.format_exc()}"
+            )
 
         # Get current selection from pattern data (mirrors Textual TUI logic)
         selected_components = self._get_current_component_selection()
@@ -986,8 +1103,7 @@ class FunctionListEditorWidget(QWidget):
                 old_pattern = self.pattern_data.copy() if isinstance(self.pattern_data, dict) else {}
 
                 # Create a persistent storage for deselected components (mirrors Textual TUI)
-                if not hasattr(self, '_deselected_components_storage'):
-                    self._deselected_components_storage = {}
+                self._deselected_components_storage = {}
 
                 # Save currently deselected components to storage
                 for old_key, old_functions in old_pattern.items():
@@ -1023,13 +1139,13 @@ class FunctionListEditorWidget(QWidget):
 
     def _refresh_component_button(self):
         """Refresh the component button text and state (mirrors Textual TUI)."""
-        if hasattr(self, 'component_btn'):
+        if self._render_header:
             new_text = self._get_component_button_text()
             old_text = self.component_btn.text()
             logger.info(f"🔄 _refresh_component_button: old={old_text!r}, new={new_text!r}, group_by={self.current_group_by}")
             self.component_btn.setText(new_text)
             self.component_btn.setEnabled(not self._is_component_button_disabled())
-
+    
         # Also update navigation buttons when component button is refreshed
         self._update_navigation_buttons()
 
@@ -1037,24 +1153,40 @@ class FunctionListEditorWidget(QWidget):
 
     def _update_navigation_buttons(self):
         """Update visibility of channel navigation buttons (mirrors Textual TUI)."""
-        if hasattr(self, 'prev_channel_btn') and hasattr(self, 'next_channel_btn'):
+        if self._render_header:
             # Show navigation buttons only in dict mode with multiple channels
             show_nav = (self.is_dict_mode and
-                       isinstance(self.pattern_data, dict) and
-                       len(self.pattern_data) > 1)
-
+                        isinstance(self.pattern_data, dict) and
+                        len(self.pattern_data) > 1)
+  
             self.prev_channel_btn.setVisible(show_nav)
             self.next_channel_btn.setVisible(show_nav)
+    
+    def get_action_buttons(self) -> Optional[QWidget]:
+        """Get the action buttons container for external placement.
+        
+        This method allows parent windows (e.g., DualEditorWindow) to
+        extract and reposition action buttons without modifying this widget's
+        internal structure.
+        
+        Returns:
+            QWidget: Container widget with action buttons (Add, Code, Component).
+                      Returns None if header is rendered (buttons are in use).
+        """
+        if self._render_header:
+            return None
+        return self._action_buttons_container
+
 
     def _navigate_channel(self, direction: int):
         """Navigate to next/previous channel (with looping, mirrors Textual TUI)."""
-        if not self.is_dict_mode or not isinstance(self.pattern_data, dict):
+        if not self._render_header or not self.is_dict_mode or not isinstance(self.pattern_data, dict):
             return
-
+        
         channels = sorted(self.pattern_data.keys())
         if len(channels) <= 1:
             return
-
+        
         try:
             current_index = channels.index(self.selected_channel)
             new_index = (current_index + direction) % len(channels)

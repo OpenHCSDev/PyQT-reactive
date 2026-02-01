@@ -8,7 +8,7 @@ from .base_form_dialog import BaseManagedWindow, BaseFormDialog
 from .tear_off_tab_widget import TearOffTabWidget, FloatingTabWindow, TearOffTabBar
 from .tear_off_registry import TearOffRegistry
 from .responsive_layout_widgets import (
-    ResponsiveTwoRowWidget, ResponsiveParameterRow,
+    ResponsiveTwoRowWidget, ResponsiveParameterRow, StagedWrapLayout,
     set_wrapping_enabled as set_row_wrapping_enabled,
     is_wrapping_enabled as is_row_wrapping_enabled
 )
@@ -41,8 +41,8 @@ __all__ = [
     "TearOffRegistry",
     "ResponsiveTwoRowWidget",
     "ResponsiveParameterRow",
+    "StagedWrapLayout",
     "ResponsiveGroupBoxTitle",
     "set_responsive_wrapping_enabled",
     "is_responsive_wrapping_enabled",
 ]
-

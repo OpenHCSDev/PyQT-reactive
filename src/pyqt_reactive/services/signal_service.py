@@ -131,7 +131,7 @@ class SignalService:
         manager._initial_values_on_open = {k: v for k, v in manager.state.parameters.items() if v is not None}
 
         from objectstate import ObjectStateRegistry
-        logger.info(f"🔍 REGISTER: {manager.field_id} (total: {len(ObjectStateRegistry.get_all())})")
+        logger.debug(f"🔍 REGISTER: {manager.field_id} (total: {len(ObjectStateRegistry.get_all())})")
 
     # ========== CROSS-WINDOW REGISTRATION (from CrossWindowRegistration) ==========
 
@@ -152,4 +152,3 @@ class SignalService:
             yield manager
         finally:
             manager.unregister_from_cross_window_updates()
-

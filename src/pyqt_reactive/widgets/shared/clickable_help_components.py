@@ -2,8 +2,8 @@
 
 import logging
 from typing import Union, Callable, Optional
-from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox, QVBoxLayout
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtProperty, QRect, QRectF
+from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox, QVBoxLayout, QSizePolicy
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtProperty, QRect, QRectF, QSize
 from PyQt6.QtGui import QFont, QCursor, QColor, QPainter, QPen
 
 from pyqt_reactive.theming import ColorScheme
@@ -192,9 +192,24 @@ class HelpIndicator(QLabel):
                 }}
             """)
         
-        # Set fixed size for consistent appearance
-        self.setFixedSize(20, 16)
+        # Set fixed size for consistent appearance (square)
+        self.setFixedSize(16, 16)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def showEvent(self, event):
+        import logging
+        logger = logging.getLogger(__name__)
+        parent = self.parentWidget()
+        logger.debug(
+            "[HELP_INDICATOR] size=%s min=%s max=%s hint=%s parent=%s parent_size=%s",
+            self.size(),
+            self.minimumSize(),
+            self.maximumSize(),
+            self.sizeHint(),
+            type(parent).__name__ if parent else None,
+            parent.size() if parent else None,
+        )
+        super().showEvent(event)
         
     def set_scope_accent_color(self, color) -> None:
         """Set scope accent color (QColor). Called by parent window for scope styling."""
@@ -273,6 +288,10 @@ class HelpButton(QPushButton):
         self.clicked.connect(self.show_help)
 
         # Style as help button
+        self._square_icon = text.strip() == "?"
+        self._square_size = None
+        self._square_width_request = None
+        self._square_height_request = None
         self.setMaximumWidth(60)
 
         # CRITICAL: Use scope_accent_color passed as parameter during creation
@@ -284,6 +303,67 @@ class HelpButton(QPushButton):
         logger.debug(f"[HELP_BUTTON] __init__: param_name={param_name}, scope_accent_color={scope_accent_color}, fallback_color={fallback_color}, using={initial_color}")
 
         self._apply_color(initial_color)
+        if self._square_icon:
+            self._apply_square_constraints(default_size=20)
+
+    def _apply_square_constraints(self, default_size: int | None = None) -> None:
+        """Force a square size for icon-style help buttons."""
+        if not self._square_icon:
+            return
+        size = None
+        if self._square_width_request and self._square_height_request:
+            size = min(self._square_width_request, self._square_height_request)
+        elif self._square_width_request:
+            size = self._square_width_request
+        elif self._square_height_request:
+            size = self._square_height_request
+        elif default_size is not None:
+            size = default_size
+        elif self._square_size is not None:
+            size = self._square_size
+
+        if size is None:
+            return
+
+        self._square_size = size
+        super().setMinimumSize(size, size)
+        super().setMaximumSize(size, size)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.updateGeometry()
+
+    def setMaximumWidth(self, w: int) -> None:
+        super().setMaximumWidth(w)
+        if self._square_icon and w and w < 16777215:
+            self._square_width_request = w
+            self._apply_square_constraints()
+
+    def setMaximumHeight(self, h: int) -> None:
+        super().setMaximumHeight(h)
+        if self._square_icon and h and h < 16777215:
+            self._square_height_request = h
+            self._apply_square_constraints()
+
+    def setFixedWidth(self, w: int) -> None:
+        super().setFixedWidth(w)
+        if self._square_icon and w:
+            self._square_width_request = w
+            self._apply_square_constraints()
+
+    def setFixedHeight(self, h: int) -> None:
+        super().setFixedHeight(h)
+        if self._square_icon and h:
+            self._square_height_request = h
+            self._apply_square_constraints()
+
+    def sizeHint(self) -> QSize:
+        if self._square_icon and self._square_size:
+            return QSize(self._square_size, self._square_size)
+        return super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:
+        if self._square_icon and self._square_size:
+            return QSize(self._square_size, self._square_size)
+        return super().minimumSizeHint()
 
     def _get_scope_accent_color(self):
         """Deprecated: retained for compatibility but prefers ScopeColorService.
@@ -326,12 +406,13 @@ class HelpButton(QPushButton):
             hex_lighter = hex_color  # Can't lighten without QColor
             hex_darker = hex_color
 
+        padding = "0" if self._square_icon else "4px 8px"
         self.setStyleSheet(f"""
             QPushButton {{
                 background-color: {hex_color};
                 color: white;
                 border: none;
-                padding: 4px 8px;
+                padding: {padding};
                 border-radius: 3px;
                 font-weight: bold;
             }}
@@ -461,33 +542,63 @@ class ProvenanceLabel(QLabel):
             # Check if source is in the SAME window (sibling MRO inheritance within same scope)
             current_scope_id = getattr(self._state, 'scope_id', None)
             if current_scope_id == source_scope_id:
-                # Same window - scroll directly without going through WindowManager
+                # Same window - ensure it doesn't overlap the clicked label
+                try:
+                    current_window = self.window()
+                    if current_window:
+                        WindowManager.position_window_near_cursor(
+                            current_window,
+                            avoid_widgets=[self.window()] if self.window() else None,
+                        )
+                except Exception:
+                    pass
                 logger.info(f"🔄 Same-window navigation: scrolling to {target_path}")
                 self._scroll_within_current_window(target_path)
                 return
 
-            # Different window - try to navigate via WindowManager
-            success = WindowManager.focus_and_navigate(
-                scope_id=source_scope_id,
-                field_path=target_path
-            )
+            # Use the same WindowManager.show_or_focus path as other windows
+            from pyqt_reactive.services import WindowFactory
 
-            if success:
+            if WindowManager.is_open(source_scope_id):
+                WindowManager.focus_and_navigate(
+                    scope_id=source_scope_id,
+                    field_path=target_path,
+                )
+                try:
+                    existing = WindowManager._scoped_windows.get(source_scope_id)
+                    source_window = self.window()
+                    if existing and source_window:
+                        if existing.frameGeometry().intersects(
+                            source_window.frameGeometry()
+                        ):
+                            WindowManager.position_window_near_cursor(
+                                existing,
+                                avoid_widgets=[source_window],
+                            )
+                except Exception:
+                    pass
                 logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
                 return
 
-            # Window not open - create via shared infrastructure
-            window = WindowManager.create_window_for_scope(source_scope_id)
+            def _factory():
+                return WindowFactory.create_window_for_scope(source_scope_id)
+
+            window = WindowManager.show_or_focus(source_scope_id, _factory)
             if window:
+                window._avoid_widgets = [self.window()] if self.window() else []
+                WindowManager.position_window_near_cursor(
+                    window,
+                    avoid_widgets=[self.window()] if self.window() else None,
+                )
                 # Navigate to field after window is shown
                 from PyQt6.QtCore import QTimer
                 QTimer.singleShot(100, lambda: WindowManager.focus_and_navigate(
                     scope_id=source_scope_id,
                     field_path=target_path
                 ))
-                logger.info(f"✅ Created window for scope: {source_scope_id}")
+                logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
             else:
-                logger.warning(f"Could not create window for scope: {source_scope_id}")
+                logger.warning(f"Could not create or focus window for scope: {source_scope_id}")
 
         except Exception as e:
             logger.error(f"Failed to navigate to provenance source: {e}")
@@ -629,28 +740,7 @@ class ProvenanceLabel(QLabel):
             current = current.parent()
         return None
 
-    def _find_plate_manager(self):
-        """Find PlateManagerWidget from main window."""
-        main_window = self._find_main_window()
-        if not main_window:
-            return None
-
-        if "plate_manager" not in main_window.floating_windows:
-            # Create plate manager if it doesn't exist
-            main_window.show_plate_manager()
-
-        plate_dialog = main_window.floating_windows.get("plate_manager")
-        if not plate_dialog:
-            return None
-
-        # Find PlateManagerWidget child
-        from PyQt6.QtWidgets import QWidget
-        for child in plate_dialog.findChildren(QWidget):
-            if hasattr(child, 'orchestrators') and hasattr(child, 'selected_plate_path'):
-                return child
-        return None
-
-    # Window creation now handled by WindowManager.create_window_for_scope()
+    # Window creation now handled by WindowFactory.create_window_for_scope()
 
 
 class LabelWithHelp(QWidget):
@@ -664,6 +754,10 @@ class LabelWithHelp(QWidget):
                  param_type: type = None, color_scheme: Optional[ColorScheme] = None,
                  parent=None, state=None, dotted_path: str = None, scope_accent_color=None):
         super().__init__(parent)
+
+        # Transparent background so parent's scope-tinted background shows through
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background-color: transparent;")
 
         # Initialize color scheme
         self.color_scheme = color_scheme or ColorScheme()
@@ -687,6 +781,7 @@ class LabelWithHelp(QWidget):
         self._base_text = text  # Store base text for dirty indicator toggle
         self._is_dirty = False  # Track dirty state for indicator
         self._label = ProvenanceLabel(text, state=state, dotted_path=dotted_path)
+        self._label.setAutoFillBackground(False)  # Transparent so scope background shows through
         layout.addWidget(self._label)
 
         # Help indicator
@@ -792,6 +887,10 @@ class GroupBoxWithHelp(FlashableGroupBox):
         self.color_scheme = color_scheme or ColorScheme()
         self.help_target = help_target
 
+        # Ensure stylesheet background actually paints
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
+
         # Scope border state (set via set_scope_color_scheme)
         self._scope_color_scheme = None
 
@@ -805,6 +904,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
             
             # Title label
             self._title_label = QLabel(title)
+            self._title_label.setAutoFillBackground(False)  # Transparent so scope background shows through
             self._base_title = title
             title_font = QFont()
             title_font.setBold(True)
@@ -829,12 +929,16 @@ class GroupBoxWithHelp(FlashableGroupBox):
         else:
             # Use plain QHBoxLayout (old non-wrapping style)
             title_widget = QWidget()
+            # Transparent background so scope-tinted background shows through
+            title_widget.setAutoFillBackground(False)
+            title_widget.setStyleSheet("background-color: transparent;")
             title_layout = QHBoxLayout(title_widget)
             title_layout.setContentsMargins(0, 0, 0, 0)
             title_layout.setSpacing(5)
             
             # Title label
             self._title_label = QLabel(title)
+            self._title_label.setAutoFillBackground(False)  # Transparent so scope background shows through
             self._base_title = title
             title_font = QFont()
             title_font.setBold(True)
@@ -901,8 +1005,31 @@ class GroupBoxWithHelp(FlashableGroupBox):
         """Set scope color scheme for border rendering."""
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"🎨 GroupBoxWithHelp.set_scope_color_scheme: title='{self.title()}', scheme={scheme is not None}")
+        logger.debug(
+            "🎨 GroupBoxWithHelp.set_scope_color_scheme: title='%s', scheme=%s, has_scope_parent=%s",
+            self.title(),
+            scheme is not None,
+            self._has_scope_parent()
+        )
+        logger.debug(
+            "🎨 GroupBoxWithHelp.set_scope_color_scheme: objectName=%s stylesheet=%s",
+            self.objectName(),
+            self.styleSheet()
+        )
         self._scope_color_scheme = scheme
+        # Avoid double background tint (QGroupBox base bg + scope paint)
+        if scheme:
+            self.setStyleSheet(
+                "QGroupBox { background-color: transparent; border: none; margin-top: 0px; padding-top: 0px; }"
+            )
+        else:
+            self.setStyleSheet("")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
+        logger.debug(
+            "🎨 GroupBoxWithHelp.set_scope_color_scheme: applied stylesheet=%s",
+            self.styleSheet()
+        )
         # Add margin for border layers if needed
         if scheme and hasattr(scheme, 'step_border_layers') and scheme.step_border_layers:
             total_width = sum(layer[0] for layer in scheme.step_border_layers)
@@ -912,7 +1039,35 @@ class GroupBoxWithHelp(FlashableGroupBox):
 
     def paintEvent(self, event) -> None:
         """Paint with scope background and border layers if set."""
+        import logging
+        if not getattr(self, "_paint_debug_logged", False):
+            logger = logging.getLogger(__name__)
+            parent_obj = self.parent()
+            logger.debug(
+                "[GROUPBOX_PAINT] title='%s' obj_name=%s id=%s rect=%s parent_cls=%s parent_name=%s scope=%s autoFill=%s styled=%s style=%s",
+                self._title_label.text() if getattr(self, "_title_label", None) else "",
+                self.objectName(),
+                id(self),
+                self.rect(),
+                type(parent_obj).__name__ if parent_obj is not None else None,
+                parent_obj.objectName() if parent_obj is not None else None,
+                self._scope_color_scheme is not None,
+                self.autoFillBackground(),
+                self.testAttribute(Qt.WidgetAttribute.WA_StyledBackground),
+                self.styleSheet(),
+            )
+            self._paint_debug_logged = True
+
+        from PyQt6.QtGui import QPainter
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self.color_scheme.to_qcolor(self.color_scheme.panel_bg))
+        painter.drawRect(self.rect())
+        painter.end()
+
         super().paintEvent(event)
+
         if not self._scope_color_scheme:
             return
 
@@ -962,6 +1117,15 @@ class GroupBoxWithHelp(FlashableGroupBox):
         painter.setBrush(color)
         painter.drawRoundedRect(QRectF(content_rect), radius - border_inset, radius - border_inset)
         painter.end()
+
+    def _has_scope_parent(self) -> bool:
+        """Return True if any parent GroupBoxWithHelp already has scope styling."""
+        parent = self.parent()
+        while parent is not None:
+            if isinstance(parent, GroupBoxWithHelp) and parent._scope_color_scheme:
+                return True
+            parent = parent.parent()
+        return False
 
     def _get_border_rect(self) -> QRect:
         """Get the painted area rect, accounting for margin-top offset.
@@ -1044,7 +1208,8 @@ class GroupBoxWithHelp(FlashableGroupBox):
     def addTitleWidget(self, widget):
         """Add widget to the title area, right-aligned (moves to row2 when narrow)."""
         # Add as right widget - will move to second row when narrow
-        if hasattr(self.title_layout, 'add_right_widget'):
+        from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
+        if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
             self.title_layout.add_right_widget(widget)
         else:
             self.title_layout.addWidget(widget)
@@ -1055,7 +1220,8 @@ class GroupBoxWithHelp(FlashableGroupBox):
         This keeps the widget left-aligned with the title/help button.
         """
         # For responsive title, add inline
-        if hasattr(self.title_layout, 'add_inline_widget'):
+        from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
+        if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
             self.title_layout.add_inline_widget(widget)
         else:
             self.title_layout.addWidget(widget)
@@ -1063,7 +1229,8 @@ class GroupBoxWithHelp(FlashableGroupBox):
     def addTitleWidgetAfterLabel(self, widget):
         """Add widget immediately after the title label."""
         # For responsive title, this adds inline
-        if hasattr(self.title_layout, 'add_inline_widget'):
+        from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
+        if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
             self.title_layout.add_inline_widget(widget)
         else:
             self.title_layout.addWidget(widget)
@@ -1074,7 +1241,8 @@ class GroupBoxWithHelp(FlashableGroupBox):
         This is the clean API for adding enableable widgets in the correct position:
         Title → Help → [Enabled Checkbox] → [Reset Button] → Other Controls
         """
-        # Find insert position after help button
+        from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
+
         insert_pos = 0
         if self._help_button:
             for i in range(self.title_layout.count()):
@@ -1082,13 +1250,21 @@ class GroupBoxWithHelp(FlashableGroupBox):
                     insert_pos = i + 1
                     break
 
-        # Insert checkbox after help button
-        if hasattr(self.title_layout, 'insertWidget'):
-            self.title_layout.insertWidget(insert_pos, enabled_checkbox)
-            if reset_button:
-                self.title_layout.insertWidget(insert_pos + 1, reset_button)
+        if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
+            self.title_layout.add_inline_widget(enabled_checkbox)
         else:
-            # Fallback: just add inline
-            self.addTitleInlineWidget(enabled_checkbox)
-            if reset_button:
-                self.addTitleInlineWidget(reset_button)
+            self.title_layout.insertWidget(insert_pos, enabled_checkbox)
+
+        if reset_button:
+            if not reset_button.styleSheet():
+                reset_button.setStyleSheet(
+                    f"background-color: {self.color_scheme.to_hex(self.color_scheme.button_normal_bg)};"
+                )
+            if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
+                self.title_layout.add_inline_widget(reset_button)
+            else:
+                insert_pos += 1
+                if self.title_layout.count() > 0 and self.title_layout.itemAt(self.title_layout.count() - 1).spacerItem():
+                    self.title_layout.insertWidget(self.title_layout.count() - 1, reset_button)
+                else:
+                    self.title_layout.insertWidget(insert_pos, reset_button)

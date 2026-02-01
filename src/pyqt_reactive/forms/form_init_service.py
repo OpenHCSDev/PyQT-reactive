@@ -317,7 +317,13 @@ class FormBuildOrchestrator:
         """Build widgets using unified async/sync path."""
         pass  # timer decorator - optional
 
-        logger.debug(f"[BUILD_WIDGETS] {manager.field_id}, use_async={use_async}, param_count={len(param_infos)}")
+        logger.debug(
+            "[BUILD_WIDGETS] field_id=%s use_async=%s param_count=%s manager_seq=%s",
+            manager.field_id,
+            use_async,
+            len(param_infos),
+            getattr(manager, '_pfm_seq', None),
+        )
         if use_async:
             self._build_widgets_async(manager, content_layout, param_infos)
         else:
@@ -332,6 +338,13 @@ class FormBuildOrchestrator:
             for param_info in param_infos:
                 is_nested = isinstance(param_info, (DirectDataclassInfo, OptionalDataclassInfo))
                 with timer(f"        Create widget for {param_info.name}", threshold_ms=2.0):
+                    logger.debug(
+                        "[BUILD_WIDGETS_SYNC] field_id=%s param=%s is_nested=%s manager_seq=%s",
+                        manager.field_id,
+                        param_info.name,
+                        is_nested,
+                        getattr(manager, '_pfm_seq', None),
+                    )
                     widget = manager._create_widget_for_param(param_info)
                     content_layout.addWidget(widget)
 
@@ -352,6 +365,12 @@ class FormBuildOrchestrator:
         if sync_params:
             with timer(f"        Create {len(sync_params)} initial widgets (sync)", threshold_ms=5.0):
                 for param_info in sync_params:
+                    logger.debug(
+                        "[BUILD_WIDGETS_ASYNC] phase=sync field_id=%s param=%s manager_seq=%s",
+                        manager.field_id,
+                        param_info.name,
+                        getattr(manager, '_pfm_seq', None),
+                    )
                     widget = manager._create_widget_for_param(param_info)
                     content_layout.addWidget(widget)
                     sync_widgets.append((param_info.name, widget))
@@ -365,13 +384,26 @@ class FormBuildOrchestrator:
         def on_batch_complete(batch_widgets):
             # Apply scope accent styling to batch widgets (progressive, so user sees colored borders immediately)
             dialog = self._get_dialog_from_layout(content_layout)
-            logger.debug(f"[BATCH_COMPLETE] batch_widgets={len(batch_widgets)}, dialog={dialog.__class__.__name__ if dialog else None}, has_apply_method={hasattr(dialog, '_apply_scope_accent_to_widgets') if dialog else False}")
+            logger.debug(
+                "[BATCH_COMPLETE] field_id=%s batch_widgets=%s manager_seq=%s dialog=%s has_apply_method=%s",
+                manager.field_id,
+                len(batch_widgets),
+                getattr(manager, '_pfm_seq', None),
+                dialog.__class__.__name__ if dialog else None,
+                hasattr(dialog, '_apply_scope_accent_to_widgets') if dialog else False,
+            )
             if dialog and hasattr(dialog, '_apply_scope_accent_to_widgets'):
-                logger.debug(f"[BATCH_COMPLETE] Calling _apply_scope_accent_to_widgets")
+                logger.debug("[BATCH_COMPLETE] Calling _apply_scope_accent_to_widgets")
                 dialog._apply_scope_accent_to_widgets(batch_widgets)
 
         def on_async_complete():
-            logger.debug(f"[ASYNC_COMPLETE] FIRED for {manager.field_id}, widgets={len(manager.widgets)}, is_nested={self.is_nested_manager(manager)}")
+            logger.debug(
+                "[ASYNC_COMPLETE] field_id=%s widgets=%s is_nested=%s manager_seq=%s",
+                manager.field_id,
+                len(manager.widgets),
+                self.is_nested_manager(manager),
+                getattr(manager, '_pfm_seq', None),
+            )
 
             # Then notify parent (if this is nested) to track completion
             if self.is_nested_manager(manager):
@@ -402,6 +434,13 @@ class FormBuildOrchestrator:
         while root_manager._parent_manager is not None:
             root_manager = root_manager._parent_manager
         root_manager._on_nested_manager_complete(nested_manager)
+        logger.debug(
+            "[NESTED_COMPLETE] nested_field_id=%s nested_seq=%s root_field_id=%s root_seq=%s",
+            nested_manager.field_id,
+            getattr(nested_manager, '_pfm_seq', None),
+            root_manager.field_id,
+            getattr(root_manager, '_pfm_seq', None),
+        )
 
     def _get_dialog_from_layout(self, layout) -> Any:
         """Get the dialog window from a layout."""
@@ -417,7 +456,13 @@ class FormBuildOrchestrator:
         pass  # timer decorator - optional
 
         if self.is_nested_manager(manager):
-            logger.debug(f"[POST_BUILD] NESTED manager={manager.field_id}, widgets={len(manager.widgets)}, callback_count={len(manager._on_build_complete_callbacks)}")
+            logger.debug(
+                "[POST_BUILD] NESTED field_id=%s widgets=%s callback_count=%s manager_seq=%s",
+                manager.field_id,
+                len(manager.widgets),
+                len(manager._on_build_complete_callbacks),
+                getattr(manager, '_pfm_seq', None),
+            )
             for callback in manager._on_build_complete_callbacks:
                 callback()
             manager._on_build_complete_callbacks.clear()
@@ -430,6 +475,11 @@ class FormBuildOrchestrator:
             # CRITICAL: Use defer=True to give async widget batches time to finish
             # This ensures placeholders are applied to all widgets, including those
             # created in final async batches
+            logger.debug(
+                "[POST_BUILD] ROOT refresh_with_live_context field_id=%s manager_seq=%s",
+                manager.field_id,
+                getattr(manager, '_pfm_seq', None),
+            )
             manager._parameter_ops_service.refresh_with_live_context(manager, defer=True)
 
         with timer("  Apply post-placeholder callbacks", threshold_ms=5.0):

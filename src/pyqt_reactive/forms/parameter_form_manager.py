@@ -33,6 +33,7 @@ except Exception:  # pragma: no cover - optional performance monitoring
         yield
 
 logger = logging.getLogger(__name__)
+_PFM_SEQ = 0
 @dataclass
 class FormManagerConfig:
     """
@@ -202,6 +203,9 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
         # Unpack config or use defaults
         config = config or FormManagerConfig()
+        global _PFM_SEQ
+        _PFM_SEQ += 1
+        self._pfm_seq = _PFM_SEQ
 
         # If no explicit scope_accent_color provided, derive it from the state's scope_id
         # using the centralized ScopeColorService. This avoids widget-tree traversal and
@@ -280,6 +284,16 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             if self.scope_id:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
                 self._scope_color_scheme = ScopeColorService.instance().get_color_scheme(self.scope_id)
+
+            logger.debug(
+                "[PFM_INIT] seq=%s field_id=%s target=%s is_nested=%s parent_cls=%s scope_id=%s",
+                self._pfm_seq,
+                self.field_id,
+                self._target_type_name,
+                self._parent_manager is not None,
+                type(self._parent_manager).__name__ if self._parent_manager is not None else None,
+                self.scope_id,
+            )
 
             # Track completion callbacks for async widget creation
             self._on_build_complete_callbacks = []
@@ -473,6 +487,20 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         """Build form UI using orchestrator service."""
         # timer decorator made optional
 
+        if getattr(self, "_form_widget", None) is not None:
+            logger.debug(
+                "[PFM_BUILD_FORM] seq=%s field_id=%s reuse_existing_form_widget",
+                self._pfm_seq,
+                self.field_id,
+            )
+            return self._form_widget
+
+        logger.debug(
+            "[PFM_BUILD_FORM] seq=%s field_id=%s param_count=%s",
+            self._pfm_seq,
+            self.field_id,
+            len(self.form_structure.parameters),
+        )
         with timer("      Create content widget", threshold_ms=1.0):
             content_widget = QWidget()
             content_layout = QVBoxLayout(content_widget)
@@ -482,13 +510,27 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         # PHASE 2A: Use orchestrator to eliminate async/sync duplication
         orchestrator = FormBuildOrchestrator()
         use_async = orchestrator.should_use_async(len(self.form_structure.parameters))
+        logger.debug(
+            "[PFM_BUILD_WIDGETS] seq=%s field_id=%s use_async=%s",
+            self._pfm_seq,
+            self.field_id,
+            use_async,
+        )
         orchestrator.build_widgets(self, content_layout, self.form_structure.parameters, use_async)
 
+        self._form_widget = content_widget
         return content_widget
 
     def _create_widget_for_param(self, param_info: Any) -> Any:
         """Create widget for a parameter. Type auto-detected from param_info."""
         from pyqt_reactive.forms.widget_creation_config import create_widget_parametric
+        logger.debug(
+            "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s widget_creation_type=%s",
+            self._pfm_seq,
+            self.field_id,
+            getattr(param_info, 'name', None),
+            getattr(param_info, 'widget_creation_type', None),
+        )
         return create_widget_parametric(self, param_info)
 
     def _create_widgets_async(self, layout, param_infos, on_complete=None, on_batch_complete=None):
@@ -500,7 +542,12 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             on_complete: Optional callback to run when all widgets are created
             on_batch_complete: Optional callback to run after each batch (receives list of widgets)
         """
-        logger.debug(f"[ASYNC_CREATE] Starting async widget creation for {self.field_id}, param_count={len(param_infos)}")
+        logger.debug(
+            "[ASYNC_CREATE] seq=%s field_id=%s param_count=%s",
+            self._pfm_seq,
+            self.field_id,
+            len(param_infos),
+        )
         # Create widgets in batches using QTimer to yield to event loop
         batch_size = 3  # Create 3 widgets at a time
         index = 0
@@ -510,7 +557,14 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
             batch_start = index
             batch_end = min(index + batch_size, len(param_infos))
-            logger.debug(f"[ASYNC_CREATE] Creating batch for {self.field_id}: params {batch_start}-{batch_end} of {len(param_infos)}")
+            logger.debug(
+                "[ASYNC_CREATE] seq=%s field_id=%s batch=%s-%s of %s",
+                self._pfm_seq,
+                self.field_id,
+                batch_start,
+                batch_end,
+                len(param_infos),
+            )
 
             # Guard: Check if layout's parent widget was deleted (window closed during async build)
             try:
@@ -582,6 +636,14 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         nested_manager = ParameterFormManager(
             state=self.state,  # CRITICAL: Share the same ObjectState instance
             config=nested_config
+        )
+        logger.debug(
+            "[PFM_NESTED_CREATE] parent_seq=%s parent_field_id=%s param=%s nested_seq=%s nested_field_id=%s",
+            self._pfm_seq,
+            self.field_id,
+            param_name,
+            getattr(nested_manager, '_pfm_seq', None),
+            nested_manager.field_id,
         )
 
         # Inherit lazy/global editing context from parent
@@ -677,12 +739,25 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         # Build full dotted path for state update
         dotted_path = f'{self.field_id}.{param_name}' if self.field_id else param_name
 
-        # Update state with full dotted path
-        self.state.update_parameter(dotted_path, converted_value)
-
-        # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
-        event = FieldChangeEvent(param_name, converted_value, self)
-        FieldChangeDispatcher.instance().dispatch(event)
+        # ATOMIC: If this state has a parent (e.g., function in a step), wrap in atomic
+        # This coalesces function parameter changes with parent step updates into one undo
+        has_parent = hasattr(self.state, '_parent_state') and self.state._parent_state is not None
+        logger.debug(f"[ATOMIC_CHECK] field_id={self.field_id}, has_parent={has_parent}, state={self.state}")
+        if has_parent:
+            from objectstate import ObjectStateRegistry
+            logger.debug(f"[ATOMIC_CHECK] Entering atomic block for {param_name}")
+            with ObjectStateRegistry.atomic("edit func parameter"):
+                self.state.update_parameter(dotted_path, converted_value)
+                # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
+                # This is INSIDE the atomic block so parent step updates are also coalesced
+                event = FieldChangeEvent(param_name, converted_value, self)
+                FieldChangeDispatcher.instance().dispatch(event)
+            logger.debug(f"[ATOMIC_CHECK] Exited atomic block for {param_name}")
+        else:
+            self.state.update_parameter(dotted_path, converted_value)
+            # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
+            event = FieldChangeEvent(param_name, converted_value, self)
+            FieldChangeDispatcher.instance().dispatch(event)
 
         # Update label styling after parameter change
         self._update_label_styling(param_name)
@@ -921,8 +996,8 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             if isinstance(widget, ValueSettable):
                 # Build full dotted path
                 dotted_path = f'{self.field_id}.{param_name}' if self.field_id else param_name
-                value = self.state.parameters.get(dotted_path)
-                if value is not None:
+                if dotted_path in self.state.parameters:
+                    value = self.state.parameters.get(dotted_path)
                     self._widget_service.update_widget_value(widget, value, param_name, False, self)
 
         # Recurse into nested managers
@@ -966,12 +1041,24 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
         # For each changed path, register and queue a LEAF flash
         for path in changed_paths:
+            if self.field_id:
+                if '.' in path:
+                    path_prefix = path.rsplit('.', 1)[0]
+                    if path_prefix != self.field_id:
+                        continue
+                else:
+                    continue
             self._queue_leaf_flash_for_path(path)
 
         # Refresh placeholders for changed fields (show new resolved values)
         for path in changed_paths:
             leaf_field = path.split('.')[-1] if '.' in path else path
             self._refresh_field_in_tree(leaf_field)
+        if changed_paths:
+            sample_path = next(iter(changed_paths))
+            sample_leaf = sample_path.split('.')[-1] if '.' in sample_path else sample_path
+            sample_prefix = sample_path.rsplit('.', 1)[0] if '.' in sample_path else None
+            logger.debug(f"[FLASH TRAIL] prefix={sample_prefix}, leaf_field={sample_leaf}")
 
     def _refresh_widgets_for_paths(self, paths: Set[str]):
         """Refresh widget values for specific paths from state.parameters.
@@ -1021,12 +1108,17 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
     def _queue_leaf_flash_for_path(self, path: str) -> None:
         """Queue a leaf flash for a changed path.
 
-        Finds the groupbox and leaf widget, registers a leaf flash element,
-        and queues the flash animation.
+        Finds the groupbox, leaf widget, and its label, registers a leaf flash element
+        (which masks title + leaf_widget + label_widget), and queues the flash animation.
         """
+        logger.info(f"[FLASH TRAIL] _queue_leaf_flash_for_path START: path={path}")
         # Find the prefix (groupbox) and leaf field name
         prefix = self._find_matching_prefix(path)
         leaf_field = path.split('.')[-1] if '.' in path else path
+
+        # SPECIAL CASE: For enable/disable toggles, flash the whole groupbox
+        # so styling changes are visible (don't mask widgets).
+        from python_introspect import ENABLED_FIELD
 
         if prefix:
             # Nested dataclass case: find groupbox and nested manager
@@ -1039,6 +1131,8 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                 logger.debug(f"[FLASH] No nested manager found for prefix={prefix}")
                 return
             leaf_widget = nested_manager.widgets.get(leaf_field)
+            label_widget = nested_manager.labels.get(leaf_field) if hasattr(nested_manager, 'labels') else None
+            logger.info(f"[FLASH TRAIL] Found leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}, label_widget={type(label_widget).__name__ if label_widget else None}")
             leaf_flash_key = f"{prefix}.{leaf_field}"
             tree_key = f"tree::{prefix}"
         else:
@@ -1046,8 +1140,49 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             # Parent widget (GroupBoxWithHelp) serves as the groupbox container
             groupbox = self.parent()
             leaf_widget = self.widgets.get(leaf_field)
+            label_widget = self.labels.get(leaf_field) if hasattr(self, 'labels') else None
             leaf_flash_key = f"param_{leaf_field}"
             tree_key = None  # No tree item for flat parameters
+
+        def _find_function_pane_ancestor(widget: QWidget | None) -> QWidget | None:
+            current = widget
+            while current is not None:
+                if hasattr(current, "_flash_title_container") or hasattr(current, "_module_path_label"):
+                    return current
+                current = current.parentWidget()
+            return None
+
+        pane = _find_function_pane_ancestor(groupbox) if groupbox is not None else None
+
+        enabled_suffix = "_enabled"
+        if (leaf_field == ENABLED_FIELD or leaf_field.endswith(enabled_suffix)) and groupbox is not None:
+            if pane is not None:
+                groupbox = pane
+            logger.info(
+                "[FLASH] Enabled toggle detected: leaf_field=%s prefix=%s groupbox=%s flash_key=%s",
+                leaf_field,
+                prefix,
+                type(groupbox).__name__,
+                getattr(groupbox, "_flash_key", None)
+            )
+            if pane is not None:
+                logger.info(
+                    "[FLASH] Enabled toggle: queueing pane flash key=%s (scoped=%s)",
+                    groupbox._flash_key,
+                    self._get_scoped_flash_key(groupbox._flash_key)
+                )
+            if hasattr(groupbox, '_flash_key') and hasattr(self, 'register_flash_groupbox_full'):
+                self.register_flash_groupbox_full(groupbox._flash_key, groupbox)
+                self.queue_flash_local(groupbox._flash_key)
+                logger.info(f"[FLASH] Enabled toggle: queued full groupbox flash key={groupbox._flash_key}")
+            else:
+                self.queue_flash_local(prefix if prefix else leaf_flash_key)
+                logger.info(f"[FLASH] Enabled toggle: queued groupbox flash key={prefix if prefix else leaf_flash_key}")
+            return
+
+        # For nested parameters inside function panes, flash the pane to include title rows
+        if pane is not None:
+            groupbox = pane
 
         if not leaf_widget:
             # Fallback to groupbox flash if leaf widget not found
@@ -1058,11 +1193,19 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                 logger.debug(f"[FLASH] No leaf widget for flat param {leaf_field}")
             return
 
+        # Flat parameter case: flash the full groupbox, mask only the changed field
+        if not prefix:
+            self.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=None)
+            self.queue_flash_local(leaf_flash_key)
+            return
+
         # Register leaf flash element (dynamic registration for this specific change)
-        self.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget)
+        logger.info(f"[FLASH TRAIL] Calling register_flash_leaf with leaf_flash_key={leaf_flash_key}")
+        self.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=label_widget)
 
         # Queue leaf flash (groupbox with inverse masking for the specific widget)
         self.queue_flash_local(leaf_flash_key)
+        logger.info(f"[FLASH TRAIL] Queued flash for leaf_flash_key={leaf_flash_key}")
         
         # Also queue tree item flash if this is a nested parameter
         if tree_key:

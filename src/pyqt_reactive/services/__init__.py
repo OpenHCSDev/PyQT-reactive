@@ -17,6 +17,8 @@ from .search_service import SearchService
 from .pattern_data_manager import PatternDataManager
 from .system_monitor_core import SystemMonitorCore
 from .persistent_system_monitor import PersistentSystemMonitor
+from .service_registry import ServiceRegistry, AutoRegisterServiceMixin
+from .scope_window_factory import WindowFactory, ScopeWindowRegistry
 
 # Also export as modules for form_init_service's ServiceRegistryMeta
 from . import signal_service
@@ -44,6 +46,10 @@ __all__ = [
     "PatternDataManager",
     "SystemMonitorCore",
     "PersistentSystemMonitor",
+    "ServiceRegistry",
+    "AutoRegisterServiceMixin",
+    "WindowFactory",
+    "ScopeWindowRegistry",
     "signal_service",
     "widget_service",
     "value_collection_service",

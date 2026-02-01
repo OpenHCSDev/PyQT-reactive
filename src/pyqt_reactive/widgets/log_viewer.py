@@ -7,6 +7,8 @@ for native desktop integration.
 """
 
 import logging
+import sys
+import json
 import re
 from typing import Optional, List, Set, Tuple
 from pathlib import Path
@@ -21,9 +23,9 @@ from PyQt6.QtGui import QSyntaxHighlighter, QTextDocument
 from PyQt6.QtCore import (
     QObject, QTimer, QFileSystemWatcher, pyqtSignal, pyqtSlot,
     Qt, QRegularExpression, QThread, QAbstractListModel, QModelIndex, QSize,
-    QThreadPool, QRunnable, QPoint, QPointF,
+    QThreadPool, QRunnable, QPoint, QPointF, QProcess,
 )
-from PyQt6.QtGui import QTextCharFormat, QColor, QAction, QFont, QTextCursor, QPalette, QAbstractTextDocumentLayout, QKeySequence
+from PyQt6.QtGui import QTextCharFormat, QColor, QAction, QFont, QTextCursor, QPalette, QAbstractTextDocumentLayout, QKeySequence, QFontMetrics
 
 from pyqt_reactive.core.log_utils import LogFileInfo
 from pyqt_reactive.protocols import get_log_discovery_provider, get_server_scan_provider
@@ -40,6 +42,8 @@ from pygments.style import Style
 from pygments.styles import get_style_by_name
 from dataclasses import dataclass
 from typing import Dict, Tuple
+
+from pyqt_reactive.utils.log_highlight_client import LogHighlightClient, HighlightedSegmentDTO
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +177,8 @@ class LogListModel(QAbstractListModel):
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._lines: List[str] = []
+        self._html_lines: List[Optional[str]] = []
+        self._max_line_width: int = 0
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # type: ignore[override]
         if parent.isValid():
@@ -195,20 +201,33 @@ class LogListModel(QAbstractListModel):
             return
         self.beginResetModel()
         self._lines.clear()
+        self._html_lines.clear()
+        self._max_line_width = 0
         self.endResetModel()
 
-    def append_lines(self, lines: List[str]) -> None:
+    def append_lines(self, lines: List) -> None:
         """Append new lines, enforcing the MAX_LINES ring buffer constraint."""
         if not lines:
             return
 
-        new_total = len(self._lines) + len(lines)
+        normalized = []
+        for item in lines:
+            if isinstance(item, dict):
+                normalized.append((item.get("text", ""), item.get("html")))
+            elif isinstance(item, tuple) and len(item) == 2:
+                normalized.append((item[0], item[1]))
+            else:
+                normalized.append((str(item), None))
+
+        new_total = len(self._lines) + len(normalized)
         if new_total > self.MAX_LINES:
             remove_count = new_total - self.MAX_LINES
             if remove_count >= len(self._lines):
                 # Replace entire buffer with newest lines only.
                 self.beginResetModel()
-                self._lines = lines[-self.MAX_LINES :]
+                self._lines = [item[0] for item in normalized[-self.MAX_LINES :]]
+                self._html_lines = [item[1] for item in normalized[-self.MAX_LINES :]]
+                self._max_line_width = max((len(line) for line in self._lines), default=0)
                 self.endResetModel()
                 return
 
@@ -218,10 +237,22 @@ class LogListModel(QAbstractListModel):
             self.endRemoveRows()
 
         start_row = len(self._lines)
-        end_row = start_row + len(lines) - 1
+        end_row = start_row + len(normalized) - 1
         self.beginInsertRows(QModelIndex(), start_row, end_row)
-        self._lines.extend(lines)
+        for text, html in normalized:
+            self._lines.append(text)
+            self._html_lines.append(html)
+            if len(text) > self._max_line_width:
+                self._max_line_width = len(text)
         self.endInsertRows()
+
+    def max_line_width(self) -> int:
+        return self._max_line_width
+
+    def html_for_row(self, row: int) -> Optional[str]:
+        if row < 0 or row >= len(self._html_lines):
+            return None
+        return self._html_lines[row]
 
     def iter_lines(self) -> List[str]:
         """Expose lines for read-only access (e.g., search)."""
@@ -278,6 +309,17 @@ class SelectableDocument(QTextDocument):
             pos: Character position in document
             mode: MoveAnchor (clear selection) or KeepAnchor (extend selection)
         """
+        # Clamp position to avoid Qt out-of-range warnings
+        max_pos = max(0, self.characterCount() - 1)
+        if pos < 0 or pos > max_pos:
+            logger.debug(
+                "SelectableDocument.setCursorPosition out-of-range pos=%d max=%d mode=%s",
+                pos,
+                max_pos,
+                mode,
+            )
+        pos = max(0, min(pos, max_pos))
+
         # Clear previous selection highlighting
         if self._text_cursor.hasSelection():
             self._clearSelection()
@@ -354,6 +396,9 @@ class SelectableDocument(QTextDocument):
         if self._text_cursor.hasSelection():
             self._clearSelection()
 
+        max_pos = max(0, self.characterCount() - 1)
+        newPos = max(0, min(newPos, max_pos))
+
         tempCursor = QTextCursor(self._text_cursor)
         tempCursor.setPosition(newPos, QTextCursor.MoveMode.KeepAnchor)
 
@@ -370,12 +415,16 @@ class SelectableDocument(QTextDocument):
         # Extend selection to word boundary based on drag direction
         if newPos < self._selected_word_on_double_click.position():
             # Dragging left - extend to start of word
-            self._text_cursor.setPosition(self._text_cursor.selectionEnd())
-            self._text_cursor.setPosition(wordStartPos, QTextCursor.MoveMode.KeepAnchor)
+            end_pos = max(0, min(self._text_cursor.selectionEnd(), max_pos))
+            start_pos = max(0, min(wordStartPos, max_pos))
+            self._text_cursor.setPosition(end_pos)
+            self._text_cursor.setPosition(start_pos, QTextCursor.MoveMode.KeepAnchor)
         else:
             # Dragging right - extend to end of word
-            self._text_cursor.setPosition(self._text_cursor.selectionStart())
-            self._text_cursor.setPosition(wordEndPos, QTextCursor.MoveMode.KeepAnchor)
+            start_pos = max(0, min(self._text_cursor.selectionStart(), max_pos))
+            end_pos = max(0, min(wordEndPos, max_pos))
+            self._text_cursor.setPosition(start_pos)
+            self._text_cursor.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
 
         # Apply selection highlighting
         if self._text_cursor.hasSelection():
@@ -449,79 +498,23 @@ class HighlightWorker(QRunnable):
         self.signals = signals
 
     def run(self):
-        """Parse text and extract formatting information in background thread."""
-        segments = self._parse_log_line(self.text)
-        self.signals.finished.emit(self.cache_key, segments)
-
-    def _parse_log_line(self, text: str) -> List[HighlightedSegment]:
-        """
-        Parse a log line and return formatting segments.
-
-        Uses pre-compiled regex patterns for maximum performance.
-        Patterns are compiled once at module load and reused.
-        """
-        segments = []
-        cs = self.color_scheme
-
-        # Timestamp pattern (start of line)
-        match = _TIMESTAMP_RE.match(text)
-        if match:
-            segments.append(HighlightedSegment(
-                start=match.start(),
-                length=match.end() - match.start(),
-                color=cs.timestamp_color
-            ))
-
-        # Log level (ERROR, WARNING, INFO, DEBUG)
-        for match in _LOG_LEVEL_RE.finditer(text):
-            level = match.group(1)
-            if level == 'ERROR' or level == 'CRITICAL':
-                color = cs.log_error_color
-            elif level == 'WARNING':
-                color = cs.log_warning_color
-            else:
-                color = cs.log_info_color
-
-            segments.append(HighlightedSegment(
-                start=match.start(),
-                length=match.end() - match.start(),
-                color=color,
-                bold=True
-            ))
-
-        # Logger name pattern (between timestamp and level)
-        for match in _LOGGER_NAME_RE.finditer(text):
-            segments.append(HighlightedSegment(
-                start=match.start(1),
-                length=match.end(1) - match.start(1),
-                color=cs.logger_name_color
-            ))
-
-        # File paths
-        for match in _FILE_PATH_RE.finditer(text):
-            segments.append(HighlightedSegment(
-                start=match.start(),
-                length=match.end() - match.start(),
-                color=cs.file_path_color
-            ))
-
-        # Python strings
-        for match in _PYTHON_STRING_RE.finditer(text):
-            segments.append(HighlightedSegment(
-                start=match.start(),
-                length=match.end() - match.start(),
-                color=cs.python_string_color
-            ))
-
-        # Numbers
-        for match in _NUMBER_RE.finditer(text):
-            segments.append(HighlightedSegment(
-                start=match.start(),
-                length=match.end() - match.start(),
-                color=cs.python_number_color
-            ))
-
-        return segments
+        """Request formatting segments from subprocess parser."""
+        if not LogHighlightClient.is_available():
+            return
+        segments = LogHighlightClient.parse_line(self.text)
+        if segments is None:
+            return
+        converted = []
+        for seg in segments:
+            converted.append(
+                HighlightedSegment(
+                    start=seg.start,
+                    length=seg.length,
+                    color=seg.color,
+                    bold=seg.bold,
+                )
+            )
+        self.signals.finished.emit(self.cache_key, converted)
 
 
 class LogItemDelegate(QStyledItemDelegate):
@@ -556,6 +549,7 @@ class LogItemDelegate(QStyledItemDelegate):
 
         # Thread pool for background highlighting
         self._thread_pool = QThreadPool.globalInstance()
+        self._highlighting_enabled = True
 
         # Signals for background workers
         self._highlight_signals = HighlightSignals()
@@ -571,6 +565,8 @@ class LogItemDelegate(QStyledItemDelegate):
 
         # Text selection state - support multi-line selection
         self._interactive_documents: Dict[int, SelectableDocument] = {}  # Map row -> document with selection
+        self._log_model: Optional[LogListModel] = None
+        self._current_render_row = -1
 
         # QTextDocument cache: maps (text, font_family, font_size, width) -> QTextDocument
         # Stores rendered documents to avoid recreation on every paint
@@ -587,6 +583,10 @@ class LogItemDelegate(QStyledItemDelegate):
         self._viewport_update_timer.setInterval(16)  # ~60fps
         self._viewport_update_timer.timeout.connect(self._do_viewport_update)
         self._viewport_needs_update = False
+        self._fixed_row_height: Optional[int] = None
+
+    def set_fixed_row_height(self, height: int) -> None:
+        self._fixed_row_height = height if height > 0 else None
 
     def set_search_state(self, text: str, case_sensitive: bool) -> None:
         """Update search text used for line-level search highlighting."""
@@ -727,6 +727,8 @@ class LogItemDelegate(QStyledItemDelegate):
             return self._segment_cache[cache_key]
 
         # Not in cache - start async parsing if not already pending
+        if not self._highlighting_enabled:
+            return None
         if cache_key not in self._pending_highlights:
             self._pending_highlights.add(cache_key)
             worker = HighlightWorker(text, cache_key, self._color_scheme, self._highlight_signals)
@@ -746,9 +748,24 @@ class LogItemDelegate(QStyledItemDelegate):
         cursor = QTextCursor(doc)
 
         for segment in segments:
+            if segment.start < 0 or segment.length <= 0:
+                continue
+            doc_len = doc.characterCount()
+            if segment.start >= doc_len:
+                logger.debug(
+                    "Skipping highlight segment out of range start=%d doc_len=%d",
+                    segment.start,
+                    doc_len,
+                )
+                continue
+            end = segment.start + segment.length
+            if end > doc_len:
+                end = doc_len
+                if end <= segment.start:
+                    continue
             # Select the segment
             cursor.setPosition(segment.start)
-            cursor.setPosition(segment.start + segment.length, QTextCursor.MoveMode.KeepAnchor)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
 
             # Create format
             fmt = QTextCharFormat()
@@ -794,9 +811,21 @@ class LogItemDelegate(QStyledItemDelegate):
         doc.setTextWidth(width)
 
         # Try to apply syntax highlighting if available
-        segments = self._get_or_request_segments(text, font)
-        if segments is not None:
-            self._apply_segments_to_document(doc, segments)
+        if not self._highlighting_enabled:
+            html = None
+            if hasattr(self, "_log_model") and self._log_model is not None:
+                try:
+                    html = self._log_model.html_for_row(self._current_render_row)
+                except Exception:
+                    html = None
+            if html:
+                doc.setHtml(html)
+            else:
+                doc.setPlainText(text)
+        else:
+            segments = self._get_or_request_segments(text, font)
+            if segments is not None:
+                self._apply_segments_to_document(doc, segments)
 
         # Add to cache
         self._document_cache[doc_cache_key] = doc
@@ -815,6 +844,7 @@ class LogItemDelegate(QStyledItemDelegate):
 
         text = opt.text
         row = index.row()
+        self._current_render_row = row
 
         # Draw simple background - skip Qt's drawControl entirely to avoid any focus/hover/selection styling
         painter.save()
@@ -830,9 +860,12 @@ class LogItemDelegate(QStyledItemDelegate):
             # Use the interactive document which has selection state
             doc = self.getInteractiveDocument(row)
             if doc is not None:
-                # ALWAYS set width to ensure consistency (prevents position shifting)
-                # The width check is inside setTextWidth to avoid unnecessary relayout
-                doc.setTextWidth(opt.rect.width())
+                # For selected rows, wrap to viewport width
+                view = self.parent() if isinstance(self.parent(), QListView) else None
+                wrap_width = opt.rect.width()
+                if view is not None and view.viewport() is not None:
+                    wrap_width = view.viewport().width()
+                doc.setTextWidth(wrap_width)
             else:
                 # Fallback to cached document rendering
                 doc = self._get_or_create_document(text, opt.font, opt.rect.width())
@@ -860,6 +893,17 @@ class LogItemDelegate(QStyledItemDelegate):
         This method is heavily optimized with caching since Qt calls it
         frequently during scrolling, resizing, and layout updates.
         """
+        if self._fixed_row_height is not None:
+            row = index.row()
+            if not self.hasInteractiveDocument(row):
+                width = option.rect.width() if option.rect.width() > 0 else 800
+                if self._log_model is not None:
+                    max_chars = self._log_model.max_line_width()
+                    if max_chars > 0:
+                        metrics = QFontMetrics(option.font)
+                        width = metrics.horizontalAdvance("M") * max_chars + 8
+                return QSize(width, self._fixed_row_height)
+
         text = index.data(Qt.DisplayRole)
         if text is None:
             return super().sizeHint(option, index)
@@ -1221,25 +1265,29 @@ class LogListView(QListView):
             itemRect = self.visualRect(index)
             width = itemRect.width() if itemRect.width() > 0 else self.viewport().width()
 
-            # Create SelectableDocument with syntax highlighting and proper width
+            # Create SelectableDocument with wrapping and proper width
             doc = delegate.createInteractiveDocument(str(text), self.font(), width)
+            max_pos = max(0, doc.characterCount() - 1)
+
+            def clamp_pos(pos: int) -> int:
+                return max(0, min(pos, max_pos))
 
             if row == firstRow and row == lastRow:
                 # Single-line selection
-                doc.setCursorPosition(firstPos)
-                doc.setCursorPosition(lastPos, QTextCursor.MoveMode.KeepAnchor)
+                doc.setCursorPosition(clamp_pos(firstPos))
+                doc.setCursorPosition(clamp_pos(lastPos), QTextCursor.MoveMode.KeepAnchor)
             elif row == firstRow:
                 # First line - select from start position to end
-                doc.setCursorPosition(firstPos)
-                doc.setCursorPosition(len(str(text)), QTextCursor.MoveMode.KeepAnchor)
+                doc.setCursorPosition(clamp_pos(firstPos))
+                doc.setCursorPosition(clamp_pos(len(str(text))), QTextCursor.MoveMode.KeepAnchor)
             elif row == lastRow:
                 # Last line - select from beginning to end position
                 doc.setCursorPosition(0)
-                doc.setCursorPosition(lastPos, QTextCursor.MoveMode.KeepAnchor)
+                doc.setCursorPosition(clamp_pos(lastPos), QTextCursor.MoveMode.KeepAnchor)
             else:
                 # Middle lines - select entire line
                 doc.setCursorPosition(0)
-                doc.setCursorPosition(len(str(text)), QTextCursor.MoveMode.KeepAnchor)
+                doc.setCursorPosition(clamp_pos(len(str(text))), QTextCursor.MoveMode.KeepAnchor)
 
             # Store document for this row
             delegate.setInteractiveDocument(row, doc)
@@ -1749,24 +1797,97 @@ class LogHighlighter(QSyntaxHighlighter):
 
 
 class LogFileLoader(QThread):
-    """Background thread for loading large log files without blocking UI."""
+    """Background process for loading large log files without blocking UI."""
 
     # Signals
-    content_loaded = pyqtSignal(str)  # Emits file content when loaded
-    load_failed = pyqtSignal(str)     # Emits error message on failure
+    chunk_loaded = pyqtSignal(list)  # Emits list[str] chunks
+    load_finished = pyqtSignal()     # Emits when all chunks loaded
+    load_failed = pyqtSignal(str)    # Emits error message on failure
 
-    def __init__(self, log_path: Path):
+    def __init__(self, log_path: Path, tail_lines: int = 100_000, chunk_lines: int = 1000):
         super().__init__()
         self.log_path = log_path
+        self.tail_lines = tail_lines
+        self.chunk_lines = chunk_lines
+        self._process: Optional[QProcess] = None
+        self._buffer = ""
+        self._stderr_chunks: list[str] = []
 
-    def run(self):
-        """Load file content in background thread."""
+    def start(self):  # type: ignore[override]
+        """Spawn a worker process to load the file content."""
         try:
-            with open(self.log_path, 'r', encoding='utf-8', errors='replace') as f:
-                content = f.read()
-            self.content_loaded.emit(content)
+            if self._process and self._process.state() != QProcess.ProcessState.NotRunning:
+                self._process.kill()
+                self._process = None
+
+            self._buffer = ""
+            self._stderr_chunks = []
+
+            self._process = QProcess()
+            self._process.setProgram(sys.executable)
+            self._process.setArguments([
+                "-m",
+                "pyqt_reactive.utils.log_streamer",
+                str(self.log_path),
+                "--tail-lines",
+                str(self.tail_lines),
+                "--chunk-lines",
+                str(self.chunk_lines),
+                "--html",
+            ])
+            self._process.readyReadStandardOutput.connect(self._on_stdout)
+            self._process.readyReadStandardError.connect(self._on_stderr)
+            self._process.finished.connect(self._on_finished)
+            self._process.start()
         except Exception as e:
             self.load_failed.emit(str(e))
+
+    def isRunning(self) -> bool:
+        return bool(self._process and self._process.state() != QProcess.ProcessState.NotRunning)
+
+    def wait(self, msecs: int = 0) -> None:
+        if self._process:
+            self._process.waitForFinished(msecs)
+
+    def _on_stdout(self) -> None:
+        if not self._process:
+            return
+        data = bytes(self._process.readAllStandardOutput())
+        text = data.decode("utf-8", errors="replace")
+        if not text:
+            return
+
+        self._buffer += text
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if payload.get("type") == "chunk":
+                lines = payload.get("lines", [])
+                if lines:
+                    self.chunk_loaded.emit(lines)
+            elif payload.get("type") == "done":
+                self.load_finished.emit()
+
+    def _on_stderr(self) -> None:
+        if not self._process:
+            return
+        data = bytes(self._process.readAllStandardError())
+        text = data.decode("utf-8", errors="replace")
+        if text:
+            self._stderr_chunks.append(text)
+
+    def _on_finished(self) -> None:
+        stderr = "".join(self._stderr_chunks).strip()
+
+        if stderr:
+            self.load_failed.emit(stderr)
+            return
 
 
 class LogTailer(QThread):
@@ -1948,15 +2069,19 @@ class LogViewerWindow(QMainWindow):
         # Enable per-row word wrapping and variable item heights so long
         # log lines are fully visible instead of clipped or forcing
         # horizontal scrolling.
-        self.log_view.setUniformItemSizes(False)
-        self.log_view.setWordWrap(True)
-        self.log_view.setResizeMode(QListView.ResizeMode.Adjust)
+        self.log_view.setUniformItemSizes(True)
+        self.log_view.setWordWrap(False)
+        self.log_view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.log_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.log_view.setResizeMode(QListView.ResizeMode.Fixed)
         # Disable Qt's native row selection - we use custom text selection instead
         self.log_view.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.log_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.log_view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.log_view.setFont(QFont("Consolas", 10))  # Monospace font for logs
         self.log_delegate = LogItemDelegate(LogColorScheme.create_dark_theme(), self.log_view)
+        self.log_delegate._log_model = self.log_model
+        self.log_delegate.set_fixed_row_height(18)
         self.log_view.setItemDelegate(self.log_delegate)
         main_layout.addWidget(self.log_view)
 
@@ -2340,7 +2465,8 @@ class LogViewerWindow(QMainWindow):
 
             # Create and start async loader
             self.file_loader = LogFileLoader(log_path)
-            self.file_loader.content_loaded.connect(self._on_file_loaded)
+            self.file_loader.chunk_loaded.connect(self._on_file_chunk_loaded)
+            self.file_loader.load_finished.connect(self._on_file_load_finished)
             self.file_loader.load_failed.connect(self._on_file_load_failed)
             self.file_loader.start()
 
@@ -2348,23 +2474,29 @@ class LogViewerWindow(QMainWindow):
             logger.error(f"Error switching to log {log_path}: {e}")
             raise
 
-    def _on_file_loaded(self, content: str) -> None:
-        """Handle file content loaded (either sync or async)."""
+    def _on_file_chunk_loaded(self, lines: list) -> None:
+        """Handle a chunk of lines loaded from subprocess."""
         try:
-            self._pending_partial_line = ""
-            self.clear_log_display()
-
-            lines = content.splitlines()
-
-            # Update file position immediately
-            self.current_file_position = len(content.encode("utf-8"))
-
-            # Batch insert lines to prevent UI freeze
-            # Insert in chunks of 1000 lines with event loop yields
-            self._batch_insert_lines(lines)
-
+            if not lines:
+                return
+            if self.log_delegate is not None:
+                self.log_delegate._highlighting_enabled = False
+            self.log_model.append_lines(lines)
         except Exception as e:
-            logger.error(f"Error displaying loaded content: {e}")
+            logger.error(f"Error displaying loaded chunk: {e}")
+
+    def _on_file_load_finished(self) -> None:
+        """Finalize after all chunks are loaded."""
+        try:
+            # Update file position immediately
+            if self.current_log_path and self.current_log_path.exists():
+                self.current_file_position = self.current_log_path.stat().st_size
+
+            self._finish_batch_insert()
+            if self.log_delegate is not None:
+                self.log_delegate._highlighting_enabled = True
+        except Exception as e:
+            logger.error(f"Error finalizing loaded content: {e}")
 
     def _batch_insert_lines(self, lines: List[str], chunk_size: int = 1000) -> None:
         """
@@ -2907,5 +3039,6 @@ class LogViewerWindow(QMainWindow):
             self.tail_timer.stop()
         if hasattr(self, 'process_update_timer') and self.process_update_timer:
             self.process_update_timer.stop()
+        LogHighlightClient.shutdown()
         self.window_closed.emit()
         super().closeEvent(event)

@@ -31,14 +31,25 @@ class ImageTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
         self._metadata_keys = metadata_keys
         self.reconfigure_columns()
     
+    # Default widths for common metadata columns to keep table compact
+    _COLUMN_WIDTHS = {
+        'extension': 70,
+        'channel': 70,
+        'site': 50,
+        'size': 80,
+        'time': 100,
+        'timestamp': 100,
+    }
+
     def get_columns(self) -> List[ColumnDef]:
         """Dynamic column definitions based on metadata keys."""
         columns = [ColumnDef(name="Filename", key="filename", width=200)]
-        
+
         for key in self._metadata_keys:
             display_name = key.replace('_', ' ').title()
-            columns.append(ColumnDef(name=display_name, key=key))
-        
+            width = self._COLUMN_WIDTHS.get(key.lower())
+            columns.append(ColumnDef(name=display_name, key=key, width=width))
+
         return columns
     
     def extract_row_data(self, item: Dict[str, Any]) -> List[str]:

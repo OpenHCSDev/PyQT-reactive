@@ -40,8 +40,9 @@ class ParameterFormLayoutConfig:
     widget_padding: int = 5  # ⭐ WIDGET INTERNAL PADDING - controls height of input fields!
     row_fixed_height: int | None = None  # ⭐ Fixed height for each parameter row (None = auto)
 
-    # Reset button width
+    # Button dimensions
     reset_button_width: int = 60
+    button_height: int = 32  # SSOT for all button heights
 
 
 # Default compact configuration

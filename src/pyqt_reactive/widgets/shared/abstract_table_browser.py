@@ -115,6 +115,10 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         self.table_widget.setSelectionMode(qt_mode)
         self.table_widget.setSortingEnabled(True)
 
+        # Configure text display for proper truncation with ellipsis
+        self.table_widget.setWordWrap(False)
+        self.table_widget.setTextElideMode(Qt.TextElideMode.ElideRight)
+
     def _apply_column_config(self, columns: List[ColumnDef]):
         """Apply column configuration to table. Called by _configure_table and reconfigure_columns."""
         self.table_widget.setColumnCount(len(columns))
@@ -224,6 +228,10 @@ class AbstractTableBrowser(QWidget, Generic[T]):
                 # Store key in first column for lookup
                 if col == 0:
                     table_item.setData(Qt.ItemDataRole.UserRole, key)
+
+                # Enable proper text truncation with ellipsis
+                table_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                table_item.setFlags(table_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
                 self.table_widget.setItem(row, col, table_item)
 

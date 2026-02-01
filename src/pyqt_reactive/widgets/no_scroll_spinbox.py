@@ -4,7 +4,7 @@ No-scroll spinbox widgets for PyQt6.
 Prevents accidental value changes from mouse wheel events.
 """
 
-from PyQt6.QtWidgets import QCheckBox, QStyleOptionComboBox, QStyle
+from PyQt6.QtWidgets import QCheckBox, QStyleOptionComboBox, QStyle, QApplication
 from PyQt6.QtGui import QWheelEvent, QFont, QColor, QPainter
 from PyQt6.QtCore import Qt
 
@@ -197,9 +197,10 @@ class NoneAwareCheckBox(QCheckBox):
     def _apply_concrete_palette(self):
         """Restore normal palette for concrete values."""
         from PyQt6.QtGui import QPalette
+        # Use application palette to get the proper text color for the theme
+        app_palette = QApplication.palette()
         palette = self.palette()
-        # Restore default text color (black)
-        palette.setColor(QPalette.ColorRole.Text, QColor(0, 0, 0))
+        palette.setColor(QPalette.ColorRole.Text, app_palette.color(QPalette.ColorRole.Text))
         self.setPalette(palette)
 
     def mousePressEvent(self, event):

@@ -22,6 +22,10 @@ def ensure_window_on_screen(w: QWidget) -> None:
     if wg.width() <= 1 or wg.height() <= 1:
         return
 
+    # Respect fixed default sizes set by app windows
+    if top.property("_fixed_default_size"):
+        return
+
     # Shrink if larger than work area
     max_w = max(100, sg.width() - 20)
     max_h = max(100, sg.height() - 20)

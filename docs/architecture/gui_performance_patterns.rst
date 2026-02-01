@@ -1000,3 +1000,55 @@ When editing ``WellFilterConfig.well_filter`` in ``PipelineConfig``:
 - Before: 3-5 sibling refreshes per keystroke (all siblings)
 - After: 0-2 sibling refreshes per keystroke (only affected siblings)
 - Measured improvement: ~5-10ms per keystroke in complex configs
+
+Performance Monitoring
+---------------------
+
+The system includes a performance monitor for tracking widget creation and form operations.
+
+**Performance Logger**:
+
+.. code-block:: python
+
+    from pyqt_reactive.core.performance_monitor import perf_logger
+
+    perf_logger.debug(f"Operation took {duration_ms:.2f}ms")
+
+**Logging Level**:
+
+Performance logger uses ``WARNING`` level by default to reduce log noise:
+
+.. code-block:: python
+
+    perf_logger.setLevel(logging.WARNING)
+
+This suppresses routine performance measurements in normal operation while still logging performance issues when they occur.
+
+**Timer Context Manager**:
+
+.. code-block:: python
+
+    from pyqt_reactive.core.performance_monitor import timer
+
+    with timer("Widget creation", threshold_ms=5.0):
+        widget = create_complex_widget()
+
+Operations slower than ``threshold_ms`` are logged to ``perf_logger``.
+
+**Usage Guidelines**:
+
+- Use ``timer`` for operations that may be slow (>5ms)
+- Set appropriate ``threshold_ms`` for each context
+- Only log operations that are likely to be performance bottlenecks
+- Avoid excessive logging in hot paths (like paint events)
+
+**Performance Metrics**:
+
+Common operation timings:
+
+- Widget creation: 1-50ms (depends on complexity)
+- Form initialization: 10-200ms (depends on parameter count)
+- Placeholder refresh: 1-10ms (per field)
+- Cross-window update: 5-20ms (per affected window)
+
+Operations exceeding these thresholds are flagged for investigation.

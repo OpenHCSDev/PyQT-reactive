@@ -28,6 +28,10 @@ Example Usage:
 import logging
 from typing import Dict, Callable, Optional, Protocol
 from PyQt6.QtWidgets import QWidget
+from PyQt6.QtGui import QCursor, QGuiApplication
+from PyQt6.QtCore import QRect
+from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtCore import QTimer
 
 from objectstate import ObjectStateRegistry
 
@@ -72,6 +76,114 @@ class WindowManager:
 
     # Global registry of open windows by scope_id
     _scoped_windows: Dict[str, QWidget] = {}
+
+    @classmethod
+    def position_window_near_cursor(
+        cls,
+        window: QWidget,
+        offset: int = 0,
+        avoid_widgets: list[QWidget] | None = None,
+    ) -> None:
+        """Place window centered on mouse cursor without overlapping floating windows."""
+        if avoid_widgets is None:
+            avoid_widgets = getattr(window, "_avoid_widgets", None) or []
+        cursor_pos = QCursor.pos()
+        screen = QGuiApplication.screenAt(cursor_pos)
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+        size = window.size()
+        if size.isEmpty():
+            size = window.sizeHint()
+        width = size.width()
+        height = size.height()
+
+        bounds_left = available.left()
+        bounds_top = available.top()
+        bounds_right = bounds_left + available.width()
+        bounds_bottom = bounds_top + available.height()
+
+        base_x = cursor_pos.x() - (width // 2) + offset
+        base_y = cursor_pos.y() - (height // 2) + offset
+
+        def clamp(x: int, y: int) -> tuple[int, int]:
+            return (
+                min(max(x, bounds_left), bounds_right - width),
+                min(max(y, bounds_top), bounds_bottom - height),
+            )
+
+        avoid_rects = []
+        for widget in avoid_widgets or []:
+            try:
+                avoid_rects.append(widget.frameGeometry())
+            except Exception:
+                continue
+
+        def intersects_any(rect: QRect) -> bool:
+            for widget in QApplication.topLevelWidgets():
+                if widget is window:
+                    continue
+                if not widget.isVisible():
+                    continue
+                if isinstance(widget, QMainWindow):
+                    continue
+                try:
+                    other = widget.frameGeometry()
+                except Exception:
+                    continue
+                if rect.intersects(other):
+                    return True
+            for other in avoid_rects:
+                if rect.intersects(other):
+                    return True
+            return False
+
+        candidates: list[tuple[int, int]] = []
+        gap = 12
+        for avoid in avoid_rects:
+            if avoid.contains(cursor_pos):
+                candidates.extend(
+                    [
+                        (avoid.right() + gap, cursor_pos.y() - (height // 2)),
+                        (avoid.left() - width - gap, cursor_pos.y() - (height // 2)),
+                        (cursor_pos.x() - (width // 2), avoid.bottom() + gap),
+                        (cursor_pos.x() - (width // 2), avoid.top() - height - gap),
+                    ]
+                )
+                break
+
+        if not candidates:
+            candidates.append((base_x, base_y))
+
+        step = 32
+        rings = 12
+        for r in range(1, rings + 1):
+            delta = r * step
+            candidates.extend(
+                [
+                    (base_x + delta, base_y),
+                    (base_x - delta, base_y),
+                    (base_x, base_y + delta),
+                    (base_x, base_y - delta),
+                    (base_x + delta, base_y + delta),
+                    (base_x + delta, base_y - delta),
+                    (base_x - delta, base_y + delta),
+                    (base_x - delta, base_y - delta),
+                ]
+            )
+
+        for candidate_x, candidate_y in candidates:
+            x, y = clamp(candidate_x, candidate_y)
+            rect = QRect(x, y, width, height)
+            if not intersects_any(rect):
+                window.move(x, y)
+                return
+
+        x, y = clamp(base_x, base_y)
+        window.move(x, y)
 
     @classmethod
     def show_or_focus(cls, scope_id: str, window_factory: Callable[[], QWidget]) -> QWidget:
@@ -149,6 +261,7 @@ class WindowManager:
 
         # Show window
         window.show()
+        QTimer.singleShot(0, lambda: cls.position_window_near_cursor(window))
         logger.debug(f"[WINDOW_MGR] Registered and showed new window for scope: {scope_id}")
         return window
 
@@ -307,6 +420,18 @@ class WindowManager:
             return False
 
     @classmethod
+    def get_window(cls, scope_id: str) -> Optional[QWidget]:
+        """Return the window instance for a scope_id if present.
+
+        Args:
+            scope_id: Scope to lookup
+
+        Returns:
+            Window instance or None if not registered
+        """
+        return cls._scoped_windows.get(scope_id)
+
+    @classmethod
     def close_window(cls, scope_id: str) -> bool:
         """Programmatically close window for scope_id.
 
@@ -353,35 +478,3 @@ class WindowManager:
             logger.debug(f"[WINDOW_MGR] Cleaned up stale reference: {scope_id}")
 
         return valid_scopes
-
-    # ========== Window Creation for Scope (Shared Infrastructure) ==========
-
-    @classmethod
-    def create_window_for_scope(cls, scope_id: str, object_state: Optional['ObjectState'] = None) -> Optional[QWidget]:
-        """Create and show a window for the given scope_id.
-
-        This is the single source of truth for scope→window creation.
-        Used by both provenance navigation and time-travel restore.
-
-        Scope ID format:
-        - "" (empty string): GlobalPipelineConfig
-        - "/path/to/plate": PipelineConfig for that plate
-        - "/path/to/plate::step_N": DualEditorWindow → Step Settings tab
-        - "/path/to/plate::step_N::func_M": DualEditorWindow → Function Pattern tab
-
-        Args:
-            scope_id: Scope identifier
-            object_state: Optional ObjectState (used for time-travel to get object_instance)
-
-        Returns:
-            The created window, or None if creation failed
-        """
-        from pyqt_reactive.protocols import get_window_factory
-
-        factory = get_window_factory()
-        if factory is None:
-            raise RuntimeError("No window factory registered. Call register_window_factory(...).")
-
-        return factory.create_window_for_scope(scope_id, object_state)
-
-    # Window creation is delegated to the registered WindowFactoryProtocol.

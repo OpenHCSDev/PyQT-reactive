@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QScrollArea, QWidget, QMessageBox
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QCursor, QGuiApplication
 
 # REUSE the actual working Textual TUI help components
 from python_introspect import DocstringExtractor
@@ -201,7 +202,6 @@ class DocstringHelpWindow(BaseHelpWindow):
         # Auto-size to content
         self.adjustSize()
         # Set reasonable min/max sizes
-        self.setMinimumSize(400, 200)
         self.setMaximumSize(800, 600)
 
 
@@ -210,6 +210,35 @@ class HelpWindowManager:
 
     # Class-level window reference for singleton behavior
     _help_window = None
+
+    @classmethod
+    def _position_window_near_cursor(cls, window: QDialog) -> None:
+        """Position help window near the mouse cursor within screen bounds."""
+        cursor_pos = QCursor.pos()
+        screen = QGuiApplication.screenAt(cursor_pos)
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+        window.adjustSize()
+        size = window.size()
+
+        x = cursor_pos.x() - size.width() - 16
+        y = cursor_pos.y() - size.height() - 16
+
+        if x < available.left():
+            x = available.left()
+        if y < available.top():
+            y = available.top()
+
+        if x + size.width() > available.right():
+            x = max(available.left(), available.right() - size.width())
+        if y + size.height() > available.bottom():
+            y = max(available.top(), available.bottom() - size.height())
+
+        window.move(x, y)
 
     @classmethod
     def show_docstring_help(cls, target: Union[Callable, type], title: Optional[str] = None, parent=None):
@@ -222,7 +251,7 @@ class HelpWindowManager:
         
         try:
             # Check if existing window is still valid
-            if cls._help_window and hasattr(cls._help_window, 'isVisible'):
+            if isinstance(cls._help_window, QDialog):
                 try:
                     if not cls._help_window.isHidden():
                         logger.info(f"🔍 Reusing existing help window")
@@ -230,6 +259,7 @@ class HelpWindowManager:
                         cls._help_window.docstring_info = DocstringExtractor.extract(target)
                         cls._help_window.setWindowTitle(title or f"Help: {getattr(target, '__name__', 'Unknown')}")
                         cls._help_window.populate_content()
+                        cls._position_window_near_cursor(cls._help_window)
                         cls._help_window.raise_()
                         cls._help_window.activateWindow()
                         return
@@ -242,6 +272,7 @@ class HelpWindowManager:
             cls._help_window = DocstringHelpWindow(target, title=title, parent=parent)
             logger.info(f"🔍 DocstringHelpWindow created, calling show()")
             cls._help_window.show()
+            cls._position_window_near_cursor(cls._help_window)
             logger.info(f"🔍 DocstringHelpWindow shown")
 
         except Exception as e:
@@ -280,12 +311,13 @@ class HelpWindowManager:
             logger.debug(f"🔍 show_parameter_help: param_name={param_name}, param_description={param_description[:50] if param_description else 'None'}")
 
             # Check if existing window is still valid
-            if cls._help_window and hasattr(cls._help_window, 'isVisible'):
+            if isinstance(cls._help_window, QDialog):
                 try:
                     if not cls._help_window.isHidden():
                         cls._help_window.docstring_info = fake_info
                         cls._help_window.setWindowTitle(f"Parameter: {param_name}")
                         cls._help_window.populate_content()
+                        cls._position_window_near_cursor(cls._help_window)
                         cls._help_window.raise_()
                         cls._help_window.activateWindow()
                         return
@@ -301,6 +333,7 @@ class HelpWindowManager:
             cls._help_window.docstring_info = fake_info
             cls._help_window.populate_content()
             cls._help_window.show()
+            cls._position_window_near_cursor(cls._help_window)
 
         except Exception as e:
             logger.error(f"Failed to show parameter help: {e}")

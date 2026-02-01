@@ -73,6 +73,53 @@ Flash animations have three phases with configurable durations:
 2. **hold** (50ms): Hold at maximum intensity
 3. **fade_out** (350ms): Slow fade-out with InOutCubic easing
 
+Widget-Type-Specific Masking
+--------------------------------
+
+Flash animations use widget-type-specific masking strategies for precise visual feedback:
+
+**Masking Strategies**:
+
+- **Checkbox**: Tight mask for indicator + label text using Qt style subelement rects
+- **Label**: Tight mask using ``sizeHint()`` to avoid empty layout space
+- **Help Button**: Fixed square mask when ``_square_size`` is set
+- **All other widgets**: Full rectangle mask
+
+**Checkbox Square Cutout**:
+
+Textless checkboxes (no label) use square cutouts to avoid rounding:
+
+.. code-block:: python
+
+    def _needs_square_checkbox_mask(widget: QWidget) -> bool:
+        return isinstance(widget, QCheckBox) and not widget.text()
+
+**Function Pane Title Masking**:
+
+Function panes mask title row widgets tightly:
+
+.. code-block:: python
+
+    def _get_function_pane_title_widgets(groupbox: QWidget) -> List[QWidget]:
+        pane = groupbox
+        while pane is not None:
+            if hasattr(pane, "_flash_title_container") or hasattr(pane, "_module_path_label"):
+                break
+            pane = pane.parentWidget()
+
+        widgets = []
+        module_label = getattr(pane, "_module_path_label", None)
+        if module_label and module_label.isVisible():
+            widgets.append(module_label)
+
+        title_container = getattr(pane, "_flash_title_container", None)
+        if title_container and title_container.isVisible():
+            for child in title_container.findChildren(QWidget):
+                if child.isVisible() and isinstance(child, LEAF_WIDGET_TYPES):
+                    widgets.append(child)
+
+        return widgets
+
 FlashElement Types
 ------------------
 
@@ -86,13 +133,37 @@ The system supports multiple element types via ``FlashElement`` dataclass:
      - Use Case
    * - Groupbox
      - ``create_groupbox_element()``
-     - Form section headers
+     - Form section headers (STANDARD mode masks all children, INVERSE mode masks title + leaf_widget)
+   * - Groupbox (full rect)
+     - ``create_groupbox_element(..., use_full_rect=True)``
+     - Flash entire groupbox geometry (no margin-top offset)
    * - Tree Item
      - ``create_tree_item_element()``
      - Config hierarchy trees
    * - List Item
      - ``create_list_item_element()``
      - Step/function lists
+
+INVERSE Mode with Label Widget Masking
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+INVERSE mode now masks title + leaf_widget + label_widget (not all title row widgets):
+
+.. code-block:: python
+
+    self.register_flash_leaf(
+        key="my_field",
+        groupbox=my_groupbox,
+        leaf_widget=my_widget,
+        label_widget=my_label  # NEW: mask label too
+    )
+
+This highlights "all fields that inherited the change" while keeping the changed field and its label visible.
+
+**Masking Behavior**:
+
+- **STANDARD mode** (``leaf_widget=None``): Mask ALL children, flash only frame/background
+- **INVERSE mode** (``leaf_widget=widget``): Mask title + leaf_widget + label_widget, flash frame + all siblings
 
 Usage with FlashMixin
 ---------------------

@@ -394,7 +394,11 @@ class MagicGuiWidgetFactory:
         enum_type = get_enum_from_list(param_type)
         widget = CheckboxGroupAdapter()
         # Don't set title - label is added separately in widget_creation_config.py
+        # Transparent background so parent's scope-tinted background shows through
+        widget.setStyleSheet("QGroupBox { background-color: transparent; border: none; }")
         layout = QVBoxLayout(widget)
+        layout.setContentsMargins(4, 2, 4, 2)  # Minimal margins for checkbox group
+        layout.setSpacing(2)
 
         # Populate checkboxes for each enum value
         for enum_value in enum_type:

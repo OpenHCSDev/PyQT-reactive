@@ -190,7 +190,7 @@ class ScrollableFormMixin:
     def _queue_leaf_flash_for_navigation(self, section_path: str, leaf_name: str, leaf_widget) -> None:
         """Queue a leaf flash for navigation to a specific field.
 
-        Uses INVERSE masking: flash the groupbox + all siblings, mask the leaf widget.
+        Uses INVERSE masking: flash the groupbox + all siblings, mask the leaf widget + its label.
         This highlights "the context around the source field" when navigating via provenance.
         """
         # Find the groupbox for this section
@@ -204,10 +204,16 @@ class ScrollableFormMixin:
             self.form_manager.queue_flash_local(section_path)
             return
 
+        # Find the label widget for this leaf field
+        nested_manager = self.form_manager._find_nested_manager_for_prefix(section_path)
+        label_widget = None
+        if nested_manager and hasattr(nested_manager, 'labels'):
+            label_widget = nested_manager.labels.get(leaf_name)
+
         # Register leaf flash element dynamically
         # Use '.' for attribute access (not '::' which is for scope hierarchy)
         leaf_flash_key = f"{section_path}.{leaf_name}"
-        self.form_manager.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget)
+        self.form_manager.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=label_widget)
 
         # Queue BOTH flashes so they're in sync:
         # 1. Leaf flash for groupbox (inverse masking)

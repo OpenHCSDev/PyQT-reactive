@@ -17,6 +17,54 @@ Parameter forms must maintain consistency between widget state, internal paramet
 
 This prevents the reset placeholder bug where forms show stale values instead of current defaults.
 
+Sequence Number Tracking
+-----------------------
+
+Each ``ParameterFormManager`` instance receives a unique sequence number (``_pfm_seq``) for debugging and tracking:
+
+.. code-block:: python
+
+    global _PFM_SEQ = 0
+
+    class ParameterFormManager(QWidget):
+        def __init__(self, ...):
+            global _PFM_SEQ
+            _PFM_SEQ += 1
+            self._pfm_seq = _PFM_SEQ
+
+This sequence number appears in debug logs to trace form creation and widget operations:
+
+.. code-block:: python
+
+    logger.debug(
+        "[PFM_INIT] seq=%s field_id=%s target=%s is_nested=%s parent_cls=%s",
+        self._pfm_seq,
+        self.field_id,
+        self._target_type_name,
+        self._parent_manager is not None,
+        type(self._parent_manager).__name__ if self._parent_manager else None,
+    )
+
+Nested Form Manager Tracking
+--------------------------
+
+The system tracks parent-child relationships between nested form managers:
+
+.. code-block:: python
+
+    class ParameterFormManager(QWidget):
+        def _on_nested_manager_complete(self, nested_manager):
+            """Called when nested form manager completes widget creation."""
+            logger.debug(
+                "[NESTED_COMPLETE] nested_field_id=%s nested_seq=%s root_field_id=%s root_seq=%s",
+                nested_manager.field_id,
+                getattr(nested_manager, '_pfm_seq', None),
+                self.field_id,
+                getattr(self, '_pfm_seq', None),
+            )
+
+This enables debugging of complex form hierarchies with multiple nesting levels.
+
 Widget State Management
 -----------------------
 The form manager coordinates widget updates with context behavior application.

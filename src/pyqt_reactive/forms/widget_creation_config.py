@@ -16,6 +16,7 @@ handlers for checkbox title widget and None/instance toggle logic.
 
 from enum import Enum
 import logging
+import itertools
 
 logger = logging.getLogger(__name__)
 from typing import Any, Callable, Optional, Type, Tuple
@@ -28,8 +29,10 @@ from .widget_creation_types import (
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 from pyqt_reactive.services.widget_service import WidgetService
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveParameterRow
+from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 
 logger = logging.getLogger(__name__)
+_WIDGET_CREATE_SEQ = itertools.count(1)
 
 
 class WidgetCreationType(Enum):
@@ -69,8 +72,30 @@ def _create_optimized_reset_button(field_id: str, param_name: str, reset_callbac
     button = QPushButton("Reset")
     button.setObjectName(f"{field_id}_reset")
     button.setMaximumWidth(60)  # Standard reset button width
+    button.setFixedHeight(CURRENT_LAYOUT.button_height)
     button.clicked.connect(reset_callback)
     return button
+
+
+def _apply_reset_button_style(button, color_scheme) -> None:
+    """Apply the canonical reset button style (SSOT)."""
+    button.setStyleSheet(
+        f"""
+        QPushButton {{
+            background-color: {color_scheme.to_hex(color_scheme.button_normal_bg)};
+            border: none;
+            border-radius: 3px;
+            padding: 2px 6px;
+            font-size: 11px;
+        }}
+        QPushButton:hover {{
+            background-color: {color_scheme.to_hex(color_scheme.button_hover_bg)};
+        }}
+        QPushButton:pressed {{
+            background-color: {color_scheme.to_hex(color_scheme.button_pressed_bg)};
+        }}
+        """
+    )
 
 
 def _create_nested_form(manager, param_info, display_info, field_ids, current_value, unwrapped_type, layout=None, CURRENT_LAYOUT=None, QWidget=None, GroupBoxWithHelp=None, PyQt6ColorScheme=None) -> Any:
@@ -143,7 +168,8 @@ def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_n
     logger = logging.getLogger(__name__)
     logger.debug(f"🔍 _move_enabled_widget_to_title: enabled_field={enabled_field}, nested_param_name={nested_param_name}")
     logger.debug(f"🔍 _move_enabled_widget_to_title: nested_manager.widgets keys={list(nested_manager.widgets.keys())}")
-    logger.debug(f"🔍 _move_enabled_widget_to_title: parent_manager.widgets keys={list(parent_manager.widgets.keys())}")
+    if hasattr(parent_manager, "widgets"):
+        logger.debug(f"🔍 _move_enabled_widget_to_title: parent_manager.widgets keys={list(parent_manager.widgets.keys())}")
 
     if enabled_field not in nested_manager.widgets:
         logger.warning(f"⚠️  _move_enabled_widget_to_title: enabled_field '{enabled_field}' not in nested_manager.widgets")
@@ -155,14 +181,15 @@ def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_n
     logger.debug(f"🔍 _move_enabled_widget_to_title: found enabled_widget={enabled_widget}, enabled_reset_button={enabled_reset_button}")
 
     # Find the container (GroupBoxWithHelp) for the nested form
-    container = parent_manager.widgets.get(nested_param_name)
-    if not container:
-        logger.warning(f"⚠️  _move_enabled_widget_to_title: container '{nested_param_name}' not found in parent_manager.widgets")
-        return
-
-    if not hasattr(container, 'title_layout'):
-        logger.warning(f"⚠️  _move_enabled_widget_to_title: container '{nested_param_name}' has no title_layout attribute")
-        return
+    from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
+    container = parent_manager.widgets.get(nested_param_name) if hasattr(parent_manager, "widgets") else None
+    if not isinstance(container, GroupBoxWithHelp):
+        # Function pane case: parent_manager *is* the container
+        if hasattr(parent_manager, "addEnableableWidgets") and hasattr(parent_manager, "_title_label"):
+            container = parent_manager
+        else:
+            logger.warning(f"⚠️  _move_enabled_widget_to_title: container '{nested_param_name}' not found or not a GroupBoxWithHelp")
+            return
 
     logger.debug(f"🔍 _move_enabled_widget_to_title: found container with title_layout")
 
@@ -196,42 +223,51 @@ def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_n
         logger.debug(f"🔍 _move_enabled_widget_to_title: removed reset button from row layout")
 
     # Find the title label in the container and make it clickable
-    title_label = None
-    if hasattr(container, '_title_label'):
-        title_label = container._title_label
-        logger.debug(f"🔍 _move_enabled_widget_to_title: using container._title_label={title_label}")
-    else:
-        # Find the title label by looking at the title_layout
-        for i in range(container.title_layout.count()):
-            item = container.title_layout.itemAt(i)
-            widget = item.widget()
-            if isinstance(widget, QLabel):
-                title_label = widget
-                logger.debug(f"🔍 _move_enabled_widget_to_title: found title_label={title_label} in title_layout at position {i}")
-                break
+    title_label = container._title_label
+    logger.debug(f"🔍 _move_enabled_widget_to_title: using container._title_label={title_label}")
 
-    if title_label and isinstance(enabled_widget, NoneAwareCheckBox):
-        # Make title clickable to toggle enabled checkbox
-        title_label.mousePressEvent = lambda e: enabled_widget.toggle()
+    # Keep reference to original checkbox for toggle functionality
+    checkbox_widget = enabled_widget
+
+    # Wrap checkbox in container with background color to match form row appearance
+    if isinstance(enabled_widget, NoneAwareCheckBox):
+        from PyQt6.QtWidgets import QWidget, QHBoxLayout, QStyle
+        from PyQt6.QtCore import Qt
+        bg_color = parent_manager.color_scheme.to_hex(parent_manager.color_scheme.button_normal_bg)
+        checkbox_container = QWidget()
+        checkbox_container.setStyleSheet(f"background-color: {bg_color};")
+        indicator_w = enabled_widget.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth)
+        indicator_h = enabled_widget.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorHeight)
+        checkbox_container.setFixedSize(indicator_w, indicator_h)
+        layout = QHBoxLayout(checkbox_container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        enabled_widget.setStyleSheet("padding: 0px; margin: 0px;")
+        enabled_widget.setFixedSize(indicator_w, indicator_h)
+        enabled_widget.setParent(checkbox_container)
+        layout.addWidget(enabled_widget)
+        enabled_widget = checkbox_container
+        logger.debug(f"🔍 _move_enabled_widget_to_title: wrapped checkbox in background container")
+
+    # Make title clickable to toggle enabled checkbox
+    if title_label and isinstance(checkbox_widget, NoneAwareCheckBox):
+        def on_title_click(e):
+            checkbox_widget.toggle()
+            # Ensure checkmark color is correct (white in dark mode)
+            checkbox_widget._apply_concrete_palette()
+        title_label.mousePressEvent = on_title_click
         title_label.setCursor(Qt.CursorShape.PointingHandCursor)
         logger.debug(f"🔍 _move_enabled_widget_to_title: made title_label clickable")
 
-    # Add the enabled widget and reset button to the title layout
-    if isinstance(enabled_widget, NoneAwareCheckBox):
-        # Compact checkbox for title
-        enabled_widget.setMaximumWidth(20)
-        logger.debug(f"🔍 _move_enabled_widget_to_title: set max width to 20")
-
     logger.debug(f"🔍 _move_enabled_widget_to_title: adding enabled widget to title_layout (count={container.title_layout.count()})")
-    
-    # Use clean API to add enableable widgets after help button
-    if hasattr(container, 'addEnableableWidgets'):
-        container.addEnableableWidgets(enabled_widget, enabled_reset_button)
-    else:
-        # Fallback for backwards compatibility
-        container.addTitleInlineWidget(enabled_widget)
-        if enabled_reset_button:
-            container.addTitleInlineWidget(enabled_reset_button)
+
+    if enabled_reset_button is not None:
+        _apply_reset_button_style(enabled_reset_button, parent_manager.color_scheme)
+        enabled_reset_button.setMaximumWidth(60)
+        enabled_reset_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+
+    container.addEnableableWidgets(enabled_widget, enabled_reset_button)
 
     # Clean up the empty row layout if possible
     if enabled_widget_layout.count() == 0:
@@ -280,27 +316,28 @@ def _create_optional_title_widget(manager, param_info, display_info, field_ids, 
     title_label.setCursor(Qt.CursorShape.PointingHandCursor)
     title_layout.addWidget(title_label)
 
-    title_layout.addStretch()
-
-    # Reset All button (will be connected later)
-    reset_all_button = None
-    if not manager.read_only:
-        reset_all_button = QPushButton("Reset")
-        reset_all_button.setMaximumWidth(60)
-        reset_all_button.setFixedHeight(20)
-        reset_all_button.setToolTip(f"Reset all parameters in {display_info['checkbox_label']} to defaults")
-        title_layout.addWidget(reset_all_button)
-
     # CRITICAL: Use scope_accent_color from manager config (passed from parent window)
     # No need to walk parent chain - it's stored directly in the manager
     scope_accent_color = getattr(manager, '_scope_accent_color', None)
 
-    # Help button
+    # Help button (immediately to the right of the title)
     help_btn = HelpButton(help_target=unwrapped_type, text="?", color_scheme=manager.color_scheme,
                          scope_accent_color=scope_accent_color, parent=title_widget)
     help_btn.setMaximumWidth(25)
-    help_btn.setMaximumHeight(20)
+    help_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
     title_layout.addWidget(help_btn)
+
+    title_layout.addStretch()
+
+    # Reset All button (right-aligned)
+    reset_all_button = None
+    if not manager.read_only:
+        reset_all_button = QPushButton("Reset")
+        reset_all_button.setMaximumWidth(60)
+        reset_all_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+        reset_all_button.setToolTip(f"Reset all parameters in {display_info['checkbox_label']} to defaults")
+        _apply_reset_button_style(reset_all_button, manager.color_scheme)
+        title_layout.addWidget(reset_all_button)
 
     return {
         'title_widget': title_widget,
@@ -385,7 +422,7 @@ def _create_regular_container(manager: ParameterFormManager, param_info: Paramet
         # Use plain QWidget with QHBoxLayout (old non-wrapping style)
         from PyQt6.QtWidgets import QWidget as QtWidget
         container = QtWidget(parent)
-    
+
     return container
 
 
@@ -414,8 +451,13 @@ def _create_nested_container(manager: ParameterFormManager, param_info: Paramete
     import logging
     logger = logging.getLogger(__name__)
     logger.debug(f"[CREATE_NESTED] field_id={manager.field_id}, manager._scope_accent_color={scope_accent_color}")
+    logger.debug(
+        "[CREATE_NESTED] param=%s title=%s widget=GroupBoxWithHelp",
+        param_info.name,
+        display_info.get('field_label')
+    )
 
-    return GBH(
+    container = GBH(
         title=display_info['field_label'],
         help_target=unwrapped_type,
         color_scheme=color_scheme,
@@ -423,6 +465,7 @@ def _create_nested_container(manager: ParameterFormManager, param_info: Paramete
         flash_key=flash_key,
         flash_manager=root_manager
     )
+    return container
 
 
 def _create_optional_nested_container(manager: ParameterFormManager, param_info: ParameterInfo,
@@ -431,7 +474,25 @@ def _create_optional_nested_container(manager: ParameterFormManager, param_info:
                                      QWidget=None, GroupBoxWithHelp=None, PyQt6ColorScheme=None) -> Any:
     """Create container for OPTIONAL_NESTED widget type."""
     from PyQt6.QtWidgets import QGroupBox
-    return QGroupBox()
+    from PyQt6.QtGui import QPalette
+    from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
+    import logging
+
+    color_scheme = manager.config.color_scheme or PCS()
+    container = QGroupBox()
+    palette = container.palette()
+    palette.setColor(QPalette.ColorRole.Window, color_scheme.to_qcolor(color_scheme.panel_bg))
+    container.setPalette(palette)
+    container.setAutoFillBackground(True)
+    logger = logging.getLogger(__name__)
+    logger.debug(
+        "[OPTIONAL_NESTED] Created QGroupBox: name=%s title=%s autoFill=%s palette_window=%s",
+        field_ids.get('widget_id'),
+        display_info.get('field_label'),
+        container.autoFillBackground(),
+        palette.color(QPalette.ColorRole.Window).name()
+    )
+    return container
 
 
 def _setup_regular_layout(manager: ParameterFormManager, param_info: ParameterInfo,
@@ -580,6 +641,23 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
         manager, param_info, display_info, field_ids, current_value, unwrapped_type,
         None, CURRENT_LAYOUT, QWidget, GroupBoxWithHelp, PyQt6ColorScheme
     )
+    create_seq = next(_WIDGET_CREATE_SEQ)
+    try:
+        parent_obj = container.parent() if container is not None else None
+        logger.debug(
+            "[WIDGET_CREATE] seq=%s stage=container type=%s param=%s field_id=%s manager_seq=%s container_cls=%s obj_name=%s id=%s parent_cls=%s",
+            create_seq,
+            creation_type.value,
+            param_info.name,
+            manager.config.field_id,
+            getattr(manager, "_pfm_seq", None),
+            type(container).__name__ if container is not None else None,
+            container.objectName() if container is not None else None,
+            id(container) if container is not None else None,
+            type(parent_obj).__name__ if parent_obj is not None else None,
+        )
+    except Exception:
+        logger.debug("[WIDGET_CREATE] seq=%s stage=container param=%s log_failed", create_seq, param_info.name)
 
     # GAME ENGINE: Register groupbox with overlay for flash rendering
     # Only for nested containers (GroupBoxWithHelp) that have flash_key
@@ -639,6 +717,25 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
             manager, param_info, display_info, field_ids, current_value, unwrapped_type
         )
         layout.addWidget(title_components['title_widget'])
+        try:
+            title_widget = title_components.get('title_widget') if title_components else None
+            checkbox = title_components.get('checkbox') if title_components else None
+            reset_btn = title_components.get('reset_all_button') if title_components else None
+            logger.debug(
+                "[WIDGET_CREATE] seq=%s stage=title_widget type=%s param=%s manager_seq=%s title_cls=%s title_id=%s checkbox_cls=%s checkbox_id=%s reset_cls=%s reset_id=%s",
+                create_seq,
+                creation_type.value,
+                param_info.name,
+                getattr(manager, "_pfm_seq", None),
+                type(title_widget).__name__ if title_widget is not None else None,
+                id(title_widget) if title_widget is not None else None,
+                type(checkbox).__name__ if checkbox is not None else None,
+                id(checkbox) if checkbox is not None else None,
+                type(reset_btn).__name__ if reset_btn is not None else None,
+                id(reset_btn) if reset_btn is not None else None,
+            )
+        except Exception:
+            logger.debug("[WIDGET_CREATE] seq=%s stage=title_widget param=%s log_failed", create_seq, param_info.name)
 
     # Add label if needed (REGULAR only)
     if config.needs_label:
@@ -659,6 +756,20 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
             dotted_path=dotted_path,
             scope_accent_color=scope_accent_color
         )
+        try:
+            parent_obj = label.parent()
+            logger.debug(
+                "[WIDGET_CREATE] seq=%s stage=label type=%s param=%s manager_seq=%s label_cls=%s id=%s parent_cls=%s",
+                create_seq,
+                creation_type.value,
+                param_info.name,
+                getattr(manager, "_pfm_seq", None),
+                type(label).__name__,
+                id(label),
+                type(parent_obj).__name__ if parent_obj is not None else None,
+            )
+        except Exception:
+            logger.debug("[WIDGET_CREATE] seq=%s stage=label param=%s log_failed", create_seq, param_info.name)
         # Check if using ResponsiveParameterRow
         if isinstance(container, ResponsiveParameterRow):
             container.set_label(label)
@@ -676,6 +787,22 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
         manager, param_info, display_info, field_ids, current_value, unwrapped_type,
         layout, CURRENT_LAYOUT, QWidget, GroupBoxWithHelp, PyQt6ColorScheme
     )
+    try:
+        parent_obj = main_widget.parent() if main_widget is not None else None
+        logger.debug(
+            "[WIDGET_CREATE] seq=%s stage=main_widget type=%s param=%s field_id=%s manager_seq=%s widget_cls=%s obj_name=%s id=%s parent_cls=%s",
+            create_seq,
+            creation_type.value,
+            param_info.name,
+            manager.config.field_id,
+            getattr(manager, "_pfm_seq", None),
+            type(main_widget).__name__ if main_widget is not None else None,
+            main_widget.objectName() if main_widget is not None else None,
+            id(main_widget) if main_widget is not None else None,
+            type(parent_obj).__name__ if parent_obj is not None else None,
+        )
+    except Exception:
+        logger.debug("[WIDGET_CREATE] seq=%s stage=main_widget param=%s log_failed", create_seq, param_info.name)
 
     # For nested widgets, add to container
     # For regular widgets, add to layout or use ResponsiveParameterRow
@@ -702,9 +829,37 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
         elif config.is_nested:
             # NESTED: "Reset All" button in GroupBox title
             from PyQt6.QtWidgets import QPushButton
+            # Ensure help button stays immediately after title (left aligned)
+            try:
+                from PyQt6.QtWidgets import QHBoxLayout
+                title_layout = getattr(container, "title_layout", None)
+                title_label = getattr(container, "_title_label", None)
+                help_button = getattr(container, "_help_button", None)
+                if isinstance(title_layout, QHBoxLayout) and title_label and help_button:
+                    title_idx = title_layout.indexOf(title_label)
+                    help_idx = title_layout.indexOf(help_button)
+                    if title_idx != -1 and help_idx != -1 and help_idx != title_idx + 1:
+                        title_layout.removeWidget(help_button)
+                        title_layout.insertWidget(title_idx + 1, help_button)
+            except Exception:
+                pass
             reset_all_button = QPushButton("Reset All")
             reset_all_button.setMaximumWidth(80)
+            reset_all_button.setFixedHeight(CURRENT_LAYOUT.button_height)
             reset_all_button.setToolTip(f"Reset all parameters in {display_info['field_label']} to defaults")
+            _apply_reset_button_style(reset_all_button, manager.color_scheme)
+            try:
+                logger.debug(
+                    "[WIDGET_CREATE] seq=%s stage=reset_all type=%s param=%s manager_seq=%s reset_cls=%s id=%s",
+                    create_seq,
+                    creation_type.value,
+                    param_info.name,
+                    getattr(manager, "_pfm_seq", None),
+                    type(reset_all_button).__name__,
+                    id(reset_all_button),
+                )
+            except Exception:
+                logger.debug("[WIDGET_CREATE] seq=%s stage=reset_all param=%s log_failed", create_seq, param_info.name)
             # Connect to nested manager's reset_all_parameters
             nested_manager = manager.nested_managers.get(param_info.name)
             if nested_manager:
@@ -717,6 +872,18 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
                 param_info.name,
                 lambda: manager.reset_parameter(param_info.name)
             )
+            try:
+                logger.debug(
+                    "[WIDGET_CREATE] seq=%s stage=reset_button type=%s param=%s manager_seq=%s reset_cls=%s id=%s",
+                    create_seq,
+                    creation_type.value,
+                    param_info.name,
+                    getattr(manager, "_pfm_seq", None),
+                    type(reset_button).__name__,
+                    id(reset_button),
+                )
+            except Exception:
+                logger.debug("[WIDGET_CREATE] seq=%s stage=reset_button param=%s log_failed", create_seq, param_info.name)
             # Check if using ResponsiveParameterRow
             if isinstance(container, ResponsiveParameterRow):
                 container.set_reset_button(reset_button)
@@ -753,10 +920,17 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
 
         # Connect widget changes to dispatcher
         # NOTE: connect_change_signal calls callback(param_name, value)
-        def on_widget_change(pname, value, mgr=manager):
+        def on_widget_change(pname, value, mgr: ParameterFormManager = manager):
             converted_value = mgr._convert_widget_value(value, pname)
             event = FieldChangeEvent(pname, converted_value, mgr)
-            FieldChangeDispatcher.instance().dispatch(event)
+            # ATOMIC: If this manager's state has a parent (e.g., function in step),
+            # wrap dispatch in atomic to coalesce with parent step update
+            from objectstate import ObjectStateRegistry
+            if mgr.state and mgr.state._parent_state is not None:
+                with ObjectStateRegistry.atomic("edit func parameter"):
+                    FieldChangeDispatcher.instance().dispatch(event)
+            else:
+                FieldChangeDispatcher.instance().dispatch(event)
 
         PyQt6WidgetEnhancer.connect_change_signal(main_widget, param_info.name, on_widget_change)
 

@@ -14,6 +14,14 @@ class ComponentSelectionProvider(Protocol):
         """Return available component keys for a given group_by."""
         ...
 
+    def has_components_available(self, group_by: Any) -> bool:
+        """Check if components are available for the given group_by without fetching them all.
+        
+        Used to determine if UI elements (like component selection buttons) should be enabled.
+        Should return False if the underlying data source (e.g., orchestrator) is not ready.
+        """
+        ...
+
     def get_component_display_name(self, group_by: Any, component_key: str) -> Optional[str]:
         """Return a human-readable name for a component key."""
         ...

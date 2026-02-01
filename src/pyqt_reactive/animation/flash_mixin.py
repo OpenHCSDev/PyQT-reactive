@@ -34,8 +34,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Callable, Any, Tuple, TYPE_CHECKING
 from weakref import WeakValueDictionary
 import re
-from PyQt6.QtCore import QTimer, Qt, QRect, QRectF
-from PyQt6.QtWidgets import QWidget, QMainWindow, QDialog, QScrollArea
+from PyQt6.QtCore import QTimer, Qt, QRect, QRectF, QSize
+from PyQt6.QtWidgets import QWidget, QMainWindow, QDialog, QScrollArea, QCheckBox, QLabel, QStyle, QStyleOptionButton, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPushButton, QToolButton, QTextEdit, QPlainTextEdit, QTreeWidget, QListWidget, QTableWidget
 from PyQt6.QtGui import QColor, QPainter, QRegion, QPainterPath
 
 from pyqt_reactive.animation.flash_config import FlashConfig, get_flash_config
@@ -316,7 +316,7 @@ class FlashElement:
     """
     key: str
     get_rect_in_window: Callable[[QWidget], Optional[QRect]]
-    get_child_rects: Optional[Callable[[QWidget], List[QRect]]] = None  # For masking child widgets
+    get_child_rects: Optional[Callable[[QWidget], List[Tuple[QRect, bool]]]] = None  # For masking child widgets
     needs_scroll_clipping: bool = True  # Groupboxes need clipping, list/tree items don't (they handle it themselves)
     source_id: Optional[str] = None  # Unique identifier for deduplication (e.g., "groupbox:123", "list_item:scope_id")
     corner_radius: float = 0.0  # Rounded corners (0 = sharp, >0 = rounded)
@@ -325,7 +325,193 @@ class FlashElement:
     get_model_index: Optional[Callable[[], Any]] = None  # Returns QModelIndex for targeted item updates (avoids full viewport repaint)
 
 
-def create_groupbox_element(key: str, groupbox: 'QGroupBox', leaf_widget: Optional[QWidget] = None) -> FlashElement:
+# Mask strategy identifiers
+_MASK_STRATEGY_CHECKBOX_STYLE = "checkbox_style"
+_MASK_STRATEGY_LABEL_SIZEHINT = "label_sizehint"
+_MASK_STRATEGY_WIDGET_RECT = "widget_rect"
+_MASK_STRATEGY_FIXED_SQUARE = "fixed_square"
+
+# Mask strategy table (single source of truth)
+_MASK_STRATEGY_BY_WIDGET: Dict[type, str] = {
+    # Tight mask for checkmarks + label text
+    QCheckBox: _MASK_STRATEGY_CHECKBOX_STYLE,
+    # Tight mask for labels (avoid empty layout space)
+    QLabel: _MASK_STRATEGY_LABEL_SIZEHINT,
+}
+
+# Leaf widget types used for groupbox child masking
+LEAF_WIDGET_TYPES = (QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox,
+                     QPushButton, QToolButton, QTextEdit, QPlainTextEdit,
+                     QTreeWidget, QListWidget, QTableWidget, QLabel)
+
+def _resolve_mask_strategy(widget: QWidget) -> str:
+    """Resolve which masking strategy to use for a widget.
+
+    Returns a strategy id string from _MASK_STRATEGY_BY_WIDGET,
+    falling back to widget rect masking for unknown types.
+    """
+    for widget_type, strategy in _MASK_STRATEGY_BY_WIDGET.items():
+        if isinstance(widget, widget_type):
+            return strategy
+    # HelpButton: fixed-size square mask
+    from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
+    if isinstance(widget, HelpButton):
+        return _MASK_STRATEGY_FIXED_SQUARE
+    return _MASK_STRATEGY_WIDGET_RECT
+
+
+def get_child_mask_rect(widget: QWidget, window: QWidget) -> QRect:
+    """Get mask rectangle for a groupbox child widget.
+
+    This is the single source of truth for child masking geometry used by
+    both STANDARD and INVERSE groupbox flashes. Checkboxes and labels are
+    masked tightly; all other widgets use their full rect size.
+
+    Args:
+        widget: Widget to mask
+        window: Reference window for coordinate transformation
+
+    Returns:
+        QRect with position and size for masking
+    """
+    from PyQt6.QtCore import QPoint
+
+    widget_global = widget.mapToGlobal(QPoint(0, 0))
+    widget_window = window.mapFromGlobal(widget_global)
+
+    strategy = _resolve_mask_strategy(widget)
+
+    # QCheckBox: use style subelement rects for indicator + (optional) label
+    if strategy == _MASK_STRATEGY_CHECKBOX_STYLE:
+        checkbox_widget = widget if isinstance(widget, QCheckBox) else None
+        option = QStyleOptionButton()
+        if checkbox_widget is not None:
+            checkbox_widget.initStyleOption(option)
+            option.rect = checkbox_widget.rect()
+        else:
+            option.rect = widget.rect()
+
+        indicator_rect = widget.style().subElementRect(QStyle.SubElement.SE_CheckBoxIndicator, option, widget)
+        contents_rect = widget.style().subElementRect(QStyle.SubElement.SE_CheckBoxContents, option, widget)
+        checkbox_rect = indicator_rect
+        if checkbox_widget is not None and checkbox_widget.text():
+            checkbox_rect = checkbox_rect.united(contents_rect)
+
+        result = QRect(widget_window.x() + checkbox_rect.x(),
+                       widget_window.y() + checkbox_rect.y(),
+                       checkbox_rect.width(),
+                       checkbox_rect.height())
+        logger.debug(f"[FLASH] get_child_mask_rect(QCheckBox): indicator={indicator_rect}, contents={contents_rect}, result={result}")
+        return result
+
+    # QLabel: use sizeHint to avoid masking empty layout space
+    if strategy == _MASK_STRATEGY_LABEL_SIZEHINT:
+        widget_size = widget.sizeHint()
+        logger.debug(f"[FLASH] get_child_mask_rect(QLabel): using sizeHint={widget_size}")
+        if widget_size.isEmpty():
+            widget_size = widget.minimumSize()
+            logger.debug(f"[FLASH] get_child_mask_rect(QLabel): fallback to minimumSize={widget_size}")
+        if widget_size.isEmpty():
+            widget_size = widget.rect().size()
+            logger.debug(f"[FLASH] get_child_mask_rect(QLabel): fallback to rect().size()={widget_size}")
+
+        widget_geom = widget.geometry()
+        y_offset = (widget_geom.height() - widget_size.height()) // 2
+        result = QRect(widget_window.x(), widget_window.y() + y_offset, widget_size.width(), widget_size.height())
+        logger.debug(f"[FLASH] get_child_mask_rect(QLabel): result={result}")
+        return result
+
+    # HelpButton: use fixed square size if set
+    if strategy == _MASK_STRATEGY_FIXED_SQUARE:
+        square_size = widget.size()
+        from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
+        if isinstance(widget, HelpButton) and widget._square_size:
+            square_size = QSize(widget._square_size, widget._square_size)
+        widget_geom = widget.geometry()
+        y_offset = (widget_geom.height() - square_size.height()) // 2
+        result = QRect(widget_window.x(), widget_window.y() + y_offset, square_size.width(), square_size.height())
+        logger.debug(f"[FLASH] get_child_mask_rect(HelpButton): result={result}")
+        return result
+
+    # Other widgets: use actual rect size to avoid partial masking
+    widget_size = widget.rect().size()
+    logger.debug(f"[FLASH] get_child_mask_rect({type(widget).__name__}): using rect().size()={widget_size}")
+
+    widget_geom = widget.geometry()
+    y_offset = (widget_geom.height() - widget_size.height()) // 2
+    result = QRect(widget_window.x(), widget_window.y() + y_offset, widget_size.width(), widget_size.height())
+    logger.debug(f"[FLASH] get_child_mask_rect({type(widget).__name__}): result={result}")
+    return result
+
+
+def resolve_mask_widgets(widget: Optional[QWidget], preferred_types: tuple) -> List[QWidget]:
+    """Resolve visible child widgets to mask.
+
+    If the given widget isn't a preferred type, attempts to find visible
+    children of preferred types. Falls back to the original widget.
+    """
+    if widget is None:
+        return []
+    if isinstance(widget, preferred_types):
+        return [widget]
+    matches = [child for child in widget.findChildren(QWidget)
+               if child.isVisible() and isinstance(child, preferred_types)]
+    if matches:
+        return matches
+    return [widget]
+
+
+def _needs_square_checkbox_mask(widget: QWidget) -> bool:
+    """Return True when a checkbox should use square cutout.
+
+    Textless checkboxes (no label) use square cutouts to avoid rounding the box.
+    Checkboxes with labels are rounded like other widgets.
+    """
+    return isinstance(widget, QCheckBox) and not widget.text()
+
+
+def _get_function_pane_title_widgets(groupbox: QWidget) -> List[QWidget]:
+    """Collect title-row widgets for a function pane ancestor.
+
+    Returns visible widgets that should be masked tightly (buttons, labels, checkboxes).
+    """
+    pane = groupbox
+    while pane is not None:
+        if hasattr(pane, "_flash_title_container") or hasattr(pane, "_module_path_label"):
+            break
+        pane = pane.parentWidget()
+    if pane is None:
+        return []
+
+    widgets: List[QWidget] = []
+    module_label = getattr(pane, "_module_path_label", None)
+    if isinstance(module_label, QWidget) and module_label.isVisible():
+        widgets.append(module_label)
+
+    title_container = getattr(pane, "_flash_title_container", None)
+    if isinstance(title_container, QWidget) and title_container.isVisible():
+        for child in title_container.findChildren(QWidget):
+            if child.isVisible() and isinstance(child, LEAF_WIDGET_TYPES):
+                widgets.append(child)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_widgets = []
+    for widget in widgets:
+        if id(widget) in seen:
+            continue
+        seen.add(id(widget))
+        unique_widgets.append(widget)
+    return unique_widgets
+
+
+def create_groupbox_element(
+    key: str,
+    groupbox: 'QGroupBox',
+    leaf_widget: Optional[QWidget] = None,
+    label_widget: Optional[QWidget] = None,
+    use_full_rect: bool = False,
+) -> FlashElement:
     """Create a FlashElement for a QGroupBox with configurable masking.
 
     Maps groupbox position to WINDOW coordinates (not scroll content coordinates).
@@ -333,12 +519,13 @@ def create_groupbox_element(key: str, groupbox: 'QGroupBox', leaf_widget: Option
 
     Masking modes (determined by leaf_widget parameter):
     - leaf_widget=None: STANDARD mode - mask ALL children, flash only frame/background
-    - leaf_widget=widget: INVERSE mode - mask ONLY title + leaf_widget, flash frame + all siblings
+    - leaf_widget=widget: INVERSE mode - mask ONLY title + leaf_widget + label_widget, flash frame + all siblings
 
     Args:
         key: Flash key
         groupbox: The QGroupBox to flash
         leaf_widget: If provided, use inverse masking (flash siblings, mask this widget)
+        label_widget: Optional label widget to mask (used with leaf_widget in INVERSE mode)
     """
     # Track groupbox size to detect resize and invalidate child cache
     _last_groupbox_size: Optional[tuple] = None
@@ -352,25 +539,33 @@ def create_groupbox_element(key: str, groupbox: 'QGroupBox', leaf_widget: Option
                 return None
 
             from PyQt6.QtCore import QPoint
+            if use_full_rect:
+                global_pos = groupbox.mapToGlobal(QPoint(0, 0))
+                window_pos = window.mapFromGlobal(global_pos)
+                size = groupbox.size()
+                return QRect(window_pos.x(), window_pos.y(), size.width(), size.height())
             # QGroupBox stylesheet has margin-top which is OUTSIDE the painted area
             # but still part of the widget's geometry. We need to offset by this.
-            # Extract margin-top from stylesheet
+            # Extract margin-top from stylesheet unless groupbox overrides it to 0
             margin_top = 0
             stylesheet = groupbox.styleSheet()
-            if not stylesheet:
-                # Check parent stylesheets
-                parent = groupbox.parentWidget()
-                while parent:
-                    stylesheet = parent.styleSheet()
-                    if stylesheet and 'QGroupBox' in stylesheet:
-                        break
-                    parent = parent.parentWidget()
-
             if stylesheet:
                 import re
                 match = re.search(r'margin-top\s*:\s*(\d+)', stylesheet)
                 if match:
                     margin_top = int(match.group(1))
+            else:
+                # Check parent stylesheets
+                parent = groupbox.parentWidget()
+                while parent:
+                    stylesheet = parent.styleSheet()
+                    if stylesheet and 'QGroupBox' in stylesheet:
+                        import re
+                        match = re.search(r'margin-top\s*:\s*(\d+)', stylesheet)
+                        if match:
+                            margin_top = int(match.group(1))
+                        break
+                    parent = parent.parentWidget()
 
             # Map the top-left of the PAINTED area (offset by margin-top)
             global_pos = groupbox.mapToGlobal(QPoint(0, margin_top))
@@ -383,7 +578,7 @@ def create_groupbox_element(key: str, groupbox: 'QGroupBox', leaf_widget: Option
         except RuntimeError:
             return None
 
-    def get_child_rects(window: QWidget) -> List[QRect]:
+    def get_child_rects(window: QWidget) -> List[Tuple[QRect, bool]]:
         """Get widgets to exclude from flash (mask out).
 
         Two modes based on leaf_widget parameter:
@@ -396,114 +591,144 @@ def create_groupbox_element(key: str, groupbox: 'QGroupBox', leaf_widget: Option
         """
         nonlocal _last_groupbox_size, _cached_child_widgets
 
+        logger.info(f"[FLASH] get_child_rects START: leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}, label_widget={type(label_widget).__name__ if label_widget else None}, groupbox={type(groupbox).__name__}")
+        
         # If the groupbox isn't visible to this window (e.g., tab not selected), skip masking
         if not groupbox.isVisible() or not groupbox.isVisibleTo(window):
             return []
 
         from PyQt6.QtCore import QPoint
 
-        # INVERSE MODE: Mask title row (same as standard) + leaf widget's row
-        # All other rows get flashed
+        # INVERSE MODE: Mask title row + leaf_widget + label_widget only
+        # All other widgets get flashed
         if leaf_widget is not None:
-            exclusions = []
+            logger.info(f"[FLASH] INVERSE MODE: Masking title + leaf_widget + label_widget only")
+            exclusions: List[Tuple[QRect, bool]] = []
             try:
                 if not leaf_widget.isVisible():
                     return []
 
-                # Get leaf widget Y position for row detection
-                leaf_global = leaf_widget.mapToGlobal(QPoint(0, 0))
-                leaf_y_center = leaf_global.y() + leaf_widget.height() // 2
-
                 # Get groupbox top for title row detection
+                from PyQt6.QtCore import QPoint
                 groupbox_global = groupbox.mapToGlobal(QPoint(0, 0))
                 title_height = groupbox.fontMetrics().height() + 20  # Title row height
                 title_y_max = groupbox_global.y() + title_height
 
-                # Use same LEAF_WIDGET_TYPES as standard mode
-                from PyQt6.QtWidgets import (QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
-                                              QCheckBox, QPushButton, QToolButton, QTextEdit,
-                                              QPlainTextEdit, QTreeWidget, QListWidget, QTableWidget,
-                                              QLabel)
-                LEAF_WIDGET_TYPES = (QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox,
-                                     QPushButton, QToolButton, QTextEdit, QPlainTextEdit,
-                                     QTreeWidget, QListWidget, QTableWidget, QLabel)
+                mask_leaf_widgets = resolve_mask_widgets(leaf_widget, LEAF_WIDGET_TYPES)
+                mask_label_widgets = resolve_mask_widgets(label_widget, (QLabel,))
 
-                for child in groupbox.findChildren(QWidget):
+                # Add leaf_widget to exclusions using precise masking
+                for mask_leaf_widget in mask_leaf_widgets:
                     try:
-                        if not child.isVisible() or not isinstance(child, LEAF_WIDGET_TYPES):
-                            continue
+                        leaf_rect = get_child_mask_rect(mask_leaf_widget, window)
+                        logger.debug(f"[FLASH INVERSE] Added leaf_widget exclusion: {leaf_rect}")
+                        exclusions.append((leaf_rect, _needs_square_checkbox_mask(mask_leaf_widget)))
+                    except Exception as e:
+                        logger.warning(f"[FLASH INVERSE] Failed to mask leaf_widget: {e}")
 
-                        child_global = child.mapToGlobal(QPoint(0, 0))
-                        child_y = child_global.y()
-                        child_y_center = child_y + child.height() // 2
+                # Add label_widget to exclusions using precise masking
+                for mask_label_widget in mask_label_widgets:
+                    if not mask_label_widget.isVisible():
+                        continue
+                    try:
+                        label_rect = get_child_mask_rect(mask_label_widget, window)
+                        logger.debug(f"[FLASH INVERSE] Added label_widget exclusion: {label_rect}")
+                        exclusions.append((label_rect, False))
+                    except Exception as e:
+                        logger.warning(f"[FLASH INVERSE] Failed to mask label_widget: {e}")
 
-                        # Check if in title row OR in leaf widget's row
-                        in_title_row = child_y < title_y_max
-                        in_leaf_row = abs(child_y_center - leaf_y_center) < max(leaf_widget.height(), child.height()) // 2 + 5
+                # Mask title row widgets only for real groupboxes (avoid masking first row in plain containers)
+                from PyQt6.QtWidgets import QGroupBox
+                if isinstance(groupbox, QGroupBox) and groupbox.title():
+                    for child in groupbox.findChildren(QWidget):
+                        try:
+                            if not child.isVisible() or not isinstance(child, LEAF_WIDGET_TYPES):
+                                continue
 
-                        if in_title_row or in_leaf_row:
-                            child_window = window.mapFromGlobal(child_global)
-                            exclusions.append(QRect(child_window, child.rect().size()))
-                    except RuntimeError:
-                        pass
-            except RuntimeError:
-                pass
+                            # Skip leaf_widget and label_widget (already added above)
+                            if child is leaf_widget or (label_widget is not None and child is label_widget):
+                                continue
+
+                            child_global = child.mapToGlobal(QPoint(0, 0))
+                            child_y = child_global.y()
+
+                            # Only mask title row widgets - not widgets in leaf_widget's row
+                            if child_y < title_y_max:
+                                child_rect = get_child_mask_rect(child, window)
+                                logger.debug(f"[FLASH INVERSE] Added title row exclusion: {child_rect}")
+                                exclusions.append((child_rect, _needs_square_checkbox_mask(child)))
+                        except Exception as e:
+                            logger.warning(f"[FLASH INVERSE] Failed to mask title child {type(child).__name__}: {e}")
+                            pass
+
+                # Function panes: mask title row widgets tightly
+                for title_widget in _get_function_pane_title_widgets(groupbox):
+                    try:
+                        title_rect = get_child_mask_rect(title_widget, window)
+                        exclusions.append((title_rect, _needs_square_checkbox_mask(title_widget)))
+                    except Exception as e:
+                        logger.warning(f"[FLASH INVERSE] Failed to mask function pane title widget: {e}")
+
+                logger.debug(f"[FLASH INVERSE] Total exclusions: {len(exclusions)}")
+            except Exception as e:
+                logger.error(f"[FLASH INVERSE] Outer exception: {e}", exc_info=True)
+                return []
+            logger.info(f"[FLASH] INVERSE MODE: Returning {len(exclusions)} exclusions")
             return exclusions
 
         # STANDARD MODE: Mask all children
-        child_rects = []
-        try:
-            groupbox_global = groupbox.mapToGlobal(QPoint(0, 0))
-            groupbox_window = window.mapFromGlobal(groupbox_global)
+        logger.info(f"[FLASH] STANDARD MODE: Masking all children")
+        child_rects: List[Tuple[QRect, bool]] = []
+        groupbox_global = groupbox.mapToGlobal(QPoint(0, 0))
+        groupbox_window = window.mapFromGlobal(groupbox_global)
 
-            # Invalidate child cache if groupbox size changed
-            current_size = (groupbox.width(), groupbox.height())
-            if _last_groupbox_size != current_size:
-                _cached_child_widgets = None
-                _last_groupbox_size = current_size
+        # Invalidate child cache if groupbox size changed
+        current_size = (groupbox.width(), groupbox.height())
+        if _last_groupbox_size != current_size:
+            _cached_child_widgets = None
+            _last_groupbox_size = current_size
 
-            # Cache child widgets list (expensive findChildren) on first call or after invalidation
-            if _cached_child_widgets is None:
-                _cached_child_widgets = []
+        # Cache child widgets list (expensive findChildren) on first call or after invalidation
+        if _cached_child_widgets is None:
+            _cached_child_widgets = []
 
-                # Check if this is a GroupBoxWithHelp with content_layout
-                if hasattr(groupbox, 'content_layout'):
-                    from PyQt6.QtWidgets import (QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
-                                                  QCheckBox, QPushButton, QToolButton, QTextEdit,
-                                                  QPlainTextEdit, QTreeWidget, QListWidget, QTableWidget,
-                                                  QLabel)
-
-                    # Recursively find all leaf widgets (buttons, labels, inputs) to exclude
-                    LEAF_WIDGET_TYPES = (QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox,
-                                         QPushButton, QToolButton, QTextEdit, QPlainTextEdit,
-                                         QTreeWidget, QListWidget, QTableWidget, QLabel)
-
-                    for child in groupbox.findChildren(QWidget):
-                        if child.isVisible() and isinstance(child, LEAF_WIDGET_TYPES):
-                            _cached_child_widgets.append(child)
-                else:
-                    # Regular QGroupBox - exclude all direct child widgets
-                    for child in groupbox.children():
-                        if isinstance(child, QWidget) and child.isVisible():
-                            _cached_child_widgets.append(child)
-
-            # Compute fresh window-relative rects (cheap coordinate transforms)
-            for child in _cached_child_widgets:
+            unmasked_widgets = set()
+            if getattr(groupbox, "_flash_include_title", False):
                 try:
-                    if not child.isVisible():
-                        continue
-                    child_global = child.mapToGlobal(QPoint(0, 0))
-                    child_window = window.mapFromGlobal(child_global)
-                    child_rects.append(QRect(child_window, child.rect().size()))
-                except RuntimeError:
-                    pass
+                    unmasked_widgets = set(getattr(groupbox, "_flash_unmasked_widgets", set()))
+                except TypeError:
+                    unmasked_widgets = set()
 
-            # DEBUG: Log groupbox position and first 2 child positions
-            if child_rects:
-                first_children = [f"({r.x()},{r.y()})" for r in child_rects[:2]]
-                logger.debug(f"[FLASH] GET_CHILD_RECTS groupbox_id={id(groupbox)} groupbox_window_pos=({groupbox_window.x()},{groupbox_window.y()}) first_children={first_children} total={len(child_rects)}")
-        except RuntimeError:
-            pass
+            # Check if this is a GroupBoxWithHelp with content_layout
+            if hasattr(groupbox, 'content_layout'):
+                for child in groupbox.findChildren(QWidget):
+                    if child.isVisible() and isinstance(child, LEAF_WIDGET_TYPES):
+                        if unmasked_widgets and child in unmasked_widgets:
+                            continue
+                        _cached_child_widgets.append(child)
+                # Function panes: also mask title/module rows in standard mode
+                for title_widget in _get_function_pane_title_widgets(groupbox):
+                    _cached_child_widgets.append(title_widget)
+            else:
+                # Regular QGroupBox - exclude all direct child widgets
+                for child in groupbox.children():
+                    if isinstance(child, QWidget) and child.isVisible():
+                        if unmasked_widgets and child in unmasked_widgets:
+                            continue
+                        _cached_child_widgets.append(child)
+
+        # Compute fresh window-relative rects using standard groupbox child geometry
+        for child in _cached_child_widgets:
+            if not child.isVisible():
+                continue
+            child_rect = get_child_mask_rect(child, window)
+            child_rects.append((child_rect, _needs_square_checkbox_mask(child)))
+
+        # DEBUG: Log groupbox position and first 2 child positions
+        if child_rects:
+            first_children = [f"({r.x()},{r.y()})" for r, _ in child_rects[:2]]
+            logger.debug(f"[FLASH] GET_CHILD_RECTS groupbox_id={id(groupbox)} groupbox_window_pos=({groupbox_window.x()},{groupbox_window.y()}) first_children={first_children} total={len(child_rects)}")
+        logger.info(f"[FLASH] STANDARD MODE: Returning {len(child_rects)} exclusions")
         return child_rects
 
     # Extract corner radius from groupbox stylesheet (cached)
@@ -928,11 +1153,15 @@ class WindowFlashOverlay(QWidget):
                     subtracted_count = 0
                     # Debug: log first 3 child rects to verify coordinates
                     first_children = []
-                    for i, child_rect in enumerate(child_rects):
+                    for i, (child_rect, child_is_checkbox) in enumerate(child_rects):
                         if child_rect.intersects(rect_to_draw):
-                            # Subtract rounded rect for each child widget
                             child_path = QPainterPath()
-                            child_path.addRoundedRect(QRectF(child_rect), radius, radius)
+                            if child_is_checkbox:
+                                # Subtract RECT (no rounding) for checkboxes only
+                                child_path.addRect(QRectF(child_rect))
+                            else:
+                                # Subtract rounded rect for all other widgets
+                                child_path.addRoundedRect(QRectF(child_rect), radius, radius)
                             path = path.subtracted(child_path)
                             subtracted_count += 1
                         if i < 3:
@@ -1091,8 +1320,8 @@ class WindowFlashOverlay(QWidget):
                         key: QColor(scheme_color.red(), scheme_color.green(), scheme_color.blue(), color.alpha())
                         for key, color in active_keys.items()
                     }
-            except ImportError:
-                pass  # OpenHCS scope coloring not available
+            except ImportError as exc:
+                raise
 
         # Filter to only keys whose elements are currently visible in this window
         visible_keys = self.get_visible_keys_for(set(active_keys.keys()))
@@ -1539,7 +1768,7 @@ class _GlobalFlashCoordinator:
                     try:
                         overlay.update()  # One final repaint to clear
                     except RuntimeError:
-                        pass  # Widget deleted
+                        raise
 
         # Diagnostic logging - show REAL work being done
         if self._tick_count % 30 == 0:
@@ -1626,13 +1855,24 @@ class VisualUpdateMixin:
                     lambda: element_factory(scoped_key),
                     widget
                 )
-                logger.debug(f"[FLASH] Deferred registration (pending): key={scoped_key}")
+                logger.debug(f"[FLASH] Deferred registration (pending): key={scoped_key}, no overlay yet")
 
     def register_flash_groupbox(self, key: str, groupbox: 'QWidget') -> None:
         """Register a groupbox for flash rendering."""
         self._register_flash_element_internal(
             key,
             lambda k: create_groupbox_element(k, groupbox),  # type: ignore
+            groupbox
+        )
+
+    def register_flash_groupbox_full(self, key: str, groupbox: 'QWidget') -> None:
+        """Register a groupbox for full-rect flash rendering.
+
+        Uses the widget's full geometry (no margin-top offset).
+        """
+        self._register_flash_element_internal(
+            key,
+            lambda k: create_groupbox_element(k, groupbox, use_full_rect=True),  # type: ignore
             groupbox
         )
 
@@ -1644,21 +1884,23 @@ class VisualUpdateMixin:
             tree
         )
 
-    def register_flash_leaf(self, key: str, groupbox: 'QWidget', leaf_widget: 'QWidget') -> None:
+    def register_flash_leaf(self, key: str, groupbox: 'QWidget', leaf_widget: 'QWidget', label_widget: Optional['QWidget'] = None) -> None:
         """Register a leaf field for INVERSE flash rendering.
 
         Flashes the groupbox INCLUDING all sibling fields, but masks out:
         - The groupbox title
         - The specific leaf widget that changed
+        - The label associated with the leaf widget (if provided)
 
         This highlights "all fields that inherited the change" while keeping
         the actual changed widget visible.
 
-        Uses the unified create_groupbox_element with leaf_widget parameter.
+        Uses the unified create_groupbox_element with leaf_widget and label_widget parameters.
         """
+        logger.info(f"[FLASH TRAIL] register_flash_leaf: key={key}, groupbox={type(groupbox).__name__}, leaf_widget={type(leaf_widget).__name__}, label_widget={type(label_widget).__name__ if label_widget else None}")
         self._register_flash_element_internal(
             key,
-            lambda k: create_groupbox_element(k, groupbox, leaf_widget=leaf_widget),  # type: ignore
+            lambda k: create_groupbox_element(k, groupbox, leaf_widget=leaf_widget, label_widget=label_widget),  # type: ignore
             groupbox
         )
 
@@ -1689,7 +1931,7 @@ class VisualUpdateMixin:
         window = self.window() if hasattr(self, 'window') else None  # type: ignore
         coordinator.queue_flash(key, window, timestamp=now)
 
-    def queue_flash_local(self, key: str) -> None:
+    def queue_flash_local(self, key: str, *, scoped: bool = True) -> None:
         """Start flash for key in THIS WINDOW ONLY.
 
         Unlike queue_flash(), this only flashes the element in the current window's overlay.
@@ -1699,7 +1941,7 @@ class VisualUpdateMixin:
 
         Key is automatically scoped to prevent cross-window contamination.
         """
-        scoped_key = self._get_scoped_flash_key(key)
+        scoped_key = self._get_scoped_flash_key(key) if scoped else key
 
         window = self.window() if hasattr(self, 'window') else None  # type: ignore
         if window is None:

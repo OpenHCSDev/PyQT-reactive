@@ -94,6 +94,7 @@ from pyqt_reactive.strategies import (
 from objectstate import LiveContextResolver
 from pyqt_reactive.animation import FlashMixin, get_flash_color, WindowFlashOverlay
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
+from pyqt_reactive.services import AutoRegisterServiceMixin
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ class _CombinedMeta(ABCMeta, type(QWidget)):
     pass
 
 
-class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, ABC, metaclass=_CombinedMeta):
+class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRegisterServiceMixin, ABC, metaclass=_CombinedMeta):
     """
     Abstract base class for item list manager widgets.
 
@@ -126,6 +127,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, ABC, m
 
     # === Subclass MUST override these class attributes ===
     TITLE: str = "Manager"
+    SERVICE_TYPE = ...  # Default: concrete subclasses auto-register using their own type
     BUTTON_CONFIGS: List[Tuple[str, str, str]] = []  # [(label, action_id, tooltip), ...]
     BUTTON_GRID_COLUMNS: int = 4  # Number of columns in button grid (0 = single row with all buttons)
     ACTION_REGISTRY: Dict[str, str] = {}  # action_id -> method_name
@@ -220,6 +222,12 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, ABC, m
             self.update_button_states()
         """
         super().__init__(parent)
+
+        # CRITICAL: Manually trigger AutoRegisterServiceMixin registration
+        # Qt's C++ classes don't call super().__init__(), so we need to do it explicitly
+        from pyqt_reactive.services.service_registry import AutoRegisterServiceMixin
+        if isinstance(self, AutoRegisterServiceMixin):
+            self._register_with_service_registry()
 
         # Core dependencies (REQUIRED)
         self.service_adapter = service_adapter
@@ -465,32 +473,25 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, ABC, m
 
     def _create_button_panel(self) -> QWidget:
         """
-        Create button panel from BUTTON_CONFIGS using grid layout.
+        Create button panel from BUTTON_CONFIGS using reusable ButtonPanel component.
 
         Uses BUTTON_GRID_COLUMNS to determine number of columns:
         - 0: Single row with all buttons (1 x N grid)
         - N: N columns, buttons wrap to next row
         """
-        from PyQt6.QtWidgets import QGridLayout
-        panel = QWidget()
-        layout = QGridLayout(panel)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
-
-        # Determine number of columns (0 means single row)
-        num_cols = self.BUTTON_GRID_COLUMNS or len(self.BUTTON_CONFIGS)
-
-        for i, (label, action_id, tooltip) in enumerate(self.BUTTON_CONFIGS):
-            button = QPushButton(label)
-            button.setToolTip(tooltip)
-            button.setStyleSheet(self.style_generator.generate_button_style())
-            button.clicked.connect(lambda checked, a=action_id: self.handle_button_action(a))
-            self.buttons[action_id] = button
-
-            row = i // num_cols
-            col = i % num_cols
-            layout.addWidget(button, row, col)
-
+        from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
+        
+        panel = ButtonPanel(
+            button_configs=self.BUTTON_CONFIGS,
+            on_action=self.handle_button_action,
+            style_generator=self.style_generator,
+            grid_columns=self.BUTTON_GRID_COLUMNS,
+            parent=self
+        )
+        
+        # Expose buttons dict for backward compatibility
+        self.buttons = panel.buttons
+        
         return panel
 
     def _setup_connections(self) -> None:
