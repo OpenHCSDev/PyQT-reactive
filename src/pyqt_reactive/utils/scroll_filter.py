@@ -12,6 +12,8 @@ Usage:
 
 from PyQt6.QtWidgets import QAbstractScrollArea
 from PyQt6.QtCore import QObject, QEvent, Qt
+from weakref import WeakKeyDictionary
+import math
 
 
 class ShiftWheelHorizontalScrollFilter(QObject):
@@ -27,7 +29,7 @@ class ShiftWheelHorizontalScrollFilter(QObject):
         app.installEventFilter(filter)
     """
 
-    def __init__(self, scroll_speed_multiplier: float = 3.0):
+    def __init__(self, scroll_speed_multiplier: float = 0.01):
         """Initialize the filter.
         
         Args:
@@ -35,8 +37,11 @@ class ShiftWheelHorizontalScrollFilter(QObject):
         """
         super().__init__()
         self._multiplier = scroll_speed_multiplier
+        # Accumulators store fractional scroll amounts per-horizontal-scrollbar
+        # so small wheel movements produce smooth scrolling once accumulated.
+        self._accumulators: "WeakKeyDictionary[object, float]" = WeakKeyDictionary()
 
-    def eventFilter(self, obj, event):
+    def eventFilter(self, a0, a1):
         """Filter wheel events for horizontal scrolling.
         
         Args:
@@ -46,12 +51,12 @@ class ShiftWheelHorizontalScrollFilter(QObject):
         Returns:
             True if the event was handled, False to pass it through
         """
-        if event.type() == QEvent.Type.Wheel:
+        if a1.type() == QEvent.Type.Wheel:
             # Check if Shift is pressed
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if a1.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 # Find the scroll area this event belongs to
                 scroll_area = None
-                parent = obj
+                parent = a0
                 while parent is not None:
                     if isinstance(parent, QAbstractScrollArea):
                         scroll_area = parent
@@ -61,18 +66,47 @@ class ShiftWheelHorizontalScrollFilter(QObject):
                 if scroll_area is not None:
                     h_scrollbar = scroll_area.horizontalScrollBar()
                     if h_scrollbar is not None and h_scrollbar.isVisible():
-                        delta = event.angleDelta().y()
+                        delta = a1.angleDelta().y()
                         if delta != 0:
-                            step = h_scrollbar.singleStep() * self._multiplier
-                            h_scrollbar.setValue(h_scrollbar.value() - int(delta / 120) * step)
-                            event.accept()
+                            # Use singleStep as base; fall back to 1 if it's 0
+                            base_step = h_scrollbar.singleStep() or 1
+                            step_float = base_step * self._multiplier
+
+                            # Convert wheel delta to fractional steps (larger denominator = less sensitive)
+                            delta_steps_float = float(delta) / 240.0
+
+                            # Desired movement (may be fractional)
+                            movement = delta_steps_float * step_float
+
+                            # Accumulate fractional movement for this scrollbar
+                            acc = self._accumulators.get(h_scrollbar, 0.0) + movement
+
+                            # Determine integer movement to apply now using truncation toward zero
+                            # (requires |acc| >= 1.0 before any movement occurs)
+                            apply_steps = int(acc)
+                            if apply_steps != 0:
+                                new_value = h_scrollbar.value() - apply_steps
+                                h_scrollbar.setValue(int(new_value))
+                                # Remove applied integer part from accumulator
+                                acc -= apply_steps
+
+                            # Store back accumulator (keep fractional remainder)
+                            # Clamp accumulator to a reasonable range to avoid runaway
+                            max_acc = step_float * 20
+                            if acc > max_acc:
+                                acc = max_acc
+                            elif acc < -max_acc:
+                                acc = -max_acc
+
+                            self._accumulators[h_scrollbar] = acc
+                            a1.accept()
                             return True
         
         # Pass event through to next filter
-        return super().eventFilter(obj, event)
+        return super().eventFilter(a0, a1)
 
 
-def install_shift_wheel_scrolling(app, scroll_speed_multiplier: float = 3.0) -> ShiftWheelHorizontalScrollFilter:
+def install_shift_wheel_scrolling(app, scroll_speed_multiplier: float = 0.01) -> ShiftWheelHorizontalScrollFilter:
     """Install global Shift+Wheel horizontal scrolling for the application.
     
     This is a convenience function that creates and installs the event filter

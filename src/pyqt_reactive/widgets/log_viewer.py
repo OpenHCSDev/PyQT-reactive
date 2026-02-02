@@ -1850,7 +1850,7 @@ class LogFileLoader(QThread):
 
             self._process = QProcess()
             self._process.setProgram(sys.executable)
-            self._process.setArguments([
+            args = [
                 "-m",
                 "pyqt_reactive.utils.log_streamer",
                 str(self.log_path),
@@ -1859,7 +1859,9 @@ class LogFileLoader(QThread):
                 "--chunk-lines",
                 str(self.chunk_lines),
                 "--html",
-            ])
+            ]
+            logger.debug("Spawning log_streamer subprocess: %s %s", sys.executable, args)
+            self._process.setArguments(args)
             self._process.readyReadStandardOutput.connect(self._on_stdout)
             self._process.readyReadStandardError.connect(self._on_stderr)
             self._process.finished.connect(self._on_finished)
