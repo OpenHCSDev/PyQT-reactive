@@ -37,6 +37,7 @@ import re
 from PyQt6.QtCore import QTimer, Qt, QRect, QRectF, QSize
 from PyQt6.QtWidgets import QWidget, QMainWindow, QDialog, QScrollArea, QCheckBox, QLabel, QStyle, QStyleOptionButton, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPushButton, QToolButton, QTextEdit, QPlainTextEdit, QTreeWidget, QListWidget, QTableWidget
 from PyQt6.QtGui import QColor, QPainter, QRegion, QPainterPath
+from PyQt6 import sip
 
 from pyqt_reactive.animation.flash_config import FlashConfig, get_flash_config
 
@@ -719,7 +720,7 @@ def create_groupbox_element(
 
         # Compute fresh window-relative rects using standard groupbox child geometry
         for child in _cached_child_widgets:
-            if not child.isVisible():
+            if sip.isdeleted(child) or not child.isVisible():
                 continue
             child_rect = get_child_mask_rect(child, window)
             child_rects.append((child_rect, _needs_square_checkbox_mask(child)))

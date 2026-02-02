@@ -330,6 +330,10 @@ class WindowManager:
             if field_path and hasattr(window, 'select_and_scroll_to_field'):
                 logger.debug(f"[WINDOW_MGR] Navigating to field: {field_path}")
                 window.select_and_scroll_to_field(field_path)
+            elif field_path:
+                logger.debug(f"[WINDOW_MGR] Field path provided but window has no select_and_scroll_to_field: {field_path}")
+            else:
+                logger.debug(f"[WINDOW_MGR] No field_path provided for scope: {scope_id}")
 
             return True
 
