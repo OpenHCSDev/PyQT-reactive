@@ -586,8 +586,13 @@ class SystemMonitorWidget(QWidget):
         # Style CPU/GPU plot - minimal padding
         self.cpu_gpu_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
         self.cpu_gpu_plot.setYRange(0, 100)
-        self.cpu_gpu_plot.setXRange(0, self.monitor_config.history_duration_seconds)
+        # X axis shows "seconds ago", so range is (-history, 0) with 0 = now (right edge)
+        self.cpu_gpu_plot.setXRange(-self.monitor_config.history_duration_seconds, 0)
         self.cpu_gpu_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
+        # Disable auto-ranging so manual panning works reliably
+        _cpu_vb = self.cpu_gpu_plot.getPlotItem().getViewBox()
+        _cpu_vb.setAutoPan(x=False, y=False)
+        _cpu_vb.disableAutoRange()
 
         # Minimize left axis
         self.cpu_gpu_plot.getAxis('left').setTextPen('white')
@@ -605,8 +610,13 @@ class SystemMonitorWidget(QWidget):
         # Style RAM/VRAM plot - minimal padding
         self.ram_vram_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
         self.ram_vram_plot.setYRange(0, 100)
-        self.ram_vram_plot.setXRange(0, self.monitor_config.history_duration_seconds)
+        # X axis shows "seconds ago", so range is (-history, 0) with 0 = now (right edge)
+        self.ram_vram_plot.setXRange(-self.monitor_config.history_duration_seconds, 0)
         self.ram_vram_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
+        # Disable auto-ranging so manual panning works reliably
+        _ram_vb = self.ram_vram_plot.getPlotItem().getViewBox()
+        _ram_vb.setAutoPan(x=False, y=False)
+        _ram_vb.disableAutoRange()
 
         # Minimize left axis
         self.ram_vram_plot.getAxis('left').setTextPen('white')
@@ -889,56 +899,123 @@ class SystemMonitorWidget(QWidget):
     def update_pyqtgraph_plots(self, metrics: Optional[dict] = None):
         """Update consolidated PyQtGraph plots with current data - non-blocking and fast."""
         try:
-            # Convert data point indices to time values in seconds
             data_length = len(self.monitor.cpu_history)
             if data_length == 0:
                 return
 
-            # Create time axis: each data point represents update_interval_seconds
-            update_interval = self.monitor_config.update_interval_seconds
-            x_time = [i * update_interval for i in range(data_length)]
+            import numpy as _np
 
-            # Get current data
-            cpu_data = list(self.monitor.cpu_history)
-            ram_data = list(self.monitor.ram_history)
-            gpu_data = list(self.monitor.gpu_history)
-            vram_data = list(self.monitor.vram_history)
+            update_interval = float(self.monitor_config.update_interval_seconds)
+            history = float(self.monitor_config.history_duration_seconds)
+            now = time.time()
 
-            # Update CPU/GPU consolidated plot
-            self.cpu_curve.setData(x_time, cpu_data)
+            # Snapshot histories
+            cpu_hist = _np.asarray(self.monitor.cpu_history, dtype=_np.float32)
+            ram_hist = _np.asarray(self.monitor.ram_history, dtype=_np.float32)
+            gpu_hist = _np.asarray(self.monitor.gpu_history, dtype=_np.float32)
+            vram_hist = _np.asarray(self.monitor.vram_history, dtype=_np.float32)
+            ts = _np.asarray(self.monitor.time_stamps, dtype=_np.float64)
 
-            # Handle GPU data (may not be available)
-            if any(gpu_data):
-                self.gpu_curve.setData(x_time, gpu_data)
+            if update_interval <= 0:
+                update_interval = 0.2
+
+            # The timestamp deque is prefilled with zeros. Fill those zeros with
+            # synthetic timestamps spaced by update_interval so the plot is
+            # visible immediately.
+            nz = _np.nonzero(ts > 0)[0]
+            if nz.size:
+                last_i = int(nz[-1])
+                # Fill backwards
+                for i in range(last_i - 1, -1, -1):
+                    if ts[i] <= 0:
+                        ts[i] = ts[i + 1] - update_interval
+                # Fill forwards (rare, but keep monotonic)
+                for i in range(last_i + 1, data_length):
+                    if ts[i] <= 0:
+                        ts[i] = ts[i - 1] + update_interval
             else:
-                self.gpu_curve.setData([], [])  # Clear data
+                idx = _np.arange(data_length, dtype=_np.float64)
+                ts = now - (data_length - 1 - idx) * update_interval
+
+            # Convert to relative x in seconds (negative = older; 0 = now)
+            base_x = ts - now
+
+            # Densify tail from newest sample -> now so x scrolls continuously
+            try:
+                rf = float(getattr(self.monitor_config, "render_fps", 60.0))
+                uf = float(getattr(self.monitor_config, "update_fps", 5.0))
+                subdivisions = max(4, int(min(64, round(rf / max(1.0, uf)))))
+            except Exception:
+                subdivisions = 8
+
+            def _series(hist: _np.ndarray, key: str) -> tuple[_np.ndarray, _np.ndarray]:
+                if data_length == 1:
+                    x0 = float(base_x[-1])
+                    y0 = float(hist[-1])
+                    y1 = float(metrics.get(key, y0)) if metrics is not None else y0
+                    x_tail = _np.linspace(x0, 0.0, subdivisions, dtype=_np.float64)
+                    y_tail = _np.linspace(y0, y1, subdivisions, dtype=_np.float32)
+                    return x_tail, y_tail
+
+                x0 = float(base_x[-1])
+                y0 = float(hist[-1])
+                y1 = float(metrics.get(key, y0)) if metrics is not None else y0
+                x_tail = _np.linspace(x0, 0.0, subdivisions, dtype=_np.float64)
+                y_tail = _np.linspace(y0, y1, subdivisions, dtype=_np.float32)
+                x_full = _np.concatenate((base_x[:-1], x_tail))
+                y_full = _np.concatenate((hist[:-1], y_tail))
+                return x_full, y_full
+
+            x_cpu, y_cpu = _series(cpu_hist, "cpu_percent")
+            _, y_gpu = _series(gpu_hist, "gpu_percent")
+            _, y_ram = _series(ram_hist, "ram_percent")
+            _, y_vram = _series(vram_hist, "vram_percent")
+
+            # Keep x range fixed to the last `history` seconds.
+            try:
+                self.cpu_gpu_plot.setXRange(-history, 0.0, padding=0)
+                self.ram_vram_plot.setXRange(-history, 0.0, padding=0)
+            except Exception:
+                pass
+
+            self.cpu_curve.setData(x_cpu, y_cpu)
+            if _np.any(y_gpu):
+                self.gpu_curve.setData(x_cpu, y_gpu)
+            else:
+                self.gpu_curve.setData([], [])
 
             # Update CPU/GPU plot title with current values
-            if metrics:
-                cpu_status = f"{metrics.get('cpu_percent', 0.0):.1f}%"
-                gpu_status = f"{metrics.get('gpu_percent', 0.0):.1f}%" if any(gpu_data) else "Not Available"
+            if metrics is not None:
+                cpu_status = f"{float(metrics.get('cpu_percent', 0.0)):.1f}%"
+                if _np.any(y_gpu):
+                    gpu_status = f"{float(metrics.get('gpu_percent', 0.0)):.1f}%"
+                else:
+                    gpu_status = "Not Available"
             else:
-                cpu_status = f'{cpu_data[-1]:.1f}%' if cpu_data else 'N/A'
-                gpu_status = f'{gpu_data[-1]:.1f}%' if gpu_data else 'Not Available'
-            self.cpu_gpu_plot.setTitle(f'CPU: {cpu_status}, GPU: {gpu_status}')
+                cpu_status = f"{float(y_cpu[-1]) if y_cpu.size else 0.0:.1f}%" if y_cpu.size else "N/A"
+                gpu_status = f"{float(y_gpu[-1]) if y_gpu.size else 0.0:.1f}%" if _np.any(y_gpu) else "Not Available"
+            self.cpu_gpu_plot.setTitle(f"CPU: {cpu_status}, GPU: {gpu_status}")
 
-            # Update RAM/VRAM consolidated plot
-            self.ram_curve.setData(x_time, ram_data)
+            # Update RAM/VRAM consolidated plot using densified arrays
+            self.ram_curve.setData(x_cpu, y_ram)
 
             # Handle VRAM data (may not be available)
-            if any(vram_data):
-                self.vram_curve.setData(x_time, vram_data)
+            if _np.any(y_vram):
+                self.vram_curve.setData(x_cpu, y_vram)
             else:
                 self.vram_curve.setData([], [])  # Clear data
 
             # Update RAM/VRAM plot title with current values
-            if metrics:
-                ram_status = f"{metrics.get('ram_percent', 0.0):.1f}%"
-                vram_status = f"{metrics.get('vram_percent', 0.0):.1f}%" if any(vram_data) else "Not Available"
+            if metrics is not None:
+                ram_status = f"{float(metrics.get('ram_percent', 0.0)):.1f}%"
+                if _np.any(y_vram):
+                    vram_status = f"{float(metrics.get('vram_percent', 0.0)):.1f}%"
+                else:
+                    vram_status = "Not Available"
             else:
-                ram_status = f'{ram_data[-1]:.1f}%' if ram_data else 'N/A'
-                vram_status = f'{vram_data[-1]:.1f}%' if vram_data else 'Not Available'
-            self.ram_vram_plot.setTitle(f'RAM: {ram_status}, VRAM: {vram_status}')
+                ram_status = f"{float(y_ram[-1]) if y_ram.size else 0.0:.1f}%" if y_ram.size else "N/A"
+                vram_status = f"{float(y_vram[-1]) if y_vram.size else 0.0:.1f}%" if _np.any(y_vram) else "Not Available"
+            self.ram_vram_plot.setTitle(f"RAM: {ram_status}, VRAM: {vram_status}")
 
         except Exception as e:
             logger.warning(f"Failed to update PyQtGraph plots: {e}")
