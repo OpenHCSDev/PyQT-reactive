@@ -1178,6 +1178,12 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             else:
                 self.queue_flash_local(prefix if prefix else leaf_flash_key)
                 logger.info(f"[FLASH] Enabled toggle: queued groupbox flash key={prefix if prefix else leaf_flash_key}")
+
+            # Keep the configuration hierarchy tree in sync with enable toggles.
+            # Non-enabled edits queue both the leaf flash and the tree::prefix flash below;
+            # the enabled-toggle special-case must do the same.
+            if tree_key:
+                self.queue_flash_local(tree_key)
             return
 
         # For nested parameters inside function panes, flash the pane to include title rows
