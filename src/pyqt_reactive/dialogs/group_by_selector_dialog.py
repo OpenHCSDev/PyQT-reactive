@@ -261,6 +261,16 @@ class GroupBySelectorDialog(QDialog):
     
     def accept_selection(self):
         """Accept the current selection."""
+        # UX FIX: Users often select items in the "Available" list and press OK
+        # expecting that to become the selection. Mirror that expectation by
+        # moving any currently-highlighted available items to the selected set
+        # before closing.
+        try:
+            if self.available_list.selectedItems():
+                self.move_right()
+        except Exception:
+            # Best-effort; fall back to current_selected
+            pass
         self.selection_changed.emit(self.current_selected.copy())
         self.accept()
     

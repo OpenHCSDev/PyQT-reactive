@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLineEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QLabel
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 from pyqt_reactive.theming import ColorScheme
 
@@ -54,6 +54,9 @@ class AbstractTableBrowser(QWidget, Generic[T]):
     item_double_clicked = pyqtSignal(str, object)  # key, item
     items_selected = pyqtSignal(list)  # list of keys (for multi-select)
 
+    INCREMENTAL_POPULATE_THRESHOLD = 750
+    INCREMENTAL_BATCH_SIZE = 200
+
     def __init__(
         self,
         color_scheme: Optional[ColorScheme] = None,
@@ -72,6 +75,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
 
         # Will be set by subclass or set_items()
         self._search_service: Optional[SearchService[T]] = None
+        self._populate_token = 0
 
         # Create UI components
         self._setup_ui()
@@ -118,6 +122,8 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         # Configure text display for proper truncation with ellipsis
         self.table_widget.setWordWrap(False)
         self.table_widget.setTextElideMode(Qt.TextElideMode.ElideRight)
+        if hasattr(self.table_widget, "setUniformRowHeights"):
+            self.table_widget.setUniformRowHeights(True)
 
     def _apply_column_config(self, columns: List[ColumnDef]):
         """Apply column configuration to table. Called by _configure_table and reconfigure_columns."""
@@ -209,33 +215,102 @@ class AbstractTableBrowser(QWidget, Generic[T]):
             searchable_text_extractor=self.get_searchable_text
         )
 
-        self.populate_table(self.filtered_items)
+        self._populate_token += 1
+        if len(self.filtered_items) > self.INCREMENTAL_POPULATE_THRESHOLD:
+            self.populate_table_incremental(
+                self.filtered_items,
+                token=self._populate_token,
+                batch_size=self.INCREMENTAL_BATCH_SIZE,
+            )
+        else:
+            self.populate_table(self.filtered_items)
         self._update_status()
 
     def populate_table(self, items: Dict[str, T]):
         """Populate the table with the given items."""
+        sorting_enabled = self.table_widget.isSortingEnabled()
         self.table_widget.setSortingEnabled(False)
-        self.table_widget.setRowCount(len(items))
+        self.table_widget.setUpdatesEnabled(False)
+        self.table_widget.blockSignals(True)
+        try:
+            self.table_widget.setRowCount(len(items))
+            columns = self.get_columns()
 
+            for row, (key, item) in enumerate(items.items()):
+                row_data = self.extract_row_data(item)
+
+                for col, value in enumerate(row_data):
+                    table_item = QTableWidgetItem(str(value))
+
+                    # Store key in first column for lookup
+                    if col == 0:
+                        table_item.setData(Qt.ItemDataRole.UserRole, key)
+
+                    # Enable proper text truncation with ellipsis
+                    table_item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
+                    table_item.setFlags(
+                        table_item.flags() & ~Qt.ItemFlag.ItemIsEditable
+                    )
+
+                    self.table_widget.setItem(row, col, table_item)
+        finally:
+            self.table_widget.blockSignals(False)
+            self.table_widget.setUpdatesEnabled(True)
+            self.table_widget.setSortingEnabled(sorting_enabled)
+
+    def populate_table_incremental(
+        self,
+        items: Dict[str, T],
+        *,
+        token: int,
+        batch_size: int = 200,
+    ) -> None:
+        """Populate table in batches to avoid blocking the UI."""
+        sorting_enabled = self.table_widget.isSortingEnabled()
+        self.table_widget.setSortingEnabled(False)
+        self.table_widget.blockSignals(True)
+
+        items_list = list(items.items())
+        self.table_widget.setRowCount(len(items_list))
         columns = self.get_columns()
 
-        for row, (key, item) in enumerate(items.items()):
-            row_data = self.extract_row_data(item)
+        def fill_batch(start_index: int) -> None:
+            if token != self._populate_token:
+                return
 
-            for col, value in enumerate(row_data):
-                table_item = QTableWidgetItem(str(value))
+            end_index = min(start_index + batch_size, len(items_list))
+            self.table_widget.setUpdatesEnabled(False)
+            try:
+                for row in range(start_index, end_index):
+                    key, item = items_list[row]
+                    row_data = self.extract_row_data(item)
 
-                # Store key in first column for lookup
-                if col == 0:
-                    table_item.setData(Qt.ItemDataRole.UserRole, key)
+                    for col, value in enumerate(row_data):
+                        table_item = QTableWidgetItem(str(value))
 
-                # Enable proper text truncation with ellipsis
-                table_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                table_item.setFlags(table_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        if col == 0:
+                            table_item.setData(Qt.ItemDataRole.UserRole, key)
 
-                self.table_widget.setItem(row, col, table_item)
+                        table_item.setTextAlignment(
+                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                        )
+                        table_item.setFlags(
+                            table_item.flags() & ~Qt.ItemFlag.ItemIsEditable
+                        )
 
-        self.table_widget.setSortingEnabled(True)
+                        self.table_widget.setItem(row, col, table_item)
+            finally:
+                self.table_widget.setUpdatesEnabled(True)
+
+            if end_index < len(items_list):
+                QTimer.singleShot(0, lambda: fill_batch(end_index))
+            else:
+                self.table_widget.blockSignals(False)
+                self.table_widget.setSortingEnabled(sorting_enabled)
+
+        QTimer.singleShot(0, lambda: fill_batch(0))
 
     def refresh(self):
         """Refresh the table display."""

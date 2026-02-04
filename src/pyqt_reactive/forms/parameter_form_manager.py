@@ -57,6 +57,7 @@ class FormManagerConfig:
     field_id: str = ''  # Canonical dotted path id for this form (e.g., 'well_filter_config')
     render_enabled_in_header: bool = False  # If True, 'enabled' checkbox is rendered in container header, not as a form row
     scope_accent_color: Optional[Any] = None  # Scope accent color for help buttons (QColor or None)
+    scope_step_index: Optional[int] = None  # Optional step index to align scope styling with pipeline order
 
 
 class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metaclass=_CombinedMeta):
@@ -214,7 +215,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             try:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
                 svc = ScopeColorService.instance()
-                accent = svc.get_accent_color(state.scope_id)
+                accent = svc.get_accent_color(state.scope_id, step_index=config.scope_step_index)
                 if accent is not None:
                     config.scope_accent_color = accent
             except Exception:
@@ -283,7 +284,10 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             self._scope_color_scheme = None
             if self.scope_id:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
-                self._scope_color_scheme = ScopeColorService.instance().get_color_scheme(self.scope_id)
+                self._scope_color_scheme = ScopeColorService.instance().get_color_scheme(
+                    self.scope_id,
+                    step_index=config.scope_step_index,
+                )
 
             logger.debug(
                 "[PFM_INIT] seq=%s field_id=%s target=%s is_nested=%s parent_cls=%s scope_id=%s",
@@ -632,6 +636,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             color_scheme=self.config.color_scheme,
             field_id=nested_id,  # Scope access to nested fields
             scope_accent_color=getattr(self, '_scope_accent_color', None),  # Inherit scope accent color
+            scope_step_index=getattr(self.config, 'scope_step_index', None),  # Preserve step index for scope styling
         )
         nested_manager = ParameterFormManager(
             state=self.state,  # CRITICAL: Share the same ObjectState instance

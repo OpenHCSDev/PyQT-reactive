@@ -12,7 +12,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
     QLabel, QMessageBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
-    QComboBox
+    QComboBox, QApplication
 )
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont
@@ -34,7 +34,7 @@ class LLMStatusIndicator(StatusIndicator):
         self._generate_button = generate_button
         super().__init__(**kwargs)
 
-    def set_state(self, state: StatusState, message: str = None):
+    def set_state(self, state: StatusState, message: str = ""):
         super().set_state(state, message)
         # Only enable generate when connected
         self._generate_button.setEnabled(state == StatusState.CONNECTED)
@@ -50,16 +50,19 @@ class LLMChatPanel(QWidget):
 
     code_generated = pyqtSignal(str)
 
-    def __init__(self, parent=None, color_scheme: Optional[ColorScheme] = None,
-                 code_type: str = None, llm_service: Optional[LLMServiceProtocol] = None):
+    def __init__(
+        self,
+        parent=None,
+        color_scheme: Optional[ColorScheme] = None,
+        code_type: Optional[str] = None,
+        llm_service: Optional[LLMServiceProtocol] = None,
+    ):
         super().__init__(parent)
 
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
-        self.code_type = code_type
+        self.code_type = code_type or "pipeline"
         self.llm_service = llm_service or get_llm_service()
-        if self.llm_service is None:
-            raise RuntimeError("No LLM service registered. Call register_llm_service(...) before creating LLMChatPanel.")
 
         # State
         self._pending_code: Optional[str] = None
@@ -105,6 +108,13 @@ class LLMChatPanel(QWidget):
             parent=self
         )
         header_layout.addWidget(self._status_indicator)
+
+        # Copy system prompt button
+        self.copy_prompt_button = QPushButton("Copy Prompt")
+        self.copy_prompt_button.setFixedHeight(24)
+        self.copy_prompt_button.setToolTip("Copy the runtime system prompt to clipboard")
+        self.copy_prompt_button.setStyleSheet(self.style_generator.generate_button_style())
+        header_layout.addWidget(self.copy_prompt_button)
 
         # Settings button (gear icon)
         self.settings_button = QPushButton("⚙")
@@ -199,6 +209,12 @@ class LLMChatPanel(QWidget):
         self.insert_button.clicked.connect(self._on_insert_clicked)
         self.regenerate_button.clicked.connect(self._on_regenerate_clicked)
         self.settings_button.clicked.connect(self._on_settings_clicked)
+        self.copy_prompt_button.clicked.connect(self._on_copy_prompt_clicked)
+
+    def _on_copy_prompt_clicked(self):
+        prompt = self.llm_service.get_system_prompt(self.code_type).strip()
+        QApplication.clipboard().setText(prompt)
+        self._chat_appender.append_success("System prompt copied to clipboard.")
 
     def _on_generate_clicked(self):
         user_request = self.user_input.toPlainText().strip()
@@ -293,17 +309,13 @@ class LLMChatPanel(QWidget):
 
             if new_endpoint and new_model and not new_model.startswith("("):
                 service_cls = self.llm_service.__class__
-                try:
-                    self.llm_service = service_cls(api_endpoint=new_endpoint, model=new_model)
-                    register_llm_service(self.llm_service)
-                except Exception as e:
-                    QMessageBox.critical(self, "LLM Settings", f"Failed to reconfigure LLM service: {e}")
-                    return
+                self.llm_service = service_cls(api_endpoint=new_endpoint, model=new_model)
+                register_llm_service(self.llm_service)
 
                 # Update status indicator's check function
                 self._status_indicator._check_fn = self.llm_service.test_connection
                 self._status_indicator.refresh(force=True)
 
-    def closeEvent(self, event):
+    def closeEvent(self, a0):
         self._generation_tasks.cleanup()
-        super().closeEvent(event)
+        super().closeEvent(a0)

@@ -46,8 +46,19 @@ class FunctionPaneWidget(GroupBoxWithHelp):
     move_function = pyqtSignal(int, int)  # index, direction
     reset_parameters = pyqtSignal(int)  # index
     
-    def __init__(self, func_item: Tuple[Callable, Dict], index: int, service_adapter, color_scheme: Optional[ColorScheme] = None,
-                 step_instance=None, scope_id: Optional[str] = None, parent=None):
+    def __init__(
+        self,
+        func_item: Tuple[Callable, Dict],
+        index: int,
+        service_adapter,
+        color_scheme: Optional[ColorScheme] = None,
+        *,
+        step_instance=None,
+        scope_id: Optional[str] = None,
+        func_scope_prefix: Optional[str] = None,
+        step_index: Optional[int] = None,
+        parent=None,
+    ):
         """
         Initialize the function pane widget.
 
@@ -58,6 +69,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             color_scheme: Color scheme for UI components
             step_instance: Step instance for context hierarchy (Function → Step → Pipeline → Global)
             scope_id: Scope identifier for cross-window live context updates
+            step_index: Step index for scope-based border alignment
             parent: Parent widget
         """
         # Extract function info before calling super().__init__
@@ -109,7 +121,15 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         self.step_instance = step_instance
 
         # CRITICAL: Store scope_id for cross-window live context updates
+        # (This is the STEP scope.)
         self.scope_id = scope_id
+
+        # Step index for scope border alignment
+        self.step_index = step_index
+
+        # Optional override for where function ObjectStates live.
+        # Used to disambiguate function states across dict-pattern keys (channels).
+        self.func_scope_prefix = func_scope_prefix
 
         # Register this pane for whole-pane flashing (after scope_id is set)
         if not getattr(self, "_flash_key", ""):
@@ -184,7 +204,16 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 else:
                     # Form not built yet (async path) - register callback
                     callbacks: list = self.form_manager._on_build_complete_callbacks
-                    callbacks.append(lambda: self._move_enabled_widget_to_title())
+                    def _move_enabled_safe() -> None:
+                        self._move_enabled_widget_to_title()
+
+                    callbacks.append(_move_enabled_safe)
+
+                    def _remove_callback_on_destroy(_obj=None) -> None:
+                        if _move_enabled_safe in callbacks:
+                            callbacks.remove(_move_enabled_safe)
+
+                    self.destroyed.connect(_remove_callback_on_destroy)
 
         # Set size policy to only take minimum vertical space needed
         size_policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
@@ -316,10 +345,23 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         from objectstate import ObjectState, ObjectStateRegistry
         from pyqt_reactive.services.scope_token_service import ScopeTokenService
+        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
 
-        # Build function-specific scope: step_scope::func_N
+        # Build function-specific scope.
+        # IMPORTANT: func_scope_prefix (if provided) allows callers to isolate
+        # function ObjectStates per dict-pattern key while keeping the parent
+        # state as the step scope for inheritance.
         step_scope = self.scope_id or "no_scope"
-        func_scope_id = ScopeTokenService.build_scope_id(step_scope, self.func)
+        func_parent_scope = self.func_scope_prefix or step_scope
+
+        token = None
+        if isinstance(self.kwargs, dict):
+            token = self.kwargs.get(SCOPE_TOKEN_KEY)
+        if token:
+            func_scope_id = f"{func_parent_scope}::{token}"
+        else:
+            # Back-compat fallback (older patterns without tokens)
+            func_scope_id = ScopeTokenService.build_scope_id(func_parent_scope, self.func)
 
         reserved_param = self._get_reserved_param_name()
         exclude_params = [reserved_param] if reserved_param else None
@@ -333,12 +375,19 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         else:
             # Get parent state (step state) from registry for context inheritance
             parent_state = ObjectStateRegistry.get_by_scope(step_scope)
+            # Never pass internal metadata keys to ObjectState parameter storage.
+            initial_values = (
+                {k: v for k, v in (self.kwargs or {}).items() if k != SCOPE_TOKEN_KEY}
+                if isinstance(self.kwargs, dict)
+                else None
+            )
+
             func_state = ObjectState(
                 object_instance=self.func,
                 scope_id=func_scope_id,
                 parent_state=parent_state,
                 exclude_params=exclude_params,
-                initial_values=self.kwargs,
+                initial_values=initial_values,
             )
             # Register here if missing (legacy paths), but do not record snapshot
             ObjectStateRegistry.register(func_state, _skip_snapshot=True)
@@ -351,6 +400,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 color_scheme=self.color_scheme,   # Pass color_scheme for consistent theming
                 use_scroll_area=False,            # Let outer FunctionListWidget manage scrolling
                 exclude_params=exclude_params,
+                scope_step_index=self.step_index,  # Align scope styling with pipeline order
             )
         )
 
@@ -358,17 +408,34 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         # Uses ObjectState.forward_to_parent_state('func') to notify parent its 'func' field changed
         # Note: Per-parameter flashing is handled automatically by the PFM
         if func_state._parent_state is not None:
-            self._suppress_initial_resolved_forward = True
-            def allow_forward_after_init():
-                self._suppress_initial_resolved_forward = False
+            # IMPORTANT: Avoid capturing QWidget instances in ObjectState callbacks.
+            # Panes can be destroyed/rebuilt during time travel; leaked callbacks must
+            # not crash with "wrapped C/C++ object ... has been deleted".
+            suppress = {"value": True}
+
+            def allow_forward_after_init() -> None:
+                suppress["value"] = False
+
             QTimer.singleShot(0, allow_forward_after_init)
-            def forward_to_step(changed_paths):
-                if self._suppress_initial_resolved_forward:
+
+            def forward_to_step(_changed_paths) -> None:
+                if suppress["value"]:
                     return
                 # Notify parent state that its 'func' field conceptually changed
-                func_state.forward_to_parent_state('func')
+                func_state.forward_to_parent_state("func")
+
             func_state.on_resolved_changed(forward_to_step)
-            logger.info(f"[FUNCTION_PANE] Registered parent notification: {func_scope_id} → {step_scope}")
+
+            def cleanup_forward(*_args) -> None:
+                try:
+                    func_state.off_resolved_changed(forward_to_step)
+                except Exception:
+                    pass
+
+            self.destroyed.connect(cleanup_forward)
+            logger.info(
+                f"[FUNCTION_PANE] Registered parent notification: {func_scope_id} → {step_scope}"
+            )
 
         # Connect parameter changes
         self.form_manager.parameter_changed.connect(

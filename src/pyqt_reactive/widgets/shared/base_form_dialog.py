@@ -169,7 +169,8 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         # Restore ObjectState to last saved state (undo unsaved changes)
         if hasattr(self, 'state') and self.state:
             logger.debug(f"[BASE_FORM_DIALOG] Restoring ObjectState to last saved state")
-            self.state.restore_saved()
+            propagate = getattr(self, '_restore_descendants_on_close', True)
+            self.state.restore_saved(propagate_descendants=propagate)
 
         # Call QDialog.reject() to close the window
         super().reject()
@@ -183,7 +184,8 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         # Restore ObjectState when closing via X button (same as reject)
         if hasattr(self, 'state') and self.state:
             logger.debug(f"[BASE_FORM_DIALOG] Restoring ObjectState on closeEvent")
-            self.state.restore_saved()
+            propagate = getattr(self, '_restore_descendants_on_close', True)
+            self.state.restore_saved(propagate_descendants=propagate)
 
         scope_key = self._get_window_scope_key()
         if scope_key:

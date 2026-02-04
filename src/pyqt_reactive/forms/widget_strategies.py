@@ -528,9 +528,14 @@ def _apply_placeholder_styling(widget: Any, interaction_hint: str, placeholder_t
 
 def _apply_lineedit_placeholder(widget: Any, text: str) -> None:
     """Apply placeholder to line edit with proper state tracking."""
-    # Clear existing text so placeholder becomes visible
-    widget.clear()
-    widget.setPlaceholderText(text)
+    # Placeholder application must not emit textChanged.
+    was_blocked = widget.blockSignals(True)
+    try:
+        # Clear existing text so placeholder becomes visible
+        widget.clear()
+        widget.setPlaceholderText(text)
+    finally:
+        widget.blockSignals(was_blocked)
     # Set placeholder state property for consistency with other widgets
     widget.setProperty("is_placeholder_state", True)
     # Add tooltip for consistency
@@ -539,13 +544,19 @@ def _apply_lineedit_placeholder(widget: Any, text: str) -> None:
 
 def _apply_spinbox_placeholder(widget: Any, text: str) -> None:
     """Apply placeholder to spinbox showing full placeholder text with prefix."""
-    # CRITICAL FIX: Always show the full placeholder text, not just the numeric value
-    # This ensures users see "Pipeline default: 1" instead of just "1"
-    widget.setSpecialValueText(text)
+    # CRITICAL: Placeholder application must be a pure VIEW operation.
+    # Setting the spinbox value to its minimum (None sentinel) can emit valueChanged,
+    # which would incorrectly dispatch an ObjectState update and record snapshots.
+    was_blocked = widget.blockSignals(True)
+    try:
+        # Always show full placeholder text (not just the numeric value)
+        widget.setSpecialValueText(text)
 
-    # Set widget to minimum value to show the special value text
-    if hasattr(widget, 'minimum'):
-        widget.setValue(widget.minimum())
+        # Set widget to minimum value to show the special value text
+        if hasattr(widget, 'minimum'):
+            widget.setValue(widget.minimum())
+    finally:
+        widget.blockSignals(was_blocked)
 
     # Apply visual styling to indicate this is a placeholder
     _apply_placeholder_styling(
@@ -699,8 +710,12 @@ def _apply_path_widget_placeholder(widget: Any, placeholder_text: str) -> None:
         # Path widgets have a path_input attribute that's a QLineEdit
         if hasattr(widget, 'path_input'):
             # Clear any existing text and apply placeholder to the inner QLineEdit
-            widget.path_input.clear()
-            widget.path_input.setPlaceholderText(placeholder_text)
+            was_blocked = widget.path_input.blockSignals(True)
+            try:
+                widget.path_input.clear()
+                widget.path_input.setPlaceholderText(placeholder_text)
+            finally:
+                widget.path_input.blockSignals(was_blocked)
             widget.path_input.setProperty("is_placeholder_state", True)
             widget.path_input.setToolTip(placeholder_text)
         else:

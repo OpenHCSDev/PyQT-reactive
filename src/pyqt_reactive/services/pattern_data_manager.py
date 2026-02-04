@@ -11,6 +11,15 @@ import copy
 from typing import Union, List, Dict, Tuple, Optional, Callable, Any
 
 
+# Internal metadata key stored in kwargs for per-entry identity.
+# This is used by the PyQt/ObjectState integration to create stable, per-occurrence
+# scopes for duplicate functions in patterns.
+SCOPE_TOKEN_KEY = "__pyqt_reactive_scope_token__"
+
+# Namespaced metadata keys for ObjectState.metadata
+FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY = "pyqt_reactive.func_editor.selected_pattern_key"
+
+
 class PatternDataManager:
     """
     Pure data operations for function patterns.
@@ -219,4 +228,3 @@ class PatternDataManager:
 
         # Check if should convert back to list (when empty)
         return PatternDataManager.convert_dict_to_list(new_pattern)
-
