@@ -213,10 +213,12 @@ class HelpIndicator(QLabel):
         
     def set_scope_accent_color(self, color) -> None:
         """Set scope accent color (QColor). Called by parent window for scope styling."""
-        if hasattr(color, 'name'):
-            hex_color = color.name()
-        else:
-            hex_color = self.color_scheme.to_hex(color)
+        from PyQt6.QtGui import QColor
+
+        if not isinstance(color, QColor):
+            raise TypeError("HelpIndicator.set_scope_accent_color expects a QColor")
+
+        hex_color = color.name()
 
         self.setStyleSheet(f"""
             QLabel {{
@@ -1031,7 +1033,9 @@ class GroupBoxWithHelp(FlashableGroupBox):
             self.styleSheet()
         )
         # Add margin for border layers if needed
-        if scheme and hasattr(scheme, 'step_border_layers') and scheme.step_border_layers:
+        from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+
+        if isinstance(scheme, ScopeColorScheme) and scheme.step_border_layers:
             total_width = sum(layer[0] for layer in scheme.step_border_layers)
             logger.debug(f"🎨 GroupBoxWithHelp: Setting margins to {total_width} for border layers")
             self.setContentsMargins(total_width, total_width, total_width, total_width)
