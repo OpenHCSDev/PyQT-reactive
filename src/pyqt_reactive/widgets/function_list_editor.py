@@ -868,6 +868,7 @@ class FunctionListEditorWidget(QWidget):
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to apply initial enabled styling to function pane: {e}")
 
+
     def setup_connections(self):
         """Setup signal/slot connections."""
         pass
