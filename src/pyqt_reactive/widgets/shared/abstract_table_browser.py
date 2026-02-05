@@ -205,16 +205,37 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         self.status_label.setText(f"Showing {filtered}/{total} items")
 
     def set_items(self, items: Dict[str, T]):
-        """Set the items to display in the table."""
+        """Set items to display in the table."""
         self.all_items = items
         self.filtered_items = items.copy()
 
-        # Initialize or update search service
-        self._search_service = SearchService(
-            all_items=self.all_items,
-            searchable_text_extractor=self.get_searchable_text
-        )
+        # Initialize search service only if all_items changed (not just filtered_items)
+        if self._search_service is None:
+            self._search_service = SearchService(
+                all_items=self.all_items,
+                searchable_text_extractor=self.get_searchable_text
+            )
+        else:
+            self._search_service.update_items(self.all_items)
 
+        self._populate_token += 1
+        if len(self.filtered_items) > self.INCREMENTAL_POPULATE_THRESHOLD:
+            self.populate_table_incremental(
+                self.filtered_items,
+                token=self._populate_token,
+                batch_size=self.INCREMENTAL_BATCH_SIZE,
+            )
+        else:
+            self.populate_table(self.filtered_items)
+        self._update_status()
+
+    def set_filtered_items(self, filtered_items: Dict[str, T]):
+        """Update filtered items without recreating SearchService.
+
+        Use this when all_items hasn't changed, only filter criteria changed.
+        Much faster than set_items() for checkbox filter updates.
+        """
+        self.filtered_items = filtered_items
         self._populate_token += 1
         if len(self.filtered_items) > self.INCREMENTAL_POPULATE_THRESHOLD:
             self.populate_table_incremental(

@@ -36,11 +36,13 @@ class ListItemFormat:
         first_line: Field paths shown after item name on first line (e.g., ('func',))
         preview_line: Field paths shown on the └─ preview line
         detail_line_field: Field path for detail line (e.g., 'path')
-        show_config_indicators: Whether to show NAP/FIJI/MAT from PREVIEW_FIELD_CONFIGS
         formatters: Dict mapping field path to formatter (method name str or callable)
 
     Field abbreviations are declared on config classes via @global_pipeline_config(field_abbreviations=...)
     and looked up from FIELD_ABBREVIATIONS_REGISTRY. This keeps abbreviations with the config, not the widget.
+
+    Config indicators (NAP, FIJI, MAT, etc.) are auto-discovered via always_viewable_fields
+    registry on config classes via @global_pipeline_config(always_viewable_fields=[...]).
 
     Formatters receive the field value and return a label string (or None to skip).
     Method name strings are resolved on the widget instance at runtime.
@@ -58,7 +60,6 @@ class ListItemFormat:
     first_line: Tuple[str, ...] = ()
     preview_line: Tuple[str, ...] = ()
     detail_line_field: Optional[str] = None
-    show_config_indicators: bool = True
     formatters: Dict[str, FieldFormatter] = field(default_factory=dict)
 
 from PyQt6.QtWidgets import (
@@ -134,18 +135,6 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
     DYNAMIC_ACTIONS: Dict[str, str] = {}  # action_id -> resolver_method_name (for toggles)
     ITEM_NAME_SINGULAR: str = "item"
     ITEM_NAME_PLURAL: str = "items"
-
-    # Declarative preview field configuration (processed automatically in __init__)
-    # Format: List[Union[str, Tuple[str, Callable]]]
-    #   - str: field name - label auto-discovered from PREVIEW_LABEL_REGISTRY
-    #         (set via @global_pipeline_config(preview_label='NAP'))
-    #   - Tuple[str, Callable]: (field_path, formatter_function) for custom formatting
-    # Example:
-    #   PREVIEW_FIELD_CONFIGS = [
-    #       'napari_streaming_config',   # Auto: preview_label='NAP' from decorator
-    #       ('num_workers', lambda v: f'W:{v if v is not None else 0}'),  # Custom formatter
-    #   ]
-    PREVIEW_FIELD_CONFIGS: List[Any] = []  # Override in subclasses
 
     # === Declarative List Item Format Config ===
     # Type-safe configuration for list item display. See ListItemFormat dataclass.
@@ -280,9 +269,6 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         # (We override _on_live_context_changed to use unified batching)
         self._init_cross_window_preview_mixin()
 
-        # Process declarative preview field configs (AFTER mixin init)
-        self._process_preview_field_configs()
-
         # Register time travel callback for list refresh
         ObjectStateRegistry.add_time_travel_complete_callback(self._on_time_travel_complete)
 
@@ -290,26 +276,6 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """Get default GUI config fallback."""
         from pyqt_reactive.protocols import get_form_config
         return get_form_config()
-
-    def _process_preview_field_configs(self) -> None:
-        """
-        Process declarative PREVIEW_FIELD_CONFIGS and register preview fields.
-
-        Called automatically in __init__ after CrossWindowPreviewMixin initialization.
-        Supports two formats:
-        - str: field name (auto-discovers preview_label from registry)
-        - Tuple[str, Callable]: (field_path, formatter_function)
-        """
-        for config in self.PREVIEW_FIELD_CONFIGS:
-            if isinstance(config, str):
-                # Simple field name - auto-discovers from registry
-                self.enable_preview_for_field(config)
-            elif isinstance(config, tuple) and len(config) == 2:
-                # (field_path, formatter) tuple
-                field_path, formatter = config
-                self.enable_preview_for_field(field_path, formatter)
-            else:
-                logger.warning(f"Invalid PREVIEW_FIELD_CONFIGS entry: {config}")
 
     def _discover_preview_fields_from_registry(self, config_source: Any) -> List[str]:
         """
@@ -1828,42 +1794,6 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
         return discovered
 
-    def _build_preview_segments(
-        self,
-        state: Optional['ObjectState'],
-    ) -> List[Tuple[str, str, Optional[str]]]:
-        """
-        Build preview segments from PREVIEW_FIELD_CONFIGS (NAP, FIJI, MAT).
-        Reads from ObjectState's pre-cached resolved values. Groups by container.
-
-        Returns:
-            List of (formatted_label, field_path, sep_before) tuples
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-
-        if state is None:
-            logger.debug(f"📐 PREVIEW: state is None, returning []")
-            return []
-
-        from pyqt_reactive.protocols import PreviewFormatterRegistry
-
-        enabled_fields = self.get_enabled_preview_fields()
-        logger.debug(f"📐 PREVIEW: enabled_fields={enabled_fields}")
-
-        # Create a formatter function that combines config_formatter and preview_value_formatter
-        def config_formatter(value, field_name):
-            if is_dataclass(value) and not isinstance(value, type):
-                formatted = PreviewFormatterRegistry.format_field(value, field_name)
-                if formatted is None:
-                    formatted = self._get_preview_label_for_config(value)
-                return formatted
-            return self.format_preview_value(field_name, value)
-
-        return self._preview_formatting_strategy.collect_and_render(
-            state, enabled_fields, {}, config_formatter
-        )
-
     def _discover_always_viewable_fields(self, state: Optional['ObjectState']) -> Set[str]:
         """
         Auto-discover always viewable fields from ALWAYS_VIEWABLE_FIELDS_REGISTRY.
@@ -2123,7 +2053,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         preview_segments = self._format_segments_from_config(state, list(fmt.preview_line))
 
         # Add always viewable fields from ALWAYS_VIEWABLE_FIELDS_REGISTRY
-        # These are merged into preview_segments (not config_segments) to appear inline
+        # These are merged into preview_segments to appear inline with other preview fields
         always_viewable = self._discover_always_viewable_fields(state)
         if always_viewable:
             logger.debug(f"📐 PREVIEW: Adding always_viewable fields to preview: {always_viewable}")
@@ -2136,11 +2066,6 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
                 always_viewable_segments[0] = (first_seg[0], first_seg[1], " | ")
             preview_segments.extend(always_viewable_segments)
 
-        # Config indicators from PREVIEW_FIELD_CONFIGS (NAP, FIJI, MAT)
-        config_segments = None
-        if fmt.show_config_indicators:
-            config_segments = self._build_preview_segments(state=state)
-
         # Detail line from ObjectState
         if not detail_line and fmt.detail_line_field and state:
             detail_line = state.get_resolved_value(fmt.detail_line_field) or ""
@@ -2150,7 +2075,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
             segments=preview_segments,
             status_prefix=status_prefix,
             detail_line=detail_line,
-            config_segments=config_segments,
+            config_segments=None,  # Removed old PREVIEW_FIELD_CONFIGS fallback
             first_line_segments=first_line_segments,
             item=item,
             state=state,
@@ -2337,9 +2262,6 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         PipelineEditor: return self._current_orchestrator (explicitly injected)
         """
         ...
-
-    # REMOVED: _configure_preview_fields() - now uses declarative PREVIEW_FIELD_CONFIGS
-    # Preview fields are configured automatically in __init__ via _process_preview_field_configs()
 
     # === Selection Hooks (declarative via ITEM_HOOKS) ===
 
