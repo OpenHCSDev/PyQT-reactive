@@ -232,9 +232,18 @@ class LogListModel(QAbstractListModel):
                 return
 
             # Drop oldest lines.
+            removed_lines = self._lines[:remove_count]
+            removed_had_max_width = any(
+                len(line) == self._max_line_width for line in removed_lines
+            )
             self.beginRemoveRows(QModelIndex(), 0, remove_count - 1)
             del self._lines[:remove_count]
+            del self._html_lines[:remove_count]
             self.endRemoveRows()
+
+            # If the previous max-width line was evicted, recompute from remaining lines.
+            if removed_had_max_width:
+                self._max_line_width = max((len(line) for line in self._lines), default=0)
 
         start_row = len(self._lines)
         end_row = start_row + len(normalized) - 1
@@ -451,8 +460,8 @@ class SelectableDocument(QTextDocument):
         clearFormat = QTextCharFormat()
         clearFormat.setBackground(QColor(0, 0, 0, 0))  # Transparent background
 
-        # Apply to selected region
-        clearCursor.setCharFormat(clearFormat)
+        # Merge so existing foreground/weight/italic syntax formatting is preserved.
+        clearCursor.mergeCharFormat(clearFormat)
 
     def _highlightSelection(self) -> None:
         """
@@ -472,8 +481,8 @@ class SelectableDocument(QTextDocument):
         selectFormat.setBackground(QApplication.palette().highlight().color())
         # Don't set foreground - preserve syntax highlighting colors
 
-        # Apply to selected region
-        highlightCursor.setCharFormat(selectFormat)
+        # Merge so existing syntax formatting is preserved.
+        highlightCursor.mergeCharFormat(selectFormat)
 
 
 class HighlightSignals(QObject):
@@ -652,8 +661,9 @@ class LogItemDelegate(QStyledItemDelegate):
         doc = SelectableDocument()
         doc.setDefaultFont(font)
         doc.setPlainText(text)
-        if width > 0:
-            doc.setTextWidth(width)
+        # Log viewer uses single-line rows with horizontal scrolling. Keep
+        # interactive docs unwrapped so selection does not hide off-viewport text.
+        doc.setTextWidth(-1)
 
         # Try to get cached formatting segments
         segments = self._get_or_request_segments(text, font)
@@ -808,7 +818,12 @@ class LogItemDelegate(QStyledItemDelegate):
         doc.setDocumentMargin(0)  # Remove default 4px margin to prevent position shifts
         doc.setDefaultFont(font)
         doc.setPlainText(text)
-        doc.setTextWidth(width)
+        # For fixed-height log rows we intentionally keep layout unwrapped and
+        # rely on horizontal scrolling for long lines.
+        if self._fixed_row_height is not None:
+            doc.setTextWidth(-1)
+        else:
+            doc.setTextWidth(width)
 
         # Try to apply syntax highlighting if available
         if not self._highlighting_enabled:
@@ -859,14 +874,7 @@ class LogItemDelegate(QStyledItemDelegate):
         if self.hasInteractiveDocument(row):
             # Use the interactive document which has selection state
             doc = self.getInteractiveDocument(row)
-            if doc is not None:
-                # For selected rows, wrap to viewport width
-                view = self.parent() if isinstance(self.parent(), QListView) else None
-                wrap_width = opt.rect.width()
-                if view is not None and view.viewport() is not None:
-                    wrap_width = view.viewport().width()
-                doc.setTextWidth(wrap_width)
-            else:
+            if doc is None:
                 # Fallback to cached document rendering
                 doc = self._get_or_create_document(text, opt.font, opt.rect.width())
         else:
@@ -1021,7 +1029,8 @@ class LogListView(QListView):
         tempDoc = QTextDocument()
         tempDoc.setDefaultFont(self.font())
         tempDoc.setPlainText(str(text))
-        tempDoc.setTextWidth(itemRect.width())
+        # Keep hit testing on an unwrapped line to match visual rendering.
+        tempDoc.setTextWidth(-1)
         charPos = tempDoc.documentLayout().hitTest(relativePosF, Qt.HitTestAccuracy.FuzzyHit)
 
         # Start selection
@@ -1110,7 +1119,7 @@ class LogListView(QListView):
             tempDoc = QTextDocument()
             tempDoc.setDefaultFont(self.font())
             tempDoc.setPlainText(str(text))
-            tempDoc.setTextWidth(itemRect.width())
+            tempDoc.setTextWidth(-1)
             charPos = tempDoc.documentLayout().hitTest(relativePosF, Qt.HitTestAccuracy.FuzzyHit)
 
             # Update selection end
@@ -1217,7 +1226,7 @@ class LogListView(QListView):
                     tempDoc = QTextDocument()
                     tempDoc.setDefaultFont(self.font())
                     tempDoc.setPlainText(str(text))
-                    tempDoc.setTextWidth(itemRect.width())
+                    tempDoc.setTextWidth(-1)
                     charPos = tempDoc.documentLayout().hitTest(relativePosF, Qt.HitTestAccuracy.FuzzyHit)
 
                     self._selection_end_index = currentIndex
