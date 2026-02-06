@@ -21,6 +21,8 @@ import os
 if TYPE_CHECKING:
     from objectstate import ObjectState
 
+from python_introspect import is_enableable, ENABLED_FIELD
+
 # Type alias for formatters: either a method name string or a callable
 FieldFormatter = Union[str, Callable[[Any], Optional[str]]]
 
@@ -1750,10 +1752,11 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         Scans the ObjectState's config types and returns field paths that should
         always be shown in previews, as declared by the config types themselves.
 
-        For Enableable config types, only includes fields if the resolved 'enabled'
-        field is True. If enabled is None (unresolved) or False, the fields are not
-        shown. This allows configs to conditionally show preview fields based on
-        their enabled state.
+        For Enableable config types, automatically includes the 'enabled' field in
+        the preview when resolved to True. Additional fields from
+        ALWAYS_VIEWABLE_FIELDS_REGISTRY are also included when enabled is True.
+        If enabled is None (unresolved) or False, no fields are shown. This allows
+        configs to conditionally show preview fields based on their enabled state.
 
         Args:
             state: ObjectState to scan for registered always viewable fields
@@ -1774,8 +1777,13 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
             if not is_dataclass(config_type):
                 continue
 
-            # Check if this config type is Enableable (has an 'enabled' field)
-            is_enableable = any(f.name == 'enabled' for f in fields(config_type))
+            # For Enableable configs: automatically include 'enabled' field when True
+            if is_enableable(config_type):
+                enabled_path = f"{path}.{ENABLED_FIELD}" if path else ENABLED_FIELD
+                resolved_enabled = state.get_resolved_value(enabled_path)
+                if resolved_enabled is True:
+                    always_viewable.add(enabled_path)
+                    logger.debug(f"📐 PREVIEW: Added enabled field {enabled_path} for {config_type.__name__}")
 
             # Check if this config type has always viewable fields registered
             registered_fields = None
@@ -1790,8 +1798,8 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
             if registered_fields:
                 # For Enableable configs, check if enabled resolves to True
-                if is_enableable:
-                    enabled_path = f"{path}.enabled" if path else "enabled"
+                if is_enableable(config_type):
+                    enabled_path = f"{path}.{ENABLED_FIELD}" if path else ENABLED_FIELD
                     resolved_enabled = state.get_resolved_value(enabled_path)
                     # Only show fields if enabled is explicitly True
                     # If enabled is None (unresolved) or False, don't show
