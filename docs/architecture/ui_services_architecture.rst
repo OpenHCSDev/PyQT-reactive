@@ -63,7 +63,7 @@ Consolidated service for widget finding, styling, and value updates.
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.services.widget_service import WidgetService
+    from pyqt_reactive.services.widget_service import WidgetService
     
     # Find widgets
     checkbox = WidgetService.find_optional_checkbox(manager, param_name)
@@ -99,7 +99,7 @@ It works hand-in-hand with ``ObjectState``:
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.services.value_collection_service import ValueCollectionService
+    from pyqt_reactive.services.value_collection_service import ValueCollectionService
 
     service = ValueCollectionService()
 
@@ -122,7 +122,7 @@ Manages Qt signal blocking, connection, and cross-window registration.
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.services.signal_service import SignalService
+    from pyqt_reactive.services.signal_service import SignalService
     
     # Block signals (context manager)
     with SignalService.block_signals(checkbox):
@@ -147,7 +147,7 @@ Handles parameter reset and placeholder refresh operations.
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.services.parameter_ops_service import ParameterOpsService
+    from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
 
     service = ParameterOpsService()
 
@@ -173,7 +173,7 @@ Orchestrates form initialization with metaprogrammed services.
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.services.form_init_service import (
+    from pyqt_reactive.services.form_init_service import (
         FormBuildOrchestrator,
         InitialRefreshStrategy,
         ParameterExtractionService,

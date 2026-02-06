@@ -7,6 +7,18 @@ from .preview_formatting import (
     PreviewFormattingStrategy,
     DefaultPreviewFormattingStrategy,
 )
+from .status_presentation import (
+    StatusPresentationInput,
+    StatusPresentationResult,
+    StatusPresentationStrategyABC,
+    DefaultStatusPresentationStrategy,
+)
+from .tree_aggregation import (
+    TreeAggregationPolicyABC,
+    MeanTreeAggregationPolicy,
+    ExplicitPercentTreeAggregationPolicy,
+    TreeAggregationPolicyRegistry,
+)
 
 __all__ = [
     'FormattingConfig',
@@ -14,4 +26,12 @@ __all__ = [
     'PreviewSegmentBuilder',
     'PreviewFormattingStrategy',
     'DefaultPreviewFormattingStrategy',
+    'StatusPresentationInput',
+    'StatusPresentationResult',
+    'StatusPresentationStrategyABC',
+    'DefaultStatusPresentationStrategy',
+    'TreeAggregationPolicyABC',
+    'MeanTreeAggregationPolicy',
+    'ExplicitPercentTreeAggregationPolicy',
+    'TreeAggregationPolicyRegistry',
 ]

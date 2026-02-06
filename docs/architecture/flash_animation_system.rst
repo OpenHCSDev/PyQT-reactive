@@ -3,7 +3,7 @@ Flash Animation System
 
 **Game engine-style O(1) per-window flash animations for UI feedback.**
 
-*Module: openhcs.pyqt_gui.widgets.shared.flash_mixin*
+*Module: pyqt_reactive.animation.flash_mixin*
 
 Overview
 --------
@@ -172,7 +172,7 @@ Widgets inherit ``FlashMixin`` (alias: ``VisualUpdateMixin``) to participate:
 
 .. code-block:: python
 
-   from openhcs.pyqt_gui.widgets.shared.flash_mixin import FlashMixin
+   from pyqt_reactive.animation.flash_mixin import FlashMixin
 
    class MyWidget(QWidget, FlashMixin):
        def __init__(self):

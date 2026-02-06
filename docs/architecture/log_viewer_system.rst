@@ -64,11 +64,11 @@ All subprocesses use JSON Lines (JSONL) for efficient I/O:
 .. code-block:: python
 
     # LogStreamer output
-    {"line": "2026-02-01 00:25:57,633 - openhcs.pyqt_gui - INFO - Starting..."}
+    {"line": "2026-02-01 00:25:57,633 - pyqt_reactive.widgets - INFO - Starting..."}
 
     # LogHighlighter output
     {
-        "line": "2026-02-01 00:25:57,633 - openhcs.pyqt_gui - INFO - Starting...",
+        "line": "2026-02-01 00:25:57,633 - pyqt_reactive.widgets - INFO - Starting...",
         "segments": [
             {"start": 0, "length": 23, "color": [105, 105, 105]},
             {"start": 24, "length": 4, "color": [100, 160, 210], "bold": true},
@@ -105,19 +105,19 @@ Log Highlighter
 
 .. code-block:: text
 
-    openhcs.pyqt_gui  ← Purple (147, 112, 219)
+    pyqt_reactive.widgets  ← Purple (147, 112, 219)
 
 **File Paths** (green):
 
 .. code-block:: text
 
-    /home/ts/code/projects/openhcs/openhcs/pyqt_gui/main.py  ← Green (34, 139, 34)
+    /home/ts/code/projects/pyqt-reactive/src/pyqt_reactive/widgets/__init__.py  ← Green (34, 139, 34)
 
 **Python Strings** (brown):
 
 .. code-block:: text
 
-    "Starting OpenHCS PyQt6 GUI..."  ← Brown (206, 145, 120)
+    "Starting pyqt-reactive PyQt6 GUI..."  ← Brown (206, 145, 120)
 
 **Numbers** (light gray-green):
 
@@ -137,7 +137,7 @@ Basic Usage
     from pathlib import Path
 
     # Create log viewer
-    log_path = Path("/home/ts/.local/share/openhcs/logs/openhcs_unified.log")
+    log_path = Path("/home/ts/.local/share/pyqt-reactive/logs/pyqt_reactive_unified.log")
     viewer = LogViewerWidget(log_path=log_path)
 
     # Add to layout
@@ -181,7 +181,7 @@ You can manually highlight log lines:
     # Highlight a single line
     client = LogHighlightClient()
     segments = client.highlight_line(
-        "2026-02-01 00:25:57,633 - openhcs.pyqt_gui - INFO - Starting..."
+        "2026-02-01 00:25:57,633 - pyqt_reactive.widgets - INFO - Starting..."
     )
 
     # segments contains highlighting info
@@ -360,7 +360,7 @@ Highlight log lines via subprocess:
         stdout=subprocess.PIPE
     )
 
-    line = "2026-02-01 00:25:57,633 - openhcs.pyqt_gui - INFO - Starting..."
+    line = "2026-02-01 00:25:57,633 - pyqt_reactive.widgets - INFO - Starting..."
     proc.stdin.write((line + "\n").encode())
     proc.stdin.close()
 

@@ -63,11 +63,10 @@ class ListItemFormat:
     formatters: Dict[str, FieldFormatter] = field(default_factory=dict)
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QListWidgetItem, QLabel, QSplitter, QScrollArea, QSizePolicy
+    QWidget, QPushButton, QListWidgetItem, QLabel
 )
 from PyQt6.QtCore import Qt, QRect, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont, QColor, QBrush
+from PyQt6.QtGui import QColor, QBrush
 
 from pyqt_reactive.core import ReorderableListWidget
 from pyqt_reactive.widgets.shared.list_item_delegate import (
@@ -91,10 +90,16 @@ from pyqt_reactive.strategies import (
     FormattingConfig,
     PreviewFormattingStrategy,
     DefaultPreviewFormattingStrategy,
+    StatusPresentationInput,
+    DefaultStatusPresentationStrategy,
 )
 from objectstate import LiveContextResolver
 from pyqt_reactive.animation import FlashMixin, get_flash_color, WindowFlashOverlay
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
+from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
+    create_manager_header,
+    setup_vertical_manager_layout,
+)
 from pyqt_reactive.services import AutoRegisterServiceMixin
 
 logger = logging.getLogger(__name__)
@@ -264,6 +269,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         else:
             config = self.PREVIEW_FORMATTING_CONFIG
         self._preview_formatting_strategy = DefaultPreviewFormattingStrategy(config, widget=self)
+        self._status_presentation_strategy = DefaultStatusPresentationStrategy()
 
         # Initialize CrossWindowPreviewMixin for preview field configuration API
         # (We override _on_live_context_changed to use unified batching)
@@ -329,34 +335,15 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         Uses VERTICAL orientation (list above buttons) to match current behavior.
         Subclass can override to add custom elements (e.g., PlateManager status scrolling).
         """
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(2, 2, 2, 2)
-        main_layout.setSpacing(2)
-
-        # Header (title + status)
         header = self._create_header()
-        main_layout.addWidget(header)
-
-        # QSplitter: list widget ABOVE buttons (VERTICAL orientation)
-        splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Top: item list
         self.item_list = self._create_list_widget()
-        splitter.addWidget(self.item_list)
-
-        # Bottom: button panel
         button_panel = self._create_button_panel()
-        splitter.addWidget(button_panel)
-
-        # Set initial sizes: list takes all space, buttons collapse to minimum height
-        # Use large value for list and 1 for buttons to make buttons start at minimum size
-        splitter.setSizes([1000, 1])
-
-        # Set stretch factors: list expands, buttons stay at minimum
-        splitter.setStretchFactor(0, 1)  # List widget expands
-        splitter.setStretchFactor(1, 0)  # Button panel stays at minimum height
-
-        main_layout.addWidget(splitter)
+        setup_vertical_manager_layout(
+            owner=self,
+            header=header,
+            top_widget=self.item_list,
+            bottom_widget=button_panel,
+        )
 
     def _create_header(self) -> QWidget:
         """
@@ -364,58 +351,14 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
         When ENABLE_STATUS_SCROLLING is True, uses QScrollArea for marquee animation.
         """
-        header = QWidget()
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(5, 5, 5, 5)
-
-        # Title label
-        title_label = QLabel(self.TITLE)
-        title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        title_label.setStyleSheet(
-            f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};"
+        header_parts = create_manager_header(
+            title=self.TITLE,
+            color_scheme=self.color_scheme,
+            enable_status_scrolling=self.ENABLE_STATUS_SCROLLING,
         )
-        header_layout.addWidget(title_label)
-
-        if self.ENABLE_STATUS_SCROLLING:
-            # Status label in scrollable area for marquee animation
-            self._status_scroll = QScrollArea()
-            self._status_scroll.setWidgetResizable(False)
-            self._status_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self._status_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            self._status_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-            self._status_scroll.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
-            self._status_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self._status_scroll.setFixedHeight(20)
-            self._status_scroll.setContentsMargins(0, 0, 0, 0)
-            self._status_scroll.setStyleSheet("QScrollArea { padding: 0px; margin: 0px; background: transparent; }")
-
-            self.status_label = QLabel("Ready")
-            self.status_label.setStyleSheet(
-                f"color: {self.color_scheme.to_hex(self.color_scheme.status_success)}; "
-                f"font-weight: bold; padding: 0px; margin: 0px;"
-            )
-            self.status_label.setTextFormat(Qt.TextFormat.PlainText)
-            self.status_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-            self.status_label.setFixedHeight(20)
-            self.status_label.setContentsMargins(0, 0, 0, 0)
-            self.status_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
-
-            self._status_scroll.setWidget(self.status_label)
-            header_layout.addWidget(self._status_scroll, 1)
-
-            # Trigger initial layout
-            QTimer.singleShot(0, lambda: self.status_label.adjustSize())
-        else:
-            header_layout.addStretch()
-            # Simple status label without scrolling
-            self.status_label = QLabel("Ready")
-            self.status_label.setStyleSheet(
-                f"color: {self.color_scheme.to_hex(self.color_scheme.status_success)}; "
-                f"font-weight: bold;"
-            )
-            header_layout.addWidget(self.status_label)
-
-        return header
+        self.status_label = header_parts.status_label
+        self._status_scroll = header_parts.status_scroll
+        return header_parts.header
 
     def _create_list_widget(self) -> ReorderableListWidget:
         """Create styled ReorderableListWidget with multiline delegate."""
@@ -898,20 +841,24 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         if not self.status_label:
             return
 
-        self._current_status_message = message
+        presentation = self._status_presentation_strategy.present(
+            StatusPresentationInput(message=message, context=self)
+        )
+        rendered_message = presentation.text
+        self._current_status_message = rendered_message
 
         if not self.ENABLE_STATUS_SCROLLING or not self._status_scroll:
             # Simple mode: just set text
-            self.status_label.setText(message)
+            self.status_label.setText(rendered_message)
             return
 
         # Scrolling mode: check if text needs animation
-        self.status_label.setText(message)
+        self.status_label.setText(rendered_message)
         self.status_label.adjustSize()
 
         # Calculate single message width for seamless loop reset
         separator = "     "
-        temp_label = QLabel(f"{message}{separator}")
+        temp_label = QLabel(f"{rendered_message}{separator}")
         temp_label.setFont(self.status_label.font())
         temp_label.adjustSize()
         self._status_single_message_width = temp_label.width()
@@ -922,7 +869,9 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
         if label_width > scroll_width:
             # Duplicate text for seamless loop
-            display_text = f"{message}{separator}{message}{separator}"
+            display_text = (
+                f"{rendered_message}{separator}{rendered_message}{separator}"
+            )
             self.status_label.setText(display_text)
             self.status_label.adjustSize()
 

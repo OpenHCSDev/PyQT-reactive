@@ -2,7 +2,7 @@
 Cross-Window Update Optimization
 ====================================
 
-*Module: openhcs.pyqt_gui.widgets.shared.parameter_form_manager*  
+*Module: pyqt_reactive.forms.parameter_form_manager*  
 *Status: STABLE*
 
 ---
@@ -10,7 +10,7 @@ Cross-Window Update Optimization
 Overview
 ========
 
-OpenHCS configuration windows update placeholders in real-time as users edit values in other windows. The cross-window update system uses type-based inheritance filtering and targeted field refresh to achieve <10ms update latency (down from ~200ms) while maintaining correct MRO-based inheritance semantics.
+pyqt-reactive configuration windows update placeholders in real-time as users edit values in other windows. The cross-window update system uses type-based inheritance filtering and targeted field refresh to achieve <10ms update latency (down from ~200ms) while maintaining correct MRO-based inheritance semantics.
 
 **Key Performance Optimizations:**
 
@@ -201,7 +201,7 @@ Reset Propagation
 None Value Semantics
 --------------------
 
-In OpenHCS lazy configs, ``None`` has special meaning:
+In pyqt-reactive lazy configs, ``None`` has special meaning:
 
 - **In saved configs**: ``None`` means "inherit from parent context via MRO"
 - **In live context**: ``None`` means "field was reset, override saved value"

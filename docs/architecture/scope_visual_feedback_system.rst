@@ -3,7 +3,7 @@ Scope Visual Feedback System
 
 **CIELAB perceptual colors and scope-based visual styling.**
 
-*Modules: openhcs.pyqt_gui.widgets.shared.scope_color_*, openhcs.pyqt_gui.widgets.shared.scope_visual_config*
+*Modules: pyqt_reactive.widgets.shared.scope_color_*, pyqt_reactive.widgets.shared.scope_visual_config*
 
 Overview
 --------
@@ -81,7 +81,7 @@ Usage
 
 .. code-block:: python
 
-   from openhcs.pyqt_gui.widgets.shared.scope_color_utils import get_scope_color_scheme
+   from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
 
    # Get color scheme for a scope
    scheme = get_scope_color_scheme("plate_path::functionstep_0")
@@ -118,7 +118,7 @@ Widgets use ``ScopedBorderMixin`` to apply scope-based border styling:
 
 .. code-block:: python
 
-   from openhcs.pyqt_gui.widgets.shared.scoped_border_mixin import ScopedBorderMixin
+   from pyqt_reactive.widgets.shared.scoped_border_mixin import ScopedBorderMixin
 
    class StepEditorDialog(QDialog, ScopedBorderMixin):
        def __init__(self, scope_id: str):

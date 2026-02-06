@@ -3,7 +3,7 @@ AbstractTableBrowser ABC
 
 **Generic searchable table widget pattern for consistent browser UIs.**
 
-*Module: openhcs.pyqt_gui.widgets.shared.abstract_table_browser*
+*Module: pyqt_reactive.widgets.shared.abstract_table_browser*
 
 Overview
 --------
@@ -119,7 +119,7 @@ Two modes are supported:
 SearchService Integration
 -------------------------
 
-The ``SearchService`` (from ``openhcs.ui.shared.search_service``) provides
+The ``SearchService`` (from ``pyqt_reactive.services.search_service``) provides
 framework-agnostic search with:
 
 - Minimum character threshold (default: 2)

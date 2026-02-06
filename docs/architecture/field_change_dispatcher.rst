@@ -48,7 +48,7 @@ The ``FieldChangeDispatcher`` (singleton, stateless) handles all events:
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.services.field_change_dispatcher import (
+    from pyqt_reactive.services.field_change_dispatcher import (
         FieldChangeDispatcher, FieldChangeEvent
     )
 

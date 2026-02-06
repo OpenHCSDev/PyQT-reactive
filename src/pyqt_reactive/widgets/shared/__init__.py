@@ -17,6 +17,22 @@ from .responsive_groupbox_title import (
     set_wrapping_enabled as set_groupbox_wrapping_enabled,
     is_wrapping_enabled as is_groupbox_wrapping_enabled
 )
+from .tree_sync_adapter import TreeNode, TreeSyncAdapter
+from .tree_state_adapter import (
+    TreeItemKeyBuilderABC,
+    DictPayloadTreeItemKeyBuilder,
+    TreeStateAdapter,
+)
+from .tree_rebuild_coordinator import TreeRebuildCoordinator
+from .manager_ui_scaffold import (
+    ManagerHeaderParts,
+    create_manager_header,
+    setup_vertical_manager_layout,
+)
+from .zmq_server_browser_widget import (
+    KillOperationPlan,
+    ZMQServerBrowserWidgetABC,
+)
 
 # Unified wrapping toggle
 def set_responsive_wrapping_enabled(enabled: bool):
@@ -43,6 +59,17 @@ __all__ = [
     "ResponsiveParameterRow",
     "StagedWrapLayout",
     "ResponsiveGroupBoxTitle",
+    "TreeNode",
+    "TreeSyncAdapter",
+    "TreeItemKeyBuilderABC",
+    "DictPayloadTreeItemKeyBuilder",
+    "TreeStateAdapter",
+    "TreeRebuildCoordinator",
+    "ManagerHeaderParts",
+    "create_manager_header",
+    "setup_vertical_manager_layout",
+    "KillOperationPlan",
+    "ZMQServerBrowserWidgetABC",
     "set_responsive_wrapping_enabled",
     "is_responsive_wrapping_enabled",
 ]

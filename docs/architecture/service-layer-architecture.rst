@@ -6,7 +6,7 @@ Framework-agnostic business logic extraction enabling cross-framework compatibil
 Overview
 --------
 
-The service layer architecture emerged from a practical problem: OpenHCS supports both PyQt6 and Textual UIs, but the business logic for parameter forms was duplicated between them. Every time we fixed a bug or added a feature, we had to implement it twice.
+The service layer architecture emerged from a practical problem: pyqt-reactive supports both PyQt6 and Textual UIs, but the business logic for parameter forms was duplicated between them. Every time we fixed a bug or added a feature, we had to implement it twice.
 
 UI frameworks naturally encourage mixing presentation logic with business logic. PyQt6 widgets know how to display themselves, so it's tempting to put parameter analysis logic directly in the widget creation code. But this creates tight coupling and makes code reuse impossible.
 

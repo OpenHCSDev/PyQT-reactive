@@ -1,7 +1,7 @@
 GUI Performance Patterns
 ========================
 
-OpenHCS GUI implements several performance optimization patterns to maintain responsiveness when editing complex pipelines with many steps and cross-window dependencies.
+pyqt-reactive GUI implements several performance optimization patterns to maintain responsiveness when editing complex pipelines with many steps and cross-window dependencies.
 
 Cross-Window Preview System
 ---------------------------
@@ -36,7 +36,7 @@ Reusable mixin for widgets that consume cross-window updates. The mixin provides
 
 .. code-block:: python
 
-   from openhcs.pyqt_gui.widgets.mixins import CrossWindowPreviewMixin
+   from pyqt_reactive.widgets.mixins import CrossWindowPreviewMixin
 
    class PipelineEditorWidget(QWidget, CrossWindowPreviewMixin):
        def __init__(self):
@@ -143,7 +143,7 @@ For consistency across widgets, use the centralized formatters in ``config_previ
 
 .. code-block:: python
 
-   from openhcs.pyqt_gui.widgets.config_preview_formatters import (
+   from pyqt_reactive.utils.preview_formatters import (
        CONFIG_INDICATORS,
        format_config_indicator
    )
@@ -222,7 +222,7 @@ visual consistency in preview labels across different config states.
        # CRITICAL: Register as external listener for cross-window refresh signals
        # This makes preview labels reactive to live context changes
        # Listen to both value changes AND refresh events (e.g., reset button clicks)
-       from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
+       from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
        ParameterFormManager.register_external_listener(
            self,
            value_changed_handler=self.handle_cross_window_preview_change,
@@ -327,7 +327,7 @@ The dispatch cycle caching system uses ``contextvars`` to cache expensive comput
 
 .. code-block:: python
 
-   from openhcs.config_framework.context_manager import dispatch_cycle
+   from your_app.context_manager import dispatch_cycle
 
    # In FieldChangeDispatcher.dispatch():
    with dispatch_cycle():
@@ -367,7 +367,7 @@ The system caches at multiple levels:
 
 .. code-block:: python
 
-   from openhcs.config_framework.context_manager import dispatch_cycle, get_dispatch_cache
+   from your_app.context_manager import dispatch_cycle, get_dispatch_cache
 
    def my_operation():
        # Check if we're in a dispatch cycle
@@ -399,7 +399,7 @@ After dispatch cycle caching:
 
 **Implementation Details**
 
-The dispatch cycle is implemented in ``openhcs/config_framework/context_manager.py``:
+The dispatch cycle is implemented in ``pyqt_reactive/services/flag_context_manager.py``:
 
 .. code-block:: python
 
@@ -455,8 +455,8 @@ Enable debug logging to see cache hits/misses:
 .. code-block:: python
 
    import logging
-   logging.getLogger('openhcs.config_framework.context_manager').setLevel(logging.DEBUG)
-   logging.getLogger('openhcs.config_framework.object_state').setLevel(logging.DEBUG)
+   logging.getLogger('your_app.context_manager').setLevel(logging.DEBUG)
+   logging.getLogger('your_app.object_state').setLevel(logging.DEBUG)
 
 Log output will show:
 
@@ -571,7 +571,7 @@ Live Context Collection
 
 .. code-block:: python
 
-   from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import (
+   from pyqt_reactive.forms.parameter_form_manager import (
        ParameterFormManager
    )
    

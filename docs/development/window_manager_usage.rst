@@ -20,7 +20,7 @@ Show or focus a window via a factory callback:
 
 .. code-block:: python
 
-   from openhcs.pyqt_gui.services.window_manager import WindowManager
+   from pyqt_reactive.services.window_manager import WindowManager
 
    # Define factory function that creates the window
    def create_config_window():
@@ -73,7 +73,7 @@ PlateManager: Edit Config Button
 
    def action_edit_config(self):
        """Edit configuration for selected plate."""
-       from openhcs.pyqt_gui.services.window_manager import WindowManager
+       from pyqt_reactive.services.window_manager import WindowManager
 
        scope_id = str(self.selected_plate_path)
 
@@ -109,7 +109,7 @@ PipelineEditor: Edit Step Button
 
    def action_edit(self):
        """Edit selected step."""
-       from openhcs.pyqt_gui.services.window_manager import WindowManager
+       from pyqt_reactive.services.window_manager import WindowManager
 
        scope_id = f"{self.scope_id}::step_{index}"
 
@@ -213,7 +213,7 @@ Show the source window and scroll to it when the user clicks an inherited field:
                field_path: Field that was clicked
                source_scope: Scope where field is defined (not inherited)
            """
-           from openhcs.pyqt_gui.services.window_manager import WindowManager
+           from pyqt_reactive.services.window_manager import WindowManager
 
            # Try to focus existing window and navigate
            if WindowManager.focus_and_navigate(source_scope, field_path=field_path):
@@ -296,4 +296,4 @@ Benefits
 3. Auto-cleanup: no memory leaks from forgotten references.
 4. Extensible: navigation API ready for inheritance tracking.
 5. Fail-loud: catches deleted windows early.
-6. Fits OpenHCS patterns: similar to ``ObjectStateRegistry`` for states.
+6. Fits pyqt-reactive patterns: similar to ``ObjectStateRegistry`` for states.

@@ -10,7 +10,7 @@ The list item preview system provides declarative, per-field styling for list it
 Overview
 --------
 
-List items in OpenHCS show rich previews of configuration state:
+List items in pyqt-reactive show rich previews of configuration state:
 
 .. code-block:: text
 
@@ -31,7 +31,7 @@ Each widget declares its format using ``ListItemFormat``:
 
 .. code-block:: python
 
-   from openhcs.pyqt_gui.widgets.shared.abstract_manager_widget import ListItemFormat
+   from pyqt_reactive.widgets.shared.abstract_manager_widget import ListItemFormat
 
    class PlateManagerWidget(AbstractManagerWidget):
        LIST_ITEM_FORMAT = ListItemFormat(
@@ -56,7 +56,7 @@ Field abbreviations are declared on config classes via ``@global_pipeline_config
    @dataclass(frozen=True)
    class PathPlanningConfig:
        well_filter: Optional[str] = None
-       output_dir_suffix: str = "_openhcs"
+       output_dir_suffix: str = "_pyqt_reactive"
 
 ListItemFormat Fields
 ~~~~~~~~~~~~~~~~~~~~~
@@ -158,7 +158,7 @@ Field abbreviations are declared on config classes via ``@global_pipeline_config
    @dataclass(frozen=True)
    class PathPlanningConfig:
        well_filter: Optional[str] = None
-       output_dir_suffix: str = "_openhcs"
+       output_dir_suffix: str = "_pyqt_reactive"
 
 Adding a New Preview Field
 --------------------------
@@ -193,7 +193,7 @@ Config indicators (NAP, FIJI, MAT) and field abbreviations are both declared via
 
 .. code-block:: python
 
-   from openhcs.config_framework import global_pipeline_config
+   from objectstate import global_pipeline_config
 
    @global_pipeline_config(
        preview_label='NEW',
@@ -246,7 +246,6 @@ See Also
 
 **Implementation References:**
 
-- ``openhcs/pyqt_gui/widgets/shared/list_item_delegate.py`` - StyledTextLayout and rendering
-- ``openhcs/pyqt_gui/widgets/shared/abstract_manager_widget.py`` - ListItemFormat and build methods
-- ``openhcs/pyqt_gui/widgets/config_preview_formatters.py`` - Centralized formatters
-
+- ``pyqt_reactive/widgets/shared/list_item_delegate.py`` - StyledTextLayout and rendering
+- ``pyqt_reactive/widgets/shared/abstract_manager_widget.py`` - ListItemFormat and build methods
+- ``pyqt_reactive/utils/preview_formatters.py`` - Centralized formatters

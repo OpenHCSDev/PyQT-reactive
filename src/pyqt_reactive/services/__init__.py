@@ -19,6 +19,25 @@ from .system_monitor_core import SystemMonitorCore
 from .persistent_system_monitor import PersistentSystemMonitor
 from .service_registry import ServiceRegistry, AutoRegisterServiceMixin
 from .scope_window_factory import WindowFactory, ScopeWindowRegistry
+from .manager_host_abc import ManagerHostABC
+from .zmq_server_scan_service import ZMQServerScanService
+from .interval_snapshot_poller import (
+    IntervalSnapshotPollerPolicyABC,
+    CallbackIntervalSnapshotPollerPolicy,
+    IntervalSnapshotPoller,
+)
+from .zmq_server_info_parser import (
+    ServerKind,
+    CompileStatus,
+    RunningExecutionEntry,
+    QueuedExecutionEntry,
+    BaseServerInfo,
+    ExecutionServerInfo,
+    ViewerServerInfo,
+    GenericServerInfo,
+    ServerInfoParserABC,
+    DefaultServerInfoParser,
+)
 
 # Also export as modules for form_init_service's ServiceRegistryMeta
 from . import signal_service
@@ -50,6 +69,21 @@ __all__ = [
     "AutoRegisterServiceMixin",
     "WindowFactory",
     "ScopeWindowRegistry",
+    "ManagerHostABC",
+    "ZMQServerScanService",
+    "IntervalSnapshotPollerPolicyABC",
+    "CallbackIntervalSnapshotPollerPolicy",
+    "IntervalSnapshotPoller",
+    "ServerKind",
+    "CompileStatus",
+    "RunningExecutionEntry",
+    "QueuedExecutionEntry",
+    "BaseServerInfo",
+    "ExecutionServerInfo",
+    "ViewerServerInfo",
+    "GenericServerInfo",
+    "ServerInfoParserABC",
+    "DefaultServerInfoParser",
     "signal_service",
     "widget_service",
     "value_collection_service",

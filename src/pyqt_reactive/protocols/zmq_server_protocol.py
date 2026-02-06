@@ -11,9 +11,21 @@ Design Principles:
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, Tuple
+from types import MappingProxyType
+from typing import Any, Mapping, Tuple
+
+
+def _empty_mapping() -> Mapping[str, Any]:
+    return MappingProxyType({})
+
+
+def freeze_mapping(data: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+    """Create immutable mapping for frozen dataclass fields."""
+    if data is None:
+        return MappingProxyType({})
+    return MappingProxyType(dict(data))
 
 
 class ServerKind(Enum):
@@ -36,7 +48,7 @@ class ServerNode:
     status_icon: str  # Pre-computed icon based on ready state
     log_file_path: str | None
     children: Tuple['ServerNode', ...] = ()
-    metadata: Dict[str, Any] = frozendict()  # Server-specific data
+    metadata: Mapping[str, Any] = field(default_factory=_empty_mapping)
 
 
 @dataclass(frozen=True)
@@ -47,7 +59,7 @@ class ProgressUpdate:
     phase: str
     status: str
     step_name: str
-    metadata: Dict[str, Any] = frozendict()
+    metadata: Mapping[str, Any] = field(default_factory=_empty_mapping)
 
 
 class ZMQServerRenderer(ABC):
@@ -72,9 +84,3 @@ class ZMQServerRenderer(ABC):
     def render_child_node(self, node: ServerNode) -> Tuple[str, str, str]:
         """Return (display_text, status_text, info_text) for child node."""
         pass
-
-
-# Type alias for frozendict - use typing.Annotated with frozendict constraint
-def frozendict(**kwargs) -> Dict[str, Any]:
-    """Create an immutable dict for frozen dataclass fields."""
-    return dict(**kwargs)  # Temporary - will be truly immutable in use

@@ -90,6 +90,7 @@ Contents
    architecture/field_change_dispatcher
    architecture/ui_services_architecture
    architecture/service-layer-architecture
+   architecture/server_scanning_and_polling
 
 .. toctree::
    :maxdepth: 2
@@ -97,6 +98,8 @@ Contents
 
    architecture/abstract_manager_widget
    architecture/abstract_table_browser
+   architecture/zmq_server_browser_widget
+   architecture/tree_state_sync_system
    architecture/list_item_preview_system
    architecture/scope_visual_feedback_system
    responsive_layout_widgets
@@ -109,6 +112,7 @@ Contents
    architecture/flash_animation_system
    architecture/gui_performance_patterns
    architecture/cross_window_update_optimization
+   architecture/tree_aggregation_strategy
 
 .. toctree::
    :maxdepth: 2

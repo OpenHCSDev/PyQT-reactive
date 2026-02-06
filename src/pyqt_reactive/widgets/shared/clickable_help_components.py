@@ -544,16 +544,6 @@ class ProvenanceLabel(QLabel):
             # Check if source is in the SAME window (sibling MRO inheritance within same scope)
             current_scope_id = getattr(self._state, 'scope_id', None)
             if current_scope_id == source_scope_id:
-                # Same window - ensure it doesn't overlap the clicked label
-                try:
-                    current_window = self.window()
-                    if current_window:
-                        WindowManager.position_window_near_cursor(
-                            current_window,
-                            avoid_widgets=[self.window()] if self.window() else None,
-                        )
-                except Exception:
-                    pass
                 logger.info(f"🔄 Same-window navigation: scrolling to {target_path}")
                 self._scroll_within_current_window(target_path)
                 return

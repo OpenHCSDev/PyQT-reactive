@@ -2,21 +2,29 @@ AbstractManagerWidget Architecture
 ===================================
 
 The Problem: Duplicated Manager Widget Code
---------------------------------------------
+-------------------------------------------
 
-PlateManagerWidget and PipelineEditorWidget implement nearly identical CRUD operations (add, delete, edit, list items) with only domain-specific differences. This duplication (~1000 lines) creates maintenance burden: bug fixes must be applied twice, and adding new features requires changes in multiple places. Additionally, both widgets use duck-typing (implicit interfaces), making it hard to understand what methods subclasses must implement.
+Many manager-style widgets implement nearly identical CRUD operations (add,
+delete, edit, list items) with only domain-specific differences. This
+duplication creates maintenance burden: fixes must be applied repeatedly and
+feature additions require parallel edits. Implicit duck-typed hooks also make
+required subclass contracts unclear.
 
 The Solution: Template Method Pattern with Declarative Configuration
 ---------------------------------------------------------------------
 
-AbstractManagerWidget uses the template method pattern to define the CRUD workflow once, with declarative configuration via class attributes. Subclasses specify their domain-specific behavior (button configs, item hooks, preview fields) as class attributes rather than implementing methods. This eliminates duplication, makes the interface explicit (ABC contracts), and enables easy extension.
+AbstractManagerWidget uses the template method pattern to define the CRUD
+workflow once, with declarative configuration via class attributes. Subclasses
+specify domain behavior (button configs, item hooks, preview fields) as class
+attributes rather than ad-hoc methods. This eliminates duplication, makes
+contracts explicit (ABCs), and enables extension without copy/paste.
 
 Overview
 --------
 
-The ``AbstractManagerWidget`` is a PyQt6 ABC that eliminates duck-typing and code duplication
-between ``PlateManagerWidget`` and ``PipelineEditorWidget`` through declarative configuration
-and the template method pattern.
+The ``AbstractManagerWidget`` is a PyQt6 ABC that eliminates duck-typing and
+code duplication across manager widgets through declarative configuration and
+the template method pattern.
 
 Architecture Pattern
 --------------------
@@ -25,9 +33,9 @@ The ABC uses the **template method pattern** with declarative configuration:
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.abstract_manager_widget import AbstractManagerWidget
+    from pyqt_reactive.widgets.shared.abstract_manager_widget import AbstractManagerWidget
 
-    class PipelineEditorWidget(AbstractManagerWidget):
+    class MyManagerWidget(AbstractManagerWidget):
         # Declarative configuration via class attributes
         TITLE = "Pipeline Editor"
         
@@ -177,7 +185,6 @@ See Also
 - :doc:`widget_protocol_system` - ABC contracts for widget operations
 - :doc:`ui_services_architecture` - Service layer for ParameterFormManager
 - :doc:`gui_performance_patterns` - Cross-window preview system
-- :doc:`compilation_service` - Compilation service extracted from PlateManager
-- :doc:`zmq_execution_service_extracted` - ZMQ execution service extracted from PlateManager
+- :doc:`zmq_server_browser_widget` - Generic browser ABC and kill/scan flow
+- :doc:`tree_state_sync_system` - Stable tree keying and state-preserving rebuild
 - :doc:`parametric_widget_creation` - Widget creation configuration
-

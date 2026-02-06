@@ -27,6 +27,7 @@ Service Layer
    service-layer-architecture
    service_registry
    scope_window_factory
+   server_scanning_and_polling
 
 Widget Components
 -----------------
@@ -36,6 +37,8 @@ Widget Components
 
    abstract_manager_widget
    abstract_table_browser
+   zmq_server_browser_widget
+   tree_state_sync_system
    button_panel
    list_item_preview_system
    scope_visual_feedback_system
@@ -51,6 +54,7 @@ Animation & Performance
    flash_callback_system
    gui_performance_patterns
    cross_window_update_optimization
+   tree_aggregation_strategy
 
 Utility Systems
 ----------------
@@ -61,4 +65,3 @@ Utility Systems
    log_viewer_system
    system_monitor_core
    persistent_system_monitor
-

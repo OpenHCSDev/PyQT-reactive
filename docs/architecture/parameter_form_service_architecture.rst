@@ -4,7 +4,7 @@ Parameter Form Service Architecture
 **Service-oriented refactoring of parameter form management with context layer builders and auto-registration.**
 
 *Status: IN DEVELOPMENT (partially functional)*
-*Module: openhcs.pyqt_gui.widgets.shared*
+*Module: pyqt_reactive.widgets.shared*
 
 Overview
 --------
@@ -66,7 +66,7 @@ The context layer builder system replaces the monolithic ``_build_context_stack(
 Context Layer Types
 ~~~~~~~~~~~~~~~~~~~
 
-:py:class:`~openhcs.pyqt_gui.widgets.shared.context_layer_builders.ContextLayerType` defines the layer order:
+:py:class:`~pyqt_reactive.widgets.shared.context_layer_builders.ContextLayerType` defines the layer order:
 
 .. code-block:: python
 
@@ -106,7 +106,7 @@ Each layer type has a dedicated builder class:
 Auto-Registration Metaclass
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Builders are automatically registered via :py:class:`~openhcs.pyqt_gui.widgets.shared.context_layer_builders.ContextLayerBuilderMeta`:
+Builders are automatically registered via :py:class:`~pyqt_reactive.widgets.shared.context_layer_builders.ContextLayerBuilderMeta`:
 
 .. code-block:: python
 
@@ -127,7 +127,7 @@ This eliminates manual registration boilerplate - just define ``_layer_type`` an
 Sibling Inheritance System
 ---------------------------
 
-The :py:class:`~openhcs.pyqt_gui.widgets.shared.context_layer_builders.SiblingContextsBuilder` enables nested managers to inherit from each other.
+The :py:class:`~pyqt_reactive.widgets.shared.context_layer_builders.SiblingContextsBuilder` enables nested managers to inherit from each other.
 
 Problem
 ~~~~~~~
@@ -139,7 +139,7 @@ The main branch achieved this by including parent's user-modified values in the 
 Solution
 ~~~~~~~~
 
-:py:class:`~openhcs.pyqt_gui.widgets.shared.context_layer_builders.SiblingContextsBuilder` collects values from all sibling nested managers:
+:py:class:`~pyqt_reactive.widgets.shared.context_layer_builders.SiblingContextsBuilder` collects values from all sibling nested managers:
 
 .. code-block:: python
 
@@ -176,7 +176,7 @@ This enables ``path_planning_config.well_filter`` to see ``well_filter_config.we
 Placeholder Refresh Service
 ----------------------------
 
-:py:class:`~openhcs.pyqt_gui.widgets.shared.services.placeholder_refresh_service.PlaceholderRefreshService` manages placeholder text updates with live context.
+:py:class:`~pyqt_reactive.services.placeholder_refresh_service.PlaceholderRefreshService` manages placeholder text updates with live context.
 
 Key Features
 ~~~~~~~~~~~~
@@ -216,7 +216,7 @@ This enables correct sibling inheritance after reset.
 Parameter Reset Service
 -----------------------
 
-:py:class:`~openhcs.pyqt_gui.widgets.shared.services.parameter_reset_service.ParameterResetService` handles parameter reset with type-safe discriminated union dispatch.
+:py:class:`~pyqt_reactive.services.parameter_reset_service.ParameterResetService` handles parameter reset with type-safe discriminated union dispatch.
 
 Discriminated Union Dispatch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -279,7 +279,7 @@ The service tracks which fields have been explicitly set by the user:
             # Remove from reset tracking
             manager.reset_fields.discard(param_name)
 
-This ensures :py:meth:`~openhcs.pyqt_gui.widgets.shared.parameter_form_manager.ParameterFormManager.get_user_modified_values` correctly excludes reset fields.
+This ensures :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.get_user_modified_values` correctly excludes reset fields.
 
 Execution Flow Examples
 -----------------------
@@ -447,7 +447,7 @@ Enable debug logging to see context stack construction:
 .. code-block:: python
 
     import logging
-    logging.getLogger('openhcs.pyqt_gui.widgets.shared').setLevel(logging.DEBUG)
+    logging.getLogger('pyqt_reactive.widgets.shared').setLevel(logging.DEBUG)
 
 Key log messages:
 
@@ -510,7 +510,7 @@ See Also
 - :doc:`service-layer-architecture` - General service layer patterns
 - :doc:`parameter_form_lifecycle` - Form lifecycle management (describes main branch)
 - :doc:`context_system` - Thread-local context management
-- :py:class:`~openhcs.pyqt_gui.widgets.shared.context_layer_builders.ContextLayerBuilder` - Base builder class
-- :py:class:`~openhcs.pyqt_gui.widgets.shared.services.placeholder_refresh_service.PlaceholderRefreshService` - Placeholder refresh service
-- :py:class:`~openhcs.pyqt_gui.widgets.shared.services.parameter_reset_service.ParameterResetService` - Parameter reset service
+- :py:class:`~pyqt_reactive.widgets.shared.context_layer_builders.ContextLayerBuilder` - Base builder class
+- :py:class:`~pyqt_reactive.services.placeholder_refresh_service.PlaceholderRefreshService` - Placeholder refresh service
+- :py:class:`~pyqt_reactive.services.parameter_reset_service.ParameterResetService` - Parameter reset service
 

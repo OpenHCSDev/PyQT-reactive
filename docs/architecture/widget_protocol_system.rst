@@ -3,12 +3,12 @@ Widget Protocol System
 
 **ABC-based widget contracts replacing duck typing with fail-loud type checking.**
 
-*Module: openhcs.ui.shared*
+*Module: pyqt_reactive.forms*
 
 The Problem: Duck Typing in UI Code
 -----------------------------------
 
-Before this system, the OpenHCS UI layer relied heavily on duck typing to interact with
+Before this system, the pyqt-reactive UI layer relied heavily on duck typing to interact with
 widgets. Code would check ``hasattr(widget, 'get_value')`` or try to call methods and
 catch exceptions. This created several problems:
 
@@ -40,7 +40,7 @@ values, show placeholders, and emit change signals. A checkbox can get and set v
 emit signals, but doesn't need placeholders. By defining each capability as a separate ABC,
 widgets can mix and match exactly the capabilities they need.
 
-This follows established OpenHCS patterns:
+This follows established pyqt-reactive patterns:
 
 - **StorageBackendMeta** - Metaclass auto-registration for storage backends
 - **MemoryTypeConverter** - Adapter pattern for normalizing inconsistent memory APIs
@@ -91,7 +91,7 @@ definition time, not at runtime when you try to use it.
 
 .. code-block:: python
 
-    from openhcs.ui.shared.widget_protocols import (
+    from pyqt_reactive.protocols.widget_protocols import (
         ValueGettable,      # get_value() -> Any
         ValueSettable,      # set_value(value: Any) -> None
         PlaceholderCapable, # set_placeholder(text: str) -> None
@@ -122,12 +122,12 @@ and you get mysterious "widget not found" errors at runtime.
 
 The ``WidgetMeta`` metaclass solves this by automatically registering widgets when
 their classes are defined. This mirrors the ``StorageBackendMeta`` pattern used
-elsewhere in OpenHCS. When Python processes a class definition with this metaclass,
+elsewhere in pyqt-reactive. When Python processes a class definition with this metaclass,
 it automatically adds the class to the global registry:
 
 .. code-block:: python
 
-    from openhcs.ui.shared.widget_registry import WidgetMeta, WIDGET_IMPLEMENTATIONS
+    from pyqt_reactive.forms.widget_registry import WidgetMeta, WIDGET_IMPLEMENTATIONS
 
     class LineEditAdapter(QLineEdit, ValueGettable, ValueSettable,
                           metaclass=WidgetMeta):
@@ -201,7 +201,7 @@ raises an immediate, descriptive ``TypeError``:
 
 .. code-block:: python
 
-    from openhcs.ui.shared.widget_dispatcher import WidgetDispatcher
+    from pyqt_reactive.forms.widget_dispatcher import WidgetDispatcher
     
     # BEFORE (duck typing):
     if hasattr(widget, 'get_value'):
@@ -232,7 +232,7 @@ widgets that may or may not support them):
 
 .. code-block:: python
 
-    from openhcs.ui.shared.widget_operations import WidgetOperations
+    from pyqt_reactive.forms.widget_operations import WidgetOperations
 
     ops = WidgetOperations()
 
@@ -261,7 +261,7 @@ type. The factory maps Python types to widget constructors:
 
 .. code-block:: python
 
-    from openhcs.ui.shared.widget_factory import WidgetFactory
+    from pyqt_reactive.forms.widget_factory import WidgetFactory
 
     factory = WidgetFactory()
 

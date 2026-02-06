@@ -3,12 +3,12 @@ Parametric Widget Creation
 
 **Dataclass-based configuration for widget creation strategies.**
 
-*Module: openhcs.pyqt_gui.widgets.shared.widget_creation_config*
+*Module: pyqt_reactive.forms.widget_creation_config*
 
 The Widget Creation Problem
 ---------------------------
 
-OpenHCS configuration is deeply nested. A pipeline configuration contains plate configurations,
+pyqt-reactive configuration is deeply nested. A pipeline configuration contains plate configurations,
 which contain step configurations, which contain processing parameters—many of which are
 themselves nested dataclasses. Some of these nested types are optional (``Optional[DataclassType]``),
 requiring checkbox-gated visibility.
@@ -36,8 +36,8 @@ dataclasses. Each widget creation type (REGULAR, NESTED, OPTIONAL_NESTED) has a 
 - Whether labels, reset buttons, or checkboxes are needed
 - Handler functions for optional features
 
-This follows the same pattern as ``openhcs/core/memory/framework_config.py`` for memory
-type handling—replace conditionals with configuration lookup.
+This follows the same pattern used across configuration registry systems:
+replace conditionals with configuration lookup.
 
 Widget Creation Types
 ---------------------
@@ -47,7 +47,7 @@ by nesting and optionality:
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.widget_creation_config import WidgetCreationType
+    from pyqt_reactive.forms.widget_creation_config import WidgetCreationType
     
     class WidgetCreationType(Enum):
         REGULAR = "regular"          # Simple widgets (int, str, bool, enum)
@@ -89,7 +89,7 @@ component tree:
 
 .. code-block:: python
 
-    from openhcs.pyqt_gui.widgets.shared.widget_creation_types import ParameterFormManager
+    from pyqt_reactive.forms.widget_creation_types import ParameterFormManager
 
     class ParameterFormManager(ABC):
         """React-quality reactive form manager interface."""
@@ -257,4 +257,3 @@ See Also
 - :doc:`field_change_dispatcher` - Dispatches changes from created widgets
 - :doc:`parameter_form_service_architecture` - Service architecture using these configs
 - :doc:`abstract_manager_widget` - ABC that orchestrates widget creation
-

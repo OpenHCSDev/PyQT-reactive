@@ -1,7 +1,7 @@
 UI Patterns
 ===========
 
-UI patterns and architectural approaches for the OpenHCS PyQt6 GUI.
+UI patterns and architectural approaches for the pyqt-reactive PyQt6 GUI.
 
 .. contents:: Table of Contents
    :local:
@@ -10,7 +10,7 @@ UI patterns and architectural approaches for the OpenHCS PyQt6 GUI.
 Overview
 --------
 
-The OpenHCS PyQt6 GUI uses key patterns for maintainability and extensibility:
+The pyqt-reactive PyQt6 GUI uses key patterns for maintainability and extensibility:
 
 - **Functional Dispatch**: Type-based dispatch tables instead of if/elif chains
 - **Service Layer**: Business logic extraction from UI code
@@ -222,7 +222,7 @@ Widget value operations use functional dispatch in the actual codebase:
 
 .. code-block:: python
 
-    # From openhcs/pyqt_gui/widgets/shared/parameter_form_manager.py
+    # From pyqt_reactive/forms/parameter_form_manager.py
     # Dispatch table for widget value updates
     WIDGET_UPDATE_DISPATCH = [
         (QComboBox, 'update_combo_box'),
@@ -405,7 +405,7 @@ The actual widget factory uses type-based dispatch for PyQt6:
 
 .. code-block:: python
 
-    # From openhcs/pyqt_gui/widgets/shared/widget_strategies.py
+    # From pyqt_reactive/forms/widget_strategies.py
     # Functional configuration registry
     CONFIGURATION_REGISTRY: Dict[Type, callable] = {
         int: lambda widget: widget.setRange(NUMERIC_RANGE_MIN, NUMERIC_RANGE_MAX)
@@ -417,7 +417,7 @@ The actual widget factory uses type-based dispatch for PyQt6:
     }
 
     class MagicGuiWidgetFactory:
-        """OpenHCS widget factory using functional mapping dispatch."""
+        """pyqt-reactive widget factory using functional mapping dispatch."""
 
         def create_widget(self, param_name: str, param_type: Type,
                          current_value: Any, widget_id: str) -> Any:
@@ -549,7 +549,7 @@ Core Classes
   - Support: PyQt6 + Textual
   - Usage: Replace scattered enum formatting logic
 
-**FieldPathDetector** (``openhcs/core/field_path_detection.py``)
+**FieldPathDetector** (``pyqt_reactive/core/path_cache.py``)
   Automatic field path detection for dataclass introspection.
 
   - Methods: ``find_field_path_for_type()``
@@ -637,7 +637,7 @@ Enum Handling
 .. code-block:: python
 
     # DO: Use EnumDisplayFormatter
-    from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
+    from pyqt_reactive.forms.enum_display_formatter import EnumDisplayFormatter
 
     def populate_combo(combo: QComboBox, enum_class: Type[Enum]):
         for enum_value in enum_class:
@@ -656,7 +656,7 @@ Constants Usage
 .. code-block:: python
 
     # DO: Use centralized constants
-    from openhcs.ui.shared.parameter_form_constants import CONSTANTS
+    from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 
     def setup_widget(widget: QWidget):
         widget.setProperty(CONSTANTS.WIDGET_TYPE_PROPERTY,
@@ -706,7 +706,7 @@ PyQt6 Parameter Form Integration
 
 .. code-block:: python
 
-    # From openhcs/pyqt_gui/widgets/shared/parameter_form_manager.py
+    # From pyqt_reactive/forms/parameter_form_manager.py
     # Complete parameter form using all patterns
     class ParameterFormManager(QWidget):
         """PyQt6 parameter form manager with functional dispatch patterns."""
@@ -794,9 +794,9 @@ See Also
 
 **Implementation References:**
 
-- ``openhcs/pyqt_gui/widgets/shared/widget_strategies.py`` - Actual dispatch tables and widget factory
-- ``openhcs/pyqt_gui/widgets/shared/parameter_form_manager.py`` - ParameterFormManager implementation
-- ``openhcs/pyqt_gui/services/service_adapter.py`` - Service layer adapter for PyQt6
+- ``pyqt_reactive/forms/widget_strategies.py`` - Actual dispatch tables and widget factory
+- ``pyqt_reactive/forms/parameter_form_manager.py`` - ParameterFormManager implementation
+- ``pyqt_reactive/forms/parameter_form_service.py`` - Service layer adapter for PyQt6
 
 **Signs You Need These Patterns:**
 - Copy-pasting code between widget implementations
@@ -814,7 +814,7 @@ When implementing code editing for new UI components, use the **CodeEditorFormUp
 
 .. code-block:: python
 
-    from openhcs.ui.shared.code_editor_form_updater import CodeEditorFormUpdater
+    from pyqt_reactive.forms.code_editor_form_updater import CodeEditorFormUpdater
 
     def _handle_edited_code(self, edited_code: str):
         """Handle edited code from code editor."""
@@ -989,7 +989,7 @@ This allows the pattern to work during widget creation (where we have the class)
 Examples
 ~~~~~~~~
 
-Enableable configs appear in OpenHCS for features that can be toggled:
+Enableable configs appear in pyqt-reactive for features that can be toggled:
 
 - ``AnalysisConsolidationConfig(Enableable)`` - Consolidate analysis results
 - ``StepMaterializationConfig(Enableable, ...)`` - Materialize step outputs
@@ -1008,4 +1008,3 @@ These configs display with the enabled checkbox prominently in the title, making
 
 - :doc:`../architecture/code_ui_interconversion` - System architecture and design
 - :doc:`../user_guide/code_ui_editing` - User guide for bidirectional editing
-
