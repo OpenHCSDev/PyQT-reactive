@@ -53,10 +53,10 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         service_adapter,
         color_scheme: Optional[ColorScheme] = None,
         *,
-        step_instance=None,
         scope_id: Optional[str] = None,
         func_scope_prefix: Optional[str] = None,
-        step_index: Optional[int] = None,
+        func_scope_token: Optional[str] = None,
+        scope_index: Optional[int] = None,
         parent=None,
     ):
         """
@@ -67,9 +67,8 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             index: Function index in the list
             service_adapter: PyQt service adapter for dialogs and operations
             color_scheme: Color scheme for UI components
-            step_instance: Step instance for context hierarchy (Function → Step → Pipeline → Global)
             scope_id: Scope identifier for cross-window live context updates
-            step_index: Step index for scope-based border alignment
+            scope_index: Optional index for scope-based border alignment
             parent: Parent widget
         """
         # Extract function info before calling super().__init__
@@ -117,19 +116,17 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         # Core dependencies
         self.service_adapter = service_adapter
 
-        # CRITICAL: Store step instance for context hierarchy
-        self.step_instance = step_instance
-
-        # CRITICAL: Store scope_id for cross-window live context updates
-        # (This is the STEP scope.)
+        # Store scope_id for cross-window live context updates.
         self.scope_id = scope_id
 
         # Step index for scope border alignment
-        self.step_index = step_index
+        self.scope_index = scope_index
 
         # Optional override for where function ObjectStates live.
         # Used to disambiguate function states across dict-pattern keys (channels).
         self.func_scope_prefix = func_scope_prefix
+        # Stable per-occurrence token supplied by the owning list editor.
+        self.func_scope_token = str(func_scope_token) if func_scope_token else None
 
         # Register this pane for whole-pane flashing (after scope_id is set)
         if not getattr(self, "_flash_key", ""):
@@ -329,10 +326,8 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         # Import the enhanced PyQt6 ParameterFormManager
         from pyqt_reactive.forms import ParameterFormManager as PyQtParameterFormManager, FormManagerConfig
 
-        # Create form manager with initial_values to load saved kwargs
-        # CRITICAL: Pass step_instance as context_obj for lazy resolution hierarchy
-        # Function parameters → Step → Pipeline → Global
-        # CRITICAL: Pass scope_id for cross-window live context updates (real-time placeholder sync)
+        # Create form manager with initial_values to load saved kwargs.
+        # scope_id is the parent context scope used for function state inheritance.
         # IMPORTANT UI BEHAVIOR:
         # - FunctionListWidget already wraps all FunctionPaneWidgets in a QScrollArea.
         # - If we also enable a scroll area inside ParameterFormManager here, the
@@ -344,24 +339,15 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         #   handle scrolling for long forms.
 
         from objectstate import ObjectState, ObjectStateRegistry
-        from pyqt_reactive.services.scope_token_service import ScopeTokenService
-        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
 
-        # Build function-specific scope.
-        # IMPORTANT: func_scope_prefix (if provided) allows callers to isolate
-        # function ObjectStates per dict-pattern key while keeping the parent
-        # state as the step scope for inheritance.
-        step_scope = self.scope_id or "no_scope"
-        func_parent_scope = self.func_scope_prefix or step_scope
-
-        token = None
-        if isinstance(self.kwargs, dict):
-            token = self.kwargs.get(SCOPE_TOKEN_KEY)
-        if token:
-            func_scope_id = f"{func_parent_scope}::{token}"
-        else:
-            # Back-compat fallback (older patterns without tokens)
-            func_scope_id = ScopeTokenService.build_scope_id(func_parent_scope, self.func)
+        parent_scope = self.scope_id or "no_scope"
+        func_parent_scope = self.func_scope_prefix or parent_scope
+        token = self.func_scope_token
+        if not token:
+            raise RuntimeError(
+                "FunctionPaneWidget requires func_scope_token for deterministic ObjectState scope."
+            )
+        func_scope_id = f"{func_parent_scope}::{token}"
 
         reserved_param = self._get_reserved_param_name()
         exclude_params = [reserved_param] if reserved_param else None
@@ -373,14 +359,9 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             func_state = existing_state
             self._func_state = None  # Don't cleanup - we didn't create it
         else:
-            # Get parent state (step state) from registry for context inheritance
-            parent_state = ObjectStateRegistry.get_by_scope(step_scope)
-            # Never pass internal metadata keys to ObjectState parameter storage.
-            initial_values = (
-                {k: v for k, v in (self.kwargs or {}).items() if k != SCOPE_TOKEN_KEY}
-                if isinstance(self.kwargs, dict)
-                else None
-            )
+            # Get parent context state from registry for context inheritance.
+            parent_state = ObjectStateRegistry.get_by_scope(parent_scope)
+            initial_values = dict(self.kwargs or {}) if isinstance(self.kwargs, dict) else None
 
             func_state = ObjectState(
                 object_instance=self.func,
@@ -389,7 +370,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 exclude_params=exclude_params,
                 initial_values=initial_values,
             )
-            # Register here if missing (legacy paths), but do not record snapshot
+            # Register if missing, but do not record a snapshot.
             ObjectStateRegistry.register(func_state, _skip_snapshot=True)
             self._func_state = None
 
@@ -400,7 +381,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 color_scheme=self.color_scheme,   # Pass color_scheme for consistent theming
                 use_scroll_area=False,            # Let outer FunctionListWidget manage scrolling
                 exclude_params=exclude_params,
-                scope_step_index=self.step_index,  # Align scope styling with pipeline order
+                scope_step_index=self.scope_index,  # Align scope styling with pipeline order
             )
         )
 
@@ -434,7 +415,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
             self.destroyed.connect(cleanup_forward)
             logger.info(
-                f"[FUNCTION_PANE] Registered parent notification: {func_scope_id} → {step_scope}"
+                f"[FUNCTION_PANE] Registered parent notification: {func_scope_id} → {parent_scope}"
             )
 
         # Connect parameter changes

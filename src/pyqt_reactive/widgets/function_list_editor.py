@@ -7,6 +7,8 @@ Displays a scrollable list of function panes with Add/Load/Save/Code controls.
 
 import logging
 import os
+import copy
+from contextlib import contextmanager, nullcontext
 from typing import List, Union, Dict, Optional, Any, Callable
 
 from PyQt6.QtWidgets import (
@@ -22,6 +24,8 @@ from pyqt_reactive.protocols import (
 )
 from pyqt_reactive.services.pattern_data_manager import PatternDataManager
 from pyqt_reactive.services.pattern_data_manager import FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY
+from pyqt_reactive.services.pattern_data_manager import FUNC_EDITOR_PATTERN_TOKENS_META_KEY
+from pyqt_reactive.services.function_navigation import parse_function_field_target
 from python_introspect import SignatureAnalyzer
 from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
 from objectstate import ObjectStateRegistry
@@ -48,9 +52,9 @@ class FunctionListEditorWidget(QWidget):
     state = None
     
     def __init__(self, initial_functions: Union[List, Dict, callable, None] = None,
-                  step_identifier: str = None, service_adapter=None, color_scheme: Optional[ColorScheme] = None,
-                  step_instance=None, scope_id: Optional[str] = None, parent=None, render_header: bool = True,
-                  button_style: Optional[str] = None, step_index: Optional[int] = None):
+                  context_identifier: str = None, service_adapter=None, color_scheme: Optional[ColorScheme] = None,
+                  scope_id: Optional[str] = None, parent=None, render_header: bool = True,
+                  button_style: Optional[str] = None, scope_index: Optional[int] = None):
         super().__init__(parent)
 
         # Initialize color scheme
@@ -60,15 +64,22 @@ class FunctionListEditorWidget(QWidget):
         self._button_style = button_style  # Store centralized button style
         self.style_generator = StyleSheetGenerator(self.color_scheme)
 
-        # Step configuration properties (mirrors Textual TUI)
-        self.current_group_by = None  # Current GroupBy setting from step editor
-        self.current_variable_components = []  # Current VariableComponents list from step editor
+        # Context configuration properties (mirrors Textual TUI)
+        self.current_group_by = None  # Current GroupBy setting from context form
+        self.current_variable_components = []  # Current VariableComponents list from context form
         self.selected_pattern_key = None  # Currently selected dict key
         self.available_pattern_keys = []  # Available dict keys (if any)
         self.is_dict_mode = False  # Whether we're in channel-specific mode
 
         # Time-travel may request a dict-key selection before dict mode is initialized.
         self._pending_selected_pattern_key = None
+        self._pattern_event_suppression_depth = 0
+        # Sidecar per-occurrence function tokens (never stored in kwargs).
+        # List mode: list[str]
+        # Dict mode: dict[str, list[str]]
+        self._pattern_tokens: Union[List[str], Dict[str, List[str]]] = []
+        # Tokens aligned with self.functions for currently visible view.
+        self._current_function_tokens: List[str] = []
 
         # Component selection cache per GroupBy (mirrors Textual TUI)
         self.component_selections = {}
@@ -136,17 +147,14 @@ class FunctionListEditorWidget(QWidget):
         self.data_manager = PatternDataManager()
         self.service_adapter = service_adapter
 
-        # Step identifier for cache isolation
-        self.step_identifier = step_identifier or f"widget_{id(self)}"
+        # Context identifier for cache isolation
+        self.context_identifier = context_identifier or f"widget_{id(self)}"
 
-        # CRITICAL: Store step instance for context hierarchy (Function → Step → Pipeline → Global)
-        self.step_instance = step_instance
-
-        # CRITICAL: Store scope_id for cross-window live context updates
+        # Store scope_id for cross-window live context updates.
         self.scope_id = scope_id
 
-        # Step index for scope border alignment
-        self.step_index = step_index
+        # Optional index used for scope border alignment.
+        self.scope_index = scope_index
 
         # Scope color scheme for styling newly created panes
         self._scope_color_scheme = None
@@ -160,10 +168,8 @@ class FunctionListEditorWidget(QWidget):
         self.setup_ui()
         self.setup_connections()
 
-        # CRITICAL: Subscribe to step's ObjectState resolved changes for cross-window updates
-        # When PipelineConfig changes group_by, the step's resolved value changes via inheritance,
-        # and we need to refresh the component button to reflect the new value
-        self._subscribe_to_step_state_changes()
+        # Subscribe to ObjectState resolved changes for cross-window updates.
+        self._subscribe_to_context_state_changes()
 
         # Time-travel: refresh function pane widgets after restore
         self._time_travel_callback = None
@@ -197,25 +203,27 @@ class FunctionListEditorWidget(QWidget):
                 len(dirty_states),
             )
 
-            # If the step's func pattern changed (e.g., reorder + undo/redo), reload
-            # the list so pane ordering matches the restored pattern.
-            if _is_relevant_time_travel(dirty_states):
-                self._refresh_pattern_from_step_state()
+            with self._suppress_pattern_events():
+                # If the step's func pattern changed (e.g., reorder + undo/redo), reload
+                # the list so pane ordering matches the restored pattern.
+                if _is_relevant_time_travel(dirty_states):
+                    self._refresh_pattern_from_context_state()
 
-            from PyQt6 import sip
+                from PyQt6 import sip
 
-            for pane in list(self.function_panes):
-                if sip.isdeleted(pane):
-                    continue
-                fm = pane.form_manager
-                if fm is not None:
-                    fm.refresh_widgets_from_state()
+                for pane in list(self.function_panes):
+                    if sip.isdeleted(pane):
+                        continue
+                    fm = pane.form_manager
+                    if fm is not None:
+                        fm.refresh_widgets_from_state()
 
-            # Re-apply current pattern so kwargs are pushed to panes
-            self.refresh_from_step_context()
+                # Re-apply current pattern so kwargs are pushed to panes
+                self.refresh_from_context()
 
-            # Restore visible dict-pattern key (metadata-driven)
-            self.apply_selected_pattern_key_from_state()
+                # Restore visible dict-pattern key from metadata only if current
+                # key is no longer valid.
+                self.apply_selected_pattern_key_from_state()
 
         ObjectStateRegistry.add_time_travel_complete_callback(on_time_travel_complete)
         self._time_travel_callback = on_time_travel_complete
@@ -227,8 +235,8 @@ class FunctionListEditorWidget(QWidget):
 
         self.destroyed.connect(cleanup_subscription)
 
-    def _get_step_state(self):
-        """Return the step ObjectState for this editor."""
+    def _get_context_state(self):
+        """Return the context ObjectState for this editor."""
         return ObjectStateRegistry.get_by_scope(str(self.scope_id))
 
     def _record_selected_pattern_key(self) -> None:
@@ -237,12 +245,20 @@ class FunctionListEditorWidget(QWidget):
             return
         if self.selected_pattern_key is None:
             return
-        state = self._get_step_state()
+        state = self._get_context_state()
+        if state is None:
+            return
         state.metadata[FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY] = str(self.selected_pattern_key)
 
     def apply_selected_pattern_key_from_state(self) -> None:
-        """Select the dict-pattern key stored in ObjectState.metadata (if any)."""
-        state = self._get_step_state()
+        """Apply dict-pattern key from ObjectState metadata.
+
+        Invariant: if current key is still valid, keep it. Metadata only selects
+        a key when no valid current selection exists.
+        """
+        state = self._get_context_state()
+        if state is None:
+            return
         key = state.metadata.get(FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY)
         if key is None:
             return
@@ -251,40 +267,124 @@ class FunctionListEditorWidget(QWidget):
         if not self.is_dict_mode or not isinstance(self.pattern_data, dict):
             self._pending_selected_pattern_key = key
             return
+        if (
+            self.selected_pattern_key is not None
+            and str(self.selected_pattern_key) in self.pattern_data
+        ):
+            return
         if key not in self.pattern_data:
             return
 
         # Time-travel/UI restore path: DO NOT save current functions into pattern_data.
         # pattern_data is authoritative from ObjectState; we just need to update the view.
-        self._set_pattern_key_view(key)
+        self._select_pattern_key(
+            key,
+            commit_current_view=False,
+            persist_selection=False,
+        )
 
-    def _set_pattern_key_view(self, key: str) -> None:
-        """Switch visible dict-pattern key without mutating pattern_data.
+    def _load_pattern_tokens_from_state(self) -> None:
+        """Load persisted per-occurrence tokens from context ObjectState metadata."""
+        state = self._get_context_state()
+        if state is None:
+            self._pattern_tokens = []
+            return
+        raw = state.metadata.get(FUNC_EDITOR_PATTERN_TOKENS_META_KEY)
+        if isinstance(raw, list):
+            self._pattern_tokens = [str(token) for token in raw if token]
+            return
+        if isinstance(raw, dict):
+            normalized: Dict[str, List[str]] = {}
+            for channel_key, tokens in raw.items():
+                if not isinstance(tokens, list):
+                    continue
+                normalized[str(channel_key)] = [str(token) for token in tokens if token]
+            self._pattern_tokens = normalized
+            return
+        self._pattern_tokens = []
 
-        This is used for time-travel/UI restoration. Unlike _switch_to_pattern_key(),
-        it does not call _update_pattern_data() (which would overwrite restored state).
-        """
+    def _persist_pattern_tokens_to_state(self) -> None:
+        """Persist per-occurrence tokens in context ObjectState metadata."""
+        state = self._get_context_state()
+        if state is None:
+            return
+        state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = copy.deepcopy(
+            self._pattern_tokens
+        )
+
+    @staticmethod
+    def _sanitize_pattern_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate kwargs and reject internal scope-token metadata."""
+        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
+
+        if not isinstance(kwargs, dict):
+            return {}
+        if SCOPE_TOKEN_KEY in kwargs:
+            raise RuntimeError(
+                "Function kwargs contain internal scope-token metadata. "
+                "Tokens must be stored in ObjectState metadata."
+            )
+        return dict(kwargs)
+
+    def _get_tokens_for_current_view(self) -> List[str]:
+        if self.is_dict_mode and isinstance(self._pattern_tokens, dict):
+            key = str(self.selected_pattern_key) if self.selected_pattern_key is not None else ""
+            return list(self._pattern_tokens.get(key, []))
+        if isinstance(self._pattern_tokens, list):
+            return list(self._pattern_tokens)
+        return []
+
+    def _set_tokens_for_current_view(self, tokens: List[str]) -> None:
+        normalized = [str(token) for token in tokens if token]
+        if self.is_dict_mode:
+            if not isinstance(self._pattern_tokens, dict):
+                self._pattern_tokens = {}
+            key = str(self.selected_pattern_key) if self.selected_pattern_key is not None else ""
+            self._pattern_tokens[key] = normalized
+        else:
+            self._pattern_tokens = normalized
+
+    def _select_pattern_key(
+        self,
+        key: str,
+        *,
+        commit_current_view: bool,
+        persist_selection: bool,
+    ) -> None:
+        """Select dict-pattern key using one invariant code path."""
         if not self.is_dict_mode or not isinstance(self.pattern_data, dict):
             return
         if key not in self.pattern_data:
             return
 
         if self.selected_pattern_key == key:
-            # Key already selected; just ensure UI chrome is up to date.
+            if persist_selection:
+                self._record_selected_pattern_key()
             self._refresh_component_button()
             self._update_navigation_buttons()
             return
 
+        if commit_current_view:
+            self._update_pattern_data()
+
         self.selected_pattern_key = key
+        if persist_selection:
+            self._record_selected_pattern_key()
+
         self.functions = self.pattern_data.get(key, [])
+        if isinstance(self._pattern_tokens, dict):
+            self._current_function_tokens = list(self._pattern_tokens.get(key, []))
+        else:
+            self._current_function_tokens = []
+
         self._refresh_component_button()
         self._populate_function_list()
         self._update_navigation_buttons()
 
-    def _refresh_pattern_from_step_state(self) -> None:
-        """Reload the function pattern from the step ObjectState.
+    def _refresh_pattern_from_context_state(self) -> None:
+        """Reload the function pattern from the context ObjectState.
 
-        Undo/redo uses ObjectState time-travel. When the step's `func` parameter
+        Undo/redo uses ObjectState time-travel. When the `func` parameter
         changes (e.g. reorder), the editor must rebuild panes to match the
         restored order.
         """
@@ -305,13 +405,10 @@ class FunctionListEditorWidget(QWidget):
         # Clone to avoid mutating the ObjectState-owned pattern in-place.
         func_pattern = PatternDataManager.clone_pattern(func_pattern)
 
-        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
-
         # Capture existing panes by token so we can reorder without destroying widgets.
         pane_by_token: dict[str, Any] = {}
         for pane in list(self.function_panes):
-            kwargs = getattr(pane, "kwargs", None)
-            token = kwargs.get(SCOPE_TOKEN_KEY) if isinstance(kwargs, dict) else None
+            token = getattr(pane, "func_scope_token", None)
             if token:
                 pane_by_token[str(token)] = pane
 
@@ -334,6 +431,10 @@ class FunctionListEditorWidget(QWidget):
                 if restored_key in self.pattern_data:
                     self.selected_pattern_key = restored_key
                     self.functions = self.pattern_data.get(restored_key, [])
+                    if isinstance(self._pattern_tokens, dict):
+                        self._current_function_tokens = list(
+                            self._pattern_tokens.get(restored_key, [])
+                        )
                 else:
                     restored_key = None
 
@@ -347,21 +448,25 @@ class FunctionListEditorWidget(QWidget):
         ):
             self.selected_pattern_key = prev_selected
             self.functions = self.pattern_data.get(prev_selected, [])
+            if isinstance(self._pattern_tokens, dict):
+                self._current_function_tokens = list(
+                    self._pattern_tokens.get(prev_selected, [])
+                )
 
         # Fast path: if this is only a reorder (same tokens/functions), move panes in-place.
-        new_tokens: list[str] = []
+        new_tokens: list[str] = list(self._current_function_tokens)
         expected_func_by_token: dict[str, Any] = {}
-        for item in self.functions:
-            func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-            if func is None or not isinstance(kwargs, dict):
+        if len(new_tokens) != len(self.functions):
+            new_tokens = []
+        for index, item in enumerate(self.functions):
+            func, _kwargs = PatternDataManager.extract_func_and_kwargs(item)
+            if func is None:
                 new_tokens = []
                 break
-            token = kwargs.get(SCOPE_TOKEN_KEY)
+            token = str(new_tokens[index]) if index < len(new_tokens) else ""
             if not token:
                 new_tokens = []
                 break
-            token = str(token)
-            new_tokens.append(token)
             expected_func_by_token[token] = func
 
         from PyQt6 import sip
@@ -399,76 +504,107 @@ class FunctionListEditorWidget(QWidget):
 
     def _initialize_pattern_data(self, initial_functions):
         """Initialize pattern data from various input formats (mirrors Textual TUI logic)."""
-        print(f"🔍 FUNC LIST EDITOR _initialize_pattern_data: initial_functions = {initial_functions}")
-
-        # Seed token generator so any existing tokens are preserved and new ones
-        # never collide (important for duplicate functions).
-        self._seed_func_token_generator(initial_functions)
+        # Load persisted sidecar tokens and seed generator so new tokens never collide.
+        self._load_pattern_tokens_from_state()
+        self._seed_func_token_generator()
         if initial_functions is None:
             self.pattern_data = []
+            self._pattern_tokens = []
             self.is_dict_mode = False
             self.functions = []
+            self._current_function_tokens = []
         elif callable(initial_functions):
             # Single callable: treat as [(callable, {})]
-            self.pattern_data = [
-                (initial_functions, self._ensure_func_item_has_token(initial_functions, {}))
-            ]
+            token = self._get_func_token_generator().ensure()
+            self.pattern_data = [(initial_functions, {})]
+            self._pattern_tokens = [token]
             self.is_dict_mode = False
             self.functions = list(self.pattern_data)
+            self._current_function_tokens = [token]
         elif isinstance(initial_functions, tuple) and len(initial_functions) == 2 and callable(initial_functions[0]) and isinstance(initial_functions[1], dict):
             # Single tuple (callable, kwargs): treat as [(callable, kwargs)]
             func, kwargs = initial_functions
-            self.pattern_data = [(func, self._ensure_func_item_has_token(func, kwargs))]
+            clean_kwargs = self._sanitize_pattern_kwargs(kwargs)
+            token = self._get_func_token_generator().ensure()
+            self.pattern_data = [(func, clean_kwargs)]
+            self._pattern_tokens = [str(token)]
             self.is_dict_mode = False
             self.functions = list(self.pattern_data)
+            self._current_function_tokens = [str(token)]
         elif isinstance(initial_functions, list):
-            print("🔍 FUNC LIST EDITOR: initial_functions is a list, calling _normalize_function_list")
             seen_tokens: set[str] = set()
             self.is_dict_mode = False
-            self.functions = self._normalize_function_list(initial_functions, seen_tokens=seen_tokens)
-            # Store the normalized form (includes per-entry tokens)
+            seed_tokens = self._pattern_tokens if isinstance(self._pattern_tokens, list) else []
+            self.functions, tokens = self._normalize_function_list(
+                initial_functions,
+                seen_tokens=seen_tokens,
+                seed_tokens=seed_tokens,
+            )
+            self._pattern_tokens = list(tokens)
+            self._current_function_tokens = list(tokens)
             self.pattern_data = list(self.functions)
-            print(f"🔍 FUNC LIST EDITOR: self.functions AFTER normalize = {self.functions}")
         elif isinstance(initial_functions, dict):
             # Convert any integer keys to string keys for consistency
             seen_tokens: set[str] = set()
             normalized_dict = {}
+            normalized_tokens: Dict[str, List[str]] = {}
+            existing_tokens = self._pattern_tokens if isinstance(self._pattern_tokens, dict) else {}
             for key, value in initial_functions.items():
                 str_key = str(key)
-                normalized_dict[str_key] = (
-                    self._normalize_function_list(value, seen_tokens=seen_tokens) if value else []
+                normalized_list, channel_tokens = (
+                    self._normalize_function_list(
+                        value,
+                        seen_tokens=seen_tokens,
+                        seed_tokens=existing_tokens.get(str_key, []),
+                    )
+                    if value
+                    else ([], [])
                 )
+                normalized_dict[str_key] = normalized_list
+                normalized_tokens[str_key] = channel_tokens
 
             self.pattern_data = normalized_dict
+            self._pattern_tokens = normalized_tokens
             self.is_dict_mode = True
 
             # Set selected channel to first key and load its functions
             if normalized_dict:
                 self.selected_pattern_key = next(iter(normalized_dict.keys()))
                 self.functions = normalized_dict[self.selected_pattern_key]
+                self._current_function_tokens = list(
+                    normalized_tokens.get(self.selected_pattern_key, [])
+                )
             else:
                 self.selected_pattern_key = None
                 self.functions = []
+                self._current_function_tokens = []
         else:
             logger.warning(f"Unknown initial_functions type: {type(initial_functions)}")
             self.pattern_data = []
+            self._pattern_tokens = []
             self.is_dict_mode = False
             self.functions = []
+            self._current_function_tokens = []
 
+        self._persist_pattern_tokens_to_state()
         self._apply_pending_pattern_key_selection()
 
-    def _normalize_function_list(self, func_list, *, seen_tokens: Optional[set[str]] = None):
+    def _normalize_function_list(
+        self,
+        func_list,
+        *,
+        seen_tokens: Optional[set[str]] = None,
+        seed_tokens: Optional[List[str]] = None,
+    ):
         """Normalize function list using PatternDataManager.
 
-        Ensures every entry is a (callable, kwargs) tuple and that kwargs contains
-        a stable per-entry scope token (even when the same callable appears
-        multiple times).
+        Ensures every entry is a (callable, kwargs) tuple and returns a parallel
+        stable per-entry token list stored in ObjectState metadata.
         """
-        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
-
         if seen_tokens is None:
             seen_tokens = set()
-        print(f"🔍 NORMALIZE: INPUT = {func_list}")
+        if seed_tokens is None:
+            seed_tokens = []
         # Handle single tuple (function, kwargs) case - wrap in list
         if isinstance(func_list, tuple) and len(func_list) == 2 and callable(func_list[0]) and isinstance(func_list[1], dict):
             func_list = [func_list]
@@ -477,24 +613,22 @@ class FunctionListEditorWidget(QWidget):
             func_list = [(func_list, {})]
         # Handle empty or None case
         elif not func_list:
-            return []
+            return [], []
 
         normalized = []
+        tokens: List[str] = []
         for i, item in enumerate(func_list):
-            print(f"🔍 NORMALIZE: Processing item {i}: {item}")
             func, kwargs = self.data_manager.extract_func_and_kwargs(item)
-            print(f"🔍 NORMALIZE: Extracted func={func.__name__ if func else None}, kwargs={kwargs}")
             if func:
-                new_kwargs = self._ensure_func_item_has_token(func, kwargs)
-                token = str(new_kwargs.get(SCOPE_TOKEN_KEY))
-                # If the user duplicated tokens in code mode, de-conflict here.
+                new_kwargs = self._sanitize_pattern_kwargs(kwargs if isinstance(kwargs, dict) else {})
+                seed_token = str(seed_tokens[i]) if i < len(seed_tokens) and seed_tokens[i] else None
+                token = seed_token or self._get_func_token_generator().ensure()
                 if token in seen_tokens:
                     token = self._get_func_token_generator().ensure()
-                    new_kwargs[SCOPE_TOKEN_KEY] = token
                 seen_tokens.add(token)
                 normalized.append((func, new_kwargs))
-        print(f"🔍 NORMALIZE: OUTPUT = {normalized}")
-        return normalized
+                tokens.append(str(token))
+        return normalized, tokens
 
     def _get_function_state_parent_scope(self, channel_key: Optional[str]) -> Optional[str]:
         """Return the parent scope used for function ObjectStates.
@@ -504,8 +638,8 @@ class FunctionListEditorWidget(QWidget):
         - switching dict/list pattern modes
         - multiple identical callables in the pattern
 
-        We keep all function states directly under the step scope and rely on a
-        per-entry token stored in kwargs for uniqueness.
+        We keep all function states directly under the context scope and rely on a
+        per-entry sidecar token stored in metadata for uniqueness.
         """
         if not self.scope_id:
             return None
@@ -519,51 +653,68 @@ class FunctionListEditorWidget(QWidget):
         return self._get_function_state_parent_scope(None)
 
     def _unregister_function_states_for_functions(
-        self, func_items: List[Any], channel_key: Optional[str]
+        self,
+        func_items: List[Any],
+        channel_key: Optional[str],
+        tokens: Optional[List[str]] = None,
     ) -> None:
         """Unregister function ObjectStates for a list of function items."""
         if not self.scope_id or not func_items:
             return
 
-        from pyqt_reactive.services.scope_token_service import ScopeTokenService
-        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
-
         parent_scope = self._get_function_state_parent_scope(channel_key)
         if not parent_scope:
             return
 
-        for item in func_items:
+        for idx, item in enumerate(func_items):
             func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
             if func is None:
                 continue
 
-            token = kwargs.get(SCOPE_TOKEN_KEY) if isinstance(kwargs, dict) else None
-            if token:
-                scope = f"{parent_scope}::{token}"
-            else:
-                # Back-compat fallback for older patterns without tokens
-                scope = ScopeTokenService.build_scope_id(parent_scope, func)
+            token = None
+            if tokens is not None and idx < len(tokens):
+                token = tokens[idx]
+            if not token:
+                raise RuntimeError(
+                    "Missing function scope token while unregistering function state."
+                )
+            scope = f"{parent_scope}::{token}"
             state = ObjectStateRegistry.get_by_scope(scope)
             if state is not None:
                 ObjectStateRegistry.unregister(state)
 
-    def _iter_all_func_items(self, pattern: Any) -> List[Any]:
-        """Return a flat list of all func items in a pattern."""
-        if pattern is None:
-            return []
+    @staticmethod
+    def _iter_tokenized_entries(
+        pattern: Any, tokens: Any
+    ) -> List[tuple[Any, Dict[str, Any], str]]:
+        """Return flat (func, kwargs, token) entries from pattern + sidecar token map."""
+        entries: List[tuple[Any, Dict[str, Any], str]] = []
         if isinstance(pattern, dict):
-            items: List[Any] = []
-            for value in pattern.values():
-                if value is None:
-                    continue
-                if isinstance(value, list):
-                    items.extend(value)
-                else:
-                    items.append(value)
-            return items
-        if isinstance(pattern, list):
-            return list(pattern)
-        return [pattern]
+            token_map = tokens if isinstance(tokens, dict) else {}
+            for channel_key, items in pattern.items():
+                channel_items = items if isinstance(items, list) else [items]
+                channel_tokens = token_map.get(str(channel_key), [])
+                for idx, item in enumerate(channel_items):
+                    func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
+                    if func is None:
+                        continue
+                    token = (
+                        str(channel_tokens[idx])
+                        if idx < len(channel_tokens) and channel_tokens[idx]
+                        else ""
+                    )
+                    entries.append((func, dict(kwargs or {}), token))
+            return entries
+
+        item_list = pattern if isinstance(pattern, list) else [pattern]
+        token_list = tokens if isinstance(tokens, list) else []
+        for idx, item in enumerate(item_list):
+            func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
+            if func is None:
+                continue
+            token = str(token_list[idx]) if idx < len(token_list) and token_list[idx] else ""
+            entries.append((func, dict(kwargs or {}), token))
+        return entries
 
     def _get_func_token_generator(self):
         """Generator for stable per-entry function tokens."""
@@ -575,19 +726,15 @@ class FunctionListEditorWidget(QWidget):
             setattr(self, "_func_token_generator", gen)
         return gen
 
-    def _seed_func_token_generator(self, pattern: Any) -> None:
-        """Seed token generator from tokens already present in pattern."""
-        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
-
+    def _seed_func_token_generator(self) -> None:
+        """Seed token generator from canonical sidecar metadata tokens."""
         gen = self._get_func_token_generator()
         tokens: List[str] = []
-        for item in self._iter_all_func_items(pattern):
-            _func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-            if not isinstance(kwargs, dict):
-                continue
-            token = kwargs.get(SCOPE_TOKEN_KEY)
-            if token:
-                tokens.append(str(token))
+        if isinstance(self._pattern_tokens, list):
+            tokens.extend(str(token) for token in self._pattern_tokens if token)
+        elif isinstance(self._pattern_tokens, dict):
+            for channel_tokens in self._pattern_tokens.values():
+                tokens.extend(str(token) for token in channel_tokens if token)
         if tokens:
             gen.seed_from_tokens(tokens)
 
@@ -604,19 +751,12 @@ class FunctionListEditorWidget(QWidget):
             return
 
         self._pending_selected_pattern_key = None
-        self._switch_to_pattern_key(channel)
+        self._select_pattern_key(
+            channel,
+            commit_current_view=True,
+            persist_selection=True,
+        )
 
-    def _ensure_func_item_has_token(self, func: Callable, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """Return a kwargs dict that contains a stable scope token."""
-        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
-
-        new_kwargs = dict(kwargs or {})
-        token = new_kwargs.get(SCOPE_TOKEN_KEY)
-        if not token:
-            token = self._get_func_token_generator().ensure()
-            new_kwargs[SCOPE_TOKEN_KEY] = token
-        return new_kwargs
-    
     def setup_ui(self):
         """Setup the user interface."""
         layout = QVBoxLayout(self)
@@ -686,29 +826,13 @@ class FunctionListEditorWidget(QWidget):
         logger.debug("[SCROLL] FunctionListEditorWidget.select_and_scroll_to_field(%r)", field_path)
         if not field_path:
             return
-        if not hasattr(self, "scroll_area") or self.scroll_area is None:
+        if self.scroll_area is None:
             return
 
-        # Normalize and try to extract a function index (best-effort).
-        index: Optional[int] = None
-        rest = field_path
-        if rest.startswith("func"):
-            rest = rest[4:]
-
-        # func[3]...
-        if rest.startswith("["):
-            close = rest.find("]")
-            if close > 1:
-                try:
-                    index = int(rest[1:close])
-                except ValueError:
-                    index = None
-        # func.3...
-        elif rest.startswith("."):
-            # Split on first '.' after func
-            parts = rest[1:].split(".", 1)
-            if parts and parts[0].isdigit():
-                index = int(parts[0])
+        target = parse_function_field_target(field_path)
+        if target.token:
+            self.select_pattern_key_for_function_token(target.token)
+        index = target.index
 
         # Default target: top of the list.
         target_pane: Optional[QWidget] = None
@@ -796,16 +920,19 @@ class FunctionListEditorWidget(QWidget):
         else:
             # Create function panes
             for i, func_item in enumerate(self.functions):
-                print(f"🔍 FUNC LIST EDITOR: Creating pane {i} with func_item = {func_item}")
+                if i >= len(self._current_function_tokens):
+                    self._current_function_tokens.append(self._get_func_token_generator().ensure())
+                    self._set_tokens_for_current_view(self._current_function_tokens)
+                    self._persist_pattern_tokens_to_state()
                 pane = FunctionPaneWidget(
                     func_item,
                     i,
                     self.service_adapter,
                     color_scheme=self.color_scheme,
-                    step_instance=self.step_instance,
                     scope_id=self.scope_id,
                     func_scope_prefix=func_scope_prefix,
-                    step_index=self.step_index,
+                    func_scope_token=self._current_function_tokens[i],
+                    scope_index=self.scope_index,
                 )
 
                 # Connect signals (using actual FunctionPaneWidget signal names)
@@ -872,6 +999,43 @@ class FunctionListEditorWidget(QWidget):
     def setup_connections(self):
         """Setup signal/slot connections."""
         pass
+
+    @contextmanager
+    def _suppress_pattern_events(self):
+        """Temporarily suppress outward pattern-change emissions."""
+        self._pattern_event_suppression_depth += 1
+        try:
+            yield
+        finally:
+            self._pattern_event_suppression_depth -= 1
+
+    def _emit_pattern_changed(self) -> None:
+        if self._pattern_event_suppression_depth > 0:
+            return
+        self.function_pattern_changed.emit()
+
+    def _commit_pattern_mutation(
+        self,
+        *,
+        mutation_label: Optional[str],
+        mutate: Callable[[], None],
+        refresh_ui: Optional[Callable[[], None]] = None,
+        persist_selected_key: bool = True,
+    ) -> None:
+        """Apply one pattern mutation through a single synchronization path."""
+        ctx = (
+            ObjectStateRegistry.atomic(mutation_label)
+            if mutation_label is not None
+            else nullcontext()
+        )
+        with ctx:
+            if persist_selected_key:
+                self._record_selected_pattern_key()
+            mutate()
+            self._update_pattern_data()
+            if refresh_ui is not None:
+                refresh_ui()
+            self._emit_pattern_changed()
     
     def add_function(self):
         """Add a new function (mirrors Textual TUI)."""
@@ -879,17 +1043,18 @@ class FunctionListEditorWidget(QWidget):
         selected_function = self.function_selection_provider.select_function(parent=self)
 
         if selected_function:
-            # ATOMIC: coalesce state changes into one undo step
-            with ObjectStateRegistry.atomic("add function"):
-                self._record_selected_pattern_key()
-                new_func_item = (
-                    selected_function,
-                    self._ensure_func_item_has_token(selected_function, {}),
-                )
+            def mutate() -> None:
+                new_func_item = (selected_function, {})
                 self.functions.append(new_func_item)
-                self._update_pattern_data()
-                self._populate_function_list()
-                self.function_pattern_changed.emit()
+                self._current_function_tokens.append(
+                    self._get_func_token_generator().ensure()
+                )
+
+            self._commit_pattern_mutation(
+                mutation_label="add function",
+                mutate=mutate,
+                refresh_ui=self._populate_function_list,
+            )
             logger.debug(f"Added function: {selected_function.__name__}")
     
 
@@ -982,8 +1147,10 @@ class FunctionListEditorWidget(QWidget):
     def _apply_edited_pattern_internal(self, new_pattern):
         """Internal implementation of apply_edited_pattern (wrapped in atomic block)."""
         try:
-            # Seed token generator from any tokens present in code.
-            self._seed_func_token_generator(new_pattern)
+            self._seed_func_token_generator()
+            old_entries = self._iter_tokenized_entries(
+                self.pattern_data, self._pattern_tokens
+            )
 
             # Get the new function list BEFORE updating self.functions
             if self.is_dict_mode:
@@ -991,49 +1158,71 @@ class FunctionListEditorWidget(QWidget):
                     # Normalize whole dict so all keys have stable per-entry tokens.
                     seen_tokens: set[str] = set()
                     normalized_pattern: dict[str, list] = {}
+                    normalized_tokens: Dict[str, List[str]] = {}
+                    seed_by_channel = (
+                        self._pattern_tokens if isinstance(self._pattern_tokens, dict) else {}
+                    )
                     for k, v in new_pattern.items():
                         sk = str(k)
-                        normalized_pattern[sk] = (
-                            self._normalize_function_list(v, seen_tokens=seen_tokens)
+                        normalized_list, token_list = (
+                            self._normalize_function_list(
+                                v,
+                                seen_tokens=seen_tokens,
+                                seed_tokens=seed_by_channel.get(sk, []),
+                            )
                             if v
-                            else []
+                            else ([], [])
                         )
+                        normalized_pattern[sk] = normalized_list
+                        normalized_tokens[sk] = token_list
                     new_pattern = normalized_pattern
 
                     if self.selected_pattern_key and self.selected_pattern_key in new_pattern:
                         new_functions = list(new_pattern[self.selected_pattern_key])
+                        new_current_tokens = list(
+                            normalized_tokens.get(self.selected_pattern_key, [])
+                        )
                     elif new_pattern:
                         new_channel = next(iter(new_pattern))
                         new_functions = list(new_pattern[new_channel])
+                        new_current_tokens = list(normalized_tokens.get(new_channel, []))
                     else:
                         new_functions = []
+                        new_current_tokens = []
                 else:
                     raise ValueError("Expected dict pattern for dict mode")
             else:
+                seed_tokens = (
+                    self._pattern_tokens if isinstance(self._pattern_tokens, list) else []
+                )
                 if isinstance(new_pattern, list):
-                    new_functions = self._normalize_function_list(new_pattern)
+                    new_functions, new_current_tokens = self._normalize_function_list(
+                        new_pattern,
+                        seed_tokens=seed_tokens,
+                    )
                 elif callable(new_pattern):
-                    new_functions = [
-                        (new_pattern, self._ensure_func_item_has_token(new_pattern, {}))
-                    ]
+                    new_functions = [(new_pattern, {})]
+                    new_current_tokens = [self._get_func_token_generator().ensure()]
                 elif isinstance(new_pattern, tuple) and len(new_pattern) == 2 and callable(new_pattern[0]) and isinstance(new_pattern[1], dict):
                     func, kwargs = new_pattern
-                    new_functions = [
-                        (func, self._ensure_func_item_has_token(func, kwargs))
-                    ]
+                    new_functions = [(func, self._sanitize_pattern_kwargs(kwargs))]
+                    new_current_tokens = [self._get_func_token_generator().ensure()]
                 else:
                     raise ValueError(f"Expected list, callable, or (callable, dict) tuple pattern for list mode, got {type(new_pattern)}")
 
             # CRITICAL FIX: Update existing function ObjectStates with new kwargs BEFORE
             # creating new widgets. This preserves dirty detection - the ObjectState's
             # saved baseline stays the same, only the current values change.
-            old_items = self._iter_all_func_items(self.pattern_data)
-            new_items = self._iter_all_func_items(new_pattern)
-            self._update_function_object_states(old_items, new_items)
+            if self.is_dict_mode:
+                new_entries = self._iter_tokenized_entries(new_pattern, normalized_tokens)
+            else:
+                new_entries = self._iter_tokenized_entries(new_functions, new_current_tokens)
+            self._update_function_object_states(old_entries, new_entries)
 
             # Now update pattern_data and functions
             if self.is_dict_mode:
                 self.pattern_data = new_pattern
+                self._pattern_tokens = normalized_tokens
                 if self.selected_pattern_key and self.selected_pattern_key in new_pattern:
                     self.functions = new_functions
                 elif new_pattern:
@@ -1041,25 +1230,26 @@ class FunctionListEditorWidget(QWidget):
                     self.functions = new_functions
                 else:
                     self.functions = []
+                self._current_function_tokens = new_current_tokens
             else:
-                # Always store normalized list (includes tokens).
+                # Always store normalized list.
                 self.pattern_data = list(new_functions)
                 self.functions = new_functions
+                self._pattern_tokens = list(new_current_tokens)
+                self._current_function_tokens = list(new_current_tokens)
+
+            self._persist_pattern_tokens_to_state()
 
             # Refresh the UI and notify of changes
             # NOTE: _populate_function_list will REUSE ObjectStates that we just updated
             self._populate_function_list()
-            self.function_pattern_changed.emit()
-
-            # CRITICAL: Trigger global cross-window refresh for ALL open windows
-            # This ensures any window with placeholders (configs, steps, etc.) refreshes
-            ObjectStateRegistry.increment_token()
+            self._emit_pattern_changed()
 
         except Exception as e:
             if self.service_adapter:
                 self.service_adapter.show_error_dialog(f"Failed to apply edited pattern: {str(e)}")
 
-    def _update_function_object_states(self, old_functions: List, new_functions: List) -> None:
+    def _update_function_object_states(self, old_entries: List, new_entries: List) -> None:
         """Update existing function ObjectStates with new kwargs from code mode edit.
 
         This is CRITICAL for dirty detection: instead of destroying and recreating
@@ -1067,35 +1257,24 @@ class FunctionListEditorWidget(QWidget):
         saved baseline is preserved and changes are detected as dirty.
 
         Args:
-            old_functions: Previous function list [(func, kwargs), ...]
-            new_functions: New function list from code mode edit
+            old_entries: Previous entries [(func, kwargs, token), ...]
+            new_entries: New entries from code mode edit
         """
         if not self.scope_id:
             return
 
         from objectstate import ObjectStateRegistry
-        from pyqt_reactive.services.scope_token_service import ScopeTokenService
-        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
-
         channel_key = self.selected_pattern_key if self.is_dict_mode else None
         parent_scope = self._get_function_state_parent_scope(channel_key) or str(self.scope_id)
 
-        def _get_token(kwargs: Any) -> Optional[str]:
-            if not isinstance(kwargs, dict):
-                return None
-            token = kwargs.get(SCOPE_TOKEN_KEY)
-            return str(token) if token else None
-
         old_by_token: dict[str, tuple[Any, Dict[str, Any]]] = {}
-        for func, kwargs in old_functions:
-            token = _get_token(kwargs)
+        for func, kwargs, token in old_entries:
             if not token:
                 continue
             old_by_token[token] = (func, dict(kwargs or {}))
 
         new_by_token: dict[str, tuple[Any, Dict[str, Any]]] = {}
-        for func, kwargs in new_functions:
-            token = _get_token(kwargs)
+        for func, kwargs, token in new_entries:
             if not token:
                 continue
             new_by_token[token] = (func, dict(kwargs or {}))
@@ -1104,7 +1283,7 @@ class FunctionListEditorWidget(QWidget):
         for token in set(old_by_token.keys()) - set(new_by_token.keys()):
             old_func, old_kwargs = old_by_token[token]
             self._unregister_function_states_for_functions(
-                [(old_func, old_kwargs)], channel_key
+                [(old_func, old_kwargs)], channel_key, tokens=[token]
             )
 
         # Update existing states for tokens still present
@@ -1115,22 +1294,14 @@ class FunctionListEditorWidget(QWidget):
             # If the function changed but token stayed, treat as replace.
             if old_func is not new_func:
                 self._unregister_function_states_for_functions(
-                    [(old_func, old_kwargs)], channel_key
+                    [(old_func, old_kwargs)], channel_key, tokens=[token]
                 )
                 continue
 
             func_scope_id = f"{parent_scope}::{token}"
             state = ObjectStateRegistry.get_by_scope(func_scope_id)
             if state is None:
-                # Back-compat: try legacy scope id derived from callable
-                func_scope_id = ScopeTokenService.build_scope_id(parent_scope, old_func)
-                state = ObjectStateRegistry.get_by_scope(func_scope_id)
-            if state is None:
                 continue
-
-            # Never write internal metadata keys into ObjectState.
-            new_kwargs = {k: v for k, v in new_kwargs.items() if k != SCOPE_TOKEN_KEY}
-            old_kwargs = {k: v for k, v in old_kwargs.items() if k != SCOPE_TOKEN_KEY}
 
             for param_name, new_value in new_kwargs.items():
                 old_value = old_kwargs.get(param_name)
@@ -1165,17 +1336,26 @@ class FunctionListEditorWidget(QWidget):
         if not (0 <= new_index < len(self.functions)):
             return
 
-        with ObjectStateRegistry.atomic("reorder function"):
-            self._record_selected_pattern_key()
+        def mutate() -> None:
             # Swap functions in data
             self.functions[index], self.functions[new_index] = (
                 self.functions[new_index],
                 self.functions[index],
             )
-            self._update_pattern_data()
+            self._current_function_tokens[index], self._current_function_tokens[new_index] = (
+                self._current_function_tokens[new_index],
+                self._current_function_tokens[index],
+            )
+
+        def refresh() -> None:
             # Reorder existing panes (NOT recreate) - preserves flash registrations
             self._reorder_function_panes(index, new_index)
-            self.function_pattern_changed.emit()
+
+        self._commit_pattern_mutation(
+            mutation_label="reorder function",
+            mutate=mutate,
+            refresh_ui=refresh,
+        )
 
     def _reorder_function_panes(self, old_index: int, new_index: int) -> None:
         """Reorder existing panes in layout without recreating them.
@@ -1211,17 +1391,18 @@ class FunctionListEditorWidget(QWidget):
         selected_function = self.function_selection_provider.select_function(parent=self)
 
         if selected_function:
-            # ATOMIC: coalesce state changes into one undo step
-            with ObjectStateRegistry.atomic("add function"):
-                self._record_selected_pattern_key()
-                new_func_item = (
-                    selected_function,
-                    self._ensure_func_item_has_token(selected_function, {}),
-                )
+            def mutate() -> None:
+                new_func_item = (selected_function, {})
                 self.functions.insert(index, new_func_item)
-                self._update_pattern_data()
-                self._populate_function_list()
-                self.function_pattern_changed.emit()
+                self._current_function_tokens.insert(
+                    index, self._get_func_token_generator().ensure()
+                )
+
+            self._commit_pattern_mutation(
+                mutation_label="add function",
+                mutate=mutate,
+                refresh_ui=self._populate_function_list,
+            )
             logger.debug(f"Added function at index {index}: {selected_function.__name__}")
     
     def _remove_function(self, index: int) -> None:
@@ -1232,27 +1413,44 @@ class FunctionListEditorWidget(QWidget):
         func_item = self.functions[index]
         channel_key = self.selected_pattern_key if self.is_dict_mode else None
 
-        # ATOMIC: coalesce state unregister + step func update into one undo step
-        with ObjectStateRegistry.atomic("remove function"):
-            self._record_selected_pattern_key()
-            self._unregister_function_states_for_functions([func_item], channel_key)
+        def mutate() -> None:
+            token = (
+                [self._current_function_tokens[index]]
+                if index < len(self._current_function_tokens)
+                else None
+            )
+            self._unregister_function_states_for_functions(
+                [func_item], channel_key, tokens=token
+            )
             self.functions.pop(index)
-            self._update_pattern_data()
-            self._populate_function_list()
-            self.function_pattern_changed.emit()
+            if index < len(self._current_function_tokens):
+                self._current_function_tokens.pop(index)
+
+        self._commit_pattern_mutation(
+            mutation_label="remove function",
+            mutate=mutate,
+            refresh_ui=self._populate_function_list,
+        )
     
     def _on_parameter_changed(self, index, param_name, value):
         """Handle parameter change from function pane."""
+        if self._pattern_event_suppression_depth > 0:
+            return
         if 0 <= index < len(self.functions):
-            func, kwargs = self.functions[index]
-            # IMPORTANT: Don't mutate kwargs dict in-place.
-            # ObjectState uses equality checks; mutating shared dict instances can
-            # make changes undetectable and can also leak edits across keys.
-            new_kwargs = dict(kwargs)
-            new_kwargs[param_name] = value
-            self.functions[index] = (func, new_kwargs)
-            self._update_pattern_data()
-            self.function_pattern_changed.emit()
+            def mutate() -> None:
+                func, kwargs = self.functions[index]
+                # IMPORTANT: Don't mutate kwargs dict in-place.
+                # ObjectState uses equality checks; mutating shared dict instances can
+                # make changes undetectable and can also leak edits across keys.
+                new_kwargs = dict(kwargs)
+                new_kwargs[param_name] = value
+                self.functions[index] = (func, new_kwargs)
+
+            self._commit_pattern_mutation(
+                mutation_label=None,
+                mutate=mutate,
+                persist_selected_key=False,
+            )
     
 
     
@@ -1313,7 +1511,9 @@ class FunctionListEditorWidget(QWidget):
     
     def set_functions(self, functions):
         """Set function list and refresh display."""
-        self.functions = functions.copy() if functions else []
+        normalized, tokens = self._normalize_function_list(functions or [])
+        self.functions = normalized
+        self._current_function_tokens = tokens
         self._update_pattern_data()
         self._populate_function_list()
 
@@ -1334,9 +1534,9 @@ class FunctionListEditorWidget(QWidget):
         # Apply scope styling to all child widgets (GroupBoxWithHelp, HelpButton, etc.)
         self._apply_scope_styling_to_children(scheme)
 
-    def set_step_index(self, step_index: Optional[int]) -> None:
-        """Update step index used for scope styling of future panes."""
-        self.step_index = step_index
+    def set_scope_index(self, scope_index: Optional[int]) -> None:
+        """Update scope index used for styling future panes."""
+        self.scope_index = scope_index
 
     def _apply_scope_styling_to_children(self, scheme) -> None:
         """Apply scope styling to all child widgets that need it.
@@ -1377,62 +1577,26 @@ class FunctionListEditorWidget(QWidget):
         for groupbox in non_pane_groupboxes:
             groupbox.set_scope_color_scheme(scheme)
 
-    def refresh_from_step_context(self) -> None:
-        """Refresh group_by and variable_components from ObjectState's LIVE values.
-
-        CRITICAL: Uses ObjectState's get_resolved_value() to get LIVE form values,
-        not saved step_instance values. This ensures the function pattern editor sees
-        the same group_by value that the step editor form shows.
-        """
+    def refresh_from_context(self) -> None:
+        """Refresh group_by and variable_components from live ObjectState values."""
         from objectstate import ObjectStateRegistry
 
-        try:
-            # Get ObjectState for this step from registry
-            my_scope = getattr(self, 'scope_id', '') or ''
-            state = ObjectStateRegistry.get_by_scope(my_scope)
+        scope = str(self.scope_id or "")
+        if not scope:
+            return
+        state = ObjectStateRegistry.get_by_scope(scope)
+        if state is None:
+            # ObjectState is authoritative.
+            return
 
-            logger.info(f"🔍 FUNC_EDITOR refresh_from_step_context: my_scope={my_scope!r}, state={state is not None}")
+        self.current_group_by = state.get_resolved_value("processing_config.group_by")
+        self.current_variable_components = (
+            state.get_resolved_value("processing_config.variable_components") or []
+        )
+        self._refresh_component_button()
 
-            if state:
-                # Use LIVE resolved values from ObjectState (includes unsaved form changes)
-                effective_group_by = state.get_resolved_value('processing_config.group_by')
-                variable_components = state.get_resolved_value('processing_config.variable_components') or []
-                logger.info(f"🔍 FUNC_EDITOR: Got LIVE values from ObjectState: group_by={effective_group_by}, current={self.current_group_by}")
-            else:
-                # Fallback to step_instance if no ObjectState (shouldn't happen in normal use)
-                logger.warning(f"No ObjectState for scope {my_scope}, falling back to step_instance")
-                if self.step_instance is None:
-                    logger.warning("No step_instance available for context refresh")
-                    return
-
-                from objectstate import build_context_stack
-                ancestor_objects = ObjectStateRegistry.get_ancestor_objects(my_scope)
-                stack = build_context_stack(
-                    object_instance=self.step_instance,
-                    ancestor_objects=ancestor_objects,
-                )
-                with stack:
-                    effective_group_by = self.step_instance.processing_config.group_by
-                    variable_components = self.step_instance.processing_config.variable_components or []
-
-            # Update state
-            self.current_group_by = effective_group_by
-            self.current_variable_components = variable_components
-
-            # Refresh UI
-            self._refresh_component_button()
-
-        except Exception as e:
-            logger.error(f"❌ Failed to refresh from step context: {e}", exc_info=True)
-
-    def _subscribe_to_step_state_changes(self) -> None:
-        """Subscribe to step's ObjectState for resolved value changes.
-
-        CRITICAL: When PipelineConfig's group_by changes, the step's resolved group_by
-        changes via inheritance. We need to refresh the component button to reflect this.
-        This is the proper cross-window update mechanism - subscribe to ObjectState,
-        not to form_manager signals (which only fire for direct edits in the same form).
-        """
+    def _subscribe_to_context_state_changes(self) -> None:
+        """Subscribe to context ObjectState resolved-value changes."""
         if not self.scope_id:
             logger.debug("No scope_id, skipping ObjectState subscription")
             return
@@ -1443,12 +1607,11 @@ class FunctionListEditorWidget(QWidget):
             return
 
         def on_resolved_changed(changed_paths: set) -> None:
-            """Called when step's resolved values change."""
-            # Check if group_by or variable_components changed
-            relevant_paths = {'processing_config.group_by', 'processing_config.variable_components'}
+            """Called when context resolved values change."""
+            relevant_paths = {"processing_config.group_by", "processing_config.variable_components"}
             if changed_paths & relevant_paths:
                 logger.info(f"🔔 FUNC_EDITOR: ObjectState resolved change detected: {changed_paths & relevant_paths}")
-                self.refresh_from_step_context()
+                self.refresh_from_context()
 
         state.on_resolved_changed(on_resolved_changed)
         # Store callback reference for cleanup
@@ -1525,30 +1688,11 @@ class FunctionListEditorWidget(QWidget):
             logger.debug("Component selection is disabled")
             return
 
-        # Get available components from provider
-        try:
-            available_components = self.component_selection_provider.get_component_keys(self.current_group_by)
-        except Exception as e:
-            import traceback
-            raise RuntimeError(
-                f"CRITICAL: Failed to get component keys for {self.current_group_by}\n"
-                f"Exception: {type(e).__name__}: {e}\n\n"
-                f"TRACEBACK:\n{traceback.format_exc()}"
-            ) from e
-        
+        available_components = self.component_selection_provider.get_component_keys(
+            self.current_group_by
+        )
         if not available_components:
-            import traceback
-            # Get the full exception info including where get_component_keys returned empty
-            raise RuntimeError(
-                f"CRITICAL: No {self.current_group_by} values found in current context\n"
-                f"Button should have been disabled but wasn't!\n\n"
-                f"Current group_by: {self.current_group_by}\n"
-                f"Component provider: {self.component_selection_provider}\n"
-                f"Step identifier: {self.step_identifier}\n\n"
-                f"GET_COMPONENT_KEYS returned empty list - this is the bug!\n"
-                f"Check reactor_providers.py _get_current_orchestrator()\n\n"
-                f"CURRENT STACK:\n{traceback.format_exc()}"
-            )
+            return
 
         # Get current selection from pattern data (mirrors Textual TUI logic)
         selected_components = self._get_current_component_selection()
@@ -1579,7 +1723,12 @@ class FunctionListEditorWidget(QWidget):
         # Save selection to cache for current group_by
         if self.current_group_by is not None and self.current_group_by != self._groupby_enum.NONE:
             self.component_selections[self.current_group_by] = new_components
-            logger.debug(f"Step '{self.step_identifier}': Cached selection for {self.current_group_by.value}: {new_components}")
+            logger.debug(
+                "Context '%s': Cached selection for %s: %s",
+                self.context_identifier,
+                self.current_group_by.value,
+                new_components,
+            )
 
         # ATOMIC: coalesce component selection change into a single undo step
         with ObjectStateRegistry.atomic("edit components"):
@@ -1590,7 +1739,7 @@ class FunctionListEditorWidget(QWidget):
             self._refresh_component_button()
             logger.debug(f"Updated components: {new_components}")
 
-            self.function_pattern_changed.emit()
+            self._emit_pattern_changed()
 
     def _update_components(self, new_components):
         """Update function pattern structure based on component selection (mirrors Textual TUI)."""
@@ -1606,18 +1755,36 @@ class FunctionListEditorWidget(QWidget):
                 old_pattern = (
                     self.pattern_data if isinstance(self.pattern_data, dict) else {}
                 )
+                old_tokens = (
+                    self._pattern_tokens if isinstance(self._pattern_tokens, dict) else {}
+                )
                 for old_key, old_functions in old_pattern.items():
                     # Keep the currently selected channel's function states.
                     # Those functions become the new list-mode pattern.
                     if self.selected_pattern_key and old_key == self.selected_pattern_key:
                         continue
-                    self._unregister_function_states_for_functions(old_functions, str(old_key))
+                    self._unregister_function_states_for_functions(
+                        old_functions,
+                        str(old_key),
+                        tokens=list(old_tokens.get(str(old_key), [])),
+                    )
 
                 # Save current functions to list mode
                 self.pattern_data = self.functions
+                selected_key = str(self.selected_pattern_key) if self.selected_pattern_key is not None else ""
+                self._pattern_tokens = (
+                    list(old_tokens.get(selected_key, []))
+                    if isinstance(old_tokens, dict)
+                    else list(self._current_function_tokens)
+                )
+                self._current_function_tokens = list(self._pattern_tokens)
                 self.is_dict_mode = False
                 self.selected_pattern_key = None
                 logger.debug("Reverted to list mode (no components selected)")
+            self._populate_function_list()
+            self._update_navigation_buttons()
+            self._persist_pattern_tokens_to_state()
+            return
         else:
             # Use component strings directly - no conversion needed
             component_keys = new_components
@@ -1627,16 +1794,29 @@ class FunctionListEditorWidget(QWidget):
                 # Convert to dict mode
                 current_functions = self.functions
                 self.pattern_data = {component_keys[0]: current_functions}
+                list_tokens = (
+                    list(self._pattern_tokens)
+                    if isinstance(self._pattern_tokens, list)
+                    else list(self._current_function_tokens)
+                )
+                self._pattern_tokens = {component_keys[0]: list_tokens}
                 self.is_dict_mode = True
                 self.selected_pattern_key = component_keys[0]
+                self._current_function_tokens = list_tokens
                 self._record_selected_pattern_key()
 
                 # Add other components with empty functions
                 for component_key in component_keys[1:]:
                     self.pattern_data[component_key] = []
+                    self._pattern_tokens[component_key] = []  # type: ignore[index]
             else:
                 # Already in dict mode - update components
                 old_pattern = self.pattern_data.copy() if isinstance(self.pattern_data, dict) else {}
+                old_tokens = (
+                    self._pattern_tokens.copy()
+                    if isinstance(self._pattern_tokens, dict)
+                    else {}
+                )
 
                 # Create a persistent storage for deselected components (mirrors Textual TUI)
                 self._deselected_components_storage = {}
@@ -1647,35 +1827,51 @@ class FunctionListEditorWidget(QWidget):
                         self._deselected_components_storage[old_key] = old_functions
                         # Unregister function ObjectStates for removed keys.
                         self._unregister_function_states_for_functions(
-                            old_functions, str(old_key)
+                            old_functions,
+                            str(old_key),
+                            tokens=list(old_tokens.get(str(old_key), [])),
                         )
                         logger.debug(f"Saved {len(old_functions)} functions for deselected component {old_key}")
 
                 new_pattern = {}
+                new_tokens: Dict[str, List[str]] = {}
 
                 # Restore functions for components (from current pattern or storage)
                 for component_key in component_keys:
                     if component_key in old_pattern:
                         # Component was already selected - keep its functions
                         new_pattern[component_key] = old_pattern[component_key]
+                        new_tokens[component_key] = list(
+                            old_tokens.get(str(component_key), [])
+                        )
                     elif component_key in self._deselected_components_storage:
                         # Component was previously deselected - restore its functions
                         new_pattern[component_key] = self._deselected_components_storage[component_key]
+                        new_tokens[component_key] = list(
+                            old_tokens.get(str(component_key), [])
+                        )
                         logger.debug(f"Restored {len(new_pattern[component_key])} functions for reselected component {component_key}")
                     else:
                         # New component - start with empty functions
                         new_pattern[component_key] = []
+                        new_tokens[component_key] = []
 
                 self.pattern_data = new_pattern
+                self._pattern_tokens = new_tokens
 
         # Update selected channel if current one is no longer available
         if self.selected_pattern_key not in component_keys:
             self.selected_pattern_key = component_keys[0]
             self.functions = new_pattern[self.selected_pattern_key]
+        if isinstance(self._pattern_tokens, dict) and self.selected_pattern_key is not None:
+            self._current_function_tokens = list(
+                self._pattern_tokens.get(str(self.selected_pattern_key), [])
+            )
 
         # Update UI to reflect changes
         self._populate_function_list()
         self._update_navigation_buttons()
+        self._persist_pattern_tokens_to_state()
 
     def _refresh_component_button(self):
         """Refresh the component button text and state (mirrors Textual TUI)."""
@@ -1740,38 +1936,14 @@ class FunctionListEditorWidget(QWidget):
             new_index = (current_index + direction) % len(keys)
             new_key = keys[new_index]
 
-            self._switch_to_pattern_key(new_key)
+            self._select_pattern_key(
+                new_key,
+                commit_current_view=True,
+                persist_selection=True,
+            )
             logger.debug(f"Navigated to key {new_key}")
         except (ValueError, IndexError):
             raise
-
-    def _switch_to_pattern_key(self, key: str):
-        """Switch to editing functions for a specific dict-pattern key."""
-        if not self.is_dict_mode:
-            return
-
-        if self.selected_pattern_key == key:
-            return
-
-        # Save current functions first
-        old_key = self.selected_pattern_key
-        logger.debug(f"Switching from key {old_key} to {key}")
-
-        self._update_pattern_data()
-
-        # Switch to new key
-        self.selected_pattern_key = key
-        self._record_selected_pattern_key()
-
-        if isinstance(self.pattern_data, dict):
-            self.functions = self.pattern_data.get(key, [])
-            logger.debug(f"Loaded {len(self.functions)} functions for key {key}")
-        else:
-            self.functions = []
-
-        # Update UI
-        self._refresh_component_button()
-        self._populate_function_list()
 
     def select_pattern_key(self, key: str) -> None:
         """Select dict-pattern key for viewing/editing."""
@@ -1782,7 +1954,11 @@ class FunctionListEditorWidget(QWidget):
             return
 
         self._pending_selected_pattern_key = None
-        self._switch_to_pattern_key(key)
+        self._select_pattern_key(
+            key,
+            commit_current_view=True,
+            persist_selection=True,
+        )
 
     def select_pattern_key_for_function_token(self, token: str) -> None:
         """Select dict-pattern key that contains a function entry token.
@@ -1790,29 +1966,49 @@ class FunctionListEditorWidget(QWidget):
         Used by OpenHCS time-travel navigation to restore the UI view to the
         correct channel when a function inside a dict pattern changed.
         """
-        from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
-
         if not token or not self.is_dict_mode or not isinstance(self.pattern_data, dict):
+            return
+        if not isinstance(self._pattern_tokens, dict):
             return
 
         target_channel = None
-        for channel_key, func_items in self.pattern_data.items():
-            for item in func_items or []:
-                _func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-                if isinstance(kwargs, dict) and str(kwargs.get(SCOPE_TOKEN_KEY)) == str(token):
-                    target_channel = str(channel_key)
-                    break
-            if target_channel is not None:
+        for channel_key, channel_tokens in self._pattern_tokens.items():
+            if str(token) in {str(t) for t in channel_tokens}:
+                target_channel = str(channel_key)
                 break
 
         if target_channel is None:
             return
 
         if self.selected_pattern_key != target_channel:
-            self._switch_to_pattern_key(target_channel)
+            self._select_pattern_key(
+                target_channel,
+                commit_current_view=True,
+                persist_selection=True,
+            )
 
     def _update_pattern_data(self):
         """Update pattern_data based on current functions and mode (mirrors Textual TUI)."""
+        sanitized_functions = []
+        for item in self.functions:
+            func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
+            if func is None:
+                continue
+            clean_kwargs = self._sanitize_pattern_kwargs(
+                kwargs if isinstance(kwargs, dict) else {}
+            )
+            sanitized_functions.append((func, clean_kwargs))
+        self.functions = sanitized_functions
+        if len(self._current_function_tokens) < len(self.functions):
+            missing = len(self.functions) - len(self._current_function_tokens)
+            self._current_function_tokens.extend(
+                self._get_func_token_generator().ensure() for _ in range(missing)
+            )
+        elif len(self._current_function_tokens) > len(self.functions):
+            self._current_function_tokens = self._current_function_tokens[
+                : len(self.functions)
+            ]
+
         if self.is_dict_mode and self.selected_pattern_key is not None:
             # Save current functions to the selected channel
             # CRITICAL: Create a NEW dict so ObjectState equality check detects changes
@@ -1821,8 +2017,11 @@ class FunctionListEditorWidget(QWidget):
             new_pattern = dict(old_pattern)  # Shallow copy of dict
             new_pattern[self.selected_pattern_key] = self.functions.copy()
             self.pattern_data = new_pattern
+            self._set_tokens_for_current_view(self._current_function_tokens)
             logger.debug(f"Saving {len(self.functions)} functions to key {self.selected_pattern_key}")
         else:
             # List mode - pattern_data is a COPY of functions list
             # CRITICAL: Must be a copy so ObjectState equality check detects changes
             self.pattern_data = self.functions.copy()
+            self._set_tokens_for_current_view(self._current_function_tokens)
+        self._persist_pattern_tokens_to_state()

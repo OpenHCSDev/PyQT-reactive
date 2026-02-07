@@ -18,6 +18,7 @@ SCOPE_TOKEN_KEY = "__pyqt_reactive_scope_token__"
 
 # Namespaced metadata keys for ObjectState.metadata
 FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY = "pyqt_reactive.func_editor.selected_pattern_key"
+FUNC_EDITOR_PATTERN_TOKENS_META_KEY = "pyqt_reactive.func_editor.pattern_tokens"
 
 
 class PatternDataManager:
