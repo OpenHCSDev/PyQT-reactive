@@ -49,6 +49,7 @@ class RunningExecutionEntry:
     plate_id: str
     start_time: float | None = None
     elapsed: float | None = None
+    compile_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ class ExecutionServerInfo(BaseServerInfo):
                     elapsed=float(execution["elapsed"])
                     if "elapsed" in execution and execution["elapsed"] is not None
                     else None,
+                    compile_only=bool(execution.get("compile_only", False)),
                 )
                 for execution in running_raw
             ),
