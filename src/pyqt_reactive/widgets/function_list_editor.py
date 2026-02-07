@@ -1805,10 +1805,10 @@ class FunctionListEditorWidget(QWidget):
                 self._current_function_tokens = list_tokens
                 self._record_selected_pattern_key()
 
-                # Add other components with empty functions
+                # Add other components with copy of current functions
                 for component_key in component_keys[1:]:
-                    self.pattern_data[component_key] = []
-                    self._pattern_tokens[component_key] = []  # type: ignore[index]
+                    self.pattern_data[component_key] = list(current_functions)
+                    self._pattern_tokens[component_key] = list(list_tokens)  # type: ignore[index]
             else:
                 # Already in dict mode - update components
                 old_pattern = self.pattern_data.copy() if isinstance(self.pattern_data, dict) else {}
@@ -1837,6 +1837,15 @@ class FunctionListEditorWidget(QWidget):
                 new_tokens: Dict[str, List[str]] = {}
 
                 # Restore functions for components (from current pattern or storage)
+                # Get a reference pattern to copy from (first existing component)
+                reference_functions = None
+                reference_tokens = None
+                for ref_key in component_keys:
+                    if ref_key in old_pattern and old_pattern[ref_key]:
+                        reference_functions = old_pattern[ref_key]
+                        reference_tokens = old_tokens.get(str(ref_key), [])
+                        break
+
                 for component_key in component_keys:
                     if component_key in old_pattern:
                         # Component was already selected - keep its functions
@@ -1852,9 +1861,15 @@ class FunctionListEditorWidget(QWidget):
                         )
                         logger.debug(f"Restored {len(new_pattern[component_key])} functions for reselected component {component_key}")
                     else:
-                        # New component - start with empty functions
-                        new_pattern[component_key] = []
-                        new_tokens[component_key] = []
+                        # New component - copy from reference pattern if available
+                        if reference_functions is not None:
+                            new_pattern[component_key] = list(reference_functions)
+                            new_tokens[component_key] = list(reference_tokens) if reference_tokens else []
+                            logger.debug(f"Copied {len(reference_functions)} functions to new component {component_key}")
+                        else:
+                            # No reference available - start with empty functions
+                            new_pattern[component_key] = []
+                            new_tokens[component_key] = []
 
                 self.pattern_data = new_pattern
                 self._pattern_tokens = new_tokens
