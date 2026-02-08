@@ -45,17 +45,21 @@ class FunctionTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
         # Get contract name
         contract = item.get('contract')
         contract_name = contract.name if hasattr(contract, 'name') else str(contract) if contract else "unknown"
-        
+
         # Format tags
         tags = item.get('tags', [])
         tags_str = ", ".join(tags) if tags else ""
-        
+
         # Truncate description
         doc = item.get('doc', '')
         description = doc[:150] + "..." if len(doc) > 150 else doc
-        
+
+        # Display original_name (just the function name) instead of name (which includes module prefix)
+        # The module is shown separately in the Module column
+        display_name = item.get('original_name', '') or item.get('name', 'unknown')
+
         return [
-            item.get('name', 'unknown'),
+            display_name,
             item.get('module', 'unknown'),
             item.get('backend', 'unknown').title(),
             item.get('registry', 'unknown').title(),
@@ -68,11 +72,16 @@ class FunctionTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
         """Return searchable text for function metadata."""
         contract = item.get('contract')
         contract_name = contract.name if hasattr(contract, 'name') else str(contract) if contract else ""
-        
+
         tags = item.get('tags', [])
-        
+
+        # Include both original_name and name for searching
+        original_name = item.get('original_name', '')
+        name = item.get('name', '')
+
         return " ".join([
-            item.get('name', ''),
+            original_name,
+            name,
             item.get('module', ''),
             contract_name,
             " ".join(tags),
