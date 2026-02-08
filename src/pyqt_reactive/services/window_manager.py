@@ -186,7 +186,13 @@ class WindowManager:
         window.move(x, y)
 
     @classmethod
-    def show_or_focus(cls, scope_id: str, window_factory: Callable[[], QWidget]) -> QWidget:
+    def show_or_focus(
+        cls,
+        scope_id: str,
+        window_factory: Callable[[], QWidget],
+        item_id: Optional[str] = None,
+        field_path: Optional[str] = None
+    ) -> QWidget:
         """Show window for scope_id. Reuse existing or create new.
 
         If window already exists for this scope_id, brings it to front.
@@ -194,9 +200,16 @@ class WindowManager:
 
         Auto-cleanup: Window is automatically unregistered when closed.
 
+        IMPORTANT: Navigation is deferred to handle async widget creation.
+        The scroll/flash only triggers after:
+        1. Window is shown and painted
+        2. Target widgets are built (via _on_build_complete_callbacks)
+
         Args:
             scope_id: Unique identifier for the window (e.g., plate path, step scope)
             window_factory: Callable that creates the window if needed
+            item_id: Optional item to select after showing (e.g., list index)
+            field_path: Optional field to highlight after showing (e.g., "well_filter_config.well_filter")
 
         Returns:
             The window (existing or newly created)
@@ -210,6 +223,13 @@ class WindowManager:
                 )
 
             window = WindowManager.show_or_focus("plate1", create_config_window)
+
+            # Show and navigate to field
+            WindowManager.show_or_focus(
+                "plate1",
+                create_config_window,
+                field_path="well_filter_config.well_filter"
+            )
         """
         # Check if window exists and is still valid
         if scope_id in cls._scoped_windows:
@@ -232,6 +252,11 @@ class WindowManager:
                     window.showNormal()
 
                 logger.debug(f"[WINDOW_MGR] Focused existing window for scope: {scope_id}")
+
+                # Defer navigation if requested
+                if item_id or field_path:
+                    cls._deferred_navigate(window, item_id, field_path)
+
                 return window
 
             except RuntimeError:
@@ -262,6 +287,11 @@ class WindowManager:
         # Show window
         window.show()
         QTimer.singleShot(0, lambda: cls.position_window_near_cursor(window))
+
+        # Defer navigation if requested (waits for async widget creation)
+        if item_id or field_path:
+            cls._deferred_navigate(window, item_id, field_path)
+
         logger.debug(f"[WINDOW_MGR] Registered and showed new window for scope: {scope_id}")
         return window
 
@@ -276,6 +306,11 @@ class WindowManager:
 
         Brings window to front and optionally navigates to item/field.
         Navigation only works if window implements the navigation protocol.
+
+        IMPORTANT: Uses deferred navigation to handle async widget creation.
+        The scroll/flash only triggers after:
+        1. Window is shown and painted
+        2. Target widgets are built (via _on_build_complete_callbacks)
 
         Args:
             scope_id: Window to focus
@@ -321,19 +356,11 @@ class WindowManager:
 
             logger.debug(f"[WINDOW_MGR] Focused window for scope: {scope_id}")
 
-            # Navigate to item if window supports it (duck typing)
-            if item_id and hasattr(window, 'select_and_scroll_to_item'):
-                logger.debug(f"[WINDOW_MGR] Navigating to item: {item_id}")
-                window.select_and_scroll_to_item(item_id)
-
-            # Navigate to field if window supports it (duck typing)
-            if field_path and hasattr(window, 'select_and_scroll_to_field'):
-                logger.debug(f"[WINDOW_MGR] Navigating to field: {field_path}")
-                window.select_and_scroll_to_field(field_path)
-            elif field_path:
-                logger.debug(f"[WINDOW_MGR] Field path provided but window has no select_and_scroll_to_field: {field_path}")
-            else:
-                logger.debug(f"[WINDOW_MGR] No field_path provided for scope: {scope_id}")
+            # Defer navigation to handle async widget creation
+            # This ensures scroll/flash only happens after:
+            # 1. Window is painted (QTimer.singleShot(0, ...))
+            # 2. Target widgets exist (_on_build_complete_callbacks)
+            cls._deferred_navigate(window, item_id, field_path)
 
             return True
 
@@ -342,6 +369,134 @@ class WindowManager:
             logger.warning(f"[WINDOW_MGR] Window deleted during navigation for scope: {scope_id}")
             del cls._scoped_windows[scope_id]
             return False
+
+    @classmethod
+    def _deferred_navigate(
+        cls,
+        window: QWidget,
+        item_id: Optional[str] = None,
+        field_path: Optional[str] = None
+    ) -> None:
+        """Internal: Deferred navigation that waits for async widget creation.
+
+        Uses QTimer.singleShot(0, ...) to defer to after paint, then checks
+        if widgets and nested managers are ready. If not, registers a callback
+        on _on_build_complete_callbacks to retry.
+
+        For nested field navigation (e.g., "well_filter_config.well_filter"),
+        we check that nested managers exist at all path levels.
+        """
+        def _do_navigation():
+            """Actually perform the navigation (scroll + flash)."""
+            try:
+                # Validate window still exists
+                _ = window.windowTitle()
+            except RuntimeError:
+                logger.debug(f"[WINDOW_MGR] Window deleted during deferred navigation")
+                return
+
+            # Navigate to item if window supports it (duck typing)
+            if item_id and hasattr(window, 'select_and_scroll_to_item'):
+                logger.debug(f"[WINDOW_MGR] Deferred navigating to item: {item_id}")
+                window.select_and_scroll_to_item(item_id)
+
+            # Navigate to field if window supports it (duck typing)
+            if field_path and hasattr(window, 'select_and_scroll_to_field'):
+                logger.debug(f"[WINDOW_MGR] Deferred navigating to field: {field_path}")
+                window.select_and_scroll_to_field(field_path)
+            elif field_path:
+                logger.debug(f"[WINDOW_MGR] Field path provided but window has no select_and_scroll_to_field: {field_path}")
+
+        def _check_nested_manager_exists(form_manager, field_path: str) -> bool:
+            """Check if all nested managers in the field path exist.
+
+            For "well_filter_config.well_filter", checks:
+            1. nested_managers['well_filter_config'] exists
+            2. (No further check needed since 'well_filter' is a widget, not nested)
+
+            Returns True if path is valid, False if nested manager is missing.
+            """
+            if '.' not in field_path:
+                # Single-level path, no nested manager needed
+                return True
+
+            parts = field_path.split('.')
+            current_manager = form_manager
+
+            # Check all but the last part (which is the field/leaf)
+            for i, part in enumerate(parts[:-1]):
+                if not hasattr(current_manager, 'nested_managers'):
+                    logger.debug(f"[WINDOW_MGR] No nested_managers attribute at depth {i}")
+                    return False
+                if part not in current_manager.nested_managers:
+                    logger.debug(f"[WINDOW_MGR] Nested manager '{part}' not found at depth {i}")
+                    return False
+                current_manager = current_manager.nested_managers[part]
+
+            return True
+
+        def _check_and_navigate():
+            """Check if widgets are ready, navigate or register callback."""
+            try:
+                # Validate window still exists
+                _ = window.windowTitle()
+            except RuntimeError:
+                return
+
+            # Check if we need to wait for async widget creation
+            needs_wait = False
+            wait_reason = None
+
+            if field_path and hasattr(window, 'form_manager'):
+                form_manager = window.form_manager
+
+                # Check 1: Root widgets must exist
+                if hasattr(form_manager, 'widgets') and not form_manager.widgets:
+                    logger.debug(f"[WINDOW_MGR] Root widgets not ready, waiting...")
+                    needs_wait = True
+                    wait_reason = "root widgets"
+                # Check 2: For nested field paths, check nested managers exist
+                elif '.' in field_path:
+                    if not _check_nested_manager_exists(form_manager, field_path):
+                        logger.debug(f"[WINDOW_MGR] Nested manager not ready for '{field_path}', waiting...")
+                        needs_wait = True
+                        wait_reason = "nested manager"
+
+            if item_id and hasattr(window, 'item_list'):
+                # For list-based navigation, check if items exist
+                if hasattr(window, '_scope_to_list_item'):
+                    if not window._scope_to_list_item:
+                        logger.debug(f"[WINDOW_MGR] List items not ready, waiting...")
+                        needs_wait = True
+                        wait_reason = "list items"
+
+            if needs_wait:
+                # Register callback to retry after build completes
+                if hasattr(window, 'form_manager'):
+                    callbacks = getattr(window.form_manager, '_on_build_complete_callbacks', None)
+                    if callbacks is not None:
+                        # Track retry count to prevent infinite loops
+                        retry_count = getattr(window, '_nav_retry_count', 0)
+                        if retry_count < 10:  # Max 10 retries
+                            def retry_with_callback():
+                                # Increment retry count
+                                window._nav_retry_count = getattr(window, '_nav_retry_count', 0) + 1
+                                logger.debug(f"[WINDOW_MGR] Build complete, retrying navigation (attempt {window._nav_retry_count})")
+                                # Schedule re-check instead of direct navigation
+                                # This allows nested managers to be fully populated
+                                QTimer.singleShot(50, _check_and_navigate)
+
+                            callbacks.append(retry_with_callback)
+                            logger.debug(f"[WINDOW_MGR] Registered build-complete callback for navigation (wait_reason={wait_reason})")
+                            return
+                        else:
+                            logger.warning(f"[WINDOW_MGR] Max retries reached for navigation, giving up")
+
+            # Widgets are ready or no wait needed - navigate now
+            _do_navigation()
+
+        # Step 1: Defer to after current event loop (ensures window is at least shown)
+        QTimer.singleShot(0, _check_and_navigate)
 
     @classmethod
     def register(cls, scope_id: str, window: QWidget) -> None:

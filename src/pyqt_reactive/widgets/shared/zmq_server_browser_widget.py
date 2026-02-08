@@ -249,14 +249,11 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
     def _periodic_cleanup(self) -> None:
         self._periodic_domain_cleanup()
-        current_ports = set(
-            server.get("port") for server in self.servers if server.get("port")
-        )
-        for port in list(self._last_known_servers.keys()):
-            if port in current_ports:
-                continue
-            if self._ping_server(port) is None:
-                del self._last_known_servers[port]
+        # Note: We intentionally do NOT clean up _last_known_servers here.
+        # Servers are removed from the tree by _populate_tree based on scan misses.
+        # Keeping _last_known_servers allows subclasses to access server info
+        # (like active executions) even when ping temporarily fails.
+        # Subclasses can implement their own cleanup via _periodic_domain_cleanup.
 
     def _collect_selected_server_ports(self, empty_selection_message: str) -> List[int]:
         selected_items = self.server_tree.selectedItems()

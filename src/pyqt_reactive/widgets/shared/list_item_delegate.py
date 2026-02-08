@@ -58,10 +58,12 @@ class Segment:
         field_path: Dotted path for styling lookup (e.g., 'path_planning_config.well_filter')
                    None = no styling, '' = root path (matches any dirty/sig-diff field)
         sep_before: Optional separator to insert before this segment (for preview grouping)
+        asterisk_prefix: If True and segment is dirty, draw asterisk BEFORE text (not after)
     """
     text: str
     field_path: Optional[str] = None
     sep_before: Optional[str] = None
+    asterisk_prefix: bool = False
 
 
 @dataclass
@@ -272,6 +274,13 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         is_dirty = self._has_field_match(segment.field_path, dirty_fields)
         has_sig_diff = self._has_field_match(segment.field_path, sig_diff_fields)
 
+        # Draw asterisk BEFORE text if asterisk_prefix=True and dirty
+        if is_dirty and segment.asterisk_prefix:
+            painter.setFont(base_font)
+            painter.setPen(color)
+            painter.drawText(x, y, "*")
+            x += QFontMetrics(base_font).horizontalAdvance("*")
+
         # Draw text with underline if sig-diff
         font = QFont(base_font)
         font.setUnderline(has_sig_diff)
@@ -280,9 +289,10 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         painter.drawText(x, y, segment.text)
         x += QFontMetrics(font).horizontalAdvance(segment.text)
 
-        # Draw asterisk WITHOUT underline if dirty
-        if is_dirty:
+        # Draw asterisk AFTER text if dirty and NOT asterisk_prefix
+        if is_dirty and not segment.asterisk_prefix:
             painter.setFont(base_font)
+            painter.setPen(color)
             painter.drawText(x, y, "*")
             x += QFontMetrics(base_font).horizontalAdvance("*")
 

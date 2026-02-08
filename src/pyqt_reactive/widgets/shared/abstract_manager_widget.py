@@ -1839,7 +1839,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """
         # Convert tuples to Segment objects with preview grouping support
         # Grouping is handled by segments having sep_before set on individual segments
-        def _create_segments_with_grouping(segments_list):
+        def _create_segments_with_grouping(segments_list, asterisk_prefix=False):
             if not segments_list:
                 return []
             result = []
@@ -1852,16 +1852,16 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
                     label, path, sep = item
                 # Use sep if provided, otherwise None for first item
                 segment_sep = sep if i > 0 else None
-                result.append(Segment(text=label, field_path=path, sep_before=segment_sep))
+                result.append(Segment(text=label, field_path=path, sep_before=segment_sep, asterisk_prefix=asterisk_prefix))
             return result
 
         layout = StyledTextLayout(
-            name=Segment(text=item_name, field_path=''),
+            name=Segment(text=item_name, field_path='', asterisk_prefix=True),
             status_prefix=status_prefix,
             first_line_segments=_create_segments_with_grouping(first_line_segments or []),
             detail_line=detail_line,
-            preview_segments=_create_segments_with_grouping(segments),
-            config_segments=_create_segments_with_grouping(config_segments or []),
+            preview_segments=_create_segments_with_grouping(segments, asterisk_prefix=True),
+            config_segments=_create_segments_with_grouping(config_segments or [], asterisk_prefix=True),
             multiline=True,
         )
         return StyledText(layout)
@@ -1933,7 +1933,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
                 segments.extend(sig_diff_segments)
 
         # Convert tuples to Segment objects with preview grouping support
-        def _create_segments_with_grouping(segments_list, sep_before_first=None):
+        def _create_segments_with_grouping(segments_list, sep_before_first=None, asterisk_prefix=False):
             """Convert segment tuples to Segment objects, preserving grouping info.
 
             Handles both 2-tuples (label, path) and 3-tuples (label, path, sep_before).
@@ -1952,21 +1952,21 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
                 # Use strategy's sep_before if provided, otherwise use default
                 if sep is not None:
-                    seg = Segment(text=label, field_path=path, sep_before=sep)
+                    seg = Segment(text=label, field_path=path, sep_before=sep, asterisk_prefix=asterisk_prefix)
                 elif i > 0:
-                    seg = Segment(text=label, field_path=path, sep_before=sep_before_first)
+                    seg = Segment(text=label, field_path=path, sep_before=sep_before_first, asterisk_prefix=asterisk_prefix)
                 else:
-                    seg = Segment(text=label, field_path=path, sep_before=None)
+                    seg = Segment(text=label, field_path=path, sep_before=None, asterisk_prefix=asterisk_prefix)
                 result.append(seg)
             return result
 
         layout = StyledTextLayout(
-            name=Segment(text=item_name, field_path=''),
+            name=Segment(text=item_name, field_path='', asterisk_prefix=True),
             status_prefix=status_prefix,
             first_line_segments=_create_segments_with_grouping(first_line_segments or []),
             detail_line=detail_line,
-            preview_segments=_create_segments_with_grouping(segments, sep_before_first=" | "),
-            config_segments=_create_segments_with_grouping(config_segments or [], sep_before_first=" | "),
+            preview_segments=_create_segments_with_grouping(segments, sep_before_first=" | ", asterisk_prefix=True),
+            config_segments=_create_segments_with_grouping(config_segments or [], sep_before_first=" | ", asterisk_prefix=True),
             multiline=True,
         )
         return StyledText(layout)
