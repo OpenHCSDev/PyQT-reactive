@@ -664,7 +664,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
     def sync_kwargs(self):
         """Sync internal kwargs to main kwargs (extracted from Textual version)."""
-        self.kwargs = self._internal_kwargs.copy()
+        # Reconstruct kwargs from ObjectState to get proper nested dataclasses
+        if self.form_manager and self.form_manager.state:
+            self.kwargs = self._reconstruct_kwargs_from_state(self.form_manager.state)
+            self._internal_kwargs = self.kwargs.copy()
+        else:
+            self.kwargs = self._internal_kwargs.copy()
     
     def update_function(self, func_item: Tuple[Callable, Dict]):
         """
