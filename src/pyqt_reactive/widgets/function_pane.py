@@ -547,16 +547,10 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             param_name: Full path like "func_0.sigma" or "dtype_config.default_dtype_conversion"
             value: New parameter value
         """
-        # ObjectState already stores the value at the dotted path.
-        # We need to reconstruct kwargs from ObjectState to get nested dataclasses.
-        # This replaces the old flattening logic that was breaking nested configs.
-
-        # Reconstruct kwargs from ObjectState's flat storage
+        # DON'T FLATTEN! Just reconstruct the entire kwargs dict from ObjectState
+        # every time any parameter changes. ObjectState knows how to rebuild nested dataclasses.
         if self.form_manager and self.form_manager.state:
             self._internal_kwargs = self._reconstruct_kwargs_from_state(self.form_manager.state)
-
-        # The form manager already has the updated value (it emitted this signal)
-        # No need to call update_parameter() again - that would be redundant
 
         # Emit parameter changed signal to notify parent (function list editor)
         # Extract leaf field for signal (parent may expect just the field name)
@@ -664,10 +658,11 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
     def sync_kwargs(self):
         """Sync internal kwargs to main kwargs (extracted from Textual version)."""
-        # Reconstruct kwargs from ObjectState to get proper nested dataclasses
+        # ALWAYS reconstruct from ObjectState - never use flattened dict
         if self.form_manager and self.form_manager.state:
-            self.kwargs = self._reconstruct_kwargs_from_state(self.form_manager.state)
-            self._internal_kwargs = self.kwargs.copy()
+            reconstructed = self._reconstruct_kwargs_from_state(self.form_manager.state)
+            self._internal_kwargs = reconstructed
+            self.kwargs = reconstructed
         else:
             self.kwargs = self._internal_kwargs.copy()
     

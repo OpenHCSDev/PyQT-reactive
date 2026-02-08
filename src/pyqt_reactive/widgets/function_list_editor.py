@@ -2004,6 +2004,12 @@ class FunctionListEditorWidget(QWidget):
 
     def _update_pattern_data(self):
         """Update pattern_data based on current functions and mode (mirrors Textual TUI)."""
+        # CRITICAL: Sync all function panes to get reconstructed kwargs from ObjectState
+        # before reading self.functions. Otherwise we get stale flattened kwargs!
+        for pane in self.function_panes:
+            if pane and hasattr(pane, 'sync_kwargs'):
+                pane.sync_kwargs()
+
         sanitized_functions = []
         for item in self.functions:
             func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
