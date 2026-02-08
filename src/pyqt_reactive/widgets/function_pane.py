@@ -544,20 +544,23 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         Handle parameter value changes (extracted from Textual version).
 
         Args:
-            param_name: Full path like "func_0.sigma" or just "func_0.param_name"
+            param_name: Full path like "func_0.sigma" or "dtype_config.default_dtype_conversion"
             value: New parameter value
         """
-        # Extract leaf field name from full path
-        # "func_0.sigma" -> "sigma"
-        leaf_field = param_name.split('.')[-1]
+        # ObjectState already stores the value at the dotted path.
+        # We need to reconstruct kwargs from ObjectState to get nested dataclasses.
+        # This replaces the old flattening logic that was breaking nested configs.
 
-        # Update internal kwargs without triggering reactive update
-        self._internal_kwargs[leaf_field] = value
+        # Reconstruct kwargs from ObjectState's flat storage
+        if self.form_manager and self.form_manager.state:
+            self._internal_kwargs = self._reconstruct_kwargs_from_state(self.form_manager.state)
 
         # The form manager already has the updated value (it emitted this signal)
         # No need to call update_parameter() again - that would be redundant
 
         # Emit parameter changed signal to notify parent (function list editor)
+        # Extract leaf field for signal (parent may expect just the field name)
+        leaf_field = param_name.split('.')[-1]
         self.parameter_changed.emit(self.index, leaf_field, value)
 
         logger.debug(f"Parameter changed: {param_name} = {value}")
@@ -625,6 +628,40 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         """
         return self._internal_kwargs.copy()
     
+    def _reconstruct_kwargs_from_state(self, state: 'ObjectState') -> dict:
+        """
+        Reconstruct kwargs dict from ObjectState's flat storage.
+
+        This properly handles nested dataclasses by using ObjectState's to_object()
+        to reconstruct them, then extracting top-level fields as kwargs.
+
+        Args:
+            state: ObjectState instance containing parameter values
+
+        Returns:
+            Dict of kwargs suitable for passing to function at runtime
+        """
+        from dataclasses import is_dataclass
+
+        # Get all top-level parameter names (no dots)
+        top_level_params = {k for k in state.parameters.keys() if '.' not in k}
+
+        kwargs = {}
+        for param_name in top_level_params:
+            value = state.parameters.get(param_name)
+
+            # Check if this is a nested dataclass that needs reconstruction
+            param_type = state._path_to_type.get(param_name)
+            if param_type and is_dataclass(param_type):
+                # Reconstruct nested dataclass from flat storage
+                reconstructed = state._reconstruct_from_prefix(param_name)
+                kwargs[param_name] = reconstructed
+            else:
+                # Primitive value - use directly
+                kwargs[param_name] = value
+
+        return kwargs
+
     def sync_kwargs(self):
         """Sync internal kwargs to main kwargs (extracted from Textual version)."""
         self.kwargs = self._internal_kwargs.copy()
