@@ -552,23 +552,11 @@ class ProvenanceLabel(QLabel):
             from pyqt_reactive.services import WindowFactory
 
             if WindowManager.is_open(source_scope_id):
+                # Window is already open - just focus and navigate, don't move it
                 WindowManager.focus_and_navigate(
                     scope_id=source_scope_id,
                     field_path=target_path,
                 )
-                try:
-                    existing = WindowManager._scoped_windows.get(source_scope_id)
-                    source_window = self.window()
-                    if existing and source_window:
-                        if existing.frameGeometry().intersects(
-                            source_window.frameGeometry()
-                        ):
-                            WindowManager.position_window_near_cursor(
-                                existing,
-                                avoid_widgets=[source_window],
-                            )
-                except Exception:
-                    pass
                 logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
                 return
 
