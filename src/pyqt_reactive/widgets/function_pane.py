@@ -552,10 +552,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         if self.form_manager and self.form_manager.state:
             self._internal_kwargs = self._reconstruct_kwargs_from_state(self.form_manager.state)
 
+        # Sync kwargs to self.kwargs so parent can read updated values
+        self.sync_kwargs()
+
         # Emit parameter changed signal to notify parent (function list editor)
-        # Extract leaf field for signal (parent may expect just the field name)
-        leaf_field = param_name.split('.')[-1]
-        self.parameter_changed.emit(self.index, leaf_field, value)
+        # Parent will read the updated kwargs from self.kwargs (already reconstructed)
+        self.parameter_changed.emit(self.index, param_name, value)
 
         logger.debug(f"Parameter changed: {param_name} = {value}")
     

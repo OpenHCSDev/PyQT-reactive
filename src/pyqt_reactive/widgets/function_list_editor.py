@@ -1433,17 +1433,22 @@ class FunctionListEditorWidget(QWidget):
         )
     
     def _on_parameter_changed(self, index, param_name, value):
-        """Handle parameter change from function pane."""
+        """Handle parameter change from function pane.
+
+        CRITICAL: This is called when FunctionPaneWidget parameters change.
+        Instead of trying to update kwargs here (which would require reconstructing
+        nested dataclasses), we just read the updated kwargs from the pane.
+        FunctionPaneWidget already maintains properly reconstructed kwargs via
+        _reconstruct_kwargs_from_state().
+        """
         if self._pattern_event_suppression_depth > 0:
             return
-        if 0 <= index < len(self.functions):
+        if 0 <= index < len(self.function_panes):
             def mutate() -> None:
-                func, kwargs = self.functions[index]
-                # IMPORTANT: Don't mutate kwargs dict in-place.
-                # ObjectState uses equality checks; mutating shared dict instances can
-                # make changes undetectable and can also leak edits across keys.
-                new_kwargs = dict(kwargs)
-                new_kwargs[param_name] = value
+                # Get the updated kwargs from the function pane (already reconstructed)
+                pane = self.function_panes[index]
+                func = pane.func
+                new_kwargs = pane.kwargs.copy()  # kwargs is already reconstructed
                 self.functions[index] = (func, new_kwargs)
 
             self._commit_pattern_mutation(
