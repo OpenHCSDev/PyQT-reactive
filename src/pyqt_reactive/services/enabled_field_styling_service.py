@@ -295,16 +295,16 @@ class EnabledFieldStylingService:
                 effect.setOpacity(0.4)
                 widget.setGraphicsEffect(effect)
 
-        # Update provenance button visibility and title label underline
-        self._update_title_label_styling(manager)
+        # Update provenance button visibility and checkbox underline
+        self._update_enabled_field_title_styling(manager)
 
-    def _update_title_label_styling(self, manager) -> None:
+    def _update_enabled_field_title_styling(self, manager) -> None:
         """
-        Update title label styling for nested configs with enabled fields.
+        Update title styling for nested configs with enabled fields.
 
         This handles:
         - Provenance button visibility (only show when provenance source available)
-        - Title label underline (when enabled field's value differs from signature)
+        - Checkbox underline (when enabled field's value differs from signature)
 
         Args:
             manager: ParameterFormManager instance (nested manager)
@@ -325,11 +325,6 @@ class EnabledFieldStylingService:
         if not group_box:
             return
 
-        # Get title label from GroupBox
-        title_label = getattr(group_box, '_title_label', None)
-        if not title_label:
-            return
-
         # Update provenance button visibility
         # The button is in the title layout, we need to find it
         from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
@@ -339,13 +334,16 @@ class EnabledFieldStylingService:
                 logger.debug(f"[TITLE_STYLING] Updated provenance button visibility for {param_name}")
                 break
 
-        # Update title label underline based on signature diff
-        dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
-        should_underline = dotted_path in manager.state.signature_diff_fields
-        font = title_label.font()
-        font.setUnderline(should_underline)
-        title_label.setFont(font)
-        logger.debug(f"[TITLE_STYLING] field_id={param_name}, should_underline={should_underline}")
+        # Update checkbox underline based on signature diff
+        # The checkbox is the enabled widget, we need to find it
+        enabled_widget = manager.widgets.get('enabled')
+        if enabled_widget:
+            dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
+            should_underline = dotted_path in manager.state.signature_diff_fields
+            font = enabled_widget.font()
+            font.setUnderline(should_underline)
+            enabled_widget.setFont(font)
+            logger.debug(f"[TITLE_STYLING] field_id={param_name}, should_underline={should_underline}")
 
         # CRITICAL: Trigger a visual update so opacity effects are rendered
         # Qt doesn't automatically render QGraphicsOpacityEffect changes

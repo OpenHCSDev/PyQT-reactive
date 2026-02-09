@@ -292,14 +292,14 @@ def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_n
     logger.debug(f"🔍 _move_enabled_widget_to_title: dotted_path={dotted_path}, has_provenance={has_provenance}")
     provenance_button.update_visibility_based_on_provenance()
 
-    # Underline title label if enabled field's value differs from signature
+    # Underline checkbox if enabled field's value differs from signature
     should_underline = dotted_path in nested_manager.state.signature_diff_fields
     logger.debug(f"🔍 _move_enabled_widget_to_title: should_underline={should_underline}, signature_diff_fields={nested_manager.state.signature_diff_fields}")
-    if should_underline and title_label:
-        font = title_label.font()
+    if should_underline and isinstance(checkbox_widget, NoneAwareCheckBox):
+        font = checkbox_widget.font()
         font.setUnderline(True)
-        title_label.setFont(font)
-        logger.debug(f"🔍 _move_enabled_widget_to_title: underlined title_label for signature diff")
+        checkbox_widget.setFont(font)
+        logger.debug(f"🔍 _move_enabled_widget_to_title: underlined checkbox_widget for signature diff")
 
     container.addEnableableWidgets(enabled_widget, enabled_reset_button, provenance_button)
     logger.debug(f"🔍 _move_enabled_widget_to_title: added widgets to container, provenance_button visible={provenance_button.isVisible()}")
