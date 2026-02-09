@@ -346,9 +346,15 @@ class WindowManager:
             if not window.isVisible():
                 window.show()
 
-            # Bring window to front
-            window.raise_()
-            window.activateWindow()
+            # Bring window to front only if not already the active window
+            # This prevents window jumping when navigating within the same window (e.g., different tabs)
+            app = QApplication.instance()
+            is_already_active = app and app.activeWindow() == window
+            if not is_already_active:
+                window.raise_()
+                window.activateWindow()
+            else:
+                logger.debug(f"[WINDOW_MGR] Window already active, skipping raise/activate: {scope_id}")
 
             # Restore if minimized
             if window.isMinimized():
@@ -402,6 +408,9 @@ class WindowManager:
 
             # Navigate to field if window supports it (duck typing)
             if field_path and hasattr(window, 'select_and_scroll_to_field'):
+                # Eagerly create flash overlay BEFORE navigation to ensure it's ready for flash
+                from pyqt_reactive.animation import WindowFlashOverlay
+                WindowFlashOverlay.get_for_window(window)
                 logger.debug(f"[WINDOW_MGR] Deferred navigating to field: {field_path}")
                 window.select_and_scroll_to_field(field_path)
             elif field_path:

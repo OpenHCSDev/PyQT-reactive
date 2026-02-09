@@ -463,18 +463,13 @@ class HelpButton(QPushButton):
 
 
 
-class ProvenanceLabel(QLabel):
-    """QLabel that supports provenance navigation on hover/click.
+class ProvenanceNavigationMixin:
+    """Mixin providing provenance navigation capability to widgets.
 
-    When a field inherits its value from an ancestor, hovering shows bold + pointer
-    cursor, and clicking navigates to the source window/field.
+    Provides methods for checking if a field has a provenance source and
+    navigating to that source when clicked. Used by ProvenanceLabel and
+    ProvenanceButton to avoid duplicating navigation logic.
     """
-
-    def __init__(self, text: str, state=None, dotted_path: str = None, parent=None):
-        super().__init__(text, parent)
-        self._state = state  # ObjectState instance
-        self._dotted_path = dotted_path  # Full dotted path for provenance lookup
-        self.setMouseTracking(True)
 
     def set_provenance_info(self, state, dotted_path: str) -> None:
         """Set provenance info after construction (for deferred binding)."""
@@ -490,33 +485,6 @@ class ProvenanceLabel(QLabel):
             return result is not None
         except Exception:
             return False
-
-    def enterEvent(self, event) -> None:
-        """On hover: show bold + pointer cursor if field has provenance."""
-        if self._has_provenance():
-            font = self.font()
-            font.setBold(True)
-            self.setFont(font)
-            self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        """On leave: restore normal font weight."""
-        font = self.font()
-        font.setBold(False)
-        self.setFont(font)
-        self.unsetCursor()
-        super().leaveEvent(event)
-
-    def mousePressEvent(self, event) -> None:
-        """On click: navigate to provenance source window and field."""
-        if event.button() == Qt.MouseButton.LeftButton and self._has_provenance():
-            result = self._state.get_provenance(self._dotted_path)
-            if result is not None:
-                source_scope_id, source_type = result
-                self._navigate_to_source(source_scope_id, source_type)
-                return
-        super().mousePressEvent(event)
 
     def _navigate_to_source(self, source_scope_id: str, source_type: type) -> None:
         """Open the source window (creating if needed) and scroll to the field.
@@ -721,6 +689,93 @@ class ProvenanceLabel(QLabel):
         return None
 
     # Window creation now handled by WindowFactory.create_window_for_scope()
+
+
+class ProvenanceLabel(QLabel, ProvenanceNavigationMixin):
+    """QLabel that supports provenance navigation on hover/click.
+
+    When a field inherits its value from an ancestor, hovering shows bold + pointer
+    cursor, and clicking navigates to the source window/field.
+    """
+
+    def __init__(self, text: str, state=None, dotted_path: str = None, parent=None):
+        super().__init__(text, parent)
+        self._state = state  # ObjectState instance
+        self._dotted_path = dotted_path  # Full dotted path for provenance lookup
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event) -> None:
+        """On hover: show bold + pointer cursor if field has provenance."""
+        if self._has_provenance():
+            font = self.font()
+            font.setBold(True)
+            self.setFont(font)
+            self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        """On leave: restore normal font weight."""
+        font = self.font()
+        font.setBold(False)
+        self.setFont(font)
+        self.unsetCursor()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        """On click: navigate to provenance source window and field."""
+        if event.button() == Qt.MouseButton.LeftButton and self._has_provenance():
+            result = self._state.get_provenance(self._dotted_path)
+            if result is not None:
+                source_scope_id, source_type = result
+                self._navigate_to_source(source_scope_id, source_type)
+                return
+        super().mousePressEvent(event)
+
+
+class ProvenanceButton(QPushButton, ProvenanceNavigationMixin):
+    """QPushButton with provenance navigation capability.
+
+    Small button (with ^ arrow) that navigates to the source window/field
+    when the enabled field has a provenance source.
+
+    Button is only visible when a provenance source is actually available.
+    """
+
+    def __init__(self, text="^", color_scheme=None, parent=None):
+        super().__init__(text, parent)
+        self.color_scheme = color_scheme or ColorScheme()
+        self._state = None
+        self._dotted_path = None
+        self.setMaximumWidth(25)
+        self.clicked.connect(self._on_click)
+
+    def _on_click(self):
+        """Handle button click - navigate to provenance source."""
+        if self._has_provenance():
+            result = self._state.get_provenance(self._dotted_path)
+            if result:
+                source_scope_id, source_type = result
+                self._navigate_to_source(source_scope_id, source_type)
+
+    def enterEvent(self, event):
+        """Show pointer cursor if field has provenance."""
+        if self._has_provenance():
+            self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Restore normal cursor."""
+        self.unsetCursor()
+        super().leaveEvent(event)
+
+    def update_visibility_based_on_provenance(self):
+        """Show/hide button based on whether provenance source is available."""
+        has_provenance = self._has_provenance()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"ProvenanceButton.update_visibility: dotted_path={self._dotted_path}, has_provenance={has_provenance}, _state={self._state}")
+        self.setVisible(has_provenance)
+        logger.debug(f"ProvenanceButton.update_visibility: visible={self.isVisible()}")
 
 
 class LabelWithHelp(QWidget):
@@ -1217,11 +1272,11 @@ class GroupBoxWithHelp(FlashableGroupBox):
         else:
             self.title_layout.addWidget(widget)
 
-    def addEnableableWidgets(self, enabled_checkbox, reset_button=None):
+    def addEnableableWidgets(self, enabled_checkbox, reset_button=None, provenance_button=None):
         """Add enableable widgets (checkbox + reset) right after help button.
 
         This is the clean API for adding enableable widgets in the correct position:
-        Title → Help → [Enabled Checkbox] → [Reset Button] → Other Controls
+        Title → Help → [Enabled Checkbox] → [Reset Button] → [Provenance Button] → Other Controls
         """
         from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
 
@@ -1250,3 +1305,17 @@ class GroupBoxWithHelp(FlashableGroupBox):
                     self.title_layout.insertWidget(self.title_layout.count() - 1, reset_button)
                 else:
                     self.title_layout.insertWidget(insert_pos, reset_button)
+
+        if provenance_button:
+            if not provenance_button.styleSheet():
+                provenance_button.setStyleSheet(
+                    f"background-color: {self.color_scheme.to_hex(self.color_scheme.button_normal_bg)};"
+                )
+            if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
+                self.title_layout.add_inline_widget(provenance_button)
+            else:
+                insert_pos += 1
+                if self.title_layout.count() > 0 and self.title_layout.itemAt(self.title_layout.count() - 1).spacerItem():
+                    self.title_layout.insertWidget(self.title_layout.count() - 1, provenance_button)
+                else:
+                    self.title_layout.insertWidget(insert_pos, provenance_button)

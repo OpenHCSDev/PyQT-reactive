@@ -1584,6 +1584,14 @@ class _GlobalFlashCoordinator:
         logger.debug(f"[FLASH] _process_pending_registrations: {len(still_pending)} still pending")
         self._pending_registrations = still_pending
 
+    def process_pending_registrations(self) -> None:
+        """Public method to process pending registrations.
+
+        Use this before queue_flash to ensure deferred registrations are
+        processed immediately (e.g., when navigating via provenance).
+        """
+        self._process_pending_registrations()
+
     def queue_flash_batch(self, keys: List[str]) -> None:
         """Queue multiple flashes with shared timestamp - perfect sync.
 

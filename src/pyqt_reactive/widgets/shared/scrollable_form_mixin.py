@@ -191,36 +191,83 @@ class ScrollableFormMixin:
         """Queue a leaf flash for navigation to a specific field.
 
         Uses INVERSE masking: flash the groupbox + all siblings, mask the leaf widget + its label.
-        This highlights "the context around the source field" when navigating via provenance.
+        This highlights "all fields that inherited the change" while keeping
+        the actual changed widget visible.
+
+        For ROOT fields (no section_path), flash the entire form area.
         """
-        # Find the groupbox for this section
+        from pyqt_reactive.animation import WindowFlashOverlay
+        from pyqt_reactive.animation.flash_mixin import _GlobalFlashCoordinator
+
+        logger.debug(f"🔍 QUEUE_LEAF_NAV_START section_path='{section_path}' leaf_name='{leaf_name}' leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}")
+
+        # Get the overlay and check what's registered
+        window = self.window()
+        overlay = WindowFlashOverlay._overlays.get(id(window)) if window else None
+
         if not section_path:
-            # No section to flash; fall back to tree/section flash is not possible.
-            return
-        groupbox = self.form_manager._get_groupbox_for_prefix(section_path)
-        if not groupbox:
-            # Fallback to section flash
-            logger.debug(f"[FLASH] No groupbox for {section_path}, falling back to section flash")
-            self.form_manager.queue_flash_local(section_path)
+            # Root field case - use the same approach as editing (line 1146-1209 in parameter_form_manager.py)
+            logger.debug(f"🔍 QUEUE_LEAF_NAV_ROOT section='{leaf_name}'")
+
+            # Get the groupbox (same as editing: parent of form_manager)
+            groupbox = self.form_manager.parent()
+            # Get the leaf widget (same as editing: from widgets dict)
+            actual_leaf_widget = self.form_manager.widgets.get(leaf_name)
+            # Get the label widget (for proper masking)
+            label_widget = self.form_manager.labels.get(leaf_name) if hasattr(self.form_manager, 'labels') else None
+
+            logger.debug(f"🔍 QUEUE_LEAF_NAV: groupbox={type(groupbox).__name__ if groupbox else None}")
+            logger.debug(f"🔍 QUEUE_LEAF_NAV: leaf_widget={type(actual_leaf_widget).__name__ if actual_leaf_widget else None}")
+            logger.debug(f"🔍 QUEUE_LEAF_NAV: label_widget={type(label_widget).__name__ if label_widget else None}")
+
+            if groupbox and actual_leaf_widget:
+                # Register with groupbox, leaf_widget, AND label_widget
+                leaf_flash_key = f"param_{leaf_name}"
+                logger.debug(f"🔍 QUEUE_LEAF_NAV: register_flash_leaf key='{leaf_flash_key}'")
+                if hasattr(groupbox, 'geometry'):
+                    logger.debug(f"🔍 QUEUE_LEAF_NAV: groupbox geometry={groupbox.geometry()}")
+                if hasattr(actual_leaf_widget, 'geometry'):
+                    logger.debug(f"🔍 QUEUE_LEAF_NAV: leaf_widget geometry={actual_leaf_widget.geometry()}")
+                if label_widget and hasattr(label_widget, 'geometry'):
+                    logger.debug(f"🔍 QUEUE_LEAF_NAV: label_widget geometry={label_widget.geometry()}")
+                # Pass label_widget instead of None for proper masking
+                self.form_manager.register_flash_leaf(leaf_flash_key, groupbox, actual_leaf_widget, label_widget=label_widget)
+
+            # Process pending registrations
+            _GlobalFlashCoordinator.get()._process_pending_registrations()
+
+            # Queue the flash
+            leaf_flash_key = f"param_{leaf_name}"
+            self.form_manager.queue_flash_local(leaf_flash_key)
+            logger.debug(f"🔍 QUEUE_LEAF_NAV_QUEUED key='{leaf_flash_key}'")
             return
 
-        # Find the label widget for this leaf field
-        nested_manager = self.form_manager._find_nested_manager_for_prefix(section_path)
-        label_widget = None
-        if nested_manager and hasattr(nested_manager, 'labels'):
-            label_widget = nested_manager.labels.get(leaf_name)
-
-        # Register leaf flash element dynamically
-        # Use '.' for attribute access (not '::' which is for scope hierarchy)
+        # Nested field case
         leaf_flash_key = f"{section_path}.{leaf_name}"
-        self.form_manager.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=label_widget)
+        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED section='{section_path}' leaf='{leaf_name}' key='{leaf_flash_key}'")
 
-        # Queue BOTH flashes so they're in sync:
-        # 1. Leaf flash for groupbox (inverse masking)
-        # 2. Tree item flash (uses tree:: prefix to avoid groupbox collision)
+        # Get widgets for nested field - same approach as editing
+        groupbox = self.form_manager._get_groupbox_for_prefix(section_path)
+        nested_manager = self.form_manager._find_nested_manager_for_prefix(section_path)
+        leaf_widget = nested_manager.widgets.get(leaf_name) if nested_manager else None
+        label_widget = nested_manager.labels.get(leaf_name) if nested_manager and hasattr(nested_manager, 'labels') else None
+
+        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED groupbox={type(groupbox).__name__ if groupbox else None}")
+        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}")
+        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED label_widget={type(label_widget).__name__ if label_widget else None}")
+
+        if groupbox and leaf_widget:
+            # Call SAME method as editing - register_flash_leaf with label_widget
+            logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED: Calling register_flash_leaf")
+            self.form_manager.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=label_widget)
+
+        # Process pending registrations
+        _GlobalFlashCoordinator.get()._process_pending_registrations()
+
+        # Queue the flash
         self.form_manager.queue_flash_local(leaf_flash_key)
         self.form_manager.queue_flash_local(f"tree::{section_path}")
-        logger.info(f"⚡ FLASH_DEBUG: Leaf flash for navigation: key={leaf_flash_key}, tree_key=tree::{section_path}")
+        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED_QUEUED leaf='{leaf_flash_key}' tree='tree::{section_path}'")
 
     def select_and_scroll_to_field(self, field_path: str) -> None:
         """Public API for WindowManager navigation protocol.

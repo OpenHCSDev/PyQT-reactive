@@ -181,8 +181,10 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
                 border_inset = sum(layer[0] for layer in layers)
         content_rect = option.rect.adjusted(border_inset, border_inset, -border_inset, -border_inset)
 
-        # Scope-based background: match border colors
-        self._paint_scope_background(painter, content_rect, scheme, layers)
+        # Scope-based background: match border colors (only when not selected)
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        if not is_selected:
+            self._paint_scope_background(painter, content_rect, scheme, layers)
 
         # Flash effect - drawn BEHIND text but inside borders
         flash_key = index.data(FLASH_KEY_ROLE)
@@ -210,7 +212,6 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         # Now draw text manually with custom colors
         painter.save()
 
-        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
         is_disabled = index.data(Qt.ItemDataRole.UserRole + 1) or False
 
         # Get structured layout - no string parsing needed!

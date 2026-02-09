@@ -1206,7 +1206,9 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
         # Flat parameter case: flash the full groupbox, mask only the changed field
         if not prefix:
-            self.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=None)
+            # Get label widget for proper masking (same as nested fields)
+            label_widget = self.labels.get(leaf_field) if hasattr(self, 'labels') else None
+            self.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=label_widget)
             self.queue_flash_local(leaf_flash_key)
             return
 

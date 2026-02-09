@@ -1090,7 +1090,7 @@ class FunctionListEditorWidget(QWidget):
                 callback=self._handle_edited_pattern,
                 use_external=use_external,
                 code_type='function',
-                code_data={'pattern_data': self.pattern_data, 'clean_mode': False}
+                code_data={'pattern_data': self.pattern_data, 'clean_mode': True}
             )
 
         except Exception as e:
