@@ -934,6 +934,9 @@ class GroupBoxWithHelp(FlashableGroupBox):
         # Scope border state (set via set_scope_color_scheme)
         self._scope_color_scheme = None
 
+        # Reset All button reference (set via addTitleWidget when button is added)
+        self._reset_all_button = None
+
         # Check if responsive wrapping is enabled
         from pyqt_reactive.widgets.shared.responsive_groupbox_title import is_wrapping_enabled as is_gb_wrapping_enabled
         
@@ -1024,6 +1027,8 @@ class GroupBoxWithHelp(FlashableGroupBox):
         - Asterisk (*): dirty (resolved_live != resolved_saved)
         - Underline: signature diff (raw != signature default)
 
+        Also updates Reset All button with same styling if present.
+
         Args:
             is_dirty: True to show asterisk prefix
             has_sig_diff: True to apply underline
@@ -1040,6 +1045,25 @@ class GroupBoxWithHelp(FlashableGroupBox):
         font = self._title_label.font()
         font.setUnderline(has_sig_diff)
         self._title_label.setFont(font)
+
+        # Also update Reset All button with same aggregate semantics
+        if self._reset_all_button:
+            self._update_reset_all_button_styling(is_dirty, has_sig_diff)
+
+    def _update_reset_all_button_styling(self, is_dirty: bool, has_sig_diff: bool) -> None:
+        """Update Reset All button with * and _ styling."""
+        button = self._reset_all_button
+        text = "Reset All"
+        if is_dirty:
+            text = "*" + text
+        if has_sig_diff:
+            text = "_" + text
+        button.setText(text)
+
+        # Apply underline via font (independent of dirty)
+        font = button.font()
+        font.setUnderline(has_sig_diff)
+        button.setFont(font)
 
     def set_scope_color_scheme(self, scheme) -> None:
         """Set scope color scheme for border rendering."""
@@ -1248,7 +1272,16 @@ class GroupBoxWithHelp(FlashableGroupBox):
         self.content_layout.addLayout(layout)
 
     def addTitleWidget(self, widget):
-        """Add widget to the title area, right-aligned (moves to row2 when narrow)."""
+        """Add widget to the title area, right-aligned (moves to row2 when narrow).
+
+        Also detects Reset All buttons and stores reference for dirty marker styling.
+        """
+        # Detect Reset All button by text pattern and store reference
+        if hasattr(widget, 'text'):
+            widget_text = widget.text()
+            if widget_text and 'reset' in widget_text.lower() and 'all' in widget_text.lower():
+                self._reset_all_button = widget
+
         # Add as right widget - will move to second row when narrow
         from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
         if isinstance(self.title_layout, ResponsiveGroupBoxTitle):

@@ -808,6 +808,21 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         reset_button = self.reset_buttons[param_name]
         update_reset_button_styling(reset_button, self.state, self.field_id, param_name)
     
+    def _update_groupbox_dirty_markers(self) -> None:
+        """Update groupbox dirty markers (title and Reset All button)."""
+        # Find the groupbox widget for this manager
+        groupbox = None
+        if self._parent_manager:
+            for name, nested in self._parent_manager.nested_managers.items():
+                if nested is self:
+                    groupbox = self._parent_manager.widgets.get(name)
+                    break
+        
+        if groupbox and hasattr(groupbox, 'set_dirty_marker'):
+            has_dirty = bool(self.state.dirty_fields)
+            has_sig_diff = bool(self.state.signature_diff_fields)
+            groupbox.set_dirty_marker(has_dirty, has_sig_diff)
+    
     def _update_provenance_button_visibility(self) -> None:
         """Update provenance button visibility for enabled field."""
         from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
@@ -868,7 +883,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         if sig_diff_prefixes is None:
             sig_diff_prefixes = set()
 
-        # Update this level's nested managers' groupboxes
+        # Update this level's nested managers' groupboxes and Reset All buttons
         for param_name, nested_manager in self.nested_managers.items():
             groupbox = self.widgets.get(param_name)
             if groupbox is None:

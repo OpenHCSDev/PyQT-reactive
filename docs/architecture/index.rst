@@ -42,6 +42,7 @@ Widget Components
    button_panel
    list_item_preview_system
    scope_visual_feedback_system
+   styling_architecture
    system_monitor
 
 Animation & Performance

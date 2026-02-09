@@ -85,7 +85,12 @@ When ``dispatch(event)`` is called:
 4. **Apply Enabled Styling**:
    - If ``field_name == 'enabled'``, apply visual styling
 
-5. **Emit Local Signal**:
+5. **Update Visual Indicators**:
+   - Reset button ``*`` and ``_`` styling for all fields in the manager
+   - Provenance button visibility (show/hide based on provenance availability)
+   - See :doc:`styling_architecture` for detailed semantics
+
+6. **Emit Local Signal**:
    - ``source.parameter_changed.emit(field_name, value)``
 
 6. **Emit Cross-Window Signal**:
@@ -178,6 +183,7 @@ Benefits
 See Also
 --------
 
+- :doc:`styling_architecture` - Visual indicators (*, _, ^) and reset button styling
 - :doc:`ui_services_architecture` - UI service layer overview
 - :doc:`parameter_form_lifecycle` - Form lifecycle management
 - :doc:`context_system` - Configuration context and inheritance

@@ -77,26 +77,28 @@ class FieldChangeDispatcher:
             from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
             from PyQt6.QtWidgets import QWidget
             
+            # 3. Refresh siblings that have the same field
+            parent = source._parent_manager
+            
             # Find the groupbox widget for this manager
             groupbox = None
-            if source._parent_manager:
-                for name, nested in source._parent_manager.nested_managers.items():
+            if parent:
+                for name, nested in parent.nested_managers.items():
                     if nested is source:
-                        groupbox = source._parent_manager.widgets.get(name)
+                        groupbox = parent.widgets.get(name)
                         break
             
-            if groupbox and hasattr(groupbox, 'title_layout'):
-                for widget in groupbox.title_layout.findChildren(ProvenanceButton):
-                    widget.setVisible(widget._has_provenance())
-                    break
+            # Update provenance button visibility
+            if source._parent_manager:
+                source._update_provenance_button_visibility()
+            
+            # Update groupbox dirty markers (title and Reset All button)
+            source._update_groupbox_dirty_markers()
 
             # Update reset button styling for ALL reset buttons in this manager
             from pyqt_reactive.utils.styling_utils import update_reset_button_styling
             for field_name, reset_button in source.reset_buttons.items():
                 update_reset_button_styling(reset_button, source.state, source.field_id, field_name)
-
-            # 3. Refresh siblings that have the same field
-            parent = source._parent_manager
             if parent:
                 if DEBUG_DISPATCHER:
                     logger.info(f"  🔍 Looking for siblings with field '{event.field_name}' in {parent.field_id}")

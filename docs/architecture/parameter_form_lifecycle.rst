@@ -99,6 +99,23 @@ Reset Context Update Pattern
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.reset_parameter` updates thread-local context during reset using :py:func:`~dataclasses.replace` to prevent placeholder bugs.
 
+Visual State Synchronization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Form managers synchronize visual indicators (``*`` and ``_``) with field state changes:
+
+**Label Styling**: :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._update_label_styling` applies ``*`` (dirty) and ``_`` (differs from signature) indicators to field labels.
+
+**Reset Button Styling**: :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._update_reset_button_styling` applies the same indicators to reset buttons, showing the target field's state.
+
+**Provenance Button Visibility**: :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._update_provenance_button_visibility` shows/hides the ``^`` provenance navigation button based on whether the field inherits from an ancestor.
+
+These updates are triggered:
+- During individual field reset (``reset_parameter()``)
+- After batch reset completes (``reset_all_parameters()``)
+- Via ``FieldChangeDispatcher`` for regular edits
+
+See :doc:`styling_architecture` for complete visual indicator semantics.
+
 UI Component Lifecycle Patterns
 -------------------------------
 Different UI components have different form lifecycle requirements.
