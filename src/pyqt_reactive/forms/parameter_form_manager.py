@@ -717,6 +717,11 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             # Even when resetting to defaults, we need live context for sibling inheritance
             # REFACTORING: Inline delegate calls
             self._parameter_ops_service.refresh_with_live_context(self)
+            
+            # Update all reset buttons and provenance button once at the end
+            for param_name in param_names:
+                self._update_reset_button_styling(param_name)
+            self._update_provenance_button_visibility()
 
 
 
@@ -787,6 +792,39 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
         # Update label styling after reset
         self._update_label_styling(param_name)
+        
+        # Update reset button styling
+        self._update_reset_button_styling(param_name)
+        
+        # Update provenance button visibility
+        self._update_provenance_button_visibility()
+
+    def _update_reset_button_styling(self, param_name: str) -> None:
+        """Update reset button styling: * and _ indicators."""
+        if param_name not in self.reset_buttons:
+            return
+        
+        from pyqt_reactive.utils.styling_utils import update_reset_button_styling
+        reset_button = self.reset_buttons[param_name]
+        update_reset_button_styling(reset_button, self.state, self.field_id, param_name)
+    
+    def _update_provenance_button_visibility(self) -> None:
+        """Update provenance button visibility for enabled field."""
+        from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
+        from PyQt6.QtWidgets import QWidget
+        
+        # Find the groupbox widget for this manager
+        groupbox = None
+        if self._parent_manager:
+            for name, nested in self._parent_manager.nested_managers.items():
+                if nested is self:
+                    groupbox = self._parent_manager.widgets.get(name)
+                    break
+        
+        if groupbox and hasattr(groupbox, 'title_layout'):
+            for widget in groupbox.title_layout.findChildren(ProvenanceButton):
+                widget.setVisible(widget._has_provenance())
+                break
 
     def _update_label_styling(self, param_name: str) -> None:
         """Update label styling: underline (differs from signature default) and dirty indicator (unsaved changes).

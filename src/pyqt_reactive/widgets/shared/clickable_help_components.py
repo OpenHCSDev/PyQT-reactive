@@ -477,13 +477,27 @@ class ProvenanceNavigationMixin:
         self._dotted_path = dotted_path
 
     def _has_provenance(self) -> bool:
-        """Check if this field has a provenance source (inherited from ancestor)."""
+        """Check if this field has a provenance source (inherited from ancestor).
+
+        Returns True if the field inherits from an ancestor, even if that ancestor
+        is the root scope (GlobalPipelineConfig, scope_id='').
+        """
         if not self._state or not self._dotted_path:
+            logger.debug(f"ProvenanceMixin._has_provenance: NO - state={self._state}, dotted_path={self._dotted_path}")
             return False
         try:
             result = self._state.get_provenance(self._dotted_path)
-            return result is not None
-        except Exception:
+            logger.debug(f"ProvenanceMixin._has_provenance: result={result}, dotted_path={self._dotted_path}")
+            # Check if result is a valid tuple with a type class
+            # Empty scope_id ('') means GlobalPipelineConfig (root scope)
+            if not result or not isinstance(result, tuple) or len(result) != 2:
+                return False
+            scope_id, source_type = result
+            # Empty scope_id is valid (represents root/GlobalPipelineConfig)
+            # Just need a valid type class
+            return source_type is not None
+        except Exception as e:
+            logger.debug(f"ProvenanceMixin._has_provenance: EXCEPTION - {e}")
             return False
 
     def _navigate_to_source(self, source_scope_id: str, source_type: type) -> None:
@@ -736,9 +750,9 @@ class ProvenanceButton(QPushButton, ProvenanceNavigationMixin):
     """QPushButton with provenance navigation capability.
 
     Small button (with ^ arrow) that navigates to the source window/field
-    when the enabled field has a provenance source.
+    when the field has a provenance source.
 
-    Button is only visible when a provenance source is actually available.
+    Mirrors ProvenanceLabel behavior: always visible, only clickable when provenance exists.
     """
 
     def __init__(self, text="^", color_scheme=None, parent=None):
@@ -767,15 +781,6 @@ class ProvenanceButton(QPushButton, ProvenanceNavigationMixin):
         """Restore normal cursor."""
         self.unsetCursor()
         super().leaveEvent(event)
-
-    def update_visibility_based_on_provenance(self):
-        """Show/hide button based on whether provenance source is available."""
-        has_provenance = self._has_provenance()
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"ProvenanceButton.update_visibility: dotted_path={self._dotted_path}, has_provenance={has_provenance}, _state={self._state}")
-        self.setVisible(has_provenance)
-        logger.debug(f"ProvenanceButton.update_visibility: visible={self.isVisible()}")
 
 
 class LabelWithHelp(QWidget):

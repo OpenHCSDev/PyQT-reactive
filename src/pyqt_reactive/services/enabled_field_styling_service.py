@@ -124,12 +124,12 @@ class EnabledFieldStylingService:
 
         # Resolve lazy value
         if value is None:
-            # Lazy field - get the resolved placeholder value from the widget
-            enabled_widget = manager.widgets.get('enabled')
-            if enabled_widget and isinstance(enabled_widget, QCheckBox):
-                resolved_value = enabled_widget.isChecked()
-            else:
-                # Fallback: assume True if we can't resolve
+            # Lazy field - get the resolved value from ObjectState
+            # This ensures we get the actual resolved value, not the raw parameter
+            full_path = f"{manager.field_id}.enabled" if manager.field_id else "enabled"
+            resolved_value = manager.state.get_resolved_value(full_path)
+            if resolved_value is None:
+                # True is the default for enabled fields
                 resolved_value = True
         else:
             resolved_value = value
@@ -295,55 +295,7 @@ class EnabledFieldStylingService:
                 effect.setOpacity(0.4)
                 widget.setGraphicsEffect(effect)
 
-        # Update provenance button visibility and checkbox underline
-        self._update_enabled_field_title_styling(manager)
 
-    def _update_enabled_field_title_styling(self, manager) -> None:
-        """
-        Update title styling for nested configs with enabled fields.
-
-        This handles:
-        - Provenance button visibility (only show when provenance source available)
-        - Checkbox underline (when enabled field's value differs from signature)
-
-        Args:
-            manager: ParameterFormManager instance (nested manager)
-        """
-        # Only apply to nested configs
-        if manager._parent_manager is None:
-            return
-
-        # Find the GroupBox and param_name for this nested manager
-        group_box = None
-        param_name = None
-        for pn, nested_manager in manager._parent_manager.nested_managers.items():
-            if nested_manager == manager:
-                group_box = manager._parent_manager.widgets.get(pn)
-                param_name = pn
-                break
-
-        if not group_box:
-            return
-
-        # Update provenance button visibility
-        # The button is in the title layout, we need to find it
-        from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
-        for widget in group_box.title_layout.findChildren(ProvenanceButton):
-            if hasattr(widget, 'update_visibility_based_on_provenance'):
-                widget.update_visibility_based_on_provenance()
-                logger.debug(f"[TITLE_STYLING] Updated provenance button visibility for {param_name}")
-                break
-
-        # Update checkbox underline based on signature diff
-        # The checkbox is the enabled widget, we need to find it
-        enabled_widget = manager.widgets.get('enabled')
-        if enabled_widget:
-            dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
-            should_underline = dotted_path in manager.state.signature_diff_fields
-            font = enabled_widget.font()
-            font.setUnderline(should_underline)
-            enabled_widget.setFont(font)
-            logger.debug(f"[TITLE_STYLING] field_id={param_name}, should_underline={should_underline}")
 
         # CRITICAL: Trigger a visual update so opacity effects are rendered
         # Qt doesn't automatically render QGraphicsOpacityEffect changes

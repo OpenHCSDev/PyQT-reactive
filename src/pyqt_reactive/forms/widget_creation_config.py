@@ -266,6 +266,10 @@ def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_n
         _apply_reset_button_style(enabled_reset_button, parent_manager.color_scheme)
         enabled_reset_button.setMaximumWidth(60)
         enabled_reset_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+        
+        # Apply * and _ styling to reset button
+        from pyqt_reactive.utils.styling_utils import update_reset_button_styling
+        update_reset_button_styling(enabled_reset_button, nested_manager.state, nested_manager.field_id, enabled_field)
 
     # Create provenance navigation button
     from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
@@ -287,22 +291,11 @@ def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_n
     # Set provenance info for navigation
     provenance_button.set_provenance_info(nested_manager.state, dotted_path)
 
-    # Update button visibility based on whether provenance is actually available
-    has_provenance = provenance_button._has_provenance()
-    logger.debug(f"🔍 _move_enabled_widget_to_title: dotted_path={dotted_path}, has_provenance={has_provenance}")
-    provenance_button.update_visibility_based_on_provenance()
-
-    # Underline checkbox if enabled field's value differs from signature
-    should_underline = dotted_path in nested_manager.state.signature_diff_fields
-    logger.debug(f"🔍 _move_enabled_widget_to_title: should_underline={should_underline}, signature_diff_fields={nested_manager.state.signature_diff_fields}")
-    if should_underline and isinstance(checkbox_widget, NoneAwareCheckBox):
-        font = checkbox_widget.font()
-        font.setUnderline(True)
-        checkbox_widget.setFont(font)
-        logger.debug(f"🔍 _move_enabled_widget_to_title: underlined checkbox_widget for signature diff")
+    # Set initial visibility based on provenance
+    provenance_button.setVisible(provenance_button._has_provenance())
 
     container.addEnableableWidgets(enabled_widget, enabled_reset_button, provenance_button)
-    logger.debug(f"🔍 _move_enabled_widget_to_title: added widgets to container, provenance_button visible={provenance_button.isVisible()}")
+    logger.debug(f"🔍 _move_enabled_widget_to_title: added widgets to container")
 
     # Clean up the empty row layout if possible
     if enabled_widget_layout.count() == 0:
