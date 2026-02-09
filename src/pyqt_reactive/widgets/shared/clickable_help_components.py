@@ -1051,16 +1051,18 @@ class GroupBoxWithHelp(FlashableGroupBox):
             self._update_reset_all_button_styling(is_dirty, has_sig_diff)
 
     def _update_reset_all_button_styling(self, is_dirty: bool, has_sig_diff: bool) -> None:
-        """Update Reset All button with * and _ styling."""
+        """Update Reset All button with * and _ styling.
+
+        * prefix indicates dirty (unsaved changes)
+        Underline (via font) indicates signature diff (differs from signature default)
+        """
         button = self._reset_all_button
         text = "Reset All"
         if is_dirty:
             text = "*" + text
-        if has_sig_diff:
-            text = "_" + text
         button.setText(text)
 
-        # Apply underline via font (independent of dirty)
+        # Apply underline via font (NOT as literal underscore character)
         font = button.font()
         font.setUnderline(has_sig_diff)
         button.setFont(font)

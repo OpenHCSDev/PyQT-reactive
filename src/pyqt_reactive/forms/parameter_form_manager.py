@@ -809,7 +809,11 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         update_reset_button_styling(reset_button, self.state, self.field_id, param_name)
     
     def _update_groupbox_dirty_markers(self) -> None:
-        """Update groupbox dirty markers (title and Reset All button)."""
+        """Update groupbox dirty markers (title and Reset All button).
+
+        CRITICAL: Only consider fields under THIS nested manager's prefix.
+        The state contains ALL fields, so we must filter by field_id prefix.
+        """
         # Find the groupbox widget for this manager
         groupbox = None
         if self._parent_manager:
@@ -817,10 +821,20 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                 if nested is self:
                     groupbox = self._parent_manager.widgets.get(name)
                     break
-        
+
         if groupbox and hasattr(groupbox, 'set_dirty_marker'):
-            has_dirty = bool(self.state.dirty_fields)
-            has_sig_diff = bool(self.state.signature_diff_fields)
+            # Filter dirty_fields and signature_diff_fields to only include
+            # fields under this nested manager's prefix (field_id)
+            prefix = self.field_id + '.' if self.field_id else ''
+
+            if prefix:
+                has_dirty = any(f.startswith(prefix) for f in self.state.dirty_fields)
+                has_sig_diff = any(f.startswith(prefix) for f in self.state.signature_diff_fields)
+            else:
+                # Root manager - check all fields
+                has_dirty = bool(self.state.dirty_fields)
+                has_sig_diff = bool(self.state.signature_diff_fields)
+
             groupbox.set_dirty_marker(has_dirty, has_sig_diff)
     
     def _update_provenance_button_visibility(self) -> None:
