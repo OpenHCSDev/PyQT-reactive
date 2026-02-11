@@ -717,11 +717,16 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             # Even when resetting to defaults, we need live context for sibling inheritance
             # REFACTORING: Inline delegate calls
             self._parameter_ops_service.refresh_with_live_context(self)
-            
+
             # Update all reset buttons and provenance button once at the end
             for param_name in param_names:
                 self._update_reset_button_styling(param_name)
             self._update_provenance_button_visibility()
+
+            # CRITICAL: Update groupbox dirty markers AFTER all resets are complete
+            # Individual reset_parameter calls update during the loop, but we need
+            # a final update to reflect the complete reset state
+            self._update_groupbox_dirty_markers()
 
 
 
