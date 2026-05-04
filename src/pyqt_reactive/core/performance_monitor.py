@@ -7,6 +7,7 @@ logging performance metrics.
 import time
 import functools
 import logging
+import os
 from contextlib import contextmanager
 from typing import Optional, Callable
 from pathlib import Path
@@ -19,7 +20,8 @@ perf_logger = logging.getLogger(_config.performance_logger_name)
 perf_logger.setLevel(logging.WARNING)
 
 # Add file handler for performance logs
-_log_dir = Path(_config.log_dir) if _config.log_dir else Path.home() / '.local' / 'share' / 'pyqt_reactive' / 'logs'
+_data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+_log_dir = Path(_config.log_dir) if _config.log_dir else _data_home / "pyqt_reactive" / "logs"
 perf_log_file = _log_dir / _config.performance_log_filename
 perf_log_file.parent.mkdir(parents=True, exist_ok=True)
 
