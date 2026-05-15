@@ -39,12 +39,38 @@ Architecture:
     - create_parameter_info(): Factory that auto-selects correct type
 """
 
-from typing import Type, Any, Optional, List, Union, get_origin, get_args
+from typing import Callable, Type, Any, Optional, List, Union, get_origin, get_args
 from dataclasses import dataclass, is_dataclass
 from abc import ABC, ABCMeta
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+InlineDataclassWidgetFactory = Callable[..., Any]
+_INLINE_DATACLASS_WIDGET_FACTORIES: dict[Type, InlineDataclassWidgetFactory] = {}
+
+
+def register_inline_dataclass_widget(
+    dataclass_type: Type,
+    widget_factory: InlineDataclassWidgetFactory,
+) -> None:
+    """Register a full-row editor for a dataclass type before nested fallback."""
+
+    if not is_dataclass(dataclass_type):
+        raise TypeError(
+            "Inline dataclass widgets can only be registered for dataclass types; "
+            f"got {dataclass_type!r}."
+        )
+    _INLINE_DATACLASS_WIDGET_FACTORIES[dataclass_type] = widget_factory
+
+
+def get_inline_dataclass_widget_factory(
+    dataclass_type: Type,
+) -> InlineDataclassWidgetFactory | None:
+    """Return the inline editor factory registered for a dataclass type."""
+
+    return _INLINE_DATACLASS_WIDGET_FACTORIES.get(dataclass_type)
 
 
 @dataclass
@@ -126,6 +152,28 @@ class OptionalDataclassInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
 
 
 @dataclass
+class InlineDataclassWidgetInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
+    """
+    Parameter info for dataclasses with a registered structural inline editor.
+
+    These parameters:
+    - Are still regular dataclass-backed values
+    - Use a registered widget instead of the default nested field form
+    - Fall back to DirectDataclassInfo when no inline widget is registered
+    """
+    default_value: Any = None
+    is_required: bool = True
+    widget_creation_type: str = "INLINE_DATACLASS"
+
+    @staticmethod
+    def matches(param_type: Type) -> bool:
+        return (
+            is_dataclass(param_type)
+            and get_inline_dataclass_widget_factory(param_type) is not None
+        )
+
+
+@dataclass
 class DirectDataclassInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
     """
     Parameter info for direct Dataclass types (non-optional).
@@ -187,7 +235,12 @@ class GenericInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
 
 
 # Union type for type hints (React-style)
-ParameterInfo = Union[OptionalDataclassInfo, DirectDataclassInfo, GenericInfo]
+ParameterInfo = Union[
+    OptionalDataclassInfo,
+    InlineDataclassWidgetInfo,
+    DirectDataclassInfo,
+    GenericInfo,
+]
 
 
 def create_parameter_info(
@@ -252,4 +305,3 @@ def create_parameter_info(
         f"No matching ParameterInfo type for {param_type}. "
         f"This should never happen - GenericInfo should match everything."
     )
-

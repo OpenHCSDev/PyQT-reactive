@@ -42,6 +42,7 @@ class WidgetCreationType(Enum):
     PyQt6 uses 3 parametric types: REGULAR, NESTED, and OPTIONAL_NESTED.
     """
     REGULAR = "regular"
+    INLINE_DATACLASS = "inline_dataclass"
     NESTED = "nested"
     OPTIONAL_NESTED = "optional_nested"
 
@@ -496,6 +497,38 @@ def _create_nested_container(manager: ParameterFormManager, param_info: Paramete
     return container
 
 
+def _create_inline_dataclass_widget(
+    manager: ParameterFormManager,
+    param_info: ParameterInfo,
+    display_info: DisplayInfo,
+    field_ids: FieldIds,
+    current_value: Any,
+    unwrapped_type: Optional[Type],
+    layout=None,
+    CURRENT_LAYOUT=None,
+    QWidget=None,
+    GroupBoxWithHelp=None,
+    PyQt6ColorScheme=None,
+) -> Any:
+    """Create the registered inline editor for a structural dataclass value."""
+    from .parameter_info_types import get_inline_dataclass_widget_factory
+
+    widget_factory = get_inline_dataclass_widget_factory(param_info.type)
+    if widget_factory is None:
+        raise ValueError(
+            "No inline dataclass widget registered for "
+            f"{param_info.type!r}; DirectDataclassInfo should have handled it."
+        )
+    return widget_factory(
+        manager=manager,
+        param_info=param_info,
+        display_info=display_info,
+        field_ids=field_ids,
+        current_value=current_value,
+        parent=manager,
+    )
+
+
 def _create_optional_nested_container(manager: ParameterFormManager, param_info: ParameterInfo,
                                      display_info: DisplayInfo, field_ids: FieldIds, current_value: Any,
                                      unwrapped_type: Optional[Type], layout=None, CURRENT_LAYOUT=None,
@@ -574,6 +607,18 @@ _WIDGET_CREATION_CONFIG: dict[WidgetCreationType, WidgetCreationConfig] = {
         needs_label=True,
         needs_reset_button=True,
         needs_unwrap_type=False,
+    ),
+
+    WidgetCreationType.INLINE_DATACLASS: WidgetCreationConfig(
+        layout_type='GroupBoxWithHelp',
+        is_nested=True,
+        create_container=_create_nested_container,
+        setup_layout=None,
+        create_main_widget=_create_inline_dataclass_widget,
+        needs_label=False,
+        needs_reset_button=False,
+        needs_unwrap_type=False,
+        is_optional=False,
     ),
 
     WidgetCreationType.NESTED: WidgetCreationConfig(

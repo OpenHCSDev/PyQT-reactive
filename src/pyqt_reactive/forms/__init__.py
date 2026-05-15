@@ -44,10 +44,13 @@ _EXPORTS = {
     "FormBuildOrchestrator": ("pyqt_reactive.forms.form_init_service", "FormBuildOrchestrator"),
     "ParameterInfoBase": ("pyqt_reactive.forms.parameter_info_types", "ParameterInfoBase"),
     "OptionalDataclassInfo": ("pyqt_reactive.forms.parameter_info_types", "OptionalDataclassInfo"),
+    "InlineDataclassWidgetInfo": ("pyqt_reactive.forms.parameter_info_types", "InlineDataclassWidgetInfo"),
     "DirectDataclassInfo": ("pyqt_reactive.forms.parameter_info_types", "DirectDataclassInfo"),
     "GenericInfo": ("pyqt_reactive.forms.parameter_info_types", "GenericInfo"),
     "ParameterInfo": ("pyqt_reactive.forms.parameter_info_types", "ParameterInfo"),
     "create_parameter_info": ("pyqt_reactive.forms.parameter_info_types", "create_parameter_info"),
+    "register_inline_dataclass_widget": ("pyqt_reactive.forms.parameter_info_types", "register_inline_dataclass_widget"),
+    "get_inline_dataclass_widget_factory": ("pyqt_reactive.forms.parameter_info_types", "get_inline_dataclass_widget_factory"),
 }
 
 

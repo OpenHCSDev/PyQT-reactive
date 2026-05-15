@@ -54,7 +54,8 @@ class FunctionListEditorWidget(QWidget):
     def __init__(self, initial_functions: Union[List, Dict, callable, None] = None,
                   context_identifier: str = None, service_adapter=None, color_scheme: Optional[ColorScheme] = None,
                   scope_id: Optional[str] = None, parent=None, render_header: bool = True,
-                  button_style: Optional[str] = None, scope_index: Optional[int] = None):
+                  button_style: Optional[str] = None, scope_index: Optional[int] = None,
+                  invocation_badge_provider: Optional[Callable[[str, int, Callable], Optional[str]]] = None):
         super().__init__(parent)
 
         # Initialize color scheme
@@ -155,6 +156,7 @@ class FunctionListEditorWidget(QWidget):
 
         # Optional index used for scope border alignment.
         self.scope_index = scope_index
+        self.invocation_badge_provider = invocation_badge_provider
 
         # Scope color scheme for styling newly created panes
         self._scope_color_scheme = None
@@ -879,6 +881,21 @@ class FunctionListEditorWidget(QWidget):
                 background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
             }}
         """
+
+    def _invocation_badge_text(self, index: int, func_item) -> Optional[str]:
+        """Resolve optional per-invocation title badge text for one visible function."""
+
+        if self.invocation_badge_provider is None:
+            return None
+        func, _kwargs = self.data_manager.extract_func_and_kwargs(func_item)
+        if func is None:
+            return None
+        group_key = (
+            str(self.selected_pattern_key)
+            if self.is_dict_mode and self.selected_pattern_key is not None
+            else "default"
+        )
+        return self.invocation_badge_provider(group_key, index, func)
     
     def _populate_function_list(self):
         """Populate function list with panes (mirrors Textual TUI)."""
@@ -933,6 +950,7 @@ class FunctionListEditorWidget(QWidget):
                     func_scope_prefix=func_scope_prefix,
                     func_scope_token=self._current_function_tokens[i],
                     scope_index=self.scope_index,
+                    invocation_badge_text=self._invocation_badge_text(i, func_item),
                 )
 
                 # Connect signals (using actual FunctionPaneWidget signal names)

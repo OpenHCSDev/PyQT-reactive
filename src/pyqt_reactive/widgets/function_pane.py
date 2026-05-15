@@ -57,6 +57,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         func_scope_prefix: Optional[str] = None,
         func_scope_token: Optional[str] = None,
         scope_index: Optional[int] = None,
+        invocation_badge_text: Optional[str] = None,
         parent=None,
     ):
         """
@@ -121,6 +122,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Step index for scope border alignment
         self.scope_index = scope_index
+        self._invocation_badge_label: Optional[QLabel] = None
 
         # Optional override for where function ObjectStates live.
         # Used to disambiguate function states across dict-pattern keys (channels).
@@ -173,9 +175,36 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Setup UI
         self.setup_ui()
+        self.set_invocation_badge_text(invocation_badge_text)
         self.setup_connections()
         
         logger.debug(f"Function pane widget initialized for index {index}")
+
+    def set_invocation_badge_text(self, badge_text: Optional[str]) -> None:
+        """Render or clear the invocation/debug badge inside the pane title."""
+
+        text = str(badge_text or "").strip()
+        if not text:
+            if self._invocation_badge_label is not None:
+                self._invocation_badge_label.hide()
+            return
+        if self._invocation_badge_label is None:
+            self._invocation_badge_label = QLabel()
+            self._invocation_badge_label.setObjectName("function_invocation_badge")
+            self._invocation_badge_label.setStyleSheet(
+                "QLabel#function_invocation_badge {"
+                "border: 1px solid rgba(66, 133, 244, 0.55);"
+                "border-radius: 7px;"
+                "padding: 1px 6px;"
+                "font-size: 10px;"
+                "font-weight: 600;"
+                "color: #1b4f9c;"
+                "background: rgba(66, 133, 244, 0.12);"
+                "}"
+            )
+            self.addTitleInlineWidget(self._invocation_badge_label)
+        self._invocation_badge_label.setText(text)
+        self._invocation_badge_label.show()
     
     def setup_ui(self):
         """Setup the user interface."""
