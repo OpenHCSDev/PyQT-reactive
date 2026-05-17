@@ -231,6 +231,8 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         self.gui_config = gui_config or self._get_default_gui_config()
         self.style_generator = StyleSheetGenerator(self.color_scheme)  # Create internally
         self.event_bus = service_adapter.get_event_bus() if service_adapter else None
+        self.code_execution_workflow = None
+        self.deletion_workflow = None
 
         # UI components (created in setup_ui)
         self.buttons: Dict[str, QPushButton] = {}
@@ -278,7 +280,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         self._init_cross_window_preview_mixin()
 
         # Register time travel callback for list refresh
-        ObjectStateRegistry.add_time_travel_complete_callback(self._on_time_travel_complete)
+        ObjectStateRegistry.add_time_travel_complete_callback(self.on_time_travel_complete)
 
     def _get_default_gui_config(self):
         """Get default GUI config fallback."""
@@ -463,7 +465,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
         backing_items = self._get_backing_items()
         if item not in backing_items:
-            insert_idx = self._get_item_insert_index(item, scope_key)
+            insert_idx = self.get_item_insert_index(item, scope_key)
             if insert_idx is not None:
                 backing_items.insert(insert_idx, item)
             else:
@@ -499,19 +501,27 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
                 return item
         return None
 
-    def _on_time_travel_complete(self, dirty_states, triggering_scope):
+    def on_time_travel_complete(self, dirty_states, triggering_scope):
         """Refresh list after time travel. Subclasses can override for custom reloads."""
         self.update_item_list()
         if hasattr(self, "update_button_states"):
             self.update_button_states()
 
-    def _get_item_insert_index(self, item: Any, scope_key: str) -> Optional[int]:
+    def _on_time_travel_complete(self, dirty_states, triggering_scope):
+        """Compatibility shim for callers still bound to the old private hook."""
+        self.on_time_travel_complete(dirty_states, triggering_scope)
+
+    def get_item_insert_index(self, item: Any, scope_key: str) -> Optional[int]:
         """Get the index at which to insert item during time-travel re-registration.
 
         Subclass can override to maintain correct ordering.
         Default: returns None (append to end).
         """
         return None
+
+    def _get_item_insert_index(self, item: Any, scope_key: str) -> Optional[int]:
+        """Compatibility shim for subclasses still overriding the old private hook."""
+        return self.get_item_insert_index(item, scope_key)
 
     # ========== Action Dispatch (Concrete) ==========
 
@@ -565,8 +575,8 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
             self.service_adapter.show_error_dialog(f"No {self.ITEM_NAME_PLURAL} selected")
             return
 
-        if self._validate_delete(items):
-            self._perform_delete(items)
+        if self.validate_delete(items):
+            self.perform_delete(items)
             self.update_item_list()
             self._emit_items_changed()
             self.status_message.emit(f"Deleted {len(items)} {self.ITEM_NAME_PLURAL}")
@@ -582,7 +592,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
             self.service_adapter.show_error_dialog(f"No {self.ITEM_NAME_SINGULAR} selected")
             return
 
-        self._show_item_editor(items[0])
+        self.show_item_editor(items[0])
 
     def action_code(self) -> None:
         """
@@ -1016,8 +1026,8 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
         Subclasses implement hooks:
         - _pre_code_execution() - Pre-processing (optional, default no-op)
-        - _handle_code_execution_error(code, error, namespace) - Migration fallback (optional)
-        - _apply_executed_code(namespace) -> bool - Extract and apply variables (REQUIRED)
+        - handle_code_execution_error(code, error, namespace) - Migration fallback (optional)
+        - apply_executed_code(namespace) -> bool - Extract and apply variables (REQUIRED)
         - _post_code_execution() - Post-processing (optional, default no-op)
         """
         code_type = self._get_code_type()
@@ -1038,14 +1048,14 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
                     exec(code, namespace)
             except TypeError as e:
                 # Migration fallback hook (returns new namespace or None to re-raise)
-                migrated_namespace = self._handle_code_execution_error(code, e, namespace)
+                migrated_namespace = self.handle_code_execution_error(code, e, namespace)
                 if migrated_namespace is not None:
                     namespace = migrated_namespace
                 else:
                     raise
 
             # Apply extracted variables to state (subclass hook)
-            if not self._apply_executed_code(namespace):
+            if not self.apply_executed_code(namespace):
                 raise ValueError(self._get_code_missing_error_message())
 
             # Post-processing: broadcast, trigger refresh
@@ -1069,7 +1079,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """
         pass  # Default: no-op
 
-    def _handle_code_execution_error(self, code: str, error: Exception, namespace: dict) -> Optional[dict]:
+    def handle_code_execution_error(self, code: str, error: Exception, namespace: dict) -> Optional[dict]:
         """
         Handle code execution error, optionally returning migrated namespace.
 
@@ -1078,9 +1088,16 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         PipelineEditor: Handle old-format step constructors (group_by/variable_components)
         PlateManager: Return None (no migration support)
         """
+        workflow = self.code_execution_workflow
+        if workflow is not None and hasattr(workflow, "migration_namespace"):
+            return workflow.migration_namespace(code, error)
         return None  # Default: re-raise error
 
-    def _apply_executed_code(self, namespace: dict) -> bool:
+    def _handle_code_execution_error(self, code: str, error: Exception, namespace: dict) -> Optional[dict]:
+        """Compatibility shim for subclasses still overriding the old private hook."""
+        return self.handle_code_execution_error(code, error, namespace)
+
+    def apply_executed_code(self, namespace: dict) -> bool:
         """
         Apply executed code namespace to widget state.
 
@@ -1090,8 +1107,15 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         PipelineEditor: Extract 'pipeline_steps', update self.pipeline_steps
         PlateManager: Extract 'plate_paths', 'pipeline_data', etc.
         """
-        logger.warning(f"{type(self).__name__}._apply_executed_code not implemented")
+        workflow = self.code_execution_workflow
+        if workflow is not None and hasattr(workflow, "apply_namespace"):
+            return workflow.apply_namespace(namespace)
+        logger.warning(f"{type(self).__name__}.apply_executed_code not implemented")
         return False  # Default: fail (subclass must override)
+
+    def _apply_executed_code(self, namespace: dict) -> bool:
+        """Compatibility shim for subclasses still overriding the old private hook."""
+        return self.apply_executed_code(namespace)
 
     def _get_code_missing_error_message(self) -> str:
         """
@@ -1407,7 +1431,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
             return
 
         # Pre-update hook (collect live context, normalize state)
-        update_context = self._pre_update_list()
+        update_context = self.prepare_list_update()
 
         # Clear scope cache at start of update cycle - will be populated lazily
         self._item_scope_cache.clear()
@@ -1527,22 +1551,38 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         # Data is the item itself
         return data
 
-    def _validate_delete(self, items: List[Any]) -> bool:
+    def validate_delete(self, items: List[Any]) -> bool:
         """Check if delete is allowed. Default: True. Override for restrictions."""
+        workflow = self.deletion_workflow
+        if workflow is not None and hasattr(workflow, "validate"):
+            return workflow.validate(items)
         return True
 
-    @abstractmethod
-    def _perform_delete(self, items: List[Any]) -> None:
+    def _validate_delete(self, items: List[Any]) -> bool:
+        """Compatibility shim for subclasses still overriding the old private hook."""
+        return self.validate_delete(items)
+
+    def perform_delete(self, items: List[Any]) -> None:
         """
         Remove items from internal list.
 
         PlateManager: Remove from self.plates, cleanup orchestrators
         PipelineEditor: Remove from self.pipeline_steps, update orchestrator
         """
-        ...
+        workflow = self.deletion_workflow
+        if workflow is not None and hasattr(workflow, "delete"):
+            workflow.delete(items)
+            return
+        raise NotImplementedError(
+            f"{type(self).__name__}.perform_delete requires a deletion workflow or override"
+        )
+
+    def _perform_delete(self, items: List[Any]) -> None:
+        """Compatibility shim for callers still bound to the old private hook."""
+        self.perform_delete(items)
 
     @abstractmethod
-    def _show_item_editor(self, item: Any) -> None:
+    def show_item_editor(self, item: Any) -> None:
         """
         Show editor for item.
 
@@ -1550,6 +1590,10 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         PipelineEditor: Open DualEditorWindow for step
         """
         ...
+
+    def _show_item_editor(self, item: Any) -> None:
+        """Compatibility shim for callers still bound to the old private hook."""
+        self.show_item_editor(item)
 
     # === UI Hooks (declarative via ITEM_HOOKS) ===
 
@@ -1680,7 +1724,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """
         return None  # Default: no placeholder
 
-    def _pre_update_list(self) -> Any:
+    def prepare_list_update(self) -> Any:
         """
         Pre-update hook: normalize state, collect context.
 
@@ -1690,6 +1734,10 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         PipelineEditor: normalize scope tokens, collect live context, return snapshot
         """
         return None  # Default: no context
+
+    def _pre_update_list(self) -> Any:
+        """Compatibility shim for subclasses still overriding the old private hook."""
+        return self.prepare_list_update()
 
     def _post_update_list(self) -> None:
         """
@@ -2313,5 +2361,5 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
     def closeEvent(self, event):
         """Ensure time travel callbacks are unregistered."""
-        ObjectStateRegistry.remove_time_travel_complete_callback(self._on_time_travel_complete)
+        ObjectStateRegistry.remove_time_travel_complete_callback(self.on_time_travel_complete)
         super().closeEvent(event)
