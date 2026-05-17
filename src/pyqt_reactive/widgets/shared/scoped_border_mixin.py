@@ -29,35 +29,35 @@ class ScopedBorderMixin:
     }
 
     _scope_color_scheme = None
+    scope_id: Optional[str] = None
     _step_index: Optional[int] = None  # For border pattern based on actual position
 
-    def _init_scope_border(self) -> None:
+    def init_scope_border(self) -> None:
         """Initialize scope-based border. Call after scope_id is set.
 
         If _step_index is set, uses it for border pattern instead of
         extracting from scope_id. This allows windows to match their
         list item's border based on actual position in pipeline.
         """
-        scope_id = getattr(self, "scope_id", None)
+        scope_id = self.scope_id
         if not scope_id:
             return
 
         # Use explicit step_index if set (for windows matching list item position)
-        step_index = getattr(self, "_step_index", None)
+        step_index = self._step_index
         self._scope_color_scheme = get_scope_color_scheme(scope_id, step_index=step_index)
         border_style = self._scope_color_scheme.to_stylesheet_step_window_border()
-        current_style = self.styleSheet() if hasattr(self, "styleSheet") else ""
+        current_style = self.styleSheet()
         self.setStyleSheet(f"{current_style}\nQDialog {{ {border_style} }}")
 
         self._subscribe_to_color_changes()
 
         # Apply accent styling to UI elements (hook for subclasses)
-        self._apply_scope_accent_styling()
+        self.apply_scope_accent_styling()
 
-        if hasattr(self, "update"):
-            self.update()
+        self.update()
 
-    def _apply_scope_accent_styling(self) -> None:
+    def apply_scope_accent_styling(self) -> None:
         """Apply scope accent color to UI elements.
 
         Override in subclasses to style buttons, tree selection, title, etc.
@@ -75,7 +75,7 @@ class ScopedBorderMixin:
             return None
         # Use the same tint_idx from step_border_layers as border/flash rendering
         base_rgb = self._scope_color_scheme.base_color_rgb
-        layers = getattr(self._scope_color_scheme, 'step_border_layers', None)
+        layers = self._scope_color_scheme.step_border_layers
         if layers:
             _, tint_idx, _ = (layers[0] + ("solid",))[:3]
             return tint_color_perceptual(base_rgb, tint_idx).darker(120)
@@ -148,13 +148,13 @@ class ScopedBorderMixin:
 
     def _subscribe_to_color_changes(self) -> None:
         service = ScopeColorService.instance()
-        scope_id = getattr(self, "scope_id", None)
+        scope_id = self.scope_id
         if scope_id:
             service.color_changed.connect(self._on_scope_color_changed)
             service.all_colors_reset.connect(self._on_all_colors_reset)
 
     def _on_scope_color_changed(self, changed_scope_id: str) -> None:
-        scope_id = getattr(self, "scope_id", None)
+        scope_id = self.scope_id
         if scope_id and (
             scope_id == changed_scope_id or scope_id.startswith(f"{changed_scope_id}::")
         ):
@@ -165,17 +165,14 @@ class ScopedBorderMixin:
 
     def _refresh_scope_border(self) -> None:
         self._scope_color_scheme = None
-        self._init_scope_border()
+        self.init_scope_border()
 
     def paintEvent(self, event) -> None:
-        # Safe super() call for multiple inheritance - only call if parent has paintEvent
-        # QDialog doesn't have paintEvent, but QWidget does
-        if hasattr(super(), 'paintEvent'):
-            super().paintEvent(event)
+        super().paintEvent(event)
 
         if not self._scope_color_scheme:
             return
-        layers = getattr(self._scope_color_scheme, "step_border_layers", None)
+        layers = self._scope_color_scheme.step_border_layers
         if not layers:
             return
         self._paint_border_layers(layers)

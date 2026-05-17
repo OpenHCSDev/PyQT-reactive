@@ -33,12 +33,12 @@ Domain Hooks (Required Overrides)
 
 Subclasses provide domain-specific behavior by overriding abstract hooks:
 
-- ``_populate_tree(parsed_servers)``
-- ``_kill_ports_with_plan(...)``
-- ``_periodic_domain_cleanup()``
-- ``_on_browser_shown()``
-- ``_on_browser_hidden()``
-- ``_on_browser_cleanup()``
+- ``populate_tree(parsed_servers)``
+- ``kill_ports_with_plan(...)``
+- ``periodic_domain_cleanup()``
+- ``on_browser_shown()``
+- ``on_browser_hidden()``
+- ``on_browser_cleanup()``
 
 Related Infrastructure
 ----------------------

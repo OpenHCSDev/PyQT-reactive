@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable
 
@@ -51,6 +52,79 @@ class KillOperationPlan:
     success_message: str
 
 
+class KillOperationKind(str, Enum):
+    """Closed user-facing server kill actions."""
+
+    GRACEFUL = "graceful"
+    FORCE = "force"
+
+
+@dataclass(frozen=True)
+class KillOperationPolicy:
+    """Invariant policy attached to one kill action kind."""
+
+    plan: KillOperationPlan
+    thread_name: str
+
+
+KILL_OPERATION_POLICIES: dict[KillOperationKind, KillOperationPolicy] = {
+    KillOperationKind.GRACEFUL: KillOperationPolicy(
+        plan=KillOperationPlan(
+            graceful=True,
+            strict_failures=True,
+            emit_signal_on_failure=False,
+            success_message="All servers quit successfully",
+        ),
+        thread_name="kill_servers",
+    ),
+    KillOperationKind.FORCE: KillOperationPolicy(
+        plan=KillOperationPlan(
+            graceful=False,
+            strict_failures=False,
+            emit_signal_on_failure=True,
+            success_message="Force kill operation completed (list will refresh)",
+        ),
+        thread_name="force_kill_servers",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ServerKillAction:
+    """User-selected server kill action with its execution policy."""
+
+    ports: List[int]
+    plan: KillOperationPlan
+    thread_name: str
+
+    @classmethod
+    def from_kind(
+        cls, ports: List[int], kind: KillOperationKind
+    ) -> "ServerKillAction":
+        policy = KILL_OPERATION_POLICIES[kind]
+        return cls(
+            ports=ports,
+            plan=policy.plan,
+            thread_name=policy.thread_name,
+        )
+
+
+class BrowserLifecycleState:
+    """Lifecycle guard for browser cleanup-sensitive operations."""
+
+    def __init__(self) -> None:
+        self._cleaning_up = False
+
+    def is_cleaning_up(self) -> bool:
+        return self._cleaning_up
+
+    def begin_cleanup(self) -> bool:
+        if self._cleaning_up:
+            return False
+        self._cleaning_up = True
+        return True
+
+
 class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     """Generic ZMQ browser UI infrastructure with domain extension hooks."""
 
@@ -91,7 +165,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         self.servers: List[Dict[str, Any]] = []
         self._last_known_servers: Dict[int, Dict[str, Any]] = {}
-        self._is_cleaning_up = False
+        self._lifecycle_state = BrowserLifecycleState()
         self._tree_state_adapter = TreeStateAdapter()
         self._tree_rebuild_coordinator = TreeRebuildCoordinator(self._tree_state_adapter)
 
@@ -114,13 +188,9 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         self.setup_ui()
 
-    def __del__(self):
-        self.cleanup()
-
     def cleanup(self) -> None:
-        if self._is_cleaning_up:
+        if not self._lifecycle_state.begin_cleanup():
             return
-        self._is_cleaning_up = True
 
         if self.refresh_timer is not None:
             self.refresh_timer.stop()
@@ -131,22 +201,22 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             self._cleanup_timer.deleteLater()
             self._cleanup_timer = None
 
-        self._on_browser_cleanup()
+        self.on_browser_cleanup()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if self._is_cleaning_up:
+        if self._lifecycle_state.is_cleaning_up():
             return
         self.refresh_servers()
         if self.refresh_timer is not None:
             self.refresh_timer.start(1000)
-        self._on_browser_shown()
+        self.on_browser_shown()
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
         if self.refresh_timer is not None:
             self.refresh_timer.stop()
-        self._on_browser_hidden()
+        self.on_browser_hidden()
 
     def setup_ui(self) -> None:
         header = self._create_header()
@@ -209,7 +279,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         action()
 
     def refresh_servers(self) -> None:
-        if self._is_cleaning_up:
+        if self._lifecycle_state.is_cleaning_up():
             return
 
         def _scan_and_emit() -> None:
@@ -232,7 +302,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
                 self._last_known_servers[port] = server
 
         def _rebuild_contents() -> None:
-            self._populate_tree(parsed_servers)
+            self.populate_tree(parsed_servers)
 
         self._tree_rebuild_coordinator.rebuild(self.server_tree, _rebuild_contents)
 
@@ -248,12 +318,12 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             del self._last_known_servers[port]
 
     def _periodic_cleanup(self) -> None:
-        self._periodic_domain_cleanup()
+        self.periodic_domain_cleanup()
         # Note: We intentionally do NOT clean up _last_known_servers here.
-        # Servers are removed from the tree by _populate_tree based on scan misses.
+        # Servers are removed from the tree by populate_tree based on scan misses.
         # Keeping _last_known_servers allows subclasses to access server info
         # (like active executions) even when ping temporarily fails.
-        # Subclasses can implement their own cleanup via _periodic_domain_cleanup.
+        # Subclasses can implement their own cleanup via periodic_domain_cleanup.
 
     def _collect_selected_server_ports(self, empty_selection_message: str) -> List[int]:
         selected_items = self.server_tree.selectedItems()
@@ -292,32 +362,16 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         )
         return reply == QMessageBox.StandardButton.Yes
 
-    def _spawn_server_kill_thread(
-        self,
-        *,
-        ports: List[int],
-        graceful: bool,
-        strict_failures: bool,
-        emit_signal_on_failure: bool,
-        success_message: str,
-    ) -> None:
-        plan = KillOperationPlan(
-            graceful=graceful,
-            strict_failures=strict_failures,
-            emit_signal_on_failure=emit_signal_on_failure,
-            success_message=success_message,
-        )
-
+    def _spawn_server_kill_thread(self, action: ServerKillAction) -> None:
         def _kill_servers() -> None:
-            success, message = self._kill_ports_with_plan(
-                ports=ports,
-                plan=plan,
+            success, message = self.kill_ports_with_plan(
+                ports=action.ports,
+                plan=action.plan,
                 on_server_killed=lambda port: self.server_killed.emit(port),
             )
             self._kill_complete.emit(success, message)
 
-        thread_name = "kill_servers" if graceful else "force_kill_servers"
-        spawn_thread_with_context(_kill_servers, name=thread_name)
+        spawn_thread_with_context(_kill_servers, name=action.thread_name)
 
     def quit_selected_servers(self) -> None:
         ports_to_kill = self._collect_selected_server_ports(
@@ -338,11 +392,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             return
 
         self._spawn_server_kill_thread(
-            ports=ports_to_kill,
-            graceful=True,
-            strict_failures=True,
-            emit_signal_on_failure=False,
-            success_message="All servers quit successfully",
+            ServerKillAction.from_kind(ports_to_kill, KillOperationKind.GRACEFUL)
         )
 
     def force_kill_selected_servers(self) -> None:
@@ -365,11 +415,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             return
 
         self._spawn_server_kill_thread(
-            ports=ports_to_kill,
-            graceful=False,
-            strict_failures=False,
-            emit_signal_on_failure=True,
-            success_message="Force kill operation completed (list will refresh)",
+            ServerKillAction.from_kind(ports_to_kill, KillOperationKind.FORCE)
         )
 
     def _on_item_double_clicked(self, item: QTreeWidgetItem) -> None:
@@ -391,15 +437,15 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         )
 
     @abstractmethod
-    def _populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
+    def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
         """Build tree items from parsed server payloads."""
 
     @abstractmethod
-    def _periodic_domain_cleanup(self) -> None:
+    def periodic_domain_cleanup(self) -> None:
         """Run domain-specific cleanup on timer ticks."""
 
     @abstractmethod
-    def _kill_ports_with_plan(
+    def kill_ports_with_plan(
         self,
         *,
         ports: List[int],
@@ -409,13 +455,13 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         """Execute blocking kill operation for selected ports."""
 
     @abstractmethod
-    def _on_browser_shown(self) -> None:
+    def on_browser_shown(self) -> None:
         """Domain hook when widget becomes visible."""
 
     @abstractmethod
-    def _on_browser_hidden(self) -> None:
+    def on_browser_hidden(self) -> None:
         """Domain hook when widget is hidden."""
 
     @abstractmethod
-    def _on_browser_cleanup(self) -> None:
+    def on_browser_cleanup(self) -> None:
         """Domain hook when widget is cleaned up."""
