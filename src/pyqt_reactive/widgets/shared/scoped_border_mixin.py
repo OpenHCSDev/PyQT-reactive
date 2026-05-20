@@ -3,6 +3,7 @@
 from typing import Optional, Tuple, List
 from PyQt6.QtGui import QPainter, QPen, QColor
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget
 import logging
 
 from pyqt_reactive.widgets.shared.scope_color_utils import (
@@ -168,7 +169,7 @@ class ScopedBorderMixin:
         self.init_scope_border()
 
     def paintEvent(self, event) -> None:
-        super().paintEvent(event)
+        QWidget.paintEvent(self, event)
 
         if not self._scope_color_scheme:
             return

@@ -109,7 +109,11 @@ class ParameterFormService:
 
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"🔍 analyze_parameters: field_id={input.field_id}, param_type.keys()={list(input.param_type.keys())}")
+        logger.debug(
+            "analyze_parameters: field_id=%s param_type.keys()=%s",
+            input.field_id,
+            list(input.param_type.keys()),
+        )
 
         param_infos = []
         nested_forms = {}
@@ -359,7 +363,7 @@ class ParameterFormService:
         context_fields = {f.name for f in dataclasses.fields(GlobalPipelineConfig)
                          if dataclasses.is_dataclass(f.type)}
 
-        print("Context fields:", context_fields)
+        logger.debug("Context fields: %s", context_fields)
         # Should include: well_filter_config, zarr_config, step_materialization_config, etc.
 
         # Verify form managers use these exact field names (no "nested_" prefix)

@@ -497,6 +497,42 @@ def _create_nested_container(manager: ParameterFormManager, param_info: Paramete
     return container
 
 
+def _create_inline_dataclass_container(
+    manager: ParameterFormManager,
+    param_info: ParameterInfo,
+    display_info: DisplayInfo,
+    field_ids: FieldIds,
+    current_value: Any,
+    unwrapped_type: Optional[Type],
+    layout=None,
+    CURRENT_LAYOUT=None,
+    QWidget=None,
+    GroupBoxWithHelp=None,
+    PyQt6ColorScheme=None,
+) -> Any:
+    """Create dataclass chrome for a registered inline dataclass editor."""
+    from pyqt_reactive.widgets.shared.clickable_help_components import (
+        InlineDataclassGroupBox,
+    )
+    from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
+
+    color_scheme = manager.config.color_scheme or PCS()
+    root_manager = manager
+    while getattr(root_manager, '_parent_manager', None) is not None:
+        root_manager = root_manager._parent_manager
+    flash_key = f"{manager.field_id}.{param_info.name}" if manager.field_id else param_info.name
+    scope_accent_color = getattr(manager, '_scope_accent_color', None)
+
+    return InlineDataclassGroupBox(
+        title=display_info['field_label'],
+        help_target=unwrapped_type,
+        color_scheme=color_scheme,
+        scope_accent_color=scope_accent_color,
+        flash_key=flash_key,
+        flash_manager=root_manager,
+    )
+
+
 def _create_inline_dataclass_widget(
     manager: ParameterFormManager,
     param_info: ParameterInfo,
@@ -612,12 +648,12 @@ _WIDGET_CREATION_CONFIG: dict[WidgetCreationType, WidgetCreationConfig] = {
     WidgetCreationType.INLINE_DATACLASS: WidgetCreationConfig(
         layout_type='GroupBoxWithHelp',
         is_nested=True,
-        create_container=_create_nested_container,
+        create_container=_create_inline_dataclass_container,
         setup_layout=None,
         create_main_widget=_create_inline_dataclass_widget,
         needs_label=False,
         needs_reset_button=False,
-        needs_unwrap_type=False,
+        needs_unwrap_type=True,
         is_optional=False,
     ),
 
@@ -982,28 +1018,38 @@ def create_widget_parametric(manager: ParameterFormManager, param_info: Paramete
                 unwrapped_type
             )
 
+    def on_widget_change(pname, value, mgr: ParameterFormManager = manager):
+        converted_value = mgr._convert_widget_value(value, pname)
+        event = FieldChangeEvent(pname, converted_value, mgr)
+        from objectstate import ObjectStateRegistry
+
+        if mgr.state and mgr.state._parent_state is not None:
+            with ObjectStateRegistry.atomic("edit func parameter"):
+                FieldChangeDispatcher.instance().dispatch(event)
+        else:
+            FieldChangeDispatcher.instance().dispatch(event)
+
     # Store widget and connect signals
     if config.is_nested:
-        # For nested, store the GroupBox/container
-        manager.widgets[param_info.name] = container
-        logger.debug(f"[CREATE_NESTED_DATACLASS] param_info.name={param_info.name}, stored container in manager.widgets")
+        if creation_type is WidgetCreationType.INLINE_DATACLASS:
+            container.set_value_widget(main_widget)
+            manager.widgets[param_info.name] = container
+            PyQt6WidgetEnhancer.connect_change_signal(
+                container,
+                param_info.name,
+                on_widget_change,
+            )
+            logger.debug(
+                "[CREATE_INLINE_DATACLASS] param_info.name=%s, stored inline container in manager.widgets",
+                param_info.name,
+            )
+        else:
+            # For nested, store the GroupBox/container
+            manager.widgets[param_info.name] = container
+            logger.debug(f"[CREATE_NESTED_DATACLASS] param_info.name={param_info.name}, stored container in manager.widgets")
     else:
         # For regular, store the main widget
         manager.widgets[param_info.name] = main_widget
-
-        # Connect widget changes to dispatcher
-        # NOTE: connect_change_signal calls callback(param_name, value)
-        def on_widget_change(pname, value, mgr: ParameterFormManager = manager):
-            converted_value = mgr._convert_widget_value(value, pname)
-            event = FieldChangeEvent(pname, converted_value, mgr)
-            # ATOMIC: If this manager's state has a parent (e.g., function in step),
-            # wrap dispatch in atomic to coalesce with parent step update
-            from objectstate import ObjectStateRegistry
-            if mgr.state and mgr.state._parent_state is not None:
-                with ObjectStateRegistry.atomic("edit func parameter"):
-                    FieldChangeDispatcher.instance().dispatch(event)
-            else:
-                FieldChangeDispatcher.instance().dispatch(event)
 
         PyQt6WidgetEnhancer.connect_change_signal(main_widget, param_info.name, on_widget_change)
 

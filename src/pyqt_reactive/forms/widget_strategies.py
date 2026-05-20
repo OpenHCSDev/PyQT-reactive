@@ -16,7 +16,13 @@ from pyqt_reactive.widgets import (
 )
 from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
-from pyqt_reactive.forms.widget_creation_registry import resolve_optional, is_enum, is_list_of_enums, get_enum_from_list
+from pyqt_reactive.forms.widget_creation_registry import (
+    enum_member_type,
+    resolve_optional,
+    is_enum,
+    is_list_of_enums,
+    get_enum_from_list,
+)
 from contextlib import contextmanager
 
 try:
@@ -280,6 +286,9 @@ class MagicGuiWidgetFactory:
 
         with timer("            resolve_optional", threshold_ms=0.1):
             resolved_type = resolve_optional(param_type)
+            enum_type = enum_member_type(resolved_type)
+            if enum_type is not None:
+                resolved_type = enum_type
 
         # Handle direct List[Enum] types - create multi-selection checkbox group
         if is_list_of_enums(resolved_type):
@@ -981,6 +990,15 @@ class PyQt6WidgetEnhancer:
             PyQt6WidgetEnhancer._connect_checkbox_group_signals(widget, param_name, placeholder_aware_callback)
             return
 
+        from pyqt_reactive.protocols.widget_protocols import ChangeSignalEmitter
+        if isinstance(widget, ChangeSignalEmitter):
+            def emit_contract_value(value):
+                PyQt6WidgetEnhancer._clear_placeholder_state(widget)
+                callback(param_name, value)
+
+            widget.connect_change_signal(emit_contract_value)
+            return
+
         # Fallback to native PyQt6 signals
         connector = next(
             (connector for signal_name, connector in SIGNAL_CONNECTION_REGISTRY.items()
@@ -1030,7 +1048,12 @@ class PyQt6WidgetEnhancer:
                         selected = widget.get_value()
                         # Handle None (placeholder state) in logging
                         selected_str = "None (inherit from parent)" if selected is None else [v.name for v in selected]
-                        logger.info(f"🔘 Checkbox {cb.text()} changed to {state}, selected values: {selected_str}")
+                        logger.debug(
+                            "Checkbox %s changed to %s, selected values: %s",
+                            cb.text(),
+                            state,
+                            selected_str,
+                        )
 
                         callback(param_name, selected)
                     return handler

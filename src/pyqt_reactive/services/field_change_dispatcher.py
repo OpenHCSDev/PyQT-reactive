@@ -68,37 +68,13 @@ class FieldChangeDispatcher:
             # CRITICAL: Compute full dotted path for nested PFMs
             full_path = f"{source.field_id}.{event.field_name}" if source.field_id else event.field_name
             source.state.update_parameter(full_path, event.value)
+            source.sync_after_model_field_change(event.field_name, full_path)
             if DEBUG_DISPATCHER:
                 reset_note = " (reset to None)" if event.is_reset else ""
                 logger.info(f"  ✅ Updated state.parameters[{full_path}]{reset_note}")
 
-            # Update ProvenanceButton visibility after state change
-            # The button is in the groupbox title, not in source.widgets
-            from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
-            from PyQt6.QtWidgets import QWidget
-            
             # 3. Refresh siblings that have the same field
             parent = source._parent_manager
-            
-            # Find the groupbox widget for this manager
-            groupbox = None
-            if parent:
-                for name, nested in parent.nested_managers.items():
-                    if nested is source:
-                        groupbox = parent.widgets.get(name)
-                        break
-            
-            # Update provenance button visibility
-            if source._parent_manager:
-                source._update_provenance_button_visibility()
-            
-            # Update groupbox dirty markers (title and Reset All button)
-            source._update_groupbox_dirty_markers()
-
-            # Update reset button styling for ALL reset buttons in this manager
-            from pyqt_reactive.utils.styling_utils import update_reset_button_styling
-            for field_name, reset_button in source.reset_buttons.items():
-                update_reset_button_styling(reset_button, source.state, source.field_id, field_name)
             if parent:
                 if DEBUG_DISPATCHER:
                     logger.info(f"  🔍 Looking for siblings with field '{event.field_name}' in {parent.field_id}")
@@ -143,9 +119,7 @@ class FieldChangeDispatcher:
 
             # 3. Handle 'enabled' field styling
             if event.field_name == 'enabled':
-                source._enabled_field_styling_service.on_enabled_field_changed(
-                    source, 'enabled', event.value
-                )
+                source.sync_enabled_field_visuals(event.value)
                 if DEBUG_DISPATCHER:
                     logger.info(f"  ✅ Applied enabled styling")
 
@@ -231,4 +205,3 @@ class FieldChangeDispatcher:
             logger.info(f"      ✅ Refreshing placeholder for {manager.field_id}.{field_name}")
 
         manager._parameter_ops_service.refresh_single_placeholder(manager, field_name)
-

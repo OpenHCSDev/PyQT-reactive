@@ -35,7 +35,27 @@ from typing import Dict, List, Optional, Set, Callable, Any, Tuple, TYPE_CHECKIN
 from weakref import WeakValueDictionary
 import re
 from PyQt6.QtCore import QTimer, Qt, QRect, QRectF, QSize
-from PyQt6.QtWidgets import QWidget, QMainWindow, QDialog, QScrollArea, QCheckBox, QLabel, QStyle, QStyleOptionButton, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPushButton, QToolButton, QTextEdit, QPlainTextEdit, QTreeWidget, QListWidget, QTableWidget
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDoubleSpinBox,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMainWindow,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QStyle,
+    QStyleOptionButton,
+    QTableWidget,
+    QTextEdit,
+    QToolButton,
+    QTreeWidget,
+    QWidget,
+)
 from PyQt6.QtGui import QColor, QPainter, QRegion, QPainterPath
 from PyQt6 import sip
 
@@ -322,7 +342,8 @@ class FlashElement:
     source_id: Optional[str] = None  # Unique identifier for deduplication (e.g., "groupbox:123", "list_item:scope_id")
     corner_radius: float = 0.0  # Rounded corners (0 = sharp, >0 = rounded)
     skip_overlay_paint: bool = False  # If True, overlay skips painting (element handles its own paint, e.g., list item delegate)
-    delegate_widget: Optional[QWidget] = None  # Widget whose viewport needs updating when skip_overlay_paint=True (e.g., QListWidget, QTreeWidget)
+    # Widget whose viewport needs updating when skip_overlay_paint=True.
+    delegate_widget: Optional[QWidget] = None
     get_model_index: Optional[Callable[[], Any]] = None  # Returns QModelIndex for targeted item updates (avoids full viewport repaint)
 
 
@@ -506,6 +527,43 @@ def _get_function_pane_title_widgets(groupbox: QWidget) -> List[QWidget]:
     return unique_widgets
 
 
+def _get_groupbox_title_mask_rects(groupbox: QWidget, window: QWidget) -> List[Tuple[QRect, bool]]:
+    """Return mask rects for visible QGroupBox title text painted by Qt styles."""
+    from PyQt6.QtWidgets import QGroupBox
+    from PyQt6.QtCore import QPoint
+
+    rects: List[Tuple[QRect, bool]] = []
+    for titled_group in groupbox.findChildren(QGroupBox):
+        title = titled_group.title()
+        if not title or not titled_group.isVisible() or not titled_group.isVisibleTo(window):
+            continue
+
+        metrics = titled_group.fontMetrics()
+        group_window_pos = window.mapFromGlobal(titled_group.mapToGlobal(QPoint(0, 0)))
+        stylesheet = titled_group.styleSheet()
+        left_padding = 6
+        extra_width = 8
+        if stylesheet:
+            import re
+            left_match = re.search(r"left\s*:\s*(\d+)", stylesheet)
+            if left_match:
+                left_padding = int(left_match.group(1))
+            padding_match = re.search(r"padding\s*:\s*0\s+(\d+)", stylesheet)
+            if padding_match:
+                extra_width = int(padding_match.group(1)) * 2
+
+        rects.append((
+            QRect(
+                group_window_pos.x() + left_padding,
+                group_window_pos.y(),
+                metrics.horizontalAdvance(title) + extra_width,
+                metrics.height() + 4,
+            ),
+            False,
+        ))
+    return rects
+
+
 def create_groupbox_element(
     key: str,
     groupbox: 'QGroupBox',
@@ -670,6 +728,8 @@ def create_groupbox_element(
                     except Exception as e:
                         logger.warning(f"[FLASH INVERSE] Failed to mask function pane title widget: {e}")
 
+                exclusions.extend(_get_groupbox_title_mask_rects(groupbox, window))
+
                 logger.debug(f"[FLASH INVERSE] Total exclusions: {len(exclusions)}")
             except Exception as e:
                 logger.error(f"[FLASH INVERSE] Outer exception: {e}", exc_info=True)
@@ -724,6 +784,8 @@ def create_groupbox_element(
                 continue
             child_rect = get_child_mask_rect(child, window)
             child_rects.append((child_rect, _needs_square_checkbox_mask(child)))
+
+        child_rects.extend(_get_groupbox_title_mask_rects(groupbox, window))
 
         # DEBUG: Log groupbox position and first 2 child positions
         if child_rects:

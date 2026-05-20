@@ -1359,3 +1359,65 @@ class GroupBoxWithHelp(FlashableGroupBox):
                     self.title_layout.insertWidget(self.title_layout.count() - 1, provenance_button)
                 else:
                     self.title_layout.insertWidget(insert_pos, provenance_button)
+
+
+class InlineDataclassGroupBox(GroupBoxWithHelp):
+    """GroupBoxWithHelp that delegates field value behavior to an inline editor."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._inline_value_widget = None
+
+    def set_value_widget(self, widget) -> None:
+        self._inline_value_widget = widget
+
+    def get_value(self):
+        from pyqt_reactive.protocols.widget_protocols import ValueGettable
+
+        if not isinstance(self._inline_value_widget, ValueGettable):
+            raise TypeError(
+                "Inline dataclass value widget must implement ValueGettable, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        return self._inline_value_widget.get_value()
+
+    def set_value(self, value) -> None:
+        from pyqt_reactive.protocols.widget_protocols import ValueSettable
+
+        if not isinstance(self._inline_value_widget, ValueSettable):
+            raise TypeError(
+                "Inline dataclass value widget must implement ValueSettable, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        self._inline_value_widget.set_value(value)
+
+    def connect_change_signal(self, callback) -> None:
+        from pyqt_reactive.protocols.widget_protocols import ChangeSignalEmitter
+
+        if not isinstance(self._inline_value_widget, ChangeSignalEmitter):
+            raise TypeError(
+                "Inline dataclass value widget must implement ChangeSignalEmitter, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        self._inline_value_widget.connect_change_signal(callback)
+
+    def disconnect_change_signal(self, callback) -> None:
+        from pyqt_reactive.protocols.widget_protocols import ChangeSignalEmitter
+
+        if not isinstance(self._inline_value_widget, ChangeSignalEmitter):
+            raise TypeError(
+                "Inline dataclass value widget must implement ChangeSignalEmitter, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        self._inline_value_widget.disconnect_change_signal(callback)
+
+
+from pyqt_reactive.protocols.widget_protocols import (
+    ChangeSignalEmitter,
+    ValueGettable,
+    ValueSettable,
+)
+
+ChangeSignalEmitter.register(InlineDataclassGroupBox)
+ValueGettable.register(InlineDataclassGroupBox)
+ValueSettable.register(InlineDataclassGroupBox)
