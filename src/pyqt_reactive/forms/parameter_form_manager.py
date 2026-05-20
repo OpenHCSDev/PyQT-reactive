@@ -814,7 +814,14 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
     def queue_field_flash(self, full_path: str) -> None:
         """Queue flash feedback for a changed field path."""
-        self._queue_leaf_flash_for_path(full_path)
+        self._root_flash_manager()._queue_leaf_flash_for_path(full_path)
+
+    def _root_flash_manager(self) -> 'ParameterFormManager':
+        """Return the root form manager that owns FlashMixin state."""
+        manager = self
+        while manager._parent_manager is not None:
+            manager = manager._parent_manager
+        return manager
 
     def sync_after_model_field_change(self, param_name: str, full_path: str) -> None:
         """Synchronize visible field chrome after ObjectState accepts a change."""
@@ -1210,6 +1217,10 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         Finds the groupbox, leaf widget, and its label, registers a leaf flash element
         (which masks title + leaf_widget + label_widget), and queues the flash animation.
         """
+        if self._parent_manager is not None:
+            self._root_flash_manager()._queue_leaf_flash_for_path(path)
+            return
+
         logger.debug("[FLASH TRAIL] _queue_leaf_flash_for_path START: path=%s", path)
         # Find the prefix (groupbox) and leaf field name
         prefix = self._find_matching_prefix(path)
@@ -1253,9 +1264,11 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                 return
 
         def _find_function_pane_ancestor(widget: QWidget | None) -> QWidget | None:
+            from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
+
             current = widget
             while current is not None:
-                if hasattr(current, "_flash_title_container") or hasattr(current, "_module_path_label"):
+                if isinstance(current, FunctionPaneWidget):
                     return current
                 current = current.parentWidget()
             return None
@@ -1271,7 +1284,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                 leaf_field,
                 prefix,
                 type(groupbox).__name__,
-                getattr(groupbox, "_flash_key", None)
+                groupbox._flash_key if pane is not None else prefix,
             )
             if pane is not None:
                 logger.debug(
@@ -1279,7 +1292,9 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                     groupbox._flash_key,
                     self._get_scoped_flash_key(groupbox._flash_key)
                 )
-            flash_key = getattr(groupbox, '_flash_key', prefix if prefix else leaf_flash_key)
+            flash_key = groupbox._flash_key if pane is not None else (
+                prefix if prefix else leaf_flash_key
+            )
             self.register_flash_groupbox_full(flash_key, groupbox)
             self.queue_flash_local(flash_key)
             logger.debug("[FLASH] Enabled toggle: queued full groupbox flash key=%s", flash_key)
