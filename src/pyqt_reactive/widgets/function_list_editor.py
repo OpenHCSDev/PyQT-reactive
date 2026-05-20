@@ -81,6 +81,7 @@ class FunctionListEditorWidget(QWidget):
         self._pattern_tokens: Union[List[str], Dict[str, List[str]]] = []
         # Tokens aligned with self.functions for currently visible view.
         self._current_function_tokens: List[str] = []
+        self._func_token_generator = None
 
         # Component selection cache per GroupBy (mirrors Textual TUI)
         self.component_selections = {}
@@ -410,7 +411,7 @@ class FunctionListEditorWidget(QWidget):
         # Capture existing panes by token so we can reorder without destroying widgets.
         pane_by_token: dict[str, Any] = {}
         for pane in list(self.function_panes):
-            token = getattr(pane, "func_scope_token", None)
+            token = pane.func_scope_token
             if token:
                 pane_by_token[str(token)] = pane
 
@@ -485,7 +486,7 @@ class FunctionListEditorWidget(QWidget):
         if can_reorder:
             for token in new_tokens:
                 pane = pane_by_token.get(token)
-                if pane is None or getattr(pane, "func", None) is not expected_func_by_token.get(token):
+                if pane is None or pane.func is not expected_func_by_token.get(token):
                     can_reorder = False
                     break
 
@@ -517,17 +518,38 @@ class FunctionListEditorWidget(QWidget):
             self._current_function_tokens = []
         elif callable(initial_functions):
             # Single callable: treat as [(callable, {})]
-            token = self._get_func_token_generator().ensure()
+            existing_tokens = self._canonical_function_scope_tokens(
+                [(initial_functions, {})],
+                None,
+                self._pattern_tokens if isinstance(self._pattern_tokens, list) else [],
+            )
+            if existing_tokens:
+                token = existing_tokens[0]
+            else:
+                token = self._get_func_token_generator().ensure()
             self.pattern_data = [(initial_functions, {})]
             self._pattern_tokens = [token]
             self.is_dict_mode = False
             self.functions = list(self.pattern_data)
             self._current_function_tokens = [token]
-        elif isinstance(initial_functions, tuple) and len(initial_functions) == 2 and callable(initial_functions[0]) and isinstance(initial_functions[1], dict):
+        elif (
+            isinstance(initial_functions, tuple)
+            and len(initial_functions) == 2
+            and callable(initial_functions[0])
+            and isinstance(initial_functions[1], dict)
+        ):
             # Single tuple (callable, kwargs): treat as [(callable, kwargs)]
             func, kwargs = initial_functions
             clean_kwargs = self._sanitize_pattern_kwargs(kwargs)
-            token = self._get_func_token_generator().ensure()
+            existing_tokens = self._canonical_function_scope_tokens(
+                [(func, clean_kwargs)],
+                None,
+                self._pattern_tokens if isinstance(self._pattern_tokens, list) else [],
+            )
+            if existing_tokens:
+                token = existing_tokens[0]
+            else:
+                token = self._get_func_token_generator().ensure()
             self.pattern_data = [(func, clean_kwargs)]
             self._pattern_tokens = [str(token)]
             self.is_dict_mode = False
@@ -537,6 +559,11 @@ class FunctionListEditorWidget(QWidget):
             seen_tokens: set[str] = set()
             self.is_dict_mode = False
             seed_tokens = self._pattern_tokens if isinstance(self._pattern_tokens, list) else []
+            seed_tokens = self._canonical_function_scope_tokens(
+                initial_functions,
+                None,
+                seed_tokens,
+            )
             self.functions, tokens = self._normalize_function_list(
                 initial_functions,
                 seen_tokens=seen_tokens,
@@ -553,11 +580,17 @@ class FunctionListEditorWidget(QWidget):
             existing_tokens = self._pattern_tokens if isinstance(self._pattern_tokens, dict) else {}
             for key, value in initial_functions.items():
                 str_key = str(key)
+                seed_tokens = existing_tokens.get(str_key, [])
+                seed_tokens = self._canonical_function_scope_tokens(
+                    value,
+                    str_key,
+                    seed_tokens,
+                )
                 normalized_list, channel_tokens = (
                     self._normalize_function_list(
                         value,
                         seen_tokens=seen_tokens,
-                        seed_tokens=existing_tokens.get(str_key, []),
+                        seed_tokens=seed_tokens,
                     )
                     if value
                     else ([], [])
@@ -631,6 +664,93 @@ class FunctionListEditorWidget(QWidget):
                 normalized.append((func, new_kwargs))
                 tokens.append(str(token))
         return normalized, tokens
+
+    def _existing_function_scope_tokens(
+        self,
+        func_list,
+        channel_key: Optional[str],
+    ) -> List[str]:
+        """Return existing child ObjectState tokens aligned with a function list."""
+        parent_scope = self._get_function_state_parent_scope(channel_key)
+        if not parent_scope:
+            return []
+
+        candidate_states = [
+            state
+            for state in ObjectStateRegistry.get_all()
+            if isinstance(state.scope_id, str)
+            and state.scope_id.startswith(f"{parent_scope}::")
+        ]
+        if not candidate_states:
+            return []
+
+        available = sorted(
+            candidate_states,
+            key=lambda state: state.scope_id.rsplit("::", 1)[-1],
+        )
+        tokens: List[str] = []
+        used_scope_ids: set[str] = set()
+        item_list = func_list if isinstance(func_list, list) else [func_list]
+        for item in item_list:
+            func, _kwargs = PatternDataManager.extract_func_and_kwargs(item)
+            if func is None:
+                continue
+            match = next(
+                (
+                    state
+                    for state in available
+                    if state.scope_id not in used_scope_ids
+                    and self._same_function_authority(state.object_instance, func)
+                ),
+                None,
+            )
+            if match is None:
+                return []
+            used_scope_ids.add(match.scope_id)
+            tokens.append(match.scope_id.rsplit("::", 1)[-1])
+        return tokens
+
+    def _canonical_function_scope_tokens(
+        self,
+        func_list,
+        channel_key: Optional[str],
+        candidate_tokens: List[str],
+    ) -> List[str]:
+        """Return candidate tokens only when they still name registered child states."""
+        if self._function_scope_tokens_match(func_list, channel_key, candidate_tokens):
+            return candidate_tokens
+        return self._existing_function_scope_tokens(func_list, channel_key)
+
+    def _function_scope_tokens_match(
+        self,
+        func_list,
+        channel_key: Optional[str],
+        tokens: List[str],
+    ) -> bool:
+        """Check whether tokens point at the registered ObjectStates for funcs."""
+        parent_scope = self._get_function_state_parent_scope(channel_key)
+        if not parent_scope or not tokens:
+            return False
+
+        item_list = func_list if isinstance(func_list, list) else [func_list]
+        if len(tokens) < len(item_list):
+            return False
+
+        for index, item in enumerate(item_list):
+            func, _kwargs = PatternDataManager.extract_func_and_kwargs(item)
+            if func is None:
+                continue
+            state = ObjectStateRegistry.get_by_scope(f"{parent_scope}::{tokens[index]}")
+            if state is None:
+                return False
+            if not self._same_function_authority(state.object_instance, func):
+                return False
+        return True
+
+    @staticmethod
+    def _same_function_authority(left: Any, right: Any) -> bool:
+        """Return whether two callable objects represent the same function authority."""
+        return left is right or left == right
 
     def _get_function_state_parent_scope(self, channel_key: Optional[str]) -> Optional[str]:
         """Return the parent scope used for function ObjectStates.
@@ -722,11 +842,9 @@ class FunctionListEditorWidget(QWidget):
         """Generator for stable per-entry function tokens."""
         from pyqt_reactive.services.scope_token_service import ScopeTokenGenerator
 
-        gen = getattr(self, "_func_token_generator", None)
-        if gen is None:
-            gen = ScopeTokenGenerator("func", attr_name=None)
-            setattr(self, "_func_token_generator", gen)
-        return gen
+        if self._func_token_generator is None:
+            self._func_token_generator = ScopeTokenGenerator("func", attr_name=None)
+        return self._func_token_generator
 
     def _seed_func_token_generator(self) -> None:
         """Seed token generator from canonical sidecar metadata tokens."""
@@ -1547,7 +1665,11 @@ class FunctionListEditorWidget(QWidget):
         Stores scheme for newly created panes and applies to existing ones.
         Also applies styling to all child GroupBoxWithHelp and HelpButton widgets.
         """
-        logger.info(f"🎨 FunctionListEditorWidget.set_scope_color_scheme called with scheme={scheme}, panes={len(self.function_panes)}")
+        logger.debug(
+            "FunctionListEditorWidget.set_scope_color_scheme called with scheme=%s panes=%s",
+            scheme,
+            len(self.function_panes),
+        )
         self._scope_color_scheme = scheme
 
         # Apply to all existing panes (title color)
@@ -1582,13 +1704,16 @@ class FunctionListEditorWidget(QWidget):
 
         # Apply to all HelpButtons
         help_btns = self.findChildren(HelpButton)
-        logger.info(f"🎨 _apply_scope_styling_to_children: found {len(help_btns)} HelpButtons")
+        logger.debug("_apply_scope_styling_to_children: found %s HelpButtons", len(help_btns))
         for help_btn in help_btns:
             help_btn.set_scope_accent_color(accent_color)
 
         # Apply to all HelpIndicators
         help_indicators = self.findChildren(HelpIndicator)
-        logger.info(f"🎨 _apply_scope_styling_to_children: found {len(help_indicators)} HelpIndicators")
+        logger.debug(
+            "_apply_scope_styling_to_children: found %s HelpIndicators",
+            len(help_indicators),
+        )
         for help_indicator in help_indicators:
             help_indicator.set_scope_accent_color(accent_color)
 
@@ -1596,7 +1721,11 @@ class FunctionListEditorWidget(QWidget):
         # NOTE: Exclude function panes since they're already handled in set_scope_color_scheme()
         groupboxes = self.findChildren(GroupBoxWithHelp)
         non_pane_groupboxes = [gb for gb in groupboxes if gb not in self.function_panes]
-        logger.info(f"🎨 _apply_scope_styling_to_children: found {len(groupboxes)} GroupBoxWithHelp, {len(non_pane_groupboxes)} non-pane")
+        logger.debug(
+            "_apply_scope_styling_to_children: found %s GroupBoxWithHelp, %s non-pane",
+            len(groupboxes),
+            len(non_pane_groupboxes),
+        )
         for groupbox in non_pane_groupboxes:
             groupbox.set_scope_color_scheme(scheme)
 
@@ -1633,14 +1762,20 @@ class FunctionListEditorWidget(QWidget):
             """Called when context resolved values change."""
             relevant_paths = {"processing_config.group_by", "processing_config.variable_components"}
             if changed_paths & relevant_paths:
-                logger.info(f"🔔 FUNC_EDITOR: ObjectState resolved change detected: {changed_paths & relevant_paths}")
+                logger.debug(
+                    "FUNC_EDITOR: ObjectState resolved change detected: %s",
+                    changed_paths & relevant_paths,
+                )
                 self.refresh_from_context()
 
         state.on_resolved_changed(on_resolved_changed)
         # Store callback reference for cleanup
         self._resolved_change_callback = on_resolved_changed
         self._subscribed_state = state
-        logger.info(f"🔔 FUNC_EDITOR: Subscribed to ObjectState resolved changes for scope {self.scope_id}")
+        logger.debug(
+            "FUNC_EDITOR: Subscribed to ObjectState resolved changes for scope %s",
+            self.scope_id,
+        )
 
         # Cleanup on widget destruction
         def cleanup_subscription():
@@ -1918,8 +2053,11 @@ class FunctionListEditorWidget(QWidget):
         # renders it in its own header.
         new_text = self._get_component_button_text()
         old_text = self.component_btn.text()
-        logger.info(
-            f"🔄 _refresh_component_button: old={old_text!r}, new={new_text!r}, group_by={self.current_group_by}"
+        logger.debug(
+            "_refresh_component_button: old=%r, new=%r, group_by=%s",
+            old_text,
+            new_text,
+            self.current_group_by,
         )
         self.component_btn.setText(new_text)
         self.component_btn.setEnabled(not self._is_component_button_disabled())

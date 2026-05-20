@@ -10,6 +10,11 @@ Framework-agnostic - can be used by any UI framework (PyQt, Textual, etc.).
 import copy
 from typing import Union, List, Dict, Tuple, Optional, Callable, Any
 
+from objectstate.object_state_metadata import (
+    ObjectStateMetadataContract,
+    ObjectStateMetadataContractRegistry,
+)
+
 
 # Internal metadata key stored in kwargs for per-entry identity.
 # This is used by the PyQt/ObjectState integration to create stable, per-occurrence
@@ -19,6 +24,21 @@ SCOPE_TOKEN_KEY = "__pyqt_reactive_scope_token__"
 # Namespaced metadata keys for ObjectState.metadata
 FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY = "pyqt_reactive.func_editor.selected_pattern_key"
 FUNC_EDITOR_PATTERN_TOKENS_META_KEY = "pyqt_reactive.func_editor.pattern_tokens"
+
+ObjectStateMetadataContractRegistry.register(
+    ObjectStateMetadataContract(
+        key=FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY,
+        owner="pyqt_reactive.function_editor",
+        description="Currently selected dict-pattern key for function editor time travel.",
+    )
+)
+ObjectStateMetadataContractRegistry.register(
+    ObjectStateMetadataContract(
+        key=FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
+        owner="pyqt_reactive.function_editor",
+        description="Stable child ObjectState scope tokens for function pattern entries.",
+    )
+)
 
 
 class PatternDataManager:
