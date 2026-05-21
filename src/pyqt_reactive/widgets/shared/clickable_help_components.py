@@ -4,10 +4,12 @@ import logging
 from typing import Union, Callable, Optional
 from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox, QVBoxLayout, QSizePolicy
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtProperty, QRect, QRectF, QSize
-from PyQt6.QtGui import QFont, QCursor, QColor, QPainter, QPen
+from PyQt6.QtGui import QFont, QCursor, QColor, QPainter
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.animation import FlashMixin
+from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
+from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
 
 logger = logging.getLogger(__name__)
 
@@ -910,14 +912,6 @@ class GroupBoxWithHelp(FlashableGroupBox):
     Supports scope-based borders matching window border patterns.
     """
 
-    # Border patterns matching ScopedBorderMixin
-    BORDER_PATTERNS = {
-        "solid": (Qt.PenStyle.SolidLine, None),
-        "dashed": (Qt.PenStyle.DashLine, [8, 6]),
-        "dotted": (Qt.PenStyle.DotLine, [2, 6]),
-        "dashdot": (Qt.PenStyle.DashDotLine, [8, 4, 2, 4]),
-    }
-
     def __init__(self, title: str, help_target: Union[Callable, type] = None,
                  color_scheme: Optional[ColorScheme] = None, parent=None,
                  flash_key: str = "", flash_manager=None, scope_accent_color=None):
@@ -1228,42 +1222,18 @@ class GroupBoxWithHelp(FlashableGroupBox):
 
         Uses _get_border_rect() for geometry matching flash overlay.
         """
-        from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Use flash-compatible geometry
         rect = self._get_border_rect()
-        inset = 0
-        base_rgb = self._scope_color_scheme.base_color_rgb
-
-        # Get corner radius from stylesheet for rounded borders
         from pyqt_reactive.animation import get_widget_corner_radius, DEFAULT_CORNER_RADIUS
         radius = get_widget_corner_radius(self)
         if radius == 0:
             radius = DEFAULT_CORNER_RADIUS
 
-        for layer in layers:
-            width, tint_idx, pattern = (layer + ("solid",))[:3]
-            color = tint_color_perceptual(base_rgb, tint_idx).darker(120)
-
-            pen = QPen(color, width)
-            style, dash_pattern = self.BORDER_PATTERNS.get(
-                pattern, self.BORDER_PATTERNS["solid"]
-            )
-            pen.setStyle(style)
-            if dash_pattern:
-                pen.setDashPattern(dash_pattern)
-
-            offset = int(inset + width / 2)
-            painter.setPen(pen)
-            draw_rect = rect.adjusted(offset, offset, -offset - 1, -offset - 1)
-            # Draw rounded rect to match flash overlay geometry
-            painter.drawRoundedRect(QRectF(draw_rect), radius, radius)
-            inset += width
-
-        painter.end()
+        ScopeBorderRenderer.paint_border_layers(
+            self,
+            self._scope_color_scheme,
+            rect,
+            radius=radius,
+        )
 
     def addWidget(self, widget):
         """Add widget to the content area."""
@@ -1370,6 +1340,19 @@ class InlineDataclassGroupBox(GroupBoxWithHelp):
 
     def set_value_widget(self, widget) -> None:
         self._inline_value_widget = widget
+        if self._scope_color_scheme is not None and isinstance(
+            widget,
+            ScopeColorSchemeReceiver,
+        ):
+            widget.set_scope_color_scheme(self._scope_color_scheme)
+
+    def set_scope_color_scheme(self, scheme) -> None:
+        super().set_scope_color_scheme(scheme)
+        if self._inline_value_widget is not None and isinstance(
+            self._inline_value_widget,
+            ScopeColorSchemeReceiver,
+        ):
+            self._inline_value_widget.set_scope_color_scheme(scheme)
 
     def get_value(self):
         from pyqt_reactive.protocols.widget_protocols import ValueGettable

@@ -1,8 +1,7 @@
 """Mixin for scope-based window border rendering."""
 
-from typing import Optional, Tuple, List
-from PyQt6.QtGui import QPainter, QPen, QColor
-from PyQt6.QtCore import Qt
+from typing import Optional
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QWidget
 import logging
 
@@ -10,6 +9,7 @@ from pyqt_reactive.widgets.shared.scope_color_utils import (
     tint_color_perceptual,
     get_scope_color_scheme,
 )
+from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
 from pyqt_reactive.services.scope_color_service import ScopeColorService
 
 logger = logging.getLogger(__name__)
@@ -21,13 +21,6 @@ class ScopedBorderMixin:
     Also provides scope accent colors for UI elements like buttons, tree selection,
     and titles to create visual consistency with the scope border color.
     """
-
-    BORDER_PATTERNS = {
-        "solid": (Qt.PenStyle.SolidLine, None),
-        "dashed": (Qt.PenStyle.DashLine, [8, 6]),
-        "dotted": (Qt.PenStyle.DotLine, [2, 6]),
-        "dashdot": (Qt.PenStyle.DashDotLine, [8, 4, 2, 4]),
-    }
 
     _scope_color_scheme = None
     scope_id: Optional[str] = None
@@ -176,31 +169,8 @@ class ScopedBorderMixin:
         layers = self._scope_color_scheme.step_border_layers
         if not layers:
             return
-        self._paint_border_layers(layers)
-
-    def _paint_border_layers(self, layers: List[Tuple]) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        rect = self.rect()
-        inset = 0
-        base_rgb = self._scope_color_scheme.base_color_rgb
-
-        for layer in layers:
-            width, tint_idx, pattern = (layer + ("solid",))[:3]
-            color = tint_color_perceptual(base_rgb, tint_idx).darker(120)
-
-            pen = QPen(color, width)
-            style, dash_pattern = self.BORDER_PATTERNS.get(
-                pattern, self.BORDER_PATTERNS["solid"]
-            )
-            pen.setStyle(style)
-            if dash_pattern:
-                pen.setDashPattern(dash_pattern)
-
-            offset = int(inset + width / 2)
-            painter.setPen(pen)
-            painter.drawRect(rect.adjusted(offset, offset, -offset - 1, -offset - 1))
-            inset += width
-
-        painter.end()
+        ScopeBorderRenderer.paint_border_layers(
+            self,
+            self._scope_color_scheme,
+            self.rect(),
+        )

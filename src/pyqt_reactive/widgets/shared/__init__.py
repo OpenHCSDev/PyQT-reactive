@@ -24,6 +24,8 @@ from .tree_state_adapter import (
     TreeStateAdapter,
 )
 from .tree_rebuild_coordinator import TreeRebuildCoordinator
+from .scope_color_receiver import ScopeColorSchemeReceiver
+from .scoped_table_widget import ScopedTableWidget
 from .manager_ui_scaffold import (
     ManagerHeaderParts,
     create_manager_header,
@@ -65,6 +67,8 @@ __all__ = [
     "DictPayloadTreeItemKeyBuilder",
     "TreeStateAdapter",
     "TreeRebuildCoordinator",
+    "ScopeColorSchemeReceiver",
+    "ScopedTableWidget",
     "ManagerHeaderParts",
     "create_manager_header",
     "setup_vertical_manager_layout",
