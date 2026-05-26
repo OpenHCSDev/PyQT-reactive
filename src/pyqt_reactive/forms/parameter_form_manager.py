@@ -14,15 +14,18 @@ from objectstate import register_hierarchy_relationship, unregister_hierarchy_re
 from .widget_creation_types import ParameterFormManager as ParameterFormManagerABC, _CombinedMeta
 # timer decorator made optional
 from .widget_operations import WidgetOperations
-from .widget_factory import WidgetFactory
-from .widget_creation_registry import create_pyqt6_registry
+from .widget_strategies import create_pyqt6_widget
 from .layout_constants import CURRENT_LAYOUT
+from .parameter_form_chrome_sync import ParameterFormChromeSync
+from .parameter_form_tree_index import ParameterFormTreeIndex
 from pyqt_reactive.services import ValueCollectionService
 from pyqt_reactive.services import SignalService
 from pyqt_reactive.services import FieldChangeDispatcher, FieldChangeEvent
 # LiveContextService deleted - functionality moved to ObjectStateRegistry
 from pyqt_reactive.services import FlagContextManager
 from .form_init_service import FormBuildOrchestrator
+from pyqt_reactive.widgets.shared.config_tree_contracts import ConfigTreeFlashManager
+from pyqt_reactive.services.window_navigation import FormNavigationManager
 from contextlib import contextmanager
 
 try:
@@ -61,7 +64,13 @@ class FormManagerConfig:
     scope_step_index: Optional[int] = None  # Optional step index to align scope styling with pipeline order
 
 
-class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metaclass=_CombinedMeta):
+class ParameterFormManager(
+    QWidget,
+    ParameterFormManagerABC,
+    FlashMixin,
+    ConfigTreeFlashManager,
+    metaclass=_CombinedMeta,
+):
     """
     React-quality reactive form manager for PyQt6.
 
@@ -271,7 +280,6 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             # Store ObjectState reference - PFM delegates MODEL to state
             self.state = state
             self._form_widget: Optional[QWidget] = None
-            self._groupbox_cache: Dict[str, Optional[QWidget]] = {}
             self._extra_repaint_callbacks: List[Callable[[], None]] = []
 
             # Store target object for this PFM's scope (root or nested)
@@ -358,6 +366,8 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             self.widgets, self.reset_buttons, self.nested_managers = {}, {}, {}
             self.labels = {}  # Track LabelWithHelp widgets for bold styling
             self._pending_nested_managers: Dict[str, 'ParameterFormManager'] = {}
+            self.form_tree = ParameterFormTreeIndex(self)
+            self.chrome_sync = ParameterFormChromeSync(self)
 
             # STEP 4: VIEW-only flags (state tracking is in ObjectState)
             self._initial_load_complete, self._block_cross_window_updates, self._in_reset = False, False, False
@@ -393,12 +403,11 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
                 # METAPROGRAMMING: Auto-unpack all services to self with _ prefix
                 ValueCollectionService.unpack_to_self(self, services, prefix="_")
 
-            # Get widget creator from registry
-            self._widget_creator = create_pyqt6_registry()
+            # Get widget creator from the concrete PyQt strategy.
+            self._widget_creator = create_pyqt6_widget
 
             # ANTI-DUCK-TYPING: Initialize ABC-based widget operations
             self._widget_ops = WidgetOperations()
-            self._widget_factory = WidgetFactory()
             self._context_event_coordinator = None
 
             # GAME ENGINE: Initialize flash overlay state BEFORE building widgets
@@ -434,7 +443,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
             # Materialized state changes: Subscribe once (root only)
             if self._parent_manager is None:
-                self.state.on_state_changed(self._on_state_changed)
+                self.state.on_state_changed(self.chrome_sync.state_changed)
 
             # STEP 8: _user_set_fields starts empty and is populated only when user edits widgets
             # (via _emit_parameter_change). Do NOT populate during initialization, as that would
@@ -530,7 +539,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
     def _create_widget_for_param(self, param_info: Any) -> Any:
         """Create widget for a parameter. Type auto-detected from param_info."""
-        from pyqt_reactive.forms.widget_creation_config import create_widget_parametric
+        from pyqt_reactive.forms.widget_creation_config import WidgetCreationPipeline
         logger.debug(
             "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s widget_creation_type=%s",
             self._pfm_seq,
@@ -538,7 +547,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             param_info.name,
             param_info.widget_creation_type,
         )
-        return create_widget_parametric(self, param_info)
+        return WidgetCreationPipeline(self, param_info).run()
 
     def _create_widgets_async(self, layout, param_infos, on_complete=None, on_batch_complete=None):
         """Create widgets asynchronously to avoid blocking the UI.
@@ -722,12 +731,12 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             # Update all reset buttons and provenance button once at the end
             for param_name in param_names:
                 self._update_reset_button_styling(param_name)
-            self._update_provenance_button_visibility()
+            self.chrome_sync.update_provenance_button_visibility()
 
             # CRITICAL: Update groupbox dirty markers AFTER all resets are complete
             # Individual reset_parameter calls update during the loop, but we need
             # a final update to reflect the complete reset state
-            self._update_groupbox_dirty_markers()
+            self.chrome_sync.update_owning_groupbox_dirty_marker()
 
     def update_parameter(self, param_name: str, value: Any) -> None:
         """Update parameter value using shared service layer.
@@ -774,7 +783,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             FieldChangeDispatcher.instance().dispatch(event)
 
         # Update label styling after parameter change
-        self._update_label_styling(param_name)
+        self.chrome_sync.update_label_styling(param_name)
 
     def reset_parameter(self, param_name: str) -> None:
         """Reset parameter to signature default.
@@ -790,18 +799,16 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         with FlagContextManager.reset_context(self, block_cross_window=False):
             self._parameter_ops_service.reset_parameter(self, param_name)
 
-        reset_value = self.state.parameters.get(dotted_path)
-        event = FieldChangeEvent(param_name, reset_value, self, is_reset=True)
-        FieldChangeDispatcher.instance().dispatch(event)
+        self.chrome_sync.dispatch_reset(param_name)
 
         # Update label styling after reset
-        self._update_label_styling(param_name)
+        self.chrome_sync.update_label_styling(param_name)
         
         # Update reset button styling
         self._update_reset_button_styling(param_name)
         
         # Update provenance button visibility
-        self._update_provenance_button_visibility()
+        self.chrome_sync.update_provenance_button_visibility()
 
     def _update_reset_button_styling(self, param_name: str) -> None:
         """Update reset button styling: * and _ indicators."""
@@ -814,109 +821,15 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
     def queue_field_flash(self, full_path: str) -> None:
         """Queue flash feedback for a changed field path."""
-        self._root_flash_manager()._queue_leaf_flash_for_path(full_path)
-
-    def _root_flash_manager(self) -> 'ParameterFormManager':
-        """Return the root form manager that owns FlashMixin state."""
-        manager = self
-        while manager._parent_manager is not None:
-            manager = manager._parent_manager
-        return manager
+        self.form_tree.root()._queue_leaf_flash_for_path(full_path)
 
     def sync_after_model_field_change(self, param_name: str, full_path: str) -> None:
         """Synchronize visible field chrome after ObjectState accepts a change."""
-        self.queue_field_flash(full_path)
-        self.sync_changed_field_visuals(param_name)
-
-    def sync_changed_field_visuals(self, param_name: str) -> None:
-        """Synchronize field-level chrome after a model value changes."""
-        self._update_label_styling(param_name)
-        self._update_groupbox_dirty_markers()
-        self._update_provenance_button_visibility()
-        for field_name in self.reset_buttons:
-            self._update_reset_button_styling(field_name)
+        self.chrome_sync.after_model_field_change(param_name, full_path)
 
     def sync_enabled_field_visuals(self, value: Any) -> None:
         """Synchronize enabled-field dependent styling after an enabled change."""
-        self._enabled_field_styling_service.on_enabled_field_changed(
-            self, 'enabled', value
-        )
-    
-    def _update_groupbox_dirty_markers(self) -> None:
-        """Update groupbox dirty markers (title and Reset All button).
-
-        CRITICAL: Only consider fields under THIS nested manager's prefix.
-        The state contains ALL fields, so we must filter by field_id prefix.
-        """
-        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-
-        groupbox = self.owning_groupbox()
-        if isinstance(groupbox, GroupBoxWithHelp):
-            # Filter dirty_fields and signature_diff_fields to only include
-            # fields under this nested manager's prefix (field_id)
-            prefix = self.field_id + '.' if self.field_id else ''
-
-            if prefix:
-                has_dirty = any(f.startswith(prefix) for f in self.state.dirty_fields)
-                has_sig_diff = any(f.startswith(prefix) for f in self.state.signature_diff_fields)
-            else:
-                # Root manager - check all fields
-                has_dirty = bool(self.state.dirty_fields)
-                has_sig_diff = bool(self.state.signature_diff_fields)
-
-            groupbox.set_dirty_marker(has_dirty, has_sig_diff)
-    
-    def _update_provenance_button_visibility(self) -> None:
-        """Update provenance button visibility for enabled field."""
-        from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
-        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-        
-        groupbox = self.owning_groupbox()
-        if isinstance(groupbox, GroupBoxWithHelp):
-            for widget in groupbox.title_layout.findChildren(ProvenanceButton):
-                widget.setVisible(widget._has_provenance())
-                break
-
-    def owning_groupbox(self) -> Optional[QWidget]:
-        """Return the parent-owned groupbox that represents this nested manager."""
-        if self._parent_manager is None:
-            return None
-        for name, nested in self._parent_manager.nested_managers.items():
-            if nested is self:
-                return self._parent_manager.widgets.get(name)
-        return None
-
-    def _update_label_styling(self, param_name: str) -> None:
-        """Update label styling: underline (differs from signature default) and dirty indicator (unsaved changes).
-
-        Two independent visual semantics:
-        - Underline: raw value differs from signature default (explicitly set)
-        - Asterisk (*): resolved value differs from saved resolved value (unsaved changes)
-        """
-        # Build full dotted path for state lookup
-        dotted_path = f'{self.field_id}.{param_name}' if self.field_id else param_name
-        should_underline = dotted_path in self.state.signature_diff_fields
-
-        # Dirty indicator: asterisk if resolved value differs from saved resolved value
-        is_dirty = dotted_path in self.state.dirty_fields
-
-        if param_name in self.labels:
-            label = self.labels[param_name]
-            label.set_underline(should_underline)
-            label.set_dirty_indicator(is_dirty)
-
-        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-        widget = self.widgets.get(param_name)
-        if isinstance(widget, GroupBoxWithHelp):
-            widget.set_dirty_marker(is_dirty, should_underline)
-
-    def _on_state_changed(self) -> None:
-        """Callback when materialized state changes (dirty/signature diff)."""
-        for param_name in set(self.labels) | set(self.widgets):
-            self._update_label_styling(param_name)
-
-        for nested_manager in self.nested_managers.values():
-            nested_manager._on_state_changed()
+        self.chrome_sync.enabled_field_visuals(value)
 
     def update_groupbox_dirty_markers(self, dirty_prefixes: set, sig_diff_prefixes: set = None) -> None:
         """Update groupbox titles with dirty markers and signature diff underline.
@@ -930,21 +843,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         """
         if sig_diff_prefixes is None:
             sig_diff_prefixes = set()
-
-        # Update this level's nested managers' groupboxes and Reset All buttons
-        for param_name, nested_manager in self.nested_managers.items():
-            groupbox = self.widgets.get(param_name)
-            if groupbox is None:
-                continue
-
-            prefix = nested_manager.field_id
-            is_dirty = prefix in dirty_prefixes
-            has_sig_diff = prefix in sig_diff_prefixes
-            groupbox.set_dirty_marker(is_dirty, has_sig_diff)
-
-        # Recurse to nested managers
-        for nested_manager in self.nested_managers.values():
-            nested_manager.update_groupbox_dirty_markers(dirty_prefixes, sig_diff_prefixes)
+        self.chrome_sync.update_groupbox_dirty_markers(dirty_prefixes, sig_diff_prefixes)
 
     # DELETED: MODEL DELEGATION - callers use self.state.get_*() directly
     # DELETED: _on_nested_parameter_changed - replaced by FieldChangeDispatcher
@@ -953,21 +852,6 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         """Apply operation to all nested managers."""
         for param_name, nested_manager in self.nested_managers.items():
             callback(param_name, nested_manager)
-
-    def _apply_callbacks_recursively(self, callback_list_name: str) -> None:
-        """REFACTORING: Unified recursive callback application - eliminates duplicate methods.
-
-        Args:
-            callback_list_name: Name of the callback list attribute (e.g., '_on_build_complete_callbacks')
-        """
-        callback_list = getattr(self, callback_list_name)
-        for callback in callback_list:
-            callback()
-        callback_list.clear()
-
-        # Recursively apply nested managers' callbacks
-        for nested_manager in self.nested_managers.values():
-            nested_manager._apply_callbacks_recursively(callback_list_name)
 
     def _on_nested_manager_complete(self, nested_manager) -> None:
         """
@@ -1034,7 +918,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
             # Unregister state change callback (root only)
             if self._parent_manager is None:
-                self.state.off_state_changed(self._on_state_changed)
+                self.state.off_state_changed(self.chrome_sync.state_changed)
 
             if self.context_obj is not None and not self._parent_manager:
                 unregister_hierarchy_relationship(type(self.object_instance))
@@ -1043,72 +927,12 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         except Exception as e:
             logger.warning(f"Unregister error: {e}")
 
-    # ========== DELEGATION TO LiveContextService ==========
-    def _schedule_cross_window_refresh(self, changed_field: Optional[str] = None, emit_signal: bool = True):
-        """Schedule a debounced placeholder refresh for cross-window updates.
-
-        Args:
-            changed_field: If specified, only refresh this field's placeholder (targeted).
-                          If None, refresh all placeholders (bulk refresh).
-            emit_signal: Whether to emit context_refreshed signal after refresh.
-                        Set to False when refresh is triggered by another window's
-                        context_refreshed to prevent infinite ping-pong loops.
-        """
-        # Cancel existing timer if any
-        if self._cross_window_refresh_timer is not None:
-            self._cross_window_refresh_timer.stop()
-
-        def do_refresh():
-            # Check if this manager was deleted before the timer fired
-            try:
-                from PyQt6 import sip
-                if sip.isdeleted(self):
-                    return
-            except (ImportError, TypeError):
-                pass
-            if changed_field is not None:
-                # Targeted refresh: only refresh the specific field that changed
-                # This field might exist in this manager OR in nested managers
-                self._refresh_field_in_tree(changed_field)
-            else:
-                # Bulk refresh: refresh all placeholders (save/cancel/code editor)
-                self._parameter_ops_service.refresh_with_live_context(self)
-                self._apply_to_nested_managers(lambda _, manager: manager._enabled_field_styling_service.refresh_enabled_styling(manager))
-
-            # CRITICAL: Only root managers emit signals to avoid nested ping-pong
-            if emit_signal and self._parent_manager is None:
-                self.context_changed.emit(self.scope_id or "", changed_field or "")
-
-        self._cross_window_refresh_timer = QTimer()
-        self._cross_window_refresh_timer.setSingleShot(True)
-        self._cross_window_refresh_timer.timeout.connect(do_refresh)
-        self._cross_window_refresh_timer.start(50)  # 10ms debounce
-
-    def _refresh_field_in_tree(self, field_name: str):
-        """Refresh a field's placeholder in this manager and nested managers."""
-        if field_name in self.widgets:
-            self._parameter_ops_service.refresh_single_placeholder(self, field_name)
-        for nested_manager in self.nested_managers.values():
-            nested_manager._refresh_field_in_tree(field_name)
-
     def refresh_widgets_from_state(self):
         """Refresh all widget values from state.parameters.
 
         Called during time-travel to sync Qt widgets with restored ObjectState.
         """
-        from pyqt_reactive.protocols.widget_protocols import ValueSettable
-
-        for param_name, widget in self.widgets.items():
-            if isinstance(widget, ValueSettable):
-                # Build full dotted path
-                dotted_path = f'{self.field_id}.{param_name}' if self.field_id else param_name
-                if dotted_path in self.state.parameters:
-                    value = self.state.parameters.get(dotted_path)
-                    self._widget_service.update_widget_value(widget, value, param_name, False, self)
-
-        # Recurse into nested managers
-        for nested_manager in self.nested_managers.values():
-            nested_manager.refresh_widgets_from_state()
+        self.chrome_sync.refresh_widgets_from_state()
 
     # ==================== GROUPBOX FLASH ANIMATION (FlashMixin) ====================
 
@@ -1137,7 +961,7 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         # TIME-TRAVEL: Refresh widget values for changed paths
         # (during time-travel, user didn't type - widgets need to be updated from state)
         if ObjectStateRegistry._in_time_travel:
-            self._refresh_widgets_for_paths(changed_paths)
+            self.chrome_sync.refresh_widgets_for_paths(changed_paths)
             # CRITICAL: Refresh enabled styling for all managers after time-travel
             # Widget updates bypass the FieldChangeDispatcher (signals blocked), so styling
             # isn't triggered automatically. We must manually sync styling to match restored state.
@@ -1159,57 +983,12 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         # Refresh placeholders for changed fields (show new resolved values)
         for path in changed_paths:
             leaf_field = path.split('.')[-1] if '.' in path else path
-            self._refresh_field_in_tree(leaf_field)
+            self.chrome_sync.refresh_field_in_tree(leaf_field)
         if changed_paths:
             sample_path = next(iter(changed_paths))
             sample_leaf = sample_path.split('.')[-1] if '.' in sample_path else sample_path
             sample_prefix = sample_path.rsplit('.', 1)[0] if '.' in sample_path else None
             logger.debug(f"[FLASH TRAIL] prefix={sample_prefix}, leaf_field={sample_leaf}")
-
-    def _refresh_widgets_for_paths(self, paths: Set[str]):
-        """Refresh widget values for specific paths from state.parameters.
-
-        Used during time-travel to sync Qt widgets with restored ObjectState.
-        """
-        from pyqt_reactive.protocols.widget_protocols import ValueSettable
-
-        logger.debug(f"⏱️ WIDGET_REFRESH: paths={paths}, field_id={self.field_id!r}, widgets={list(self.widgets.keys())}")
-
-        for path in paths:
-            # Extract path prefix and leaf field
-            # e.g., "step_well_filter_config.well_filter" -> prefix="step_well_filter_config", leaf="well_filter"
-            if '.' in path:
-                path_prefix = path.rsplit('.', 1)[0]
-                leaf_field = path.rsplit('.', 1)[1]
-            else:
-                path_prefix = ""
-                leaf_field = path
-
-            logger.debug(f"⏱️ WIDGET_REFRESH: path={path}, path_prefix={path_prefix!r}, leaf_field={leaf_field}, my_prefix={self.field_id!r}")
-
-            # CRITICAL: Only update widget if this path belongs to this manager
-            # Path prefix must match manager's field_id exactly
-            if path_prefix != self.field_id:
-                logger.debug(f"⏱️ WIDGET_REFRESH: SKIP path={path} (prefix mismatch: {path_prefix!r} != {self.field_id!r})")
-                continue  # This path doesn't belong to this manager
-
-            # Check if we have this widget
-            if leaf_field in self.widgets:
-                widget = self.widgets[leaf_field]
-                if isinstance(widget, ValueSettable):
-                    # Use get with sentinel to distinguish "key exists with None value" from "key doesn't exist"
-                    _MISSING = object()
-                    value = self.state.parameters.get(path, _MISSING)
-                    logger.debug(f"⏱️ WIDGET_REFRESH: UPDATING {leaf_field} -> {value!r}")
-                    if value is not _MISSING:
-                        # None is a valid value (means "inherit") - don't skip it
-                        self._widget_service.update_widget_value(widget, value, leaf_field, False, self)
-            else:
-                logger.debug(f"⏱️ WIDGET_REFRESH: NO WIDGET for {leaf_field}")
-
-        # Recurse into nested managers
-        for nested_manager in self.nested_managers.values():
-            nested_manager._refresh_widgets_for_paths(paths)
 
     def _queue_leaf_flash_for_path(self, path: str) -> None:
         """Queue a leaf flash for a changed path.
@@ -1218,12 +997,12 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
         (which masks title + leaf_widget + label_widget), and queues the flash animation.
         """
         if self._parent_manager is not None:
-            self._root_flash_manager()._queue_leaf_flash_for_path(path)
+            self.form_tree.root()._queue_leaf_flash_for_path(path)
             return
 
         logger.debug("[FLASH TRAIL] _queue_leaf_flash_for_path START: path=%s", path)
         # Find the prefix (groupbox) and leaf field name
-        prefix = self._find_matching_prefix(path)
+        prefix = self.form_tree.matching_prefix(path)
         leaf_field = path.split('.')[-1] if '.' in path else path
 
         # SPECIAL CASE: For enable/disable toggles, flash the whole groupbox
@@ -1232,11 +1011,11 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
 
         if prefix:
             # Nested dataclass case: find groupbox and nested manager
-            groupbox = self._get_groupbox_for_prefix(prefix)
+            groupbox = self.form_tree.groupbox_for_prefix(prefix)
             if not groupbox:
                 logger.debug(f"[FLASH] No groupbox found for prefix={prefix}")
                 return
-            nested_manager = self._find_nested_manager_for_prefix(prefix)
+            nested_manager = self.form_tree.nested_manager_for_prefix(prefix)
             if not nested_manager:
                 logger.debug(f"[FLASH] No nested manager found for prefix={prefix}")
                 return
@@ -1341,89 +1120,20 @@ class ParameterFormManager(QWidget, ParameterFormManagerABC, FlashMixin, metacla
             
         logger.debug(f"[FLASH] Queued leaf flash: key={leaf_flash_key}, leaf={leaf_field}")
 
-    def _find_nested_manager_for_prefix(self, prefix: str) -> Optional['ParameterFormManager']:
-        """Find the nested manager for a given field_id."""
-        return self._find_nested_manager_recursive(prefix, self)
-
-    def _find_nested_manager_recursive(self, prefix: str, manager: 'ParameterFormManager') -> Optional['ParameterFormManager']:
-        """Recursively find nested manager with matching prefix."""
-        for _, nested_manager in manager.nested_managers.items():
-            if nested_manager.field_id == prefix:
-                return nested_manager
-            result = self._find_nested_manager_recursive(prefix, nested_manager)
-            if result:
-                return result
-        return None
-
-    def _find_matching_prefix(self, path: str) -> Optional[str]:
-        """Find the nested manager field_id that matches a changed path."""
-        return self._find_prefix_recursive(path, self)
-
-    def _find_prefix_recursive(self, path: str, manager: 'ParameterFormManager') -> Optional[str]:
-        """Recursively find matching prefix through nested managers."""
-        for _, nested_manager in manager.nested_managers.items():
-            prefix = nested_manager.field_id
-            if path.startswith(prefix + '.') or path == prefix:
-                deeper = self._find_prefix_recursive(path, nested_manager)
-                return deeper if deeper else prefix
-        return None
-
     # PAINT-TIME API: get_flash_color_for_key() inherited from VisualUpdateMixin
     # Groupboxes and tree items call this during paint to get current flash color
 
-    def _get_groupbox_for_prefix(self, prefix: str) -> Optional[QWidget]:
-        """Get the groupbox widget for a field_id by finding the nested manager.
-
-        PERFORMANCE: Results are cached since form structure is immutable.
-        """
-        if prefix in self._groupbox_cache:
-            return self._groupbox_cache[prefix]
-        result = self._get_groupbox_recursive(prefix, self)
-        self._groupbox_cache[prefix] = result
-        return result
-
-    def _get_groupbox_recursive(self, prefix: str, manager: 'ParameterFormManager') -> Optional[QWidget]:
-        """Recursively find groupbox by field_id."""
-        for param_name, nested_manager in manager.nested_managers.items():
-            if nested_manager.field_id == prefix:
-                return manager.widgets.get(param_name)
-            result = self._get_groupbox_recursive(prefix, nested_manager)
-            if result:
-                return result
-        return None
-
-    def _is_flash_visible(self) -> bool:
-        """Check if this form's flash animations are visible on screen.
-
-        GAME ENGINE: Skip animation ticks entirely for forms that aren't visible.
-        """
-        # Check if our parent widget (the form itself) is visible
-        try:
-            if not self.isVisible():
-                return False
-            # Check if minimized or occluded
-            window = self.window()
-            if window and window.isMinimized():
-                return False
-        except RuntimeError:
-            return False  # Widget deleted
-        return True
-
-    def _visual_repaint(self) -> None:
-        """GAME ENGINE: Repaint handled by WindowFlashOverlay.
-
-        WindowFlashOverlay renders ALL flash effects in ONE paintEvent per window.
-        This is O(1) per window regardless of how many items are animating.
-
-        This method is now a no-op - the global coordinator handles all repaints.
-        """
-        # Repaint callbacks for external widgets (e.g., tree widget)
+    def _execute_text_update(self) -> None:
+        """Execute queued external repaint callbacks for form companion widgets."""
         for callback in self._extra_repaint_callbacks:
             callback()
 
     def register_repaint_callback(self, callback) -> None:
-        """Register a callback to be invoked during _visual_repaint.
+        """Register a callback to be invoked during queued visual updates.
 
         Used by ConfigWindow to repaint tree widget using same flash source of truth.
         """
         self._extra_repaint_callbacks.append(callback)
+
+
+FormNavigationManager.register(ParameterFormManager)

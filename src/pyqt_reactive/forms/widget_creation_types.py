@@ -12,8 +12,9 @@ This is the Python equivalent of React's component interface:
 """
 
 from abc import ABC, abstractmethod, ABCMeta
+from enum import Enum
 from typing import TypedDict, Callable, Optional, Any, Dict, Type
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 
 # Import ParameterInfo ABC from shared UI module
 from .parameter_info_types import ParameterInfoBase as ParameterInfo
@@ -32,13 +33,52 @@ class FieldIds(TypedDict, total=False):
     optional_checkbox_id: str
 
 
-# Create a combined metaclass that works with both PyQt and ABC
-# This must be done BEFORE defining the ABC class
+class LayoutKind(Enum):
+    """Nominal layout strategy for widget containers."""
+    HORIZONTAL_ROW = "horizontal_row"
+    VERTICAL_BOX = "vertical_box"
+    PRECONFIGURED_GROUPBOX = "preconfigured_groupbox"
+    GROUPBOX_WITH_HELP = "groupbox_with_help"
+
+
+@dataclass(frozen=True)
+class OptionalTitleComponents:
+    """Widgets that make up an optional nested dataclass title row."""
+    title_widget: Any
+    checkbox: Any
+    title_label: Any
+    help_btn: Any
+    reset_all_button: Optional[Any]
+
+
+@dataclass(frozen=True)
+class WidgetBuildContext:
+    """Shared context for one parameter widget build."""
+    manager: 'ParameterFormManager'
+    param_info: ParameterInfo
+    display_info: DisplayInfo
+    field_ids: FieldIds
+    current_value: Any
+    unwrapped_type: Optional[Type]
+    container: Optional[Any] = None
+    layout: Optional[Any] = None
+    layout_config: Optional[Any] = None
+    qwidget_type: Optional[type] = None
+    groupbox_with_help_type: Optional[type] = None
+    color_scheme_type: Optional[type] = None
+
+    def with_layout(self, layout: Any) -> 'WidgetBuildContext':
+        return dataclass_replace(self, layout=layout)
+
+    def with_container(self, container: Any) -> 'WidgetBuildContext':
+        return dataclass_replace(self, container=container)
+
+
 from PyQt6.QtWidgets import QWidget
+
 
 class _CombinedMeta(ABCMeta, type(QWidget)):
     """Combined metaclass for ABC + PyQt6 QWidget."""
-    pass
 
 
 class ParameterFormManager(ABC, metaclass=_CombinedMeta):
@@ -120,18 +160,9 @@ class ParameterFormManager(ABC, metaclass=_CombinedMeta):
 
 
 # Type aliases for handler signatures
-WidgetOperationHandler = Callable[
-    ['ParameterFormManager', 'ParameterInfo', DisplayInfo, FieldIds,
-     Any, Optional[Type], Optional[Any], Optional[Any], Optional[Type],
-     Optional[Type], Optional[Type]],
-    Any
-]
+WidgetOperationHandler = Callable[[WidgetBuildContext], Any]
 
-OptionalTitleHandler = Callable[
-    ['ParameterFormManager', 'ParameterInfo', DisplayInfo, FieldIds,
-     Any, Optional[Type]],
-    Dict[str, Any]
-]
+OptionalTitleHandler = Callable[[WidgetBuildContext], OptionalTitleComponents]
 
 CheckboxLogicHandler = Callable[
     ['ParameterFormManager', 'ParameterInfo', Any, Any, Any, Any, Any, Type],
@@ -142,7 +173,7 @@ CheckboxLogicHandler = Callable[
 @dataclass
 class WidgetCreationConfig:
     """Type-safe configuration for a widget creation type."""
-    layout_type: str
+    layout_type: LayoutKind
     is_nested: bool
     create_container: WidgetOperationHandler
     setup_layout: Optional[WidgetOperationHandler]
@@ -155,4 +186,3 @@ class WidgetCreationConfig:
     is_enableable: bool = False
     create_title_widget: Optional[OptionalTitleHandler] = None
     connect_checkbox_logic: Optional[CheckboxLogicHandler] = None
-

@@ -1,11 +1,14 @@
 """Responsive layout widgets for PyQt6 - Uses layout config from manager"""
 
 import logging
+from enum import Enum
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFontMetrics
 from typing import Optional, Any, List
+
+from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT, ParameterFormLayoutConfig
 
 # Global toggle for responsive wrapping
 _wrapping_enabled = True
@@ -20,18 +23,43 @@ def is_wrapping_enabled() -> bool:
     return _wrapping_enabled
 
 
+class ResponsiveRowLayoutMode(Enum):
+    """Layout mode for two-row responsive widgets."""
+
+    HORIZONTAL = "horizontal"
+    VERTICAL = "vertical"
+
+    def should_switch(self, available_width: int, content_width: int) -> bool:
+        if self is ResponsiveRowLayoutMode.HORIZONTAL:
+            return available_width < content_width
+        return available_width > (content_width + 20)
+
+    def next_mode(self) -> "ResponsiveRowLayoutMode":
+        if self is ResponsiveRowLayoutMode.HORIZONTAL:
+            return ResponsiveRowLayoutMode.VERTICAL
+        return ResponsiveRowLayoutMode.HORIZONTAL
+
+    @property
+    def uses_second_row(self) -> bool:
+        return self is ResponsiveRowLayoutMode.VERTICAL
+
+
 class ResponsiveTwoRowWidget(QWidget):
     """Widget that switches between 1-row (horizontal) and 2-row (vertical) layout."""
     
     def __init__(self, width_threshold: int = 400, parent=None, layout_config=None):
         super().__init__(parent)
         self._threshold = width_threshold
-        self._layout_config = layout_config
-        self._is_horizontal = True
+        self._layout_config = layout_config or CURRENT_LAYOUT
+        self._layout_mode = ResponsiveRowLayoutMode.HORIZONTAL
 
-        # Get spacing from layout config or use defaults
-        spacing = getattr(layout_config, 'parameter_row_spacing', 2) if layout_config else 2
-        margins = getattr(layout_config, 'parameter_row_margins', (1, 1, 1, 1)) if layout_config else (1, 1, 1, 1)
+        if not isinstance(self._layout_config, ParameterFormLayoutConfig):
+            raise TypeError(
+                "ResponsiveTwoRowWidget layout_config must be ParameterFormLayoutConfig, "
+                f"got {type(self._layout_config).__name__}."
+            )
+        spacing = self._layout_config.parameter_row_spacing
+        margins = self._layout_config.parameter_row_margins
 
         # Two rows
         self._main_layout = QVBoxLayout(self)
@@ -86,25 +114,15 @@ class ResponsiveTwoRowWidget(QWidget):
             return
         
         parent_widget = self.parent()
-        if parent_widget and hasattr(parent_widget, 'width'):
+        if parent_widget:
             available_width = parent_widget.width()
         else:
             available_width = self.width()
         content_width = self._calculate_content_width()
         
-        # Switch immediately when content exceeds available space (no hysteresis)
-        if self._is_horizontal:
-            # Wrap when content is wider than available
-            needs_vertical = available_width < content_width
-            if needs_vertical:
-                self._is_horizontal = False
-                self._do_switch()
-        else:
-            # Unwrap when we have enough space (add small buffer to prevent rapid switching)
-            can_go_horizontal = available_width > (content_width + 20)
-            if can_go_horizontal:
-                self._is_horizontal = True
-                self._do_switch()
+        if self._layout_mode.should_switch(available_width, content_width):
+            self._layout_mode = self._layout_mode.next_mode()
+            self._do_switch()
     
     def _calculate_content_width(self) -> int:
         """Calculate the actual width needed for all widgets in a single row.
@@ -149,7 +167,7 @@ class ResponsiveTwoRowWidget(QWidget):
     
     def _do_switch(self):
         """Actually perform the layout switch."""
-        if self._is_horizontal:
+        if not self._layout_mode.uses_second_row:
             # Switching to horizontal: hide row2 first, then move widgets
             self._row2.setVisible(False)
             # Rebuild row1: left widgets + stretch + right widgets
@@ -223,7 +241,7 @@ class ResponsiveTwoRowWidget(QWidget):
         # Height: ONLY include visible rows
         row1_height = self._row1.minimumSizeHint().height()
         
-        if self._is_horizontal:
+        if not self._layout_mode.uses_second_row:
             min_height = row1_height
         else:
             row2_height = self._row2.minimumSizeHint().height()
@@ -233,7 +251,7 @@ class ResponsiveTwoRowWidget(QWidget):
         size = QSize(min_width, min_height)
         logger = logging.getLogger(__name__)
         logger.debug(f"[ResponsiveTwoRowWidget] minimumSizeHint: {min_width}x{min_height}, "
-                    f"is_horizontal={self._is_horizontal}, left_widgets={len(self._left_widgets)}, "
+                    f"layout_mode={self._layout_mode.value}, left_widgets={len(self._left_widgets)}, "
                     f"right_widgets={len(self._right_widgets)}")
         return size
     
@@ -243,13 +261,13 @@ class ResponsiveTwoRowWidget(QWidget):
         
         # Width: max of row 1 or row 2 content
         row1_width = self._row1.sizeHint().width()
-        row2_width = self._row2.sizeHint().width() if not self._is_horizontal else 0
+        row2_width = self._row2.sizeHint().width() if self._layout_mode.uses_second_row else 0
         width = max(row1_width, row2_width)
         
         # Height: only visible rows
         row1_height = self._row1.sizeHint().height()
         
-        if self._is_horizontal:
+        if not self._layout_mode.uses_second_row:
             height = row1_height
         else:
             row2_height = self._row2.sizeHint().height()
@@ -268,7 +286,7 @@ class ResponsiveParameterRow(ResponsiveTwoRowWidget):
     def set_label(self, widget):
         from PyQt6.QtWidgets import QSizePolicy
         widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        if hasattr(widget, 'setWordWrap'):
+        if isinstance(widget, QLabel):
             # Allow root-level field labels to wrap for better readability
             widget.setWordWrap(True)
         self.add_left_widget(widget, 0)

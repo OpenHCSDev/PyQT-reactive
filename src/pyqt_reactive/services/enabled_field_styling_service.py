@@ -1,11 +1,7 @@
-"""
-Enabled Field Styling Service - Visual styling for enabled/disabled states.
-
-Extracts all enabled field styling logic from ParameterFormManager.
-Handles dimming effects, ancestor checking, and nested config styling.
-"""
+"""Enabled Field Styling Service - Visual styling for enabled/disabled states."""
 
 from typing import Any
+from weakref import WeakKeyDictionary
 from PyQt6.QtWidgets import QCheckBox, QLabel, QGraphicsOpacityEffect
 import logging
 
@@ -23,6 +19,8 @@ class EnabledFieldStylingService:
         """Initialize enabled field styling service (stateless - imports dependencies)."""
         from pyqt_reactive.forms import WidgetOperations
         self.widget_ops = WidgetOperations
+        self._last_enabled_values: WeakKeyDictionary[Any, bool] = WeakKeyDictionary()
+        self._direct_widgets_by_manager: WeakKeyDictionary[Any, list] = WeakKeyDictionary()
     
     def apply_initial_enabled_styling(self, manager) -> None:
         """
@@ -40,12 +38,11 @@ class EnabledFieldStylingService:
         if self._should_skip_optional_dataclass_styling(manager, "INITIAL ENABLED STYLING"):
             return
 
-        # CRITICAL: Clear the cache to ensure initial styling is always applied
-        # The cache may have been set during widget initialization when setChecked() was called
-        cache_attr = '_last_enabled_value'
-        if hasattr(manager, cache_attr):
-            delattr(manager, cache_attr)
-            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, cleared cache to force initial styling")
+        self._last_enabled_values.pop(manager, None)
+        logger.debug(
+            "[INITIAL_STYLING] field_id=%s, cleared cache to force initial styling",
+            manager.field_id,
+        )
 
         # Get the enabled widget
         enabled_widget = manager.widgets.get('enabled')
@@ -135,12 +132,13 @@ class EnabledFieldStylingService:
             resolved_value = value
 
         # PERFORMANCE: Skip if value hasn't changed
-        cache_attr = '_last_enabled_value'
-        last_value = getattr(manager, cache_attr, None)
-        if last_value == resolved_value:
+        if (
+            manager in self._last_enabled_values
+            and self._last_enabled_values[manager] == resolved_value
+        ):
             logger.debug(f"[ENABLED_HANDLER] field_id={manager.field_id}, SKIP (value unchanged: {resolved_value})")
             return
-        setattr(manager, cache_attr, resolved_value)
+        self._last_enabled_values[manager] = resolved_value
 
         logger.debug(f"[ENABLED_HANDLER] field_id={manager.field_id}, resolved_value={resolved_value}")
 
@@ -196,10 +194,8 @@ class EnabledFieldStylingService:
         Returns:
             List of widgets belonging to this form
         """
-        # CACHE: Return cached result if available
-        cache_attr = '_cached_direct_widgets'
-        if hasattr(manager, cache_attr):
-            return getattr(manager, cache_attr)
+        if manager in self._direct_widgets_by_manager:
+            return self._direct_widgets_by_manager[manager]
 
         direct_widgets = []
         all_widgets = self.widget_ops.get_all_value_widgets(manager)
@@ -224,8 +220,7 @@ class EnabledFieldStylingService:
 
         logger.debug(f"[GET_DIRECT_WIDGETS] field_id={manager.field_id}, returning {len(direct_widgets)} direct widgets")
 
-        # CACHE: Store for future calls
-        setattr(manager, cache_attr, direct_widgets)
+        self._direct_widgets_by_manager[manager] = direct_widgets
         return direct_widgets
     
     def _is_any_ancestor_disabled(self, manager) -> bool:
@@ -294,9 +289,6 @@ class EnabledFieldStylingService:
                 effect = QGraphicsOpacityEffect()
                 effect.setOpacity(0.4)
                 widget.setGraphicsEffect(effect)
-
-
-
         # CRITICAL: Trigger a visual update so opacity effects are rendered
         # Qt doesn't automatically render QGraphicsOpacityEffect changes
         # Use repaint() for immediate synchronous update, not update() which is async
@@ -360,4 +352,3 @@ class EnabledFieldStylingService:
 
                 # Update the group box itself
                 group_box.repaint()
-

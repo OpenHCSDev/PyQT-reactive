@@ -35,14 +35,13 @@ class DictPayloadTreeItemKeyBuilder(TreeItemKeyBuilderABC):
 class TreeStateAdapter:
     """Capture/restore tree expansion and selection state by item keys."""
 
-    def __init__(
-        self, key_builder: TreeItemKeyBuilderABC | None = None
-    ) -> None:
-        self._key_builder = (
-            key_builder
-            if key_builder is not None
-            else DictPayloadTreeItemKeyBuilder()
-        )
+    def __init__(self, key_builder: TreeItemKeyBuilderABC) -> None:
+        self._key_builder = key_builder
+
+    @classmethod
+    def default(cls) -> "TreeStateAdapter":
+        """Build the default dict-payload tree state adapter."""
+        return cls(DictPayloadTreeItemKeyBuilder())
 
     def item_tree_key(self, item: QTreeWidgetItem) -> str:
         segments = [self._key_builder.item_segment_key(item)]

@@ -5,7 +5,8 @@ Displays function metadata in a searchable table with static columns.
 Used as the table portion of FunctionSelectorDialog.
 """
 
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional, ClassVar
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
@@ -24,27 +25,39 @@ class FunctionTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
     # Column widths
     MODULE_WIDTH = 250
     DESCRIPTION_WIDTH = 300
+    COLUMN_SPECS: ClassVar[tuple[tuple[str, str, int], ...]] = (
+        ("Name", "name", 150),
+        ("Module", "module", MODULE_WIDTH),
+        ("Backend", "backend", 80),
+        ("Registry", "registry", 80),
+        ("Contract", "contract", 100),
+        ("Tags", "tags", 100),
+        ("Description", "doc", DESCRIPTION_WIDTH),
+    )
     
     def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
         super().__init__(color_scheme=color_scheme, selection_mode='single', parent=parent)
+
+    @staticmethod
+    def _contract_display_name(contract: Any, *, unknown_label: str) -> str:
+        if contract is None:
+            return unknown_label
+        if isinstance(contract, Enum):
+            return contract.name
+        return str(contract)
     
     def get_columns(self) -> List[ColumnDef]:
         """Static column definitions for function table."""
         return [
-            ColumnDef(name="Name", key="name", width=150),
-            ColumnDef(name="Module", key="module", width=self.MODULE_WIDTH),
-            ColumnDef(name="Backend", key="backend", width=80),
-            ColumnDef(name="Registry", key="registry", width=80),
-            ColumnDef(name="Contract", key="contract", width=100),
-            ColumnDef(name="Tags", key="tags", width=100),
-            ColumnDef(name="Description", key="doc", width=self.DESCRIPTION_WIDTH),
+            ColumnDef(name=name, key=key, width=width)
+            for name, key, width in self.COLUMN_SPECS
         ]
     
     def extract_row_data(self, item: Dict[str, Any]) -> List[str]:
         """Extract display values from function metadata dict."""
         # Get contract name
         contract = item.get('contract')
-        contract_name = contract.name if hasattr(contract, 'name') else str(contract) if contract else "unknown"
+        contract_name = self._contract_display_name(contract, unknown_label="unknown")
 
         # Format tags
         tags = item.get('tags', [])
@@ -71,7 +84,7 @@ class FunctionTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
     def get_searchable_text(self, item: Dict[str, Any]) -> str:
         """Return searchable text for function metadata."""
         contract = item.get('contract')
-        contract_name = contract.name if hasattr(contract, 'name') else str(contract) if contract else ""
+        contract_name = self._contract_display_name(contract, unknown_label="")
 
         tags = item.get('tags', [])
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
 from zmqruntime.messages import WorkerState
 
@@ -77,8 +77,21 @@ class BaseServerInfo(ABC):
 
 
 @dataclass(frozen=True)
-class ExecutionServerInfo(BaseServerInfo):
+class FixedKindServerInfo(BaseServerInfo):
+    """Base server info variant whose kind is fixed by the subclass."""
+
+    KIND: ClassVar[ServerKind]
+
+    @property
+    def kind(self) -> ServerKind:
+        return type(self).KIND
+
+
+@dataclass(frozen=True)
+class ExecutionServerInfo(FixedKindServerInfo):
     """Execution server specific fields."""
+
+    KIND: ClassVar[ServerKind] = ServerKind.EXECUTION
 
     workers: tuple[WorkerState, ...] = ()
     compile_status: CompileStatus | None = None
@@ -135,10 +148,6 @@ class ExecutionServerInfo(BaseServerInfo):
         )
 
     @property
-    def kind(self) -> ServerKind:
-        return ServerKind.EXECUTION
-
-    @property
     def running_executions(self) -> tuple[str, ...]:
         return tuple(entry.execution_id for entry in self.running_execution_entries)
 
@@ -186,8 +195,10 @@ class ViewerServerInfo(BaseServerInfo):
 
 
 @dataclass(frozen=True)
-class GenericServerInfo(BaseServerInfo):
+class GenericServerInfo(FixedKindServerInfo):
     """Fallback type for unknown server names."""
+
+    KIND: ClassVar[ServerKind] = ServerKind.GENERIC
 
     server_name: str
 
@@ -202,10 +213,6 @@ class GenericServerInfo(BaseServerInfo):
             if "log_file_path" in payload and payload["log_file_path"] is not None
             else None,
         )
-
-    @property
-    def kind(self) -> ServerKind:
-        return ServerKind.GENERIC
 
 
 class ServerInfoParserABC(ABC):

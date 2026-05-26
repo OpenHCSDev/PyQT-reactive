@@ -26,7 +26,10 @@ Example Usage:
 """
 
 import logging
-from typing import Dict, Callable, Optional, Protocol
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, Callable, Optional
+from PyQt6 import sip
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QCursor, QGuiApplication
 from PyQt6.QtCore import QRect
@@ -34,31 +37,34 @@ from PyQt6.QtWidgets import QApplication, QMainWindow
 from PyQt6.QtCore import QTimer
 
 from objectstate import ObjectStateRegistry
+from pyqt_reactive.services.window_navigation import (
+    AvoidWidgetsWindow,
+    FieldNavigableWindow,
+    FormManagedWindow,
+    FormNavigationManager,
+    ItemNavigableWindow,
+    ListNavigationReadinessWindow,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class NavigableWindow(Protocol):
-    """Protocol for windows that support navigation to items/fields.
+class WindowLookupStatus(Enum):
+    PRESENT = "present"
+    MISSING = "missing"
+    HIDDEN = "hidden"
+    STALE = "stale"
 
-    Windows can optionally implement these methods to support navigation.
-    """
 
-    def select_and_scroll_to_item(self, item_id: str) -> None:
-        """Select and scroll to item (e.g., list item, tab).
+@dataclass(frozen=True)
+class WindowLookupResult:
+    scope_id: str
+    status: WindowLookupStatus
+    window: Optional[QWidget] = None
 
-        Args:
-            item_id: Identifier for the item to navigate to
-        """
-        ...
-
-    def select_and_scroll_to_field(self, field_path: str) -> None:
-        """Select and scroll to field (e.g., tree node, form widget).
-
-        Args:
-            field_path: Dotted path to field (e.g., "well_filter_config.well_filter")
-        """
-        ...
+    @property
+    def is_present(self) -> bool:
+        return self.status is WindowLookupStatus.PRESENT and self.window is not None
 
 
 class WindowManager:
@@ -76,6 +82,35 @@ class WindowManager:
 
     # Global registry of open windows by scope_id
     _scoped_windows: Dict[str, QWidget] = {}
+    _navigation_retry_counts: Dict[int, int] = {}
+
+    @classmethod
+    def _resolve_registered_window(
+        cls,
+        scope_id: str,
+        *,
+        require_visible: bool = False,
+    ) -> WindowLookupResult:
+        window = cls._scoped_windows.get(scope_id)
+        if window is None:
+            return WindowLookupResult(scope_id, WindowLookupStatus.MISSING)
+
+        if sip.isdeleted(window):
+            result = WindowLookupResult(scope_id, WindowLookupStatus.STALE)
+            cls._drop_resolved_window(result)
+            return result
+
+        visible = window.isVisible()
+        if require_visible and not visible:
+            cls.unregister(scope_id)
+            return WindowLookupResult(scope_id, WindowLookupStatus.HIDDEN)
+
+        return WindowLookupResult(scope_id, WindowLookupStatus.PRESENT, window)
+
+    @classmethod
+    def _drop_resolved_window(cls, result: WindowLookupResult) -> None:
+        if result.status is WindowLookupStatus.STALE:
+            cls.unregister(result.scope_id)
 
     @classmethod
     def position_window_near_cursor(
@@ -86,7 +121,7 @@ class WindowManager:
     ) -> None:
         """Place window centered on mouse cursor without overlapping floating windows."""
         if avoid_widgets is None:
-            avoid_widgets = getattr(window, "_avoid_widgets", None) or []
+            avoid_widgets = window._avoid_widgets if isinstance(window, AvoidWidgetsWindow) else []
         cursor_pos = QCursor.pos()
         screen = QGuiApplication.screenAt(cursor_pos)
         if screen is None:
@@ -270,7 +305,7 @@ class WindowManager:
         cls._scoped_windows[scope_id] = window
 
         # Auto-cleanup on close (hook into closeEvent)
-        original_close = window.closeEvent if hasattr(window, 'closeEvent') else None
+        original_close = window.closeEvent
 
         def close_wrapper(event):
             # Unregister window before closing
@@ -278,9 +313,7 @@ class WindowManager:
                 del cls._scoped_windows[scope_id]
                 logger.debug(f"[WINDOW_MGR] Unregistered window on close: {scope_id}")
 
-            # Call original closeEvent
-            if original_close:
-                original_close(event)
+            original_close(event)
 
         window.closeEvent = close_wrapper
 
@@ -333,48 +366,39 @@ class WindowManager:
                 item_id="3"  # Select step 3 in list
             )
         """
-        window = cls._scoped_windows.get(scope_id)
-        if not window:
+        lookup = cls._resolve_registered_window(scope_id)
+        if not lookup.is_present:
             logger.debug(f"[WINDOW_MGR] Cannot navigate - window not open for scope: {scope_id}")
             return False
+        window = lookup.window
 
-        try:
-            # Test if window still exists by accessing any property
-            _ = window.windowTitle()
+        # Ensure window is visible (may be hidden or still initializing)
+        if not window.isVisible():
+            window.show()
 
-            # Ensure window is visible (may be hidden or still initializing)
-            if not window.isVisible():
-                window.show()
+        # Bring window to front only if not already the active window
+        # This prevents window jumping when navigating within the same window (e.g., different tabs)
+        app = QApplication.instance()
+        is_already_active = app and app.activeWindow() == window
+        if not is_already_active:
+            window.raise_()
+            window.activateWindow()
+        else:
+            logger.debug(f"[WINDOW_MGR] Window already active, skipping raise/activate: {scope_id}")
 
-            # Bring window to front only if not already the active window
-            # This prevents window jumping when navigating within the same window (e.g., different tabs)
-            app = QApplication.instance()
-            is_already_active = app and app.activeWindow() == window
-            if not is_already_active:
-                window.raise_()
-                window.activateWindow()
-            else:
-                logger.debug(f"[WINDOW_MGR] Window already active, skipping raise/activate: {scope_id}")
+        # Restore if minimized
+        if window.isMinimized():
+            window.showNormal()
 
-            # Restore if minimized
-            if window.isMinimized():
-                window.showNormal()
+        logger.debug(f"[WINDOW_MGR] Focused window for scope: {scope_id}")
 
-            logger.debug(f"[WINDOW_MGR] Focused window for scope: {scope_id}")
+        # Defer navigation to handle async widget creation
+        # This ensures scroll/flash only happens after:
+        # 1. Window is painted (QTimer.singleShot(0, ...))
+        # 2. Target widgets exist (_on_build_complete_callbacks)
+        cls._deferred_navigate(window, item_id, field_path)
 
-            # Defer navigation to handle async widget creation
-            # This ensures scroll/flash only happens after:
-            # 1. Window is painted (QTimer.singleShot(0, ...))
-            # 2. Target widgets exist (_on_build_complete_callbacks)
-            cls._deferred_navigate(window, item_id, field_path)
-
-            return True
-
-        except RuntimeError:
-            # Window was deleted - cleanup stale reference
-            logger.warning(f"[WINDOW_MGR] Window deleted during navigation for scope: {scope_id}")
-            del cls._scoped_windows[scope_id]
-            return False
+        return True
 
     @classmethod
     def _deferred_navigate(
@@ -401,13 +425,11 @@ class WindowManager:
                 logger.debug(f"[WINDOW_MGR] Window deleted during deferred navigation")
                 return
 
-            # Navigate to item if window supports it (duck typing)
-            if item_id and hasattr(window, 'select_and_scroll_to_item'):
+            if item_id and isinstance(window, ItemNavigableWindow):
                 logger.debug(f"[WINDOW_MGR] Deferred navigating to item: {item_id}")
                 window.select_and_scroll_to_item(item_id)
 
-            # Navigate to field if window supports it (duck typing)
-            if field_path and hasattr(window, 'select_and_scroll_to_field'):
+            if field_path and isinstance(window, FieldNavigableWindow):
                 # Eagerly create flash overlay BEFORE navigation to ensure it's ready for flash
                 from pyqt_reactive.animation import WindowFlashOverlay
                 WindowFlashOverlay.get_for_window(window)
@@ -416,7 +438,7 @@ class WindowManager:
             elif field_path:
                 logger.debug(f"[WINDOW_MGR] Field path provided but window has no select_and_scroll_to_field: {field_path}")
 
-        def _check_nested_manager_exists(form_manager, field_path: str) -> bool:
+        def _check_nested_manager_exists(form_manager: FormNavigationManager, field_path: str) -> bool:
             """Check if all nested managers in the field path exist.
 
             For "well_filter_config.well_filter", checks:
@@ -434,9 +456,6 @@ class WindowManager:
 
             # Check all but the last part (which is the field/leaf)
             for i, part in enumerate(parts[:-1]):
-                if not hasattr(current_manager, 'nested_managers'):
-                    logger.debug(f"[WINDOW_MGR] No nested_managers attribute at depth {i}")
-                    return False
                 if part not in current_manager.nested_managers:
                     logger.debug(f"[WINDOW_MGR] Nested manager '{part}' not found at depth {i}")
                     return False
@@ -456,50 +475,52 @@ class WindowManager:
             needs_wait = False
             wait_reason = None
 
-            if field_path and hasattr(window, 'form_manager'):
+            if field_path and isinstance(window, FormManagedWindow):
                 form_manager = window.form_manager
-
-                # Check 1: Root widgets must exist
-                if hasattr(form_manager, 'widgets') and not form_manager.widgets:
-                    logger.debug(f"[WINDOW_MGR] Root widgets not ready, waiting...")
+                if not isinstance(form_manager, FormNavigationManager):
+                    logger.debug("[WINDOW_MGR] Form manager is not ready for navigation")
                     needs_wait = True
-                    wait_reason = "root widgets"
-                # Check 2: For nested field paths, check nested managers exist
-                elif '.' in field_path:
-                    if not _check_nested_manager_exists(form_manager, field_path):
-                        logger.debug(f"[WINDOW_MGR] Nested manager not ready for '{field_path}', waiting...")
-                        needs_wait = True
-                        wait_reason = "nested manager"
+                    wait_reason = "form manager"
+                else:
 
-            if item_id and hasattr(window, 'item_list'):
-                # For list-based navigation, check if items exist
-                if hasattr(window, '_scope_to_list_item'):
-                    if not window._scope_to_list_item:
-                        logger.debug(f"[WINDOW_MGR] List items not ready, waiting...")
+                    # Check 1: Root widgets must exist
+                    if not form_manager.widgets:
+                        logger.debug(f"[WINDOW_MGR] Root widgets not ready, waiting...")
                         needs_wait = True
-                        wait_reason = "list items"
+                        wait_reason = "root widgets"
+                    # Check 2: For nested field paths, check nested managers exist
+                    elif '.' in field_path:
+                        if not _check_nested_manager_exists(form_manager, field_path):
+                            logger.debug(f"[WINDOW_MGR] Nested manager not ready for '{field_path}', waiting...")
+                            needs_wait = True
+                            wait_reason = "nested manager"
+
+            if item_id and isinstance(window, ListNavigationReadinessWindow):
+                # For list-based navigation, check if items exist
+                if not window.has_list_navigation_items:
+                    logger.debug(f"[WINDOW_MGR] List items not ready, waiting...")
+                    needs_wait = True
+                    wait_reason = "list items"
 
             if needs_wait:
                 # Register callback to retry after build completes
-                if hasattr(window, 'form_manager'):
-                    callbacks = getattr(window.form_manager, '_on_build_complete_callbacks', None)
-                    if callbacks is not None:
-                        # Track retry count to prevent infinite loops
-                        retry_count = getattr(window, '_nav_retry_count', 0)
-                        if retry_count < 10:  # Max 10 retries
-                            def retry_with_callback():
-                                # Increment retry count
-                                window._nav_retry_count = getattr(window, '_nav_retry_count', 0) + 1
-                                logger.debug(f"[WINDOW_MGR] Build complete, retrying navigation (attempt {window._nav_retry_count})")
-                                # Schedule re-check instead of direct navigation
-                                # This allows nested managers to be fully populated
-                                QTimer.singleShot(50, _check_and_navigate)
+                if isinstance(window, FormManagedWindow) and isinstance(window.form_manager, FormNavigationManager):
+                    callbacks = window.form_manager._on_build_complete_callbacks
+                    window_key = id(window)
+                    retry_count = cls._navigation_retry_counts.get(window_key, 0)
+                    if retry_count < 10:  # Max 10 retries
+                        def retry_with_callback():
+                            next_retry_count = cls._navigation_retry_counts.get(window_key, 0) + 1
+                            cls._navigation_retry_counts[window_key] = next_retry_count
+                            logger.debug(f"[WINDOW_MGR] Build complete, retrying navigation (attempt {next_retry_count})")
+                            # Schedule re-check instead of direct navigation
+                            # This allows nested managers to be fully populated
+                            QTimer.singleShot(50, _check_and_navigate)
 
-                            callbacks.append(retry_with_callback)
-                            logger.debug(f"[WINDOW_MGR] Registered build-complete callback for navigation (wait_reason={wait_reason})")
-                            return
-                        else:
-                            logger.warning(f"[WINDOW_MGR] Max retries reached for navigation, giving up")
+                        callbacks.append(retry_with_callback)
+                        logger.debug(f"[WINDOW_MGR] Registered build-complete callback for navigation (wait_reason={wait_reason})")
+                        return
+                    logger.warning(f"[WINDOW_MGR] Max retries reached for navigation, giving up")
 
             # Widgets are ready or no wait needed - navigate now
             _do_navigation()
@@ -570,22 +591,8 @@ class WindowManager:
         Returns:
             True if window exists, is valid, AND is visible, False otherwise
         """
-        if scope_id not in cls._scoped_windows:
-            return False
-
-        try:
-            window = cls._scoped_windows[scope_id]
-            is_visible = window.isVisible()
-            if not is_visible:
-                # Window was closed/hidden but not unregistered - clean up
-                del cls._scoped_windows[scope_id]
-                logger.debug(f"[WINDOW_MGR] Cleaned up closed window: {scope_id}")
-                return False
-            return True
-        except RuntimeError:
-            # Stale reference (C++ object deleted)
-            del cls._scoped_windows[scope_id]
-            return False
+        lookup = cls._resolve_registered_window(scope_id, require_visible=True)
+        return lookup.is_present
 
     @classmethod
     def get_window(cls, scope_id: str) -> Optional[QWidget]:
@@ -609,17 +616,12 @@ class WindowManager:
         Returns:
             True if window was found and closed, False otherwise
         """
-        if scope_id not in cls._scoped_windows:
+        lookup = cls._resolve_registered_window(scope_id)
+        if not lookup.is_present:
             return False
 
-        try:
-            window = cls._scoped_windows[scope_id]
-            window.close()  # Triggers closeEvent → auto-cleanup
-            return True
-        except RuntimeError:
-            # Already deleted
-            del cls._scoped_windows[scope_id]
-            return False
+        lookup.window.close()  # Triggers closeEvent -> auto-cleanup
+        return True
 
     @classmethod
     def get_open_scopes(cls) -> list[str]:

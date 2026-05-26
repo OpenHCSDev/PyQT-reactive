@@ -6,8 +6,6 @@ import logging
 
 from pyqt_reactive.widgets.shared.scope_color_strategy import (
     ScopeColorStrategy,
-    IndexBasedStrategy,
-    MD5HashStrategy,
     ManualColorStrategy,
     ColorStrategyType,
 )
@@ -35,11 +33,9 @@ class ScopeColorService(QObject):
 
     def __init__(self):
         super().__init__()
-        self._strategies: Dict[ColorStrategyType, ScopeColorStrategy] = {
-            ColorStrategyType.INDEX_BASED: IndexBasedStrategy(),
-            ColorStrategyType.MD5_HASH: MD5HashStrategy(),
-            ColorStrategyType.MANUAL: ManualColorStrategy(),
-        }
+        self._strategies: Dict[ColorStrategyType, ScopeColorStrategy] = (
+            ScopeColorStrategy.create_registry()
+        )
         self._active_strategy_type = ColorStrategyType.INDEX_BASED  # Use index-based by default
         self._scheme_cache: Dict = {}  # Mixed key types: str or (str, int)
 
@@ -57,6 +53,15 @@ class ScopeColorService(QObject):
         self._strategies[strategy.strategy_type] = strategy
         logger.info("Registered color strategy: %s", strategy.strategy_type.name)
 
+    def _manual_strategy(self) -> ManualColorStrategy:
+        manual = self._strategies[ColorStrategyType.MANUAL]
+        if not isinstance(manual, ManualColorStrategy):
+            raise TypeError(
+                "Manual scope color strategy must be ManualColorStrategy, "
+                f"got {type(manual).__name__}."
+            )
+        return manual
+
     def get_color_scheme(
         self, scope_id: Optional[str], step_index: Optional[int] = None
     ) -> "ScopeColorScheme":
@@ -69,7 +74,7 @@ class ScopeColorService(QObject):
                         extracting from scope_id. Cache key includes index.
         """
         from pyqt_reactive.widgets.shared.scope_color_utils import (
-            _build_color_scheme_from_rgb,
+            build_color_scheme_from_rgb,
             extract_orchestrator_scope,
         )
         from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
@@ -90,7 +95,7 @@ class ScopeColorService(QObject):
             orchestrator_scope = extract_orchestrator_scope(scope_id) or scope_id
             # Pass step_index (used by some strategies, ignored by orchestrator-based)
             rgb = self.active_strategy.generate_color(orchestrator_scope, step_index=step_index)
-            self._scheme_cache[cache_key] = _build_color_scheme_from_rgb(
+            self._scheme_cache[cache_key] = build_color_scheme_from_rgb(
                 rgb, scope_id, step_index=step_index
             )
         return self._scheme_cache[cache_key]
@@ -130,8 +135,8 @@ class ScopeColorService(QObject):
         # Always return a QColor. If no scheme exists, fall back to neutral scheme.
         scheme = self.get_color_scheme(scope_id, step_index=step_index)
 
-        base_rgb = getattr(scheme, 'base_color_rgb', (128, 128, 128))
-        layers = getattr(scheme, 'step_border_layers', None)
+        base_rgb = scheme.base_color_rgb
+        layers = scheme.step_border_layers
 
         if layers:
             _, tint_idx, _ = (layers[0] + ("solid",))[:3]
@@ -142,16 +147,12 @@ class ScopeColorService(QObject):
         return color.darker(120)
 
     def set_manual_color(self, scope_id: str, rgb: Tuple[int, int, int]) -> None:
-        manual = self._strategies[ColorStrategyType.MANUAL]
-        if isinstance(manual, ManualColorStrategy):
-            manual.set_color(scope_id, rgb)
-            self._invalidate(scope_id)
+        self._manual_strategy().set_color(scope_id, rgb)
+        self._invalidate(scope_id)
 
     def clear_manual_color(self, scope_id: str) -> None:
-        manual = self._strategies[ColorStrategyType.MANUAL]
-        if isinstance(manual, ManualColorStrategy):
-            manual.clear_color(scope_id)
-            self._invalidate(scope_id)
+        self._manual_strategy().clear_color(scope_id)
+        self._invalidate(scope_id)
 
     def _invalidate(self, scope_id: str) -> None:
         keys_to_remove = [

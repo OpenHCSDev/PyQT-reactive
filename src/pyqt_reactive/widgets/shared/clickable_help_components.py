@@ -1,8 +1,11 @@
 """PyQt6 clickable help components - clean architecture without circular imports."""
 
+import inspect
 import logging
+from dataclasses import dataclass
 from typing import Union, Callable, Optional
-from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox, QVBoxLayout, QSizePolicy
+from objectstate import ObjectState
+from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox, QVBoxLayout, QSizePolicy, QAbstractButton
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtProperty, QRect, QRectF, QSize
 from PyQt6.QtGui import QFont, QCursor, QColor, QPainter
 
@@ -10,8 +13,106 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
 from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
+from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+from pyqt_reactive.services.window_navigation import FieldNavigableWindow
+from pyqt_reactive.protocols import (
+    ChangeSignalEmitter,
+    PyQtWidgetMeta,
+    ValueGettable,
+    ValueSettable,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class ProvenanceNavigationUnavailable(RuntimeError):
+    """Raised when provenance metadata cannot be projected to a UI field path."""
+
+
+class CallableTitleAuthority:
+    """Formats stable display titles for function/class help labels."""
+
+    @staticmethod
+    def format(func: Callable | type | None, index: int | None = None) -> str:
+        if func is None:
+            func_name = "Unknown Function"
+            module_name = ""
+        elif inspect.isfunction(func) or inspect.ismethod(func) or inspect.isbuiltin(func) or inspect.isclass(func):
+            func_name = func.__name__
+            module_name = func.__module__.split(".")[-1]
+        else:
+            func_type = type(func)
+            func_name = func_type.__name__
+            module_name = func_type.__module__.split(".")[-1]
+
+        title = f"{index + 1}: {func_name}" if index is not None else func_name
+        if module_name:
+            title += f" ({module_name})"
+        return title
+
+
+class ScopeAccentColorResolution:
+    """Resolves optional scope accent colors without treating falsy colors as absent."""
+
+    @staticmethod
+    def resolve(scope_accent_color, default_color):
+        if scope_accent_color is None:
+            return default_color
+        return scope_accent_color
+
+
+@dataclass(frozen=True, slots=True)
+class HelpContext:
+    """Shared help-widget context for target, parameter, color, and parent data."""
+
+    help_target: Union[Callable, type, None] = None
+    param_name: Optional[str] = None
+    param_description: Optional[str] = None
+    param_type: Optional[type] = None
+    color_scheme: Optional[ColorScheme] = None
+    scope_accent_color: object = None
+    parent: Optional[QWidget] = None
+
+    @property
+    def resolved_color_scheme(self) -> ColorScheme:
+        return self.color_scheme or ColorScheme()
+
+    @property
+    def resolved_param_description(self) -> str:
+        return self.param_description or "No description available"
+
+    def show_help(self, parent_widget: QWidget) -> bool:
+        """Show the help target or parameter documentation if this context has one."""
+        from pyqt_reactive.windows.help_window_manager import HelpWindowManager
+
+        if self.help_target:
+            HelpWindowManager.show_docstring_help(self.help_target, parent=parent_widget)
+            return True
+        if self.param_name:
+            HelpWindowManager.show_parameter_help(
+                self.param_name,
+                self.resolved_param_description,
+                self.param_type,
+                parent=parent_widget,
+            )
+            return True
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class DirtyLabelState:
+    """Text projection for a label with an optional dirty marker."""
+
+    base_text: str
+    is_dirty: bool = False
+
+    def with_dirty(self, is_dirty: bool) -> "DirtyLabelState":
+        return DirtyLabelState(base_text=self.base_text, is_dirty=is_dirty)
+
+    def display_text(self) -> str:
+        if self.is_dirty:
+            return f"* {self.base_text}"
+        return self.base_text
 
 
 class FlashableGroupBox(QGroupBox, FlashMixin):
@@ -41,30 +142,20 @@ class ClickableHelpLabel(QLabel):
     
     help_requested = pyqtSignal()
     
-    def __init__(self, text: str, help_target: Union[Callable, type] = None,
-                 param_name: str = None, param_description: str = None,
-                 param_type: type = None, color_scheme: Optional[ColorScheme] = None, parent=None):
+    def __init__(self, text: str, help_context: HelpContext):
         """Initialize clickable help label.
 
         Args:
             text: Display text for the label
-            help_target: Function or class to show help for (for function help)
-            param_name: Parameter name (for parameter help)
-            param_description: Parameter description (for parameter help)
-            param_type: Parameter type (for parameter help)
-            color_scheme: Color scheme for styling (optional, uses default if None)
+            help_context: Shared context for help target/parameter and styling
         """
         # Add help indicator to text
         display_text = f"{text} (?)"
-        super().__init__(display_text, parent)
+        super().__init__(display_text, help_context.parent)
 
         # Initialize color scheme
-        self.color_scheme = color_scheme or ColorScheme()
-
-        self.help_target = help_target
-        self.param_name = param_name
-        self.param_description = param_description
-        self.param_type = param_type
+        self.help_context = help_context
+        self.color_scheme = help_context.resolved_color_scheme
 
         # Style as clickable
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -82,19 +173,8 @@ class ClickableHelpLabel(QLabel):
         """Handle mouse press to show help - reuses Textual TUI help manager pattern."""
         if event.button() == Qt.MouseButton.LeftButton:
             try:
-                # Import inside method to avoid circular imports (same pattern as Textual TUI)
-                from pyqt_reactive.windows.help_window_manager import HelpWindowManager
-
-                if self.help_target:
-                    # Show function/class help using unified manager
-                    HelpWindowManager.show_docstring_help(self.help_target, parent=self)
-                elif self.param_name:
-                    # Show parameter help using the description passed from parameter analysis
-                    HelpWindowManager.show_parameter_help(
-                        self.param_name, self.param_description or "No description available", self.param_type, parent=self
-                    )
-
-                self.help_requested.emit()
+                if self.help_context.show_help(self):
+                    self.help_requested.emit()
 
             except Exception as e:
                 logger.error(f"Failed to show help: {e}")
@@ -109,19 +189,13 @@ class ClickableFunctionTitle(ClickableHelpLabel):
     """PyQt6 clickable function title that shows function documentation - mirrors Textual TUI."""
 
     def __init__(self, func: Callable, index: int = None, color_scheme: Optional[ColorScheme] = None, parent=None):
-        func_name = getattr(func, '__name__', 'Unknown Function')
-        module_name = getattr(func, '__module__', '').split('.')[-1] if func else ''
-
-        # Build title text
-        title = f"{index + 1}: {func_name}" if index is not None else func_name
-        if module_name:
-            title += f" ({module_name})"
-
         super().__init__(
-            text=title,
-            help_target=func,
-            color_scheme=color_scheme,
-            parent=parent
+            text=CallableTitleAuthority.format(func, index),
+            help_context=HelpContext(
+                help_target=func,
+                color_scheme=color_scheme,
+                parent=parent,
+            ),
         )
 
         # Make title bold
@@ -140,11 +214,13 @@ class ClickableParameterLabel(ClickableHelpLabel):
 
         super().__init__(
             text=display_name,
-            param_name=param_name,
-            param_description=param_description or "No description available",
-            param_type=param_type,
-            color_scheme=color_scheme,
-            parent=parent
+            help_context=HelpContext(
+                param_name=param_name,
+                param_description=param_description,
+                param_type=param_type,
+                color_scheme=color_scheme,
+                parent=parent,
+            ),
         )
 
 
@@ -153,19 +229,12 @@ class HelpIndicator(QLabel):
     
     help_requested = pyqtSignal()
     
-    def __init__(self, help_target: Union[Callable, type] = None,
-                 param_name: str = None, param_description: str = None,
-                 param_type: type = None, color_scheme: Optional[ColorScheme] = None,
-                 scope_accent_color=None, parent=None):
-        super().__init__("?", parent)
+    def __init__(self, help_context: HelpContext):
+        super().__init__("?", help_context.parent)
 
         # Initialize color scheme
-        self.color_scheme = color_scheme or ColorScheme()
-
-        self.help_target = help_target
-        self.param_name = param_name
-        self.param_description = param_description
-        self.param_type = param_type
+        self.help_context = help_context
+        self.color_scheme = help_context.resolved_color_scheme
 
         # Style as clickable help indicator
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -174,11 +243,12 @@ class HelpIndicator(QLabel):
         # NOTE: setStyleSheet must be called AFTER set_scope_accent_color if using scope color
         import logging
         logger = logging.getLogger(__name__)
-        if scope_accent_color:
-            logger.debug(f"[HELP_INDICATOR] param_name={param_name}, scope_accent_color={scope_accent_color.name()}, RGB=({scope_accent_color.red()},{scope_accent_color.green()},{scope_accent_color.blue()})")
-            self.set_scope_accent_color(scope_accent_color)
+        if help_context.scope_accent_color is not None:
+            scope_accent_color = help_context.scope_accent_color
+            logger.debug(f"[HELP_INDICATOR] param_name={help_context.param_name}, scope_accent_color={scope_accent_color.name()}, RGB=({scope_accent_color.red()},{scope_accent_color.green()},{scope_accent_color.blue()})")
+            self.set_scope_accent_color(help_context.scope_accent_color)
         else:
-            logger.debug(f"[HELP_INDICATOR] param_name={param_name}, using default color")
+            logger.debug(f"[HELP_INDICATOR] param_name={help_context.param_name}, using default color")
             # Only set default stylesheet if no scope_accent_color provided
             self.setStyleSheet(f"""
                 QLabel {{
@@ -240,23 +310,16 @@ class HelpIndicator(QLabel):
         """Handle mouse press to show help - reuses Textual TUI help manager pattern."""
         if event.button() == Qt.MouseButton.LeftButton:
             try:
-                # Import inside method to avoid circular imports (same pattern as Textual TUI)
-                from pyqt_reactive.windows.help_window_manager import HelpWindowManager
                 import logging
                 logger = logging.getLogger(__name__)
 
-                if self.help_target:
-                    # Show function/class help using unified manager
-                    logger.debug(f"🔍 HelpIndicator clicked: help_target={self.help_target}")
-                    HelpWindowManager.show_docstring_help(self.help_target, parent=self)
-                elif self.param_name:
-                    # Show parameter help using the description passed from parameter analysis
-                    logger.debug(f"🔍 HelpIndicator clicked: param_name={self.param_name}, param_description={self.param_description[:50] if self.param_description else 'None'}")
-                    HelpWindowManager.show_parameter_help(
-                        self.param_name, self.param_description or "No description available", self.param_type, parent=self
-                    )
-
-                self.help_requested.emit()
+                logger.debug(
+                    "HelpIndicator clicked: help_target=%s, param_name=%s",
+                    self.help_context.help_target,
+                    self.help_context.param_name,
+                )
+                if self.help_context.show_help(self):
+                    self.help_requested.emit()
 
             except Exception as e:
                 logger.error(f"Failed to show help: {e}")
@@ -270,23 +333,15 @@ class HelpIndicator(QLabel):
 class HelpButton(QPushButton):
     """PyQt6 help button for adding help functionality to any widget - mirrors Textual TUI."""
 
-    def __init__(self, help_target: Union[Callable, type] = None,
-                 param_name: str = None, param_description: str = None,
-                 param_type: type = None, text: str = "Help",
-                 color_scheme: Optional[ColorScheme] = None, parent=None,
-                 scope_accent_color=None):
-        super().__init__(text, parent)
+    def __init__(self, help_context: HelpContext, text: str = "Help"):
+        super().__init__(text, help_context.parent)
 
         import logging
         logger = logging.getLogger(__name__)
 
         # Initialize color scheme
-        self.color_scheme = color_scheme or ColorScheme()
-
-        self.help_target = help_target
-        self.param_name = param_name
-        self.param_description = param_description
-        self.param_type = param_type
+        self.help_context = help_context
+        self.color_scheme = help_context.resolved_color_scheme
 
         # Connect click to help display
         self.clicked.connect(self.show_help)
@@ -301,10 +356,10 @@ class HelpButton(QPushButton):
         # CRITICAL: Use scope_accent_color passed as parameter during creation
         # This ensures help buttons are created with the correct color from the start
         # instead of trying to discover it from parent chain (which doesn't work during __init__)
-        fallback_color = self.color_scheme.selection_bg
-        initial_color = scope_accent_color or fallback_color
+        default_color = self.color_scheme.selection_bg
+        initial_color = ScopeAccentColorResolution.resolve(help_context.scope_accent_color, default_color)
 
-        logger.debug(f"[HELP_BUTTON] __init__: param_name={param_name}, scope_accent_color={scope_accent_color}, fallback_color={fallback_color}, using={initial_color}")
+        logger.debug(f"[HELP_BUTTON] __init__: param_name={help_context.param_name}, scope_accent_color={help_context.scope_accent_color}, default_color={default_color}, using={initial_color}")
 
         self._apply_color(initial_color)
         if self._square_icon:
@@ -369,38 +424,9 @@ class HelpButton(QPushButton):
             return QSize(self._square_size, self._square_size)
         return super().minimumSizeHint()
 
-    def _get_scope_accent_color(self):
-        """Deprecated: retained for compatibility but prefers ScopeColorService.
-
-        Historically HelpButton walked the widget tree to find a parent's
-        _scope_accent_color. Prefer using ScopeColorService/get_accent_color by
-        scope_id for deterministic behavior. This shim still attempts the old
-        lookup as a fallback.
-        """
-        # Fallback legacy behavior - attempt quick parent attribute lookup
-        widget = self.parent()
-        depth = 0
-        while widget is not None:
-            accent_color = getattr(widget, '_scope_accent_color', None)
-            if accent_color is not None:
-                return accent_color
-            if hasattr(widget, 'get_scope_accent_color'):
-                try:
-                    color = widget.get_scope_accent_color()
-                    if color is not None:
-                        return color
-                except Exception:
-                    pass
-            widget = widget.parent()
-            depth += 1
-            if depth > 10:
-                break
-        return None
-
     def _apply_color(self, color) -> None:
         """Apply a color to this button (for scope accent styling)."""
-        if hasattr(color, 'name'):
-            # QColor
+        if isinstance(color, QColor):
             hex_color = color.name()
             hex_lighter = color.lighter(115).name()
             hex_darker = color.darker(115).name()
@@ -438,29 +464,50 @@ class HelpButton(QPushButton):
     def show_help(self):
         """Show help using the unified help manager - reuses Textual TUI logic."""
         try:
-            # Import inside method to avoid circular imports (same pattern as Textual TUI)
-            from pyqt_reactive.windows.help_window_manager import HelpWindowManager
             import logging
             logger = logging.getLogger(__name__)
 
-            logger.info(f"🔍 HelpButton.show_help() CALLED - help_target={self.help_target}, param_name={self.param_name}")
+            logger.info(f"HelpButton.show_help() CALLED - help_target={self.help_context.help_target}, param_name={self.help_context.param_name}")
             logger.info(f"🔍 HelpButton parent class: {type(self.parent()).__name__ if self.parent() else 'None'}")
             logger.info(f"🔍 HelpButton parent widget: {self.parent()}")
 
-            if self.help_target:
-                # Show function/class help using unified manager
-                logger.info(f"🔍 Calling show_docstring_help with target={self.help_target}")
-                HelpWindowManager.show_docstring_help(self.help_target, parent=self)
-            elif self.param_name:
-                # Show parameter help using the description passed from parameter analysis
-                logger.info(f"🔍 Calling show_parameter_help with param_name={self.param_name}")
-                HelpWindowManager.show_parameter_help(
-                    self.param_name, self.param_description or "No description available", self.param_type, parent=self
-                )
+            if self.help_context.help_target:
+                logger.info(f"Calling show_docstring_help with target={self.help_context.help_target}")
+            elif self.help_context.param_name:
+                logger.info(f"Calling show_parameter_help with param_name={self.help_context.param_name}")
+            self.help_context.show_help(self)
 
         except Exception as e:
             logger.error(f"Failed to show help: {e}")
             raise
+
+
+class HelpButtonFactory:
+    """Creates consistently configured help buttons for shared widget chrome."""
+
+    TITLE_ICON_WIDTH = 25
+    TITLE_ICON_HEIGHT = 20
+
+    @classmethod
+    def create_title_icon(
+        cls,
+        help_target: Union[Callable, type],
+        color_scheme: ColorScheme,
+        scope_accent_color,
+        parent: Optional[QWidget],
+    ) -> HelpButton:
+        button = HelpButton(
+            help_context=HelpContext(
+                help_target=help_target,
+                color_scheme=color_scheme,
+                scope_accent_color=scope_accent_color,
+                parent=parent,
+            ),
+            text="?",
+        )
+        button.setMaximumWidth(cls.TITLE_ICON_WIDTH)
+        button.setMaximumHeight(cls.TITLE_ICON_HEIGHT)
+        return button
 
 
 
@@ -510,64 +557,64 @@ class ProvenanceNavigationMixin:
             source_type: The TYPE that has the concrete value (may differ from local
                          container type due to MRO inheritance)
         """
+        from pyqt_reactive.services.window_manager import WindowManager
+
+        # Extract field_name from our local dotted path
+        field_name = self._dotted_path.split('.')[-1] if '.' in self._dotted_path else self._dotted_path
+
+        logger.debug(f"_navigate_to_source: local_path={self._dotted_path}, field_name={field_name}, "
+                    f"source_scope_id={source_scope_id}, source_type={source_type.__name__}")
+
+        # Compute the target path in the source window:
+        # We need to find what path source_type is at in the target window's ObjectState
         try:
-            from pyqt_reactive.services.window_manager import WindowManager
-
-            # Extract field_name from our local dotted path
-            field_name = self._dotted_path.split('.')[-1] if '.' in self._dotted_path else self._dotted_path
-
-            logger.debug(f"_navigate_to_source: local_path={self._dotted_path}, field_name={field_name}, "
-                        f"source_scope_id={source_scope_id}, source_type={source_type.__name__}")
-
-            # Compute the target path in the source window:
-            # We need to find what path source_type is at in the target window's ObjectState
             target_path = self._compute_target_path(source_scope_id, source_type, field_name)
+        except ProvenanceNavigationUnavailable as exc:
+            logger.warning("Provenance navigation unavailable: %s", exc)
+            return
 
-            logger.info(f"🔗 Navigate: {self._dotted_path} → {source_scope_id}::{target_path}")
+        logger.info(f"🔗 Navigate: {self._dotted_path} → {source_scope_id}::{target_path}")
 
-            # Check if source is in the SAME window (sibling MRO inheritance within same scope)
-            current_scope_id = getattr(self._state, 'scope_id', None)
-            if current_scope_id == source_scope_id:
-                logger.info(f"🔄 Same-window navigation: scrolling to {target_path}")
-                self._scroll_within_current_window(target_path)
-                return
+        # Check if source is in the SAME window (sibling MRO inheritance within same scope)
+        if (
+            isinstance(self._state, ObjectState)
+            and self._state.scope_id == source_scope_id
+        ):
+            logger.info(f"🔄 Same-window navigation: scrolling to {target_path}")
+            self._scroll_within_current_window(target_path)
+            return
 
-            # Use the same WindowManager.show_or_focus path as other windows
-            from pyqt_reactive.services import WindowFactory
+        # Use the same WindowManager.show_or_focus path as other windows
+        from pyqt_reactive.services import WindowFactory
 
-            if WindowManager.is_open(source_scope_id):
-                # Window is already open - just focus and navigate, don't move it
-                WindowManager.focus_and_navigate(
-                    scope_id=source_scope_id,
-                    field_path=target_path,
-                )
-                logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
-                return
+        if WindowManager.is_open(source_scope_id):
+            # Window is already open - just focus and navigate, don't move it
+            WindowManager.focus_and_navigate(
+                scope_id=source_scope_id,
+                field_path=target_path,
+            )
+            logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
+            return
 
-            def _factory():
-                return WindowFactory.create_window_for_scope(source_scope_id)
+        def _factory():
+            return WindowFactory.create_window_for_scope(source_scope_id)
 
-            window = WindowManager.show_or_focus(source_scope_id, _factory)
-            if window:
-                window._avoid_widgets = [self.window()] if self.window() else []
-                WindowManager.position_window_near_cursor(
-                    window,
-                    avoid_widgets=[self.window()] if self.window() else None,
-                )
-                # Navigate to field after window is shown
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(100, lambda: WindowManager.focus_and_navigate(
-                    scope_id=source_scope_id,
-                    field_path=target_path
-                ))
-                logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
-            else:
-                logger.warning(f"Could not create or focus window for scope: {source_scope_id}")
-
-        except Exception as e:
-            logger.error(f"Failed to navigate to provenance source: {e}")
-            import traceback
-            traceback.print_exc()
+        window = WindowManager.show_or_focus(source_scope_id, _factory)
+        if window:
+            window._avoid_widgets = [self.window()] if self.window() else []
+            WindowManager.position_window_near_cursor(
+                window,
+                avoid_widgets=[self.window()] if self.window() else None,
+            )
+            # Navigate to field after window is shown
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, lambda: WindowManager.focus_and_navigate(
+                scope_id=source_scope_id,
+                field_path=target_path
+            ))
+            logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
+        else:
+            logger.warning(f"Could not create or focus window for scope: {source_scope_id}")
 
     def _scroll_within_current_window(self, target_path: str) -> None:
         """Scroll to target_path within the current window (same scope).
@@ -577,7 +624,7 @@ class ProvenanceNavigationMixin:
         # Find the window that has ScrollableFormMixin
         current = self.parent()
         while current:
-            if hasattr(current, 'select_and_scroll_to_field'):
+            if isinstance(current, FieldNavigableWindow):
                 current.select_and_scroll_to_field(target_path)
                 logger.info(f"✅ Scrolled to {target_path} in current window")
                 return
@@ -608,9 +655,9 @@ class ProvenanceNavigationMixin:
         # Get the target window's ObjectState
         target_state = ObjectStateRegistry.get_by_scope(source_scope_id)
         if target_state is None:
-            # Fallback: use same path as local (might work if same type)
-            logger.warning(f"No state for scope {source_scope_id}, using local path: {self._dotted_path}")
-            return self._dotted_path
+            raise ProvenanceNavigationUnavailable(
+                f"no ObjectState registered for scope {source_scope_id!r}"
+            )
 
         # Debug: log the available types in target state
         logger.debug(f"Target state _path_to_type keys: {list(target_state._path_to_type.keys())}")
@@ -618,94 +665,15 @@ class ProvenanceNavigationMixin:
             if '.' not in path:
                 logger.debug(f"  {path} -> {typ.__name__}")
 
-        # Find the path for source_type in the target state
-        path_prefix = target_state.find_path_for_type(source_type)
-        if path_prefix is None:
-            # Fallback: type not found in target - use same path as local
-            logger.warning(f"No path for type {source_type.__name__} in scope {source_scope_id}, using local path: {self._dotted_path}")
-            return self._dotted_path
-
-        # Check if source_type is ui_hidden - if so, find a visible subclass
-        if self._is_type_ui_hidden(source_type):
-            visible_path = self._find_visible_subclass_path(
-                target_state, source_type, field_name
+        target_path = target_state.project_ui_visible_field_path(source_type, field_name)
+        if target_path is None:
+            raise ProvenanceNavigationUnavailable(
+                f"no visible UI path for type {source_type.__name__}.{field_name} "
+                f"in scope {source_scope_id!r}"
             )
-            if visible_path:
-                logger.info(f"UI-hidden fallback: {source_type.__name__} → {visible_path}")
-                return visible_path
-            # If no visible subclass found, fall through to use original path
-            # (scroll will fail but at least we tried)
 
-        # Construct full path: prefix.field_name (empty prefix = root level field)
-        target_path = f"{path_prefix}.{field_name}" if path_prefix else field_name
         logger.info(f"Computed target path: {target_path} (source_type={source_type.__name__}, field={field_name})")
         return target_path
-
-    def _is_type_ui_hidden(self, typ: type) -> bool:
-        """Check if a type has ui_hidden=True (should not appear in UI forms)."""
-        # Check __dict__ directly to avoid inheriting _ui_hidden from parent classes
-        return hasattr(typ, '__dict__') and '_ui_hidden' in typ.__dict__ and typ._ui_hidden
-
-    def _find_visible_subclass_path(
-        self, target_state, hidden_type: type, field_name: str
-    ) -> Optional[str]:
-        """Find a visible subclass that inherits from hidden_type and has field_name.
-
-        When provenance points to a ui_hidden config (like NapariDisplayConfig),
-        we need to find a visible subclass (like NapariStreamingConfig) that:
-        1. Inherits from the hidden type (has it in MRO)
-        2. Is visible in the UI (not ui_hidden)
-        3. Exists in the target window's ObjectState
-
-        Args:
-            target_state: ObjectState of the target window
-            hidden_type: The ui_hidden type to find a substitute for
-            field_name: The field we want to navigate to
-
-        Returns:
-            Full dotted path (e.g., 'napari_streaming_config.colormap') or None
-        """
-        from objectstate import get_base_type_for_lazy
-
-        # Scan all types in target_state to find visible subclasses
-        for path, typ in target_state._path_to_type.items():
-            # Skip if path has dots (not a top-level config)
-            if '.' in path:
-                continue
-
-            # Normalize type for comparison
-            typ_base = get_base_type_for_lazy(typ) or typ
-
-            # Skip if this type itself is ui_hidden
-            if self._is_type_ui_hidden(typ_base):
-                continue
-
-            # Check if hidden_type is in this type's MRO (inheritance chain)
-            try:
-                mro = typ_base.__mro__
-            except AttributeError:
-                continue
-
-            hidden_base = get_base_type_for_lazy(hidden_type) or hidden_type
-            if hidden_base in mro:
-                # Found a visible subclass! Return the path to the field
-                target_path = f"{path}.{field_name}"
-                logger.debug(f"Found visible subclass: {typ_base.__name__} at path {path}")
-                return target_path
-
-        return None
-
-    def _find_main_window(self):
-        """Find the main window through the parent chain."""
-        current = self.parent()
-        while current:
-            if hasattr(current, 'floating_windows') and hasattr(current, 'service_adapter'):
-                return current
-            current = current.parent()
-        return None
-
-    # Window creation now handled by WindowFactory.create_window_for_scope()
-
 
 class ProvenanceLabel(QLabel, ProvenanceNavigationMixin):
     """QLabel that supports provenance navigation on hover/click.
@@ -791,24 +759,23 @@ class LabelWithHelp(QWidget):
     Uses ProvenanceLabel for the text portion to support click-to-source navigation.
     """
 
-    def __init__(self, text: str, help_target: Union[Callable, type] = None,
-                 param_name: str = None, param_description: str = None,
-                 param_type: type = None, color_scheme: Optional[ColorScheme] = None,
-                 parent=None, state=None, dotted_path: str = None, scope_accent_color=None):
-        super().__init__(parent)
+    def __init__(self, text: str, help_context: HelpContext, state=None, dotted_path: str = None):
+        super().__init__(help_context.parent)
 
         # Transparent background so parent's scope-tinted background shows through
         self.setAutoFillBackground(False)
         self.setStyleSheet("background-color: transparent;")
 
         # Initialize color scheme
-        self.color_scheme = color_scheme or ColorScheme()
+        self.help_context = help_context
+        self.color_scheme = help_context.resolved_color_scheme
 
         # DEBUG: Log what scope_accent_color was received
-        if scope_accent_color:
-            logger.debug(f"[LABEL_WITH_HELP] param_name={param_name}, scope_accent_color={scope_accent_color.name()}, RGB=({scope_accent_color.red()},{scope_accent_color.green()},{scope_accent_color.blue()})")
+        if help_context.scope_accent_color is not None:
+            scope_accent_color = help_context.scope_accent_color
+            logger.debug(f"[LABEL_WITH_HELP] param_name={help_context.param_name}, scope_accent_color={scope_accent_color.name()}, RGB=({scope_accent_color.red()},{scope_accent_color.green()},{scope_accent_color.blue()})")
         else:
-            logger.debug(f"[LABEL_WITH_HELP] param_name={param_name}, scope_accent_color=None (will use default)")
+            logger.debug(f"[LABEL_WITH_HELP] param_name={help_context.param_name}, scope_accent_color=None (will use default)")
 
         # Fixed size policy prevents horizontal stretching
         # This fixes flash area blocking for widgets to the right (e.g., checkbox groups)
@@ -820,20 +787,22 @@ class LabelWithHelp(QWidget):
         layout.setSpacing(5)
 
         # Main label - ProvenanceLabel for click-to-source support
-        self._base_text = text  # Store base text for dirty indicator toggle
-        self._is_dirty = False  # Track dirty state for indicator
+        self._dirty_label_state = DirtyLabelState(base_text=text)
         self._label = ProvenanceLabel(text, state=state, dotted_path=dotted_path)
         self._label.setAutoFillBackground(False)  # Transparent so scope background shows through
         layout.addWidget(self._label)
 
         # Help indicator
         help_indicator = HelpIndicator(
-            help_target=help_target,
-            param_name=param_name,
-            param_description=param_description,
-            param_type=param_type,
-            color_scheme=self.color_scheme,
-            scope_accent_color=scope_accent_color
+            help_context=HelpContext(
+                help_target=help_context.help_target,
+                param_name=help_context.param_name,
+                param_description=help_context.param_description,
+                param_type=help_context.param_type,
+                color_scheme=self.color_scheme,
+                scope_accent_color=help_context.scope_accent_color,
+                parent=self,
+            )
         )
         layout.addWidget(help_indicator)
 
@@ -855,14 +824,11 @@ class LabelWithHelp(QWidget):
         Asterisk (*) means resolved value differs from saved resolved.
         This is orthogonal to underline (which means raw != signature default).
         """
-        if is_dirty == self._is_dirty:
+        if is_dirty == self._dirty_label_state.is_dirty:
             return  # No change needed
 
-        self._is_dirty = is_dirty
-        if is_dirty:
-            self._label.setText(f"* {self._base_text}")
-        else:
-            self._label.setText(self._base_text)
+        self._dirty_label_state = self._dirty_label_state.with_dirty(is_dirty)
+        self._label.setText(self._dirty_label_state.display_text())
 
 
 class FunctionTitleWithHelp(QWidget):
@@ -880,25 +846,14 @@ class FunctionTitleWithHelp(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        # Function title
-        func_name = getattr(func, '__name__', 'Unknown Function')
-        module_name = getattr(func, '__module__', '').split('.')[-1] if func else ''
-
-        title = f"{index + 1}: {func_name}" if index is not None else func_name
-        if module_name:
-            title += f" ({module_name})"
-
-        title_label = QLabel(title)
+        title_label = QLabel(CallableTitleAuthority.format(func, index))
         title_font = QFont()
         title_font.setBold(True)
         title_label.setFont(title_font)
         layout.addWidget(title_label)
 
         # Help button
-        help_btn = HelpButton(help_target=func, text="?", color_scheme=self.color_scheme,
-                             scope_accent_color=scope_accent_color, parent=self)
-        help_btn.setMaximumWidth(25)
-        help_btn.setMaximumHeight(20)
+        help_btn = HelpButtonFactory.create_title_icon(func, self.color_scheme, scope_accent_color, self)
         layout.addWidget(help_btn)
 
         layout.addStretch()
@@ -926,7 +881,8 @@ class GroupBoxWithHelp(FlashableGroupBox):
         self.setAutoFillBackground(True)
 
         # Scope border state (set via set_scope_color_scheme)
-        self._scope_color_scheme = None
+        self._scope_color_scheme: ScopeColorScheme | None = None
+        self._paint_debug_logged = False
 
         # Reset All button reference (set via addTitleWidget when button is added)
         self._reset_all_button = None
@@ -951,15 +907,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
             # Help button
             help_btn = None
             if help_target:
-                help_btn = HelpButton(
-                    help_target=help_target,
-                    text="?",
-                    color_scheme=self.color_scheme,
-                    scope_accent_color=scope_accent_color,
-                    parent=self
-                )
-                help_btn.setMaximumWidth(25)
-                help_btn.setMaximumHeight(20)
+                help_btn = HelpButtonFactory.create_title_icon(help_target, self.color_scheme, scope_accent_color, self)
                 title_widget.set_help_widget(help_btn)
             
             self.title_layout = title_widget
@@ -985,15 +933,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
             # Help button
             help_btn = None
             if help_target:
-                help_btn = HelpButton(
-                    help_target=help_target,
-                    text="?",
-                    color_scheme=self.color_scheme,
-                    scope_accent_color=scope_accent_color,
-                    parent=self
-                )
-                help_btn.setMaximumWidth(25)
-                help_btn.setMaximumHeight(20)
+                help_btn = HelpButtonFactory.create_title_icon(help_target, self.color_scheme, scope_accent_color, self)
                 title_layout.addWidget(help_btn)
             
             title_layout.addStretch()
@@ -1091,8 +1031,6 @@ class GroupBoxWithHelp(FlashableGroupBox):
             self.styleSheet()
         )
         # Add margin for border layers if needed
-        from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
-
         if isinstance(scheme, ScopeColorScheme) and scheme.step_border_layers:
             total_width = sum(layer[0] for layer in scheme.step_border_layers)
             logger.debug(f"🎨 GroupBoxWithHelp: Setting margins to {total_width} for border layers")
@@ -1102,12 +1040,12 @@ class GroupBoxWithHelp(FlashableGroupBox):
     def paintEvent(self, event) -> None:
         """Paint with scope background and border layers if set."""
         import logging
-        if not getattr(self, "_paint_debug_logged", False):
+        if not self._paint_debug_logged:
             logger = logging.getLogger(__name__)
             parent_obj = self.parent()
             logger.debug(
                 "[GROUPBOX_PAINT] title='%s' obj_name=%s id=%s rect=%s parent_cls=%s parent_name=%s scope=%s autoFill=%s styled=%s style=%s",
-                self._title_label.text() if getattr(self, "_title_label", None) else "",
+                self._title_label.text(),
                 self.objectName(),
                 id(self),
                 self.rect(),
@@ -1133,7 +1071,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
         if not self._scope_color_scheme:
             return
 
-        layers = getattr(self._scope_color_scheme, 'step_border_layers', None)
+        layers = self._scope_color_scheme.step_border_layers
 
         # Paint scope background tint (same approach as list item delegate)
         self._paint_scope_background(layers)
@@ -1148,9 +1086,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
         from pyqt_reactive.widgets.shared.scope_visual_config import ScopeVisualConfig
         from pyqt_reactive.animation import get_widget_corner_radius, DEFAULT_CORNER_RADIUS
 
-        base_rgb = getattr(self._scope_color_scheme, 'base_color_rgb', None)
-        if not base_rgb:
-            return
+        base_rgb = self._scope_color_scheme.base_color_rgb
 
         # Get tint index from first layer (or default)
         if layers:
@@ -1249,7 +1185,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
         Also detects Reset All buttons and stores reference for dirty marker styling.
         """
         # Detect Reset All button by text pattern and store reference
-        if hasattr(widget, 'text'):
+        if isinstance(widget, QAbstractButton):
             widget_text = widget.text()
             if widget_text and 'reset' in widget_text.lower() and 'all' in widget_text.lower():
                 self._reset_all_button = widget
@@ -1331,7 +1267,13 @@ class GroupBoxWithHelp(FlashableGroupBox):
                     self.title_layout.insertWidget(insert_pos, provenance_button)
 
 
-class InlineDataclassGroupBox(GroupBoxWithHelp):
+class InlineDataclassGroupBox(
+    GroupBoxWithHelp,
+    ValueGettable,
+    ValueSettable,
+    ChangeSignalEmitter,
+    metaclass=PyQtWidgetMeta,
+):
     """GroupBoxWithHelp that delegates field value behavior to an inline editor."""
 
     def __init__(self, *args, **kwargs):
@@ -1355,8 +1297,6 @@ class InlineDataclassGroupBox(GroupBoxWithHelp):
             self._inline_value_widget.set_scope_color_scheme(scheme)
 
     def get_value(self):
-        from pyqt_reactive.protocols.widget_protocols import ValueGettable
-
         if not isinstance(self._inline_value_widget, ValueGettable):
             raise TypeError(
                 "Inline dataclass value widget must implement ValueGettable, "
@@ -1365,8 +1305,6 @@ class InlineDataclassGroupBox(GroupBoxWithHelp):
         return self._inline_value_widget.get_value()
 
     def set_value(self, value) -> None:
-        from pyqt_reactive.protocols.widget_protocols import ValueSettable
-
         if not isinstance(self._inline_value_widget, ValueSettable):
             raise TypeError(
                 "Inline dataclass value widget must implement ValueSettable, "
@@ -1375,8 +1313,6 @@ class InlineDataclassGroupBox(GroupBoxWithHelp):
         self._inline_value_widget.set_value(value)
 
     def connect_change_signal(self, callback) -> None:
-        from pyqt_reactive.protocols.widget_protocols import ChangeSignalEmitter
-
         if not isinstance(self._inline_value_widget, ChangeSignalEmitter):
             raise TypeError(
                 "Inline dataclass value widget must implement ChangeSignalEmitter, "
@@ -1385,22 +1321,9 @@ class InlineDataclassGroupBox(GroupBoxWithHelp):
         self._inline_value_widget.connect_change_signal(callback)
 
     def disconnect_change_signal(self, callback) -> None:
-        from pyqt_reactive.protocols.widget_protocols import ChangeSignalEmitter
-
         if not isinstance(self._inline_value_widget, ChangeSignalEmitter):
             raise TypeError(
                 "Inline dataclass value widget must implement ChangeSignalEmitter, "
                 f"got {type(self._inline_value_widget).__name__}."
             )
         self._inline_value_widget.disconnect_change_signal(callback)
-
-
-from pyqt_reactive.protocols.widget_protocols import (
-    ChangeSignalEmitter,
-    ValueGettable,
-    ValueSettable,
-)
-
-ChangeSignalEmitter.register(InlineDataclassGroupBox)
-ValueGettable.register(InlineDataclassGroupBox)
-ValueSettable.register(InlineDataclassGroupBox)

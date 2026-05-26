@@ -9,6 +9,7 @@ import dataclasses
 from typing import Dict, Optional, Type, Union, get_origin, get_args
 from enum import Enum
 
+from objectstate.lazy_factory import LazyDataclass
 from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 
 
@@ -184,8 +185,7 @@ class ParameterTypeUtils:
         Returns:
             True if the type is an Enum, False otherwise
         """
-        return (hasattr(param_type, CONSTANTS.BASES_ATTR) and 
-                Enum in getattr(param_type, CONSTANTS.BASES_ATTR))
+        return isinstance(param_type, type) and issubclass(param_type, Enum)
     
     @staticmethod
     def is_list_of_enums(param_type: Type) -> bool:
@@ -198,18 +198,8 @@ class ParameterTypeUtils:
         Returns:
             True if the type is List[Enum], False otherwise
         """
-        try:
-            # Check if it's a generic type (like List[Something])
-            if hasattr(param_type, '__origin__') and hasattr(param_type, '__args__'):
-                origin = getattr(param_type, '__origin__')
-                if origin is list:
-                    args = getattr(param_type, '__args__')
-                    if args:
-                        inner_type = args[0]
-                        return ParameterTypeUtils.is_enum_type(inner_type)
-            return False
-        except Exception:
-            return False
+        args = get_args(param_type)
+        return get_origin(param_type) is list and bool(args) and ParameterTypeUtils.is_enum_type(args[0])
     
     @staticmethod
     def get_enum_from_list_type(param_type: Type) -> Optional[Type]:
@@ -222,16 +212,10 @@ class ParameterTypeUtils:
         Returns:
             The Enum type, or None if not a List[Enum]
         """
-        try:
-            if hasattr(param_type, '__origin__') and hasattr(param_type, '__args__'):
-                origin = getattr(param_type, '__origin__')
-                if origin is list:
-                    args = getattr(param_type, '__args__')
-                    if args and ParameterTypeUtils.is_enum_type(args[0]):
-                        return args[0]
-            return None
-        except Exception:
-            return None
+        args = get_args(param_type)
+        if get_origin(param_type) is list and args and ParameterTypeUtils.is_enum_type(args[0]):
+            return args[0]
+        return None
     
     @staticmethod
     def has_dataclass_fields(obj: any) -> bool:
@@ -244,7 +228,7 @@ class ParameterTypeUtils:
         Returns:
             True if the object has __dataclass_fields__ attribute
         """
-        return hasattr(obj, CONSTANTS.DATACLASS_FIELDS_ATTR)
+        return dataclasses.is_dataclass(obj)
     
     @staticmethod
     def has_resolve_field_value(obj: any) -> bool:
@@ -257,7 +241,7 @@ class ParameterTypeUtils:
         Returns:
             True if the object has _resolve_field_value attribute
         """
-        return hasattr(obj, CONSTANTS.RESOLVE_FIELD_VALUE_ATTR)
+        return isinstance(obj, LazyDataclass)
     
     @staticmethod
     def is_concrete_dataclass(obj: any) -> bool:
@@ -299,9 +283,7 @@ class ParameterTypeUtils:
         Returns:
             The value attribute if it exists, otherwise the original object
         """
-        if hasattr(obj, CONSTANTS.VALUE_ATTR):
-            return getattr(obj, CONSTANTS.VALUE_ATTR)
-        return obj
+        return obj.value if isinstance(obj, Enum) else obj
     
     @staticmethod
     def convert_string_to_bool(value: str) -> bool:

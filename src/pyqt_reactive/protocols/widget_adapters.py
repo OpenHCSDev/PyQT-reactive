@@ -293,6 +293,14 @@ if PYQT6_AVAILABLE:
             # Dictionary mapping enum values to checkbox widgets
             self._checkboxes = {}
 
+        def checkbox_items(self) -> tuple[tuple[Any, Any], ...]:
+            """Return enum-to-checkbox items for group-level placeholder logic."""
+            return tuple(self._checkboxes.items())
+
+        def checkbox_widgets(self) -> tuple[Any, ...]:
+            """Return checkboxes managed by this group."""
+            return tuple(self._checkboxes.values())
+
         def get_value(self) -> Any:
             """
             Implement ValueGettable ABC.
@@ -388,5 +396,4 @@ if PYQT6_AVAILABLE:
         for abc_type in abc_types:
             if issubclass(adapter_class, abc_type):
                 capabilities.add(abc_type)
-
 

@@ -187,7 +187,7 @@ def get_scope_color_scheme(scope_id: Optional[str], step_index: Optional[int] = 
         return ScopeColorScheme()
 
 
-def _build_color_scheme_from_rgb(
+def build_color_scheme_from_rgb(
     base_rgb: Tuple[int, int, int],
     scope_id: str,
     step_index: Optional[int] = None,

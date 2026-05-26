@@ -11,11 +11,12 @@ from pyqt_reactive.widgets.shared.scope_color_utils import (
 )
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
 from pyqt_reactive.services.scope_color_service import ScopeColorService
+from pyqt_reactive.widgets.shared.config_tree_contracts import ScopeColorSchemeHost
 
 logger = logging.getLogger(__name__)
 
 
-class ScopedBorderMixin:
+class ScopedBorderMixin(ScopeColorSchemeHost):
     """Mixin that renders scope-based borders on QDialog/QWidget subclasses.
 
     Also provides scope accent colors for UI elements like buttons, tree selection,

@@ -5,9 +5,38 @@ Provides common functionality for scrolling to sections in the form.
 Used by ConfigWindow and StepParameterEditorWidget.
 """
 import logging
-from PyQt6.QtWidgets import QScrollArea
+from dataclasses import dataclass
+from typing import Any, Optional
+
+from PyQt6.QtWidgets import QScrollArea, QWidget
+
+from pyqt_reactive.services.window_navigation import FieldNavigableWindow, FormManagedWindow
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ScrollTarget:
+    """Resolved form navigation target."""
+
+    field_name: str
+    leaf_name: str
+    section_path: str
+    target_widget: QWidget
+    groupbox_widget: Optional[QWidget]
+    current_manager: Any
+    is_field: bool
+
+
+@dataclass(frozen=True)
+class ScrollViewport:
+    """Snapshot of scroll-area geometry used to compute navigation."""
+
+    content_widget: QWidget
+    viewport_height: int
+    viewport_top: int
+    viewport_bottom: int
+    vertical_scroll_bar: Any
 
 
 class ScrollableFormMixin:
@@ -37,155 +66,172 @@ class ScrollableFormMixin:
         """
         logger.info(f"🔍 Scrolling to section: {field_name}")
 
-        if not hasattr(self, 'scroll_area') or self.scroll_area is None:
+        if self.scroll_area is None:
             logger.warning("Scroll area not initialized; cannot navigate to section")
             return
 
-        # Parse dotted path to navigate through nested managers
-        parts = field_name.split('.')
-        current_manager = self.form_manager
-        target_widget = None
-        # Canonical section path for flashing. This must match the groupbox flash_key,
-        # which is the nested manager's dotted field_id.
-        section_parts = []
-        section_path = ""
-
-        # Navigate through nested managers for all but the last part
-        for i, part in enumerate(parts[:-1]):
-            if part not in current_manager.nested_managers:
-                logger.warning(f"❌ Part '{part}' not in nested_managers at depth {i}")
-                return
-            current_manager = current_manager.nested_managers[part]
-            section_parts.append(part)
-            section_path = ".".join(section_parts)
-
-        # The last part is either a nested manager (section) or a widget (leaf field)
-        leaf_name = parts[-1]
-        groupbox_widget = None  # For section navigation, use groupbox for sizing
-
-        if leaf_name in current_manager.nested_managers:
-            # It's a section - get the groupbox for proper sizing
-            nested_manager = current_manager.nested_managers[leaf_name]
-            section_parts.append(leaf_name)
-            section_path = ".".join(section_parts)
-            # Get the groupbox widget that contains this section
-            if hasattr(self.form_manager, '_get_groupbox_for_prefix'):
-                groupbox_widget = self.form_manager._get_groupbox_for_prefix(section_path)
-            if hasattr(nested_manager, 'widgets') and nested_manager.widgets:
-                first_param_name = next(iter(nested_manager.widgets.keys()))
-                target_widget = nested_manager.widgets[first_param_name]
-        elif leaf_name in current_manager.widgets:
-            # It's a leaf widget - scroll directly to it
-            target_widget = current_manager.widgets[leaf_name]
-            # Leaf field: flash the parent section (if any). If this is a root-level
-            # leaf with no section, section_path stays "" and we fall back.
-            section_path = ".".join(section_parts)
-        else:
-            # Single-part path that's a nested manager key
-            if len(parts) == 1 and leaf_name in self.form_manager.nested_managers:
-                nested_manager = self.form_manager.nested_managers[leaf_name]
-                section_parts = [leaf_name]
-                section_path = leaf_name
-                # Get the groupbox widget for this section
-                if hasattr(self.form_manager, '_get_groupbox_for_prefix'):
-                    groupbox_widget = self.form_manager._get_groupbox_for_prefix(section_path)
-                if hasattr(nested_manager, 'widgets') and nested_manager.widgets:
-                    first_param_name = next(iter(nested_manager.widgets.keys()))
-                    target_widget = nested_manager.widgets[first_param_name]
-            else:
-                logger.warning(f"❌ Leaf '{leaf_name}' not found in widgets or nested_managers")
-                return
-
-        if target_widget is None:
-            logger.warning(f"⚠️ No target widget found for {field_name}")
+        target = self._resolve_scroll_target(field_name)
+        if target is None:
             return
 
-        # Map widget position to scroll area content coordinates
-        content_widget = self.scroll_area.widget()
-
-        # Determine leaf-vs-section based on what we resolved, not on whether the
-        # input contains '.' (dotted paths can still refer to a section).
-        is_field = leaf_name in current_manager.widgets and leaf_name not in current_manager.nested_managers
-
-        # For groupbox navigation, use the groupbox for sizing (not the first field inside it)
-        sizing_widget = groupbox_widget if (groupbox_widget is not None and not is_field) else target_widget
-
-        widget_pos = sizing_widget.mapTo(content_widget, sizing_widget.rect().topLeft())
-        widget_height = sizing_widget.height()
-        widget_top = widget_pos.y()
-        widget_bottom = widget_top + widget_height
-
-        v_scroll_bar = self.scroll_area.verticalScrollBar()
-        viewport_height = self.scroll_area.viewport().height()
-        viewport_top = v_scroll_bar.value()
-        viewport_bottom = viewport_top + viewport_height
-
-        # Check if widget is fully visible in viewport
-        is_fully_visible = widget_top >= viewport_top and widget_bottom <= viewport_bottom
-
-        if is_fully_visible:
+        viewport = self._scroll_viewport()
+        if self._target_is_fully_visible(target, viewport):
             logger.info(f"✅ Target {field_name} already visible, skipping scroll")
         else:
-            if is_field:
-                # Field in groupbox - try to fit entire groupbox if possible
-                groupbox_for_field = groupbox_widget or (
-                    self.form_manager._get_groupbox_for_prefix(section_path) if section_path else None
-                )
-                if groupbox_for_field:
-                    gb_pos = groupbox_for_field.mapTo(content_widget, groupbox_for_field.rect().topLeft())
-                    gb_height = groupbox_for_field.height()
-                    gb_top = gb_pos.y()
-
-                    if gb_height <= viewport_height:
-                        # Groupbox fits in viewport - show entire groupbox, centered
-                        gb_center = gb_top + gb_height // 2
-                        target_scroll = max(0, gb_center - viewport_height // 2)
-                        logger.debug(f"📜 SCROLL: Field {field_name} - groupbox fits, centering groupbox: gb_height={gb_height}, viewport_height={viewport_height}")
-                    else:
-                        # Groupbox doesn't fit - center the field itself
-                        field_pos = target_widget.mapTo(content_widget, target_widget.rect().topLeft())
-                        field_center = field_pos.y() + target_widget.height() // 2
-                        target_scroll = max(0, field_center - viewport_height // 2)
-                        logger.debug(f"📜 SCROLL: Field {field_name} - groupbox too tall, centering field")
-                else:
-                    # No groupbox found - center the field
-                    field_pos = target_widget.mapTo(content_widget, target_widget.rect().topLeft())
-                    field_center = field_pos.y() + target_widget.height() // 2
-                    target_scroll = max(0, field_center - viewport_height // 2)
-            else:
-                # Groupbox → center or top-align if taller than viewport
-                if widget_height >= viewport_height:
-                    # Groupbox taller than viewport - top align
-                    target_scroll = widget_top
-                    logger.debug(f"📜 SCROLL: {field_name} taller than viewport, top-aligning: widget_height={widget_height}, viewport_height={viewport_height}")
-                else:
-                    # Center the groupbox vertically in viewport
-                    widget_center = widget_top + widget_height // 2
-                    target_scroll = max(0, widget_center - viewport_height // 2)
-                    logger.debug(f"📜 SCROLL: {field_name} centering: widget_top={widget_top}, widget_height={widget_height}, widget_center={widget_center}, viewport_height={viewport_height}, target_scroll={target_scroll}")
-
-            v_scroll_bar.setValue(target_scroll)
+            target_scroll = self._target_scroll_position(target, viewport)
+            viewport.vertical_scroll_bar.setValue(target_scroll)
             logger.info(f"✅ Scrolled to {field_name} (target_scroll={target_scroll})")
 
             # Invalidate flash overlay geometry cache after programmatic scroll
             from pyqt_reactive.animation import WindowFlashOverlay
             WindowFlashOverlay.invalidate_cache_for_widget(self)  # type: ignore[arg-type]
 
-        # Flash the target to highlight it (LOCAL to this window only)
-        # Use LEAF flash if we have a specific field, groupbox flash for sections
-        if flash and hasattr(self.form_manager, 'queue_flash_local'):
-            # Check if this is a leaf field (dotted path with specific widget)
-            if is_field:
-                # Use leaf flash - register dynamically and queue
-                self._queue_leaf_flash_for_navigation(section_path, leaf_name, target_widget)
-            else:
-                # Section-level flash (no specific leaf widget)
-                # Queue both groupbox (standard masking) and tree item
-                if section_path:
-                    logger.info(f"⚡ FLASH_DEBUG: Calling queue_flash_local({section_path}) on form_manager scope_id={getattr(self.form_manager, 'scope_id', 'NONE')}")
-                    self.form_manager.queue_flash_local(section_path)
-                    self.form_manager.queue_flash_local(f"tree::{section_path}")
-            logger.debug(f"⚡ Flashed for {field_name} (local)")
+        if flash:
+            self._flash_scroll_target(target)
+
+    def _resolve_scroll_target(self, field_name: str) -> Optional[ScrollTarget]:
+        """Resolve a dotted form path to a concrete widget and section path."""
+        parts = field_name.split('.')
+        current_manager = self.form_manager
+        section_parts = []
+
+        for i, part in enumerate(parts[:-1]):
+            if part not in current_manager.nested_managers:
+                logger.warning(f"❌ Part '{part}' not in nested_managers at depth {i}")
+                return None
+            current_manager = current_manager.nested_managers[part]
+            section_parts.append(part)
+
+        leaf_name = parts[-1]
+        section_path = ".".join(section_parts)
+        groupbox_widget = None
+        target_widget = None
+
+        if leaf_name in current_manager.nested_managers:
+            nested_manager = current_manager.nested_managers[leaf_name]
+            section_parts.append(leaf_name)
+            section_path = ".".join(section_parts)
+            groupbox_widget = self.form_manager.form_tree.groupbox_for_prefix(section_path)
+            if nested_manager.widgets:
+                first_param_name = next(iter(nested_manager.widgets.keys()))
+                target_widget = nested_manager.widgets[first_param_name]
+        elif leaf_name in current_manager.widgets:
+            target_widget = current_manager.widgets[leaf_name]
+        else:
+            logger.warning(f"❌ Leaf '{leaf_name}' not found in widgets or nested_managers")
+            return None
+
+        if target_widget is None:
+            logger.warning(f"⚠️ No target widget found for {field_name}")
+            return None
+
+        is_field = leaf_name in current_manager.widgets and leaf_name not in current_manager.nested_managers
+        return ScrollTarget(
+            field_name=field_name,
+            leaf_name=leaf_name,
+            section_path=section_path,
+            target_widget=target_widget,
+            groupbox_widget=groupbox_widget,
+            current_manager=current_manager,
+            is_field=is_field,
+        )
+
+    def _scroll_viewport(self) -> ScrollViewport:
+        """Capture scroll-area geometry once for a navigation operation."""
+        content_widget = self.scroll_area.widget()
+        v_scroll_bar = self.scroll_area.verticalScrollBar()
+        viewport_height = self.scroll_area.viewport().height()
+        viewport_top = v_scroll_bar.value()
+        return ScrollViewport(
+            content_widget=content_widget,
+            viewport_height=viewport_height,
+            viewport_top=viewport_top,
+            viewport_bottom=viewport_top + viewport_height,
+            vertical_scroll_bar=v_scroll_bar,
+        )
+
+    def _target_sizing_widget(self, target: ScrollTarget) -> QWidget:
+        """Use section groupboxes for section navigation and leaf widgets for fields."""
+        if target.groupbox_widget is not None and not target.is_field:
+            return target.groupbox_widget
+        return target.target_widget
+
+    def _target_bounds(self, widget: QWidget, viewport: ScrollViewport) -> tuple[int, int, int]:
+        widget_pos = widget.mapTo(viewport.content_widget, widget.rect().topLeft())
+        widget_height = widget.height()
+        widget_top = widget_pos.y()
+        return widget_top, widget_height, widget_top + widget_height
+
+    def _target_is_fully_visible(self, target: ScrollTarget, viewport: ScrollViewport) -> bool:
+        sizing_widget = self._target_sizing_widget(target)
+        widget_top, _, widget_bottom = self._target_bounds(sizing_widget, viewport)
+        return widget_top >= viewport.viewport_top and widget_bottom <= viewport.viewport_bottom
+
+    def _target_scroll_position(self, target: ScrollTarget, viewport: ScrollViewport) -> int:
+        if target.is_field:
+            return self._field_scroll_position(target, viewport)
+        return self._section_scroll_position(target, viewport)
+
+    def _field_scroll_position(self, target: ScrollTarget, viewport: ScrollViewport) -> int:
+        groupbox_for_field = target.groupbox_widget or (
+            self.form_manager.form_tree.groupbox_for_prefix(target.section_path)
+            if target.section_path
+            else None
+        )
+        if groupbox_for_field:
+            gb_top, gb_height, _ = self._target_bounds(groupbox_for_field, viewport)
+            if gb_height <= viewport.viewport_height:
+                gb_center = gb_top + gb_height // 2
+                target_scroll = max(0, gb_center - viewport.viewport_height // 2)
+                logger.debug(
+                    f"📜 SCROLL: Field {target.field_name} - groupbox fits, centering groupbox: "
+                    f"gb_height={gb_height}, viewport_height={viewport.viewport_height}"
+                )
+                return target_scroll
+
+            field_center = self._widget_center(target.target_widget, viewport)
+            logger.debug(f"📜 SCROLL: Field {target.field_name} - groupbox too tall, centering field")
+            return max(0, field_center - viewport.viewport_height // 2)
+
+        field_center = self._widget_center(target.target_widget, viewport)
+        return max(0, field_center - viewport.viewport_height // 2)
+
+    def _section_scroll_position(self, target: ScrollTarget, viewport: ScrollViewport) -> int:
+        sizing_widget = self._target_sizing_widget(target)
+        widget_top, widget_height, _ = self._target_bounds(sizing_widget, viewport)
+
+        if widget_height >= viewport.viewport_height:
+            logger.debug(
+                f"📜 SCROLL: {target.field_name} taller than viewport, top-aligning: "
+                f"widget_height={widget_height}, viewport_height={viewport.viewport_height}"
+            )
+            return widget_top
+
+        widget_center = widget_top + widget_height // 2
+        target_scroll = max(0, widget_center - viewport.viewport_height // 2)
+        logger.debug(
+            f"📜 SCROLL: {target.field_name} centering: widget_top={widget_top}, "
+            f"widget_height={widget_height}, widget_center={widget_center}, "
+            f"viewport_height={viewport.viewport_height}, target_scroll={target_scroll}"
+        )
+        return target_scroll
+
+    def _widget_center(self, widget: QWidget, viewport: ScrollViewport) -> int:
+        widget_top, widget_height, _ = self._target_bounds(widget, viewport)
+        return widget_top + widget_height // 2
+
+    def _flash_scroll_target(self, target: ScrollTarget) -> None:
+        """Flash the resolved target locally after navigation."""
+        if target.is_field:
+            self._queue_leaf_flash_for_navigation(target.section_path, target.leaf_name, target.target_widget)
+        elif target.section_path:
+            logger.info(
+                f"⚡ FLASH_DEBUG: Calling queue_flash_local({target.section_path}) "
+                f"on form_manager scope_id={getattr(self.form_manager, 'scope_id', 'NONE')}"
+            )
+            self.form_manager.queue_flash_local(target.section_path)
+            self.form_manager.queue_flash_local(f"tree::{target.section_path}")
+        logger.debug(f"⚡ Flashed for {target.field_name} (local)")
 
     def _queue_leaf_flash_for_navigation(self, section_path: str, leaf_name: str, leaf_widget) -> None:
         """Queue a leaf flash for navigation to a specific field.
@@ -214,7 +260,7 @@ class ScrollableFormMixin:
             # Get the leaf widget (same as editing: from widgets dict)
             actual_leaf_widget = self.form_manager.widgets.get(leaf_name)
             # Get the label widget (for proper masking)
-            label_widget = self.form_manager.labels.get(leaf_name) if hasattr(self.form_manager, 'labels') else None
+            label_widget = self.form_manager.labels.get(leaf_name)
 
             logger.debug(f"🔍 QUEUE_LEAF_NAV: groupbox={type(groupbox).__name__ if groupbox else None}")
             logger.debug(f"🔍 QUEUE_LEAF_NAV: leaf_widget={type(actual_leaf_widget).__name__ if actual_leaf_widget else None}")
@@ -224,11 +270,9 @@ class ScrollableFormMixin:
                 # Register with groupbox, leaf_widget, AND label_widget
                 leaf_flash_key = f"param_{leaf_name}"
                 logger.debug(f"🔍 QUEUE_LEAF_NAV: register_flash_leaf key='{leaf_flash_key}'")
-                if hasattr(groupbox, 'geometry'):
-                    logger.debug(f"🔍 QUEUE_LEAF_NAV: groupbox geometry={groupbox.geometry()}")
-                if hasattr(actual_leaf_widget, 'geometry'):
-                    logger.debug(f"🔍 QUEUE_LEAF_NAV: leaf_widget geometry={actual_leaf_widget.geometry()}")
-                if label_widget and hasattr(label_widget, 'geometry'):
+                logger.debug(f"🔍 QUEUE_LEAF_NAV: groupbox geometry={groupbox.geometry()}")
+                logger.debug(f"🔍 QUEUE_LEAF_NAV: leaf_widget geometry={actual_leaf_widget.geometry()}")
+                if label_widget:
                     logger.debug(f"🔍 QUEUE_LEAF_NAV: label_widget geometry={label_widget.geometry()}")
                 # Pass label_widget instead of None for proper masking
                 self.form_manager.register_flash_leaf(leaf_flash_key, groupbox, actual_leaf_widget, label_widget=label_widget)
@@ -247,10 +291,10 @@ class ScrollableFormMixin:
         logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED section='{section_path}' leaf='{leaf_name}' key='{leaf_flash_key}'")
 
         # Get widgets for nested field - same approach as editing
-        groupbox = self.form_manager._get_groupbox_for_prefix(section_path)
-        nested_manager = self.form_manager._find_nested_manager_for_prefix(section_path)
+        groupbox = self.form_manager.form_tree.groupbox_for_prefix(section_path)
+        nested_manager = self.form_manager.form_tree.nested_manager_for_prefix(section_path)
         leaf_widget = nested_manager.widgets.get(leaf_name) if nested_manager else None
-        label_widget = nested_manager.labels.get(leaf_name) if nested_manager and hasattr(nested_manager, 'labels') else None
+        label_widget = nested_manager.labels.get(leaf_name) if nested_manager else None
 
         logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED groupbox={type(groupbox).__name__ if groupbox else None}")
         logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}")
@@ -276,3 +320,7 @@ class ScrollableFormMixin:
         This method name matches the protocol expected by WindowManager.focus_and_navigate().
         """
         self._scroll_to_section(field_path, flash=True)
+
+
+FieldNavigableWindow.register(ScrollableFormMixin)
+FormManagedWindow.register(ScrollableFormMixin)

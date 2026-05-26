@@ -9,6 +9,8 @@ Uses React-style discriminated unions for type-safe parameter handling.
 """
 
 import dataclasses
+
+from objectstate import UIParameterVisibilityRequest, should_hide_ui_parameter
 from dataclasses import dataclass
 from typing import Dict, Any, Type, Optional, List, Tuple
 
@@ -16,11 +18,16 @@ from objectstate import LazyDefaultPlaceholderService
 # Old field path detection removed - using simple field name matching
 from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 from .parameter_type_utils import ParameterTypeUtils
-from pyqt_reactive.forms.ui_utils import debug_param, format_param_name
+from pyqt_reactive.forms.ui_utils import FieldDisplayText, debug_param
 from .parameter_info_types import (
     ParameterInfo,
     create_parameter_info
 )
+
+
+def _type_label(param_type: Type) -> str:
+    """Return a stable label for diagnostics and tooltips."""
+    return param_type.__name__ if isinstance(param_type, type) else str(param_type)
 
 
 @dataclass
@@ -145,16 +152,23 @@ class ParameterFormService:
             if isinstance(param_info, (OptionalDataclassInfo, DirectDataclassInfo)):
                 # Get actual field path from FieldPathDetector (no artificial "nested_" prefix)
                 # Unwrap Optional types to get the actual dataclass type for field path detection
-                unwrapped_param_type = self._type_utils.get_optional_inner_type(parameter_type) if self._type_utils.is_optional_dataclass(parameter_type) else parameter_type
+                unwrapped_param_type = self._unwrap_optional_dataclass_type(parameter_type)
 
                 # For function parameters (no parent dataclass), use parameter name directly
                 if input.parent_obj_type is None:
                     nested_field_id = param_name
                 else:
-                    nested_field_id = self.get_field_path_with_fail_loud(input.parent_obj_type, unwrapped_param_type)
+                    nested_field_id = self.get_field_path_with_fail_loud(
+                        input.parent_obj_type,
+                        unwrapped_param_type,
+                    )
 
                 nested_structure = self._analyze_nested_dataclass(
-                    param_name, parameter_type, current_value, nested_field_id, input.parent_obj_type
+                    param_name,
+                    parameter_type,
+                    current_value,
+                    nested_field_id,
+                    input.parent_obj_type,
                 )
                 nested_forms[param_name] = nested_structure
 
@@ -169,7 +183,12 @@ class ParameterFormService:
             has_optional_dataclasses=has_optional_dataclasses
         )
 
-    def _should_hide_from_ui(self, parent_obj_type: Optional[Type], param_name: str, param_type: Type) -> bool:
+    def _should_hide_from_ui(
+        self,
+        parent_obj_type: Optional[Type],
+        param_name: str,
+        param_type: Type,
+    ) -> bool:
         """
         Check if a parameter should be hidden from the UI.
 
@@ -181,38 +200,43 @@ class ParameterFormService:
         Returns:
             True if the parameter should be hidden from UI
         """
-        import dataclasses
+        return should_hide_ui_parameter(
+            UIParameterVisibilityRequest(
+                owner_type=parent_obj_type,
+                field_name=param_name,
+                field_type_candidate=self._unwrap_optional_dataclass_type(param_type),
+                field_metadata_hidden=self._field_metadata_declares_hidden(
+                    parent_obj_type,
+                    param_name,
+                ),
+            )
+        )
 
-        # Check if parent class declares this field as having a special editor
-        # (e.g., FunctionStep._ui_special_fields = ('func',) - rendered as FunctionPatternEditor)
-        if parent_obj_type is not None:
-            special_fields = getattr(parent_obj_type, '_ui_special_fields', ())
-            if param_name in special_fields:
-                return True
+    def _unwrap_optional_dataclass_type(self, param_type: Type) -> Type:
+        """Return the dataclass type behind Optional[T], or the type itself."""
+        if self._type_utils.is_optional_dataclass(param_type):
+            return self._type_utils.get_optional_inner_type(param_type)
+        return param_type
 
-        # If no parent dataclass, can't check field metadata
+    def _field_metadata_declares_hidden(
+        self,
+        parent_obj_type: Optional[Type],
+        param_name: str,
+    ) -> bool:
+        """Return True when a dataclass field carries UI-hidden metadata."""
         if parent_obj_type is None:
-            # Still check if the type itself has _ui_hidden
-            unwrapped_type = self._type_utils.get_optional_inner_type(param_type) if self._type_utils.is_optional_dataclass(param_type) else param_type
-            if hasattr(unwrapped_type, '__dict__') and '_ui_hidden' in unwrapped_type.__dict__ and unwrapped_type._ui_hidden:
-                return True
+            return False
+        if not dataclasses.is_dataclass(parent_obj_type):
             return False
 
-        # Check field metadata for ui_hidden flag
-        try:
-            field_obj = next(f for f in dataclasses.fields(parent_obj_type) if f.name == param_name)
-            if field_obj.metadata.get('ui_hidden', False):
-                return True
-        except (StopIteration, TypeError, AttributeError):
-            pass
-
-        # Check if type itself has _ui_hidden attribute
-        # IMPORTANT: Check __dict__ directly to avoid inheriting _ui_hidden from parent classes
-        unwrapped_type = self._type_utils.get_optional_inner_type(param_type) if self._type_utils.is_optional_dataclass(param_type) else param_type
-        if hasattr(unwrapped_type, '__dict__') and '_ui_hidden' in unwrapped_type.__dict__ and unwrapped_type._ui_hidden:
-            return True
-
-        return False
+        field_by_name = {
+            field.name: field
+            for field in dataclasses.fields(parent_obj_type)
+        }
+        field_obj = field_by_name.get(param_name)
+        if field_obj is None:
+            return False
+        return field_obj.metadata.get("ui_hidden", False)
 
     def convert_value_to_type(self, value: Any, param_type: Type, param_name: str, obj_type: Type = None) -> Any:
         """
@@ -230,7 +254,7 @@ class ParameterFormService:
         Returns:
             The converted value
         """
-        debug_param("convert_value", f"param={param_name}, input_type={type(value).__name__}, target_type={param_type.__name__ if hasattr(param_type, '__name__') else str(param_type)}")
+        debug_param("convert_value", f"param={param_name}, input_type={type(value).__name__}, target_type={_type_label(param_type)}")
 
         if value is None:
             return None
@@ -286,8 +310,10 @@ class ParameterFormService:
                 return None
             try:
                 return param_type(value)
-            except (ValueError, TypeError):
-                return None
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"Invalid {param_type.__name__} value for parameter {param_name!r}: {value!r}"
+                ) from exc
 
         # Handle empty strings in lazy context - convert to None for all parameter types
         # This is critical for lazy dataclass behavior where None triggers placeholder resolution
@@ -318,13 +344,14 @@ class ParameterFormService:
         Returns:
             Dictionary with display information
         """
+        text = FieldDisplayText.from_field_name(param_name)
         return {
-            'display_name': format_param_name(param_name),
-            'field_label': f"{format_param_name(param_name)}:",
-            'checkbox_label': f"Enable {format_param_name(param_name)}",
-            'group_title': format_param_name(param_name),
-            'description': description or f"Parameter: {format_param_name(param_name)}",
-            'tooltip': f"{format_param_name(param_name)} ({param_type.__name__ if hasattr(param_type, '__name__') else str(param_type)})"
+            'display_name': text.display_name,
+            'field_label': text.field_label,
+            'checkbox_label': text.checkbox_label,
+            'group_title': text.group_title,
+            'description': description or f"Parameter: {text.display_name}",
+            'tooltip': f"{text.display_name} ({_type_label(param_type)})"
         }
     
     def format_widget_name(self, field_path: str, param_name: str) -> str:
@@ -427,8 +454,6 @@ class ParameterFormService:
 
         return parameters, parameter_types
 
-
-
     def _get_field_value(self, dataclass_instance: Any, field: Any) -> Any:
         """Extract a single field value from a dataclass instance."""
         if dataclass_instance is None:
@@ -438,10 +463,10 @@ class ParameterFormService:
 
         if self._type_utils.has_resolve_field_value(dataclass_instance):
             # Lazy dataclass - get raw value
-            return object.__getattribute__(dataclass_instance, field_name) if hasattr(dataclass_instance, field_name) else field.default
+            return object.__getattribute__(dataclass_instance, field_name)
         else:
             # Concrete dataclass - get attribute value
-            return getattr(dataclass_instance, field_name, field.default)
+            return object.__getattribute__(dataclass_instance, field_name)
 
     def _create_parameter_info(self, param_name: str, param_type: Type, current_value: Any,
                              parameter_info: Optional[Dict] = None, full_param_path: str = None) -> ParameterInfo:
@@ -547,8 +572,6 @@ class ParameterFormService:
             # All nested managers must have reset_all_parameters method
             nested_manager.reset_all_parameters()
 
-
-
     def get_reset_value_for_parameter(self, param_name: str, param_type: Type,
                                     obj_type: Type, is_global_config_editing: Optional[bool] = None) -> Any:
         """
@@ -602,7 +625,7 @@ class ParameterFormService:
         import inspect
 
         # For pure functions: get default from signature
-        if callable(obj_type) and not is_dataclass(obj_type) and not hasattr(obj_type, '__mro__'):
+        if callable(obj_type) and not is_dataclass(obj_type) and not inspect.isclass(obj_type):
             sig = inspect.signature(obj_type)
             if param_name in sig.parameters:
                 default = sig.parameters[param_name].default
@@ -610,8 +633,10 @@ class ParameterFormService:
             return None  # Dynamic property, not in signature
 
         # For all other types (dataclasses, ABCs, classes): check class attribute first
-        if hasattr(obj_type, param_name):
-            return getattr(obj_type, param_name)
+        sentinel = object()
+        class_value = inspect.getattr_static(obj_type, param_name, sentinel)
+        if class_value is not sentinel:
+            return class_value
 
         # For dataclasses: check if it's a field(default_factory=...) field
         if is_dataclass(obj_type):

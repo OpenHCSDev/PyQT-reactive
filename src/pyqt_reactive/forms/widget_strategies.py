@@ -4,16 +4,19 @@ import dataclasses
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Type, Callable, Optional, Union
+from typing import Any, Dict, Type, Callable, get_origin
 
-from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QGroupBox, QVBoxLayout, QSpinBox, QDoubleSpinBox
+from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QGroupBox, QVBoxLayout, QSpinBox, QDoubleSpinBox, QWidget
 from PyQt6.QtCore import Qt
-from magicgui.widgets import create_widget
+from PyQt6.QtGui import QIntValidator, QValidator
+from magicgui.widgets import Widget as MagicGuiWidget, create_widget
 from magicgui.type_map import register_type
 
 from pyqt_reactive.widgets import (
-    NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox
+    NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox, NoneAwareCheckBox
 )
+from pyqt_reactive.protocols import PyQtWidgetMeta, ValueGettable, ValueSettable, ChangeSignalEmitter
+from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 from pyqt_reactive.forms.widget_creation_registry import (
@@ -38,7 +41,12 @@ logger = logging.getLogger(__name__)
 # ==================== None-Aware Widget Classes ====================
 # Defined at top so they can be used throughout this file.
 
-class NoneAwareLineEdit(QLineEdit):
+class NoneAwareLineEdit(
+    QLineEdit,
+    ValueGettable,
+    ValueSettable,
+    metaclass=PyQtWidgetMeta,
+):
     """QLineEdit that properly handles None values for lazy dataclass contexts."""
 
     def get_value(self):
@@ -51,12 +59,16 @@ class NoneAwareLineEdit(QLineEdit):
         self.setText("" if value is None else str(value))
 
 
-class NoneAwareIntEdit(QLineEdit):
+class NoneAwareIntEdit(
+    QLineEdit,
+    ValueGettable,
+    ValueSettable,
+    metaclass=PyQtWidgetMeta,
+):
     """QLineEdit that only allows digits and properly handles None values for integer fields."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from PyQt6.QtGui import QIntValidator
         self.setValidator(QIntValidator())
 
     def get_value(self):
@@ -64,41 +76,17 @@ class NoneAwareIntEdit(QLineEdit):
         text = self.text().strip()
         if text == "":
             return None
-        try:
-            return int(text)
-        except ValueError:
-            return None
+        validator = self.validator()
+        if validator is None:
+            raise TypeError("NoneAwareIntEdit requires a QIntValidator before value extraction")
+        state, _, _ = validator.validate(text, 0)
+        if state != QValidator.State.Acceptable:
+            raise ValueError(f"Invalid integer text in NoneAwareIntEdit: {text!r}")
+        return int(text)
 
     def set_value(self, value):
         """Set value, handling None properly."""
         self.setText("" if value is None else str(value))
-
-
-# Register as implementing ValueGettable and ValueSettable
-from pyqt_reactive.protocols.widget_protocols import ValueGettable, ValueSettable
-ValueGettable.register(NoneAwareLineEdit)
-ValueSettable.register(NoneAwareLineEdit)
-ValueGettable.register(NoneAwareIntEdit)
-ValueSettable.register(NoneAwareIntEdit)
-
-
-def _get_enum_display_text(enum_value: Enum) -> str:
-    """
-    Get display text for enum value, handling nested enums.
-
-    For simple enums like VariableComponents.SITE, returns the string value.
-    For nested enums like GroupBy.CHANNEL = VariableComponents.CHANNEL,
-    returns the nested enum's string value.
-    """
-    if isinstance(enum_value.value, Enum):
-        # Nested enum (e.g., GroupBy.CHANNEL = VariableComponents.CHANNEL)
-        return enum_value.value.value
-    elif isinstance(enum_value.value, str):
-        # Simple string enum
-        return enum_value.value
-    else:
-        # Fallback to string representation
-        return str(enum_value.value)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -215,9 +203,6 @@ def register_openhcs_widgets():
     register_type(Path, widget_type="FileEdit")
 
 
-
-
-
 # Functional widget replacement registry
 WIDGET_REPLACEMENT_REGISTRY: Dict[Type, callable] = {
     str: lambda current_value, **kwargs: create_string_fallback_widget(current_value=current_value),
@@ -254,176 +239,156 @@ def create_enum_widget_unified(enum_type: Type, current_value: Any, **kwargs) ->
         widget.addItem(display_text, enum_value)
 
     # Set current selection
-    if current_value and hasattr(current_value, '__class__') and isinstance(current_value, enum_type):
-        for i in range(widget.count()):
-            if widget.itemData(i) == current_value:
-                widget.setCurrentIndex(i)
-                break
+    if current_value and isinstance(current_value, enum_type):
+        _select_combobox_data(widget, current_value)
 
     return widget
 
-# Functional configuration registry
-CONFIGURATION_REGISTRY: Dict[Type, callable] = {
-    int: lambda widget: widget.setRange(WidgetConfig.NUMERIC_RANGE_MIN, WidgetConfig.NUMERIC_RANGE_MAX)
-        if hasattr(widget, 'setRange') else None,
-    float: lambda widget: (
-        widget.setRange(WidgetConfig.NUMERIC_RANGE_MIN, WidgetConfig.NUMERIC_RANGE_MAX)
-        if hasattr(widget, 'setRange') else None,
-        widget.setDecimals(WidgetConfig.FLOAT_PRECISION)
-        if hasattr(widget, 'setDecimals') else None
-    )[-1],
-}
+
+def _select_combobox_data(widget: QComboBox, value: Any) -> None:
+    """Select the first combobox entry whose item data matches value."""
+    for index in range(widget.count()):
+        if widget.itemData(index) == value:
+            widget.setCurrentIndex(index)
+            return
 
 
-@dataclasses.dataclass(frozen=True)
-class MagicGuiWidgetFactory:
-    """OpenHCS widget factory using functional mapping dispatch."""
-
-    def create_widget(self, param_name: str, param_type: Type, current_value: Any,
-                     widget_id: str, parameter_info: Any = None) -> Any:
-        """Create widget using functional registry dispatch."""
-        pass  # timer decorator - optional
-
-        with timer("            resolve_optional", threshold_ms=0.1):
-            resolved_type = resolve_optional(param_type)
-            enum_type = enum_member_type(resolved_type)
-            if enum_type is not None:
-                resolved_type = enum_type
-
-        # Handle direct List[Enum] types - create multi-selection checkbox group
-        if is_list_of_enums(resolved_type):
-            with timer("            create checkbox group", threshold_ms=0.5):
-                return self._create_checkbox_group_widget(param_name, resolved_type, current_value)
-
-        # Extract enum from list wrapper for other cases
-        with timer("            extract enum value", threshold_ms=0.1):
-            extracted_value = (current_value[0] if isinstance(current_value, list) and
-                              len(current_value) == 1 and isinstance(current_value[0], Enum)
-                              else current_value)
-
-        # Handle direct enum types
-        if is_enum(resolved_type):
-            with timer("            create enum widget", threshold_ms=0.5):
-                return create_enum_widget_unified(resolved_type, extracted_value)
-
-        # OPTIMIZATION: Fast path for simple types - bypass magicgui overhead (~0.3ms per widget)
-        # This saves ~36ms for 120 widgets
-        if resolved_type == int:
-            with timer("            create int widget (fast path)", threshold_ms=0.5):
-                return _create_direct_int_widget(extracted_value)
-        elif resolved_type == float:
-            with timer("            create float widget (fast path)", threshold_ms=0.5):
-                return _create_direct_float_widget(extracted_value)
-        elif resolved_type == bool:
-            with timer("            create bool widget (fast path)", threshold_ms=0.5):
-                return _create_direct_bool_widget(extracted_value)
-        elif resolved_type == str:
-            with timer("            create string widget (fast path)", threshold_ms=0.5):
-                return create_string_fallback_widget(current_value=extracted_value)
-
-        # Check for OpenHCS custom widget replacements
-        with timer("            registry lookup", threshold_ms=0.1):
-            replacement_factory = WIDGET_REPLACEMENT_REGISTRY.get(resolved_type)
-
-        if replacement_factory:
-            with timer(f"            call replacement factory for {resolved_type.__name__ if hasattr(resolved_type, '__name__') else resolved_type}", threshold_ms=0.5):
-                widget = replacement_factory(
-                    current_value=extracted_value,
-                    param_name=param_name,
-                    parameter_info=parameter_info
-                )
-        else:
-            # Try magicgui for complex types, with string fallback for unsupported types
-            try:
-                # Handle None values to prevent magicgui from converting None to literal "None" string
-                with timer("            prepare magicgui value", threshold_ms=0.1):
-                    magicgui_value = extracted_value
-                    if extracted_value is None:
-                        # Use appropriate default values for magicgui to prevent "None" string conversion
-                        # CRITICAL FIX: Use minimal defaults that won't look like concrete user values
-                        if resolved_type == int:
-                            magicgui_value = 0  # magicgui needs a value, placeholder will override display
-                        elif resolved_type == float:
-                            magicgui_value = 0.0  # magicgui needs a value, placeholder will override display
-                        elif resolved_type == bool:
-                            magicgui_value = False
-                        elif hasattr(resolved_type, '__origin__') and resolved_type.__origin__ is list:
-                            magicgui_value = []  # Empty list for List[T] types
-                        elif hasattr(resolved_type, '__origin__') and resolved_type.__origin__ is tuple:
-                            magicgui_value = ()  # Empty tuple for tuple[T, ...] types
-                        # For other types, let magicgui handle None (might still cause issues but less common)
-
-                with timer(f"            magicgui.create_widget({param_name}, {resolved_type.__name__ if hasattr(resolved_type, '__name__') else resolved_type})", threshold_ms=0.0):
-                    widget = create_widget(annotation=resolved_type, value=magicgui_value)
-
-                # Check if magicgui returned a basic QWidget (which indicates failure)
-                with timer("            check magicgui result", threshold_ms=0.1):
-                    if hasattr(widget, 'native') and type(widget.native).__name__ == 'QWidget':
-                        logger.warning(f"magicgui returned basic QWidget for {param_name} ({resolved_type}), using fallback")
-                        widget = create_string_fallback_widget(current_value=extracted_value)
-                    elif type(widget).__name__ == 'QWidget':
-                        logger.warning(f"magicgui returned basic QWidget for {param_name} ({resolved_type}), using fallback")
-                        widget = create_string_fallback_widget(current_value=extracted_value)
-                    else:
-                        # If original value was None, clear the widget to show placeholder behavior
-                        if extracted_value is None and hasattr(widget, 'native'):
-                            native_widget = widget.native
-                            if hasattr(native_widget, 'setText'):
-                                native_widget.setText("")  # Clear text for None values
-                            elif hasattr(native_widget, 'setChecked') and resolved_type == bool:
-                                native_widget.setChecked(False)  # Uncheck for None bool values
-
-                        # Extract native PyQt6 widget from magicgui wrapper if needed
-                        if hasattr(widget, 'native'):
-                            native_widget = widget.native
-                            native_widget._magicgui_widget = widget  # Store reference for signal connections
-                            widget = native_widget
-            except Exception as e:
-                # Fallback to string widget for any type magicgui cannot handle
-                # Use DEBUG level since this is expected for complex Union types (e.g., well_filter)
-                logger.debug(f"Widget creation failed for {param_name} ({resolved_type}): {e}")
-                widget = create_string_fallback_widget(current_value=extracted_value)
-
-        # Functional configuration dispatch
-        with timer("            apply widget configuration", threshold_ms=0.1):
-            configurator = CONFIGURATION_REGISTRY.get(resolved_type, lambda w: w)
-            configurator(widget)
-
-        return widget
-
-    def _create_checkbox_group_widget(self, param_name: str, param_type: Type, current_value: Any):
-        """Create multi-selection checkbox group for List[Enum] parameters.
-
-        Uses CheckboxGroupAdapter to properly implement ValueGettable/ValueSettable ABCs.
-        This eliminates duck typing in favor of explicit ABC contracts.
-        """
-        from pyqt_reactive.widgets import NoneAwareCheckBox
-        from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
-
-        enum_type = get_enum_from_list(param_type)
-        widget = CheckboxGroupAdapter()
-        # Don't set title - label is added separately in widget_creation_config.py
-        # Transparent background so parent's scope-tinted background shows through
-        widget.setStyleSheet("QGroupBox { background-color: transparent; border: none; }")
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(4, 2, 4, 2)  # Minimal margins for checkbox group
-        layout.setSpacing(2)
-
-        # Populate checkboxes for each enum value
-        for enum_value in enum_type:
-            checkbox = NoneAwareCheckBox()
-            checkbox.setText(enum_value.value)
-            checkbox.setObjectName(f"{param_name}_{enum_value.value}")
-            widget._checkboxes[enum_value] = checkbox
-            layout.addWidget(checkbox)
-
-        # Set current value using ABC method
-        widget.set_value(current_value)
-
-        return widget
+def _type_label(param_type: Type) -> str:
+    """Return a stable label for diagnostics and timer names."""
+    return param_type.__name__ if isinstance(param_type, type) else str(param_type)
 
 
-# Registry pattern removed - use create_pyqt6_widget from widget_creation_registry.py instead
+def create_pyqt6_widget(param_name: str, param_type: Type, current_value: Any,
+                       widget_id: str, parameter_info: Any = None) -> Any:
+    """Create a PyQt6 widget using the functional widget strategy."""
+    with timer("            resolve_optional", threshold_ms=0.1):
+        resolved_type = resolve_optional(param_type)
+        enum_type = enum_member_type(resolved_type)
+        if enum_type is not None:
+            resolved_type = enum_type
+
+    # Handle direct List[Enum] types - create multi-selection checkbox group
+    if is_list_of_enums(resolved_type):
+        with timer("            create checkbox group", threshold_ms=0.5):
+            return _create_checkbox_group_widget(param_name, resolved_type, current_value)
+
+    # Extract enum from list wrapper for other cases
+    with timer("            extract enum value", threshold_ms=0.1):
+        extracted_value = (current_value[0] if isinstance(current_value, list) and
+                          len(current_value) == 1 and isinstance(current_value[0], Enum)
+                          else current_value)
+
+    # Handle direct enum types
+    if is_enum(resolved_type):
+        with timer("            create enum widget", threshold_ms=0.5):
+            return create_enum_widget_unified(resolved_type, extracted_value)
+
+    # OPTIMIZATION: Fast path for simple types - bypass magicgui overhead (~0.3ms per widget)
+    # This saves ~36ms for 120 widgets
+    if resolved_type == int:
+        with timer("            create int widget (fast path)", threshold_ms=0.5):
+            return _create_direct_int_widget(extracted_value)
+    elif resolved_type == float:
+        with timer("            create float widget (fast path)", threshold_ms=0.5):
+            return _create_direct_float_widget(extracted_value)
+    elif resolved_type == bool:
+        with timer("            create bool widget (fast path)", threshold_ms=0.5):
+            return _create_direct_bool_widget(extracted_value)
+    elif resolved_type == str:
+        with timer("            create string widget (fast path)", threshold_ms=0.5):
+            return create_string_fallback_widget(current_value=extracted_value)
+
+    # Check for OpenHCS custom widget replacements
+    with timer("            registry lookup", threshold_ms=0.1):
+        replacement_factory = WIDGET_REPLACEMENT_REGISTRY.get(resolved_type)
+
+    if replacement_factory:
+        with timer(f"            call replacement factory for {_type_label(resolved_type)}", threshold_ms=0.5):
+            widget = replacement_factory(
+                current_value=extracted_value,
+                param_name=param_name,
+                parameter_info=parameter_info
+            )
+    else:
+        # Try magicgui for complex types, with string fallback for unsupported types
+        try:
+            # Handle None values to prevent magicgui from converting None to literal "None" string
+            with timer("            prepare magicgui value", threshold_ms=0.1):
+                magicgui_value = extracted_value
+                if extracted_value is None:
+                    # Use appropriate default values for magicgui to prevent "None" string conversion
+                    # CRITICAL FIX: Use minimal defaults that won't look like concrete user values
+                    if resolved_type == int:
+                        magicgui_value = 0  # magicgui needs a value, placeholder will override display
+                    elif resolved_type == float:
+                        magicgui_value = 0.0  # magicgui needs a value, placeholder will override display
+                    elif resolved_type == bool:
+                        magicgui_value = False
+                    elif get_origin(resolved_type) is list:
+                        magicgui_value = []  # Empty list for List[T] types
+                    elif get_origin(resolved_type) is tuple:
+                        magicgui_value = ()  # Empty tuple for tuple[T, ...] types
+                    # For other types, let magicgui handle None (might still cause issues but less common)
+
+            with timer(f"            magicgui.create_widget({param_name}, {_type_label(resolved_type)})", threshold_ms=0.0):
+                widget = create_widget(annotation=resolved_type, value=magicgui_value)
+
+            # Check if magicgui returned a basic QWidget (which indicates failure)
+            with timer("            check magicgui result", threshold_ms=0.1):
+                native_widget = widget.native if isinstance(widget, MagicGuiWidget) else None
+                if isinstance(native_widget, QWidget) and type(native_widget) is QWidget:
+                    logger.warning(f"magicgui returned basic QWidget for {param_name} ({resolved_type}), using fallback")
+                    widget = create_string_fallback_widget(current_value=extracted_value)
+                elif type(widget) is QWidget:
+                    logger.warning(f"magicgui returned basic QWidget for {param_name} ({resolved_type}), using fallback")
+                    widget = create_string_fallback_widget(current_value=extracted_value)
+                else:
+                    # If original value was None, clear the widget to show placeholder behavior
+                    if extracted_value is None and native_widget is not None:
+                        if isinstance(native_widget, QLineEdit):
+                            native_widget.setText("")  # Clear text for None values
+                        elif isinstance(native_widget, QCheckBox) and resolved_type == bool:
+                            native_widget.setChecked(False)  # Uncheck for None bool values
+
+                    # Extract native PyQt6 widget from magicgui wrapper if needed
+                    if native_widget is not None:
+                        native_widget.setProperty("magicgui_widget", widget)
+                        widget = native_widget
+        except Exception as e:
+            # Fallback to string widget for any type magicgui cannot handle
+            # Use DEBUG level since this is expected for complex Union types (e.g., well_filter)
+            logger.debug(f"Widget creation failed for {param_name} ({resolved_type}): {e}")
+            widget = create_string_fallback_widget(current_value=extracted_value)
+
+    return widget
+
+
+def _create_checkbox_group_widget(param_name: str, param_type: Type, current_value: Any):
+    """Create multi-selection checkbox group for List[Enum] parameters."""
+    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
+
+    enum_type = get_enum_from_list(param_type)
+    widget = CheckboxGroupAdapter()
+    # Don't set title - label is added separately in widget_creation_config.py
+    # Transparent background so parent's scope-tinted background shows through
+    widget.setStyleSheet("QGroupBox { background-color: transparent; border: none; }")
+    layout = QVBoxLayout(widget)
+    layout.setContentsMargins(4, 2, 4, 2)  # Minimal margins for checkbox group
+    layout.setSpacing(2)
+
+    # Populate checkboxes for each enum value
+    for enum_value in enum_type:
+        checkbox = NoneAwareCheckBox()
+        checkbox.setText(enum_value.value)
+        checkbox.setObjectName(f"{param_name}_{enum_value.value}")
+        widget._checkboxes[enum_value] = checkbox
+        layout.addWidget(checkbox)
+
+    # Set current value using ABC method
+    widget.set_value(current_value)
+
+    return widget
 
 
 class PlaceholderConfig:
@@ -437,346 +402,184 @@ class PlaceholderConfig:
     }
 
 
-# Functional placeholder strategies
-PLACEHOLDER_STRATEGIES: Dict[str, Callable[[Any, str], None]] = {
-    'setPlaceholderText': lambda widget, text: _apply_lineedit_placeholder(widget, text),
-    'setSpecialValueText': lambda widget, text: _apply_spinbox_placeholder(widget, text),
-}
+def _get_cached_placeholder_text(widget: QWidget) -> str | None:
+    """Return cached placeholder text stored on the Qt object."""
+    cached = widget.property("cached_placeholder_text")
+    return cached if isinstance(cached, str) else None
 
 
-def _extract_default_value(placeholder_text: str) -> str:
-    """Extract default value from placeholder text, handling any prefix dynamically."""
-    # CRITICAL FIX: Handle dynamic prefixes like "Pipeline default:", "Step default:", etc.
-    # Look for the pattern "prefix: value" and extract the value part
-    if ':' in placeholder_text:
-        # Split on the first colon and take the part after it
-        parts = placeholder_text.split(':', 1)
-        if len(parts) == 2:
-            value = parts[1].strip()
+def _set_cached_placeholder_text(widget: QWidget, placeholder_text: str) -> None:
+    """Store cached placeholder text on the Qt object."""
+    widget.setProperty("cached_placeholder_text", placeholder_text)
+
+
+def _clear_cached_placeholder_text(widget: QWidget) -> None:
+    """Clear cached placeholder text stored on the Qt object."""
+    widget.setProperty("cached_placeholder_text", None)
+
+
+class PlaceholderRenderer:
+    """Typed placeholder rendering authority for PyQt widgets."""
+
+    def extract_default_value(self, placeholder_text: str) -> str:
+        if ':' in placeholder_text:
+            value = placeholder_text.split(':', 1)[1].strip()
         else:
             value = placeholder_text.strip()
-    else:
-        # Fallback: if no colon, use the whole text
-        value = placeholder_text.strip()
 
-    # Handle enum values like "Microscope.AUTO" -> "AUTO"
-    if '.' in value and not value.startswith('('):  # Avoid breaking "(none)" values
-        enum_parts = value.split('.')
-        if len(enum_parts) == 2:
-            # Return just the enum member name
-            return enum_parts[1]
+        if '.' in value and not value.startswith('('):
+            enum_parts = value.split('.')
+            if len(enum_parts) == 2:
+                return enum_parts[1]
 
-    return value
+        return value
 
-
-def _extract_numeric_value_from_placeholder(placeholder_text: str) -> Optional[Union[int, float]]:
-    """
-    Extract numeric value from placeholder text for integer/float fields.
-
-    Args:
-        placeholder_text: Full placeholder text like "Pipeline default: 42"
-
-    Returns:
-        Numeric value if found and valid, None otherwise
-    """
-    try:
-        # Extract the value part after the prefix
-        value_str = placeholder_text.replace(PlaceholderConfig.PLACEHOLDER_PREFIX, "").strip()
-
-        # Try to parse as int first, then float
-        if value_str.isdigit() or (value_str.startswith('-') and value_str[1:].isdigit()):
-            return int(value_str)
-        else:
-            # Try float parsing
-            return float(value_str)
-    except (ValueError, AttributeError):
-        return None
-
-
-def _apply_placeholder_styling(widget: Any, interaction_hint: str, placeholder_text: str) -> None:
-    """Apply consistent placeholder styling and tooltip."""
-    # Get widget-specific styling that's strong enough to override application theme
-    widget_type = type(widget).__name__
-
-    if widget_type == "QComboBox" or widget_type == "NoScrollComboBox":
-        # For editable comboboxes, style the line edit to show placeholder styling
-        # The native placeholder text will automatically appear gray/italic
-        if widget.isEditable():
+    def apply_styling(self, widget: QWidget, interaction_hint: str, placeholder_text: str) -> None:
+        """Apply consistent placeholder styling and tooltip."""
+        if isinstance(widget, QComboBox):
+            if widget.isEditable():
+                style = """
+                    QComboBox QLineEdit {
+                        color: #888888 !important;
+                        font-style: italic !important;
+                    }
+                """
+            else:
+                style = """
+                    QComboBox {
+                        color: #888888 !important;
+                        font-style: italic !important;
+                        opacity: 0.7;
+                    }
+                """
+        elif isinstance(widget, QCheckBox):
             style = """
-                QComboBox QLineEdit {
-                    color: #888888 !important;
-                    font-style: italic !important;
-                }
-            """
-        else:
-            # Fallback for non-editable comboboxes (shouldn't happen with new approach)
-            style = """
-                QComboBox {
+                QCheckBox {
                     color: #888888 !important;
                     font-style: italic !important;
                     opacity: 0.7;
                 }
             """
-    elif widget_type == "QCheckBox":
-        # Strong checkbox-specific styling
-        style = """
-            QCheckBox {
-                color: #888888 !important;
-                font-style: italic !important;
-                opacity: 0.7;
-            }
-        """
-    else:
-        # Fallback to general styling
-        style = PlaceholderConfig.PLACEHOLDER_STYLE
+        else:
+            style = PlaceholderConfig.PLACEHOLDER_STYLE
 
-    widget.setStyleSheet(style)
-    widget.setToolTip(f"{placeholder_text} ({interaction_hint})")
-    widget.setProperty("is_placeholder_state", True)
+        widget.setStyleSheet(style)
+        widget.setToolTip(f"{placeholder_text} ({interaction_hint})")
+        widget.setProperty("is_placeholder_state", True)
 
+    def apply_lineedit(self, widget: QLineEdit, text: str) -> None:
+        """Apply placeholder to line edit with proper state tracking."""
+        was_blocked = widget.blockSignals(True)
+        try:
+            widget.clear()
+            widget.setPlaceholderText(text)
+        finally:
+            widget.blockSignals(was_blocked)
+        widget.setProperty("is_placeholder_state", True)
+        widget.setToolTip(text)
 
-def _apply_lineedit_placeholder(widget: Any, text: str) -> None:
-    """Apply placeholder to line edit with proper state tracking."""
-    # Placeholder application must not emit textChanged.
-    was_blocked = widget.blockSignals(True)
-    try:
-        # Clear existing text so placeholder becomes visible
-        widget.clear()
-        widget.setPlaceholderText(text)
-    finally:
-        widget.blockSignals(was_blocked)
-    # Set placeholder state property for consistency with other widgets
-    widget.setProperty("is_placeholder_state", True)
-    # Add tooltip for consistency
-    widget.setToolTip(text)
-
-
-def _apply_spinbox_placeholder(widget: Any, text: str) -> None:
-    """Apply placeholder to spinbox showing full placeholder text with prefix."""
-    # CRITICAL: Placeholder application must be a pure VIEW operation.
-    # Setting the spinbox value to its minimum (None sentinel) can emit valueChanged,
-    # which would incorrectly dispatch an ObjectState update and record snapshots.
-    was_blocked = widget.blockSignals(True)
-    try:
-        # Always show full placeholder text (not just the numeric value)
-        widget.setSpecialValueText(text)
-
-        # Set widget to minimum value to show the special value text
-        if hasattr(widget, 'minimum'):
+    def apply_spinbox(self, widget: QSpinBox | QDoubleSpinBox, text: str) -> None:
+        """Apply placeholder to spinbox showing full placeholder text with prefix."""
+        was_blocked = widget.blockSignals(True)
+        try:
+            widget.setSpecialValueText(text)
             widget.setValue(widget.minimum())
-    finally:
-        widget.blockSignals(was_blocked)
-
-    # Apply visual styling to indicate this is a placeholder
-    _apply_placeholder_styling(
-        widget,
-        'change value to set your own',
-        text  # Keep full text in tooltip
-    )
-
-
-def _apply_checkbox_placeholder(widget: QCheckBox, placeholder_text: str) -> None:
-    """Apply placeholder to checkbox showing preview of inherited value.
-
-    Shows the actual inherited boolean value (checked/unchecked) with gray/translucent styling.
-    This gives users a visual preview of what the value will be if they don't override it.
-    """
-    try:
-        default_value = _extract_default_value(placeholder_text).lower() == 'true'
-
-        # Block signals to prevent checkbox state changes from triggering parameter updates
-        widget.blockSignals(True)
-        try:
-            # Set the checkbox to show the inherited value
-            widget.setChecked(default_value)
-
-            # Mark as placeholder state for NoneAwareCheckBox
-            if hasattr(widget, '_is_placeholder'):
-                widget._is_placeholder = True
         finally:
-            widget.blockSignals(False)
+            widget.blockSignals(was_blocked)
 
-        # Set tooltip and property to indicate this is a placeholder state
-        widget.setToolTip(f"{placeholder_text} ({PlaceholderConfig.INTERACTION_HINTS['checkbox']})")
-        widget.setProperty("is_placeholder_state", True)
+        self.apply_styling(widget, 'change value to set your own', text)
 
-        # Trigger repaint to show gray styling
-        widget.update()
-    except Exception as e:
-        widget.setToolTip(placeholder_text)
+    def apply_checkbox(self, widget: QCheckBox, placeholder_text: str) -> None:
+        """Apply checkbox placeholder from a boolean placeholder value."""
+        try:
+            default_value = self.extract_default_value(placeholder_text).lower() == 'true'
 
-
-def _apply_checkbox_group_placeholder(widget: Any, placeholder_text: str) -> None:
-    """Apply placeholder to checkbox group (QGroupBox with _checkboxes dict).
-
-    Reuses _apply_checkbox_placeholder() for each checkbox in the group.
-    Parses the list of inherited enum values and applies placeholder state to each checkbox.
-
-    Example placeholder_text: "Pipeline default: [SITE, CHANNEL]"
-    """
-    if not hasattr(widget, '_checkboxes'):
-        return
-
-    import logging
-    logger = logging.getLogger(__name__)
-
-    try:
-        logger.debug(f"🔍 Applying checkbox group placeholder: {placeholder_text}")
-
-        # Extract the list of enum values from placeholder text
-        # Format: "Pipeline default: [SITE, CHANNEL]" or "Pipeline default: []"
-        default_value_str = _extract_default_value(placeholder_text)
-        logger.debug(f"📋 Extracted default value: {default_value_str}")
-
-        # Parse the list - remove brackets and split by comma
-        if default_value_str.startswith('[') and default_value_str.endswith(']'):
-            list_content = default_value_str[1:-1].strip()
-            inherited_values = [v.strip() for v in list_content.split(',')] if list_content else []
-        else:
-            inherited_values = []
-
-        logger.debug(f"✅ Parsed inherited values: {inherited_values}")
-
-        # Apply placeholder to each checkbox in the group
-        for enum_value, checkbox in widget._checkboxes.items():
-            # Check if this enum value is in the inherited list
-            # Compare using uppercase enum name (e.g., 'SITE') not lowercase value (e.g., 'site')
-            is_checked = enum_value.name in inherited_values
-
-            logger.debug(f"  📌 {enum_value.value}: is_checked={is_checked} (comparing {enum_value.name} in {inherited_values})")
-
-            # Create individual placeholder text for this checkbox
-            individual_placeholder = f"Pipeline default: {is_checked}"
-
-            # Reuse existing checkbox placeholder logic
-            _apply_checkbox_placeholder(checkbox, individual_placeholder)
-
-        # Mark the group widget itself as being in placeholder state
-        widget.setProperty("is_placeholder_state", True)
-        widget.setToolTip(f"{placeholder_text} (click any checkbox to set your own value)")
-
-    except Exception as e:
-        logger.error(f"❌ Failed to apply checkbox group placeholder: {e}", exc_info=True)
-        widget.setToolTip(placeholder_text)
-
-
-def _apply_checkbox_group_placeholder_with_value(widget: Any, resolved_value: Any, placeholder_text: str) -> None:
-    """Apply placeholder to checkbox group using actual value (type-safe).
-
-    This function uses the resolved value directly instead of parsing placeholder text,
-    eliminating string parsing and ensuring type safety.
-
-    Args:
-        widget: CheckboxGroupAdapter with _checkboxes dict
-        resolved_value: The actual List[Enum] value (or None)
-        placeholder_text: Formatted text for tooltips/display
-    """
-    if not hasattr(widget, '_checkboxes'):
-        return
-
-    import logging
-    logger = logging.getLogger(__name__)
-
-    try:
-        logger.debug(f"🔍 Applying checkbox group placeholder (type-safe): {placeholder_text}")
-
-        # Use actual value directly - no parsing!
-        if resolved_value is None:
-            inherited_enums = []
-        elif isinstance(resolved_value, list):
-            inherited_enums = resolved_value
-        else:
-            logger.warning(f"Unexpected resolved_value type: {type(resolved_value)}")
-            inherited_enums = []
-
-        logger.debug(f"✅ Using inherited enums directly: {inherited_enums}")
-
-        # Apply placeholder to each checkbox in the group
-        for enum_value, checkbox in widget._checkboxes.items():
-            # Type-safe membership check using actual enum objects
-            is_checked = enum_value in inherited_enums
-
-            logger.debug(f"  📌 {enum_value.value}: is_checked={is_checked}")
-
-            # Create individual placeholder text for this checkbox
-            individual_placeholder = f"Pipeline default: {is_checked}"
-
-            # Reuse existing checkbox placeholder logic
-            _apply_checkbox_placeholder(checkbox, individual_placeholder)
-
-        # Mark the group widget itself as being in placeholder state
-        widget.setProperty("is_placeholder_state", True)
-        widget.setToolTip(f"{placeholder_text} (click any checkbox to set your own value)")
-
-    except Exception as e:
-        logger.error(f"❌ Failed to apply checkbox group placeholder: {e}", exc_info=True)
-        widget.setToolTip(placeholder_text)
-
-
-def _apply_path_widget_placeholder(widget: Any, placeholder_text: str) -> None:
-    """Apply placeholder to Path widget by targeting the inner QLineEdit."""
-    try:
-        # Path widgets have a path_input attribute that's a QLineEdit
-        if hasattr(widget, 'path_input'):
-            # Clear any existing text and apply placeholder to the inner QLineEdit
-            was_blocked = widget.path_input.blockSignals(True)
+            was_blocked = widget.blockSignals(True)
             try:
-                widget.path_input.clear()
-                widget.path_input.setPlaceholderText(placeholder_text)
+                widget.setChecked(default_value)
+                if isinstance(widget, NoneAwareCheckBox):
+                    widget.set_placeholder_preview(default_value)
             finally:
-                widget.path_input.blockSignals(was_blocked)
-            widget.path_input.setProperty("is_placeholder_state", True)
-            widget.path_input.setToolTip(placeholder_text)
-        else:
-            # Fallback to tooltip if structure is different
+                widget.blockSignals(was_blocked)
+
+            widget.setToolTip(f"{placeholder_text} ({PlaceholderConfig.INTERACTION_HINTS['checkbox']})")
+            widget.setProperty("is_placeholder_state", True)
+            widget.update()
+        except Exception:
             widget.setToolTip(placeholder_text)
-    except Exception:
-        widget.setToolTip(placeholder_text)
 
-
-def _apply_combobox_placeholder(widget: QComboBox, placeholder_text: str) -> None:
-    """Apply placeholder to combobox while preserving None (no concrete selection).
-
-    Strategy:
-    - Set currentIndex to -1 (no selection) to represent None
-    - Use NoScrollComboBox's custom paintEvent to show placeholder
-    - Display only the inherited enum value (no 'Pipeline default:' prefix)
-    - Dropdown shows only real enum items (no duplicate placeholder item)
-    """
-    try:
-        default_value = _extract_default_value(placeholder_text)
-
-        # Find matching item using robust enum matching to get display text
-        matching_index = next(
-            (i for i in range(widget.count())
-             if _item_matches_value(widget, i, default_value)),
-            -1
-        )
-        placeholder_display = (
-            widget.itemText(matching_index) if matching_index >= 0 else default_value
-        )
-
-        # Block signals so this visual change doesn't emit change events
-        widget.blockSignals(True)
+    def apply_checkbox_group_with_value(
+        self,
+        widget: CheckboxGroupAdapter,
+        resolved_value: Any,
+        placeholder_text: str
+    ) -> None:
+        """Apply checkbox-group placeholder from the resolved enum list."""
         try:
-            # Set to no selection (index -1) to represent None
-            widget.setCurrentIndex(-1)
+            if resolved_value is None:
+                inherited_enums = []
+            elif isinstance(resolved_value, list):
+                inherited_enums = resolved_value
+            else:
+                raise TypeError(f"Checkbox group placeholder requires list or None, got {type(resolved_value).__name__}")
 
-            # Use our custom setPlaceholder method for NoScrollComboBox
-            if hasattr(widget, 'setPlaceholder'):
-                widget.setPlaceholder(placeholder_display)
-            # Fallback for editable comboboxes
-            elif widget.isEditable():
-                widget.lineEdit().setPlaceholderText(placeholder_display)
+            for enum_value, checkbox in widget.checkbox_items():
+                individual_placeholder = f"Pipeline default: {enum_value in inherited_enums}"
+                self.apply_checkbox(checkbox, individual_placeholder)
+
+            widget.setProperty("is_placeholder_state", True)
+            widget.setToolTip(f"{placeholder_text} (click any checkbox to set your own value)")
+        except Exception:
+            logger.exception("Failed to apply checkbox group placeholder")
+            widget.setToolTip(placeholder_text)
+
+    def apply_path_widget(self, widget: EnhancedPathWidget, placeholder_text: str) -> None:
+        """Apply placeholder to Path widget by targeting the inner QLineEdit."""
+        was_blocked = widget.path_input.blockSignals(True)
+        try:
+            widget.path_input.clear()
+            widget.path_input.setPlaceholderText(placeholder_text)
         finally:
-            widget.blockSignals(False)
+            widget.path_input.blockSignals(was_blocked)
+        widget.path_input.setProperty("is_placeholder_state", True)
+        widget.path_input.setToolTip(placeholder_text)
 
-        # Don't apply placeholder styling - our paintEvent handles the gray/italic styling
-        # Just set the tooltip
-        widget.setToolTip(f"{placeholder_text} ({PlaceholderConfig.INTERACTION_HINTS['combobox']})")
-        widget.setProperty("is_placeholder_state", True)
-    except Exception:
-        widget.setToolTip(placeholder_text)
+    def apply_combobox(self, widget: QComboBox, placeholder_text: str) -> None:
+        """Apply placeholder to combobox while preserving None as no concrete selection."""
+        try:
+            default_value = self.extract_default_value(placeholder_text)
+            matching_index = next(
+                (i for i in range(widget.count())
+                 if _item_matches_value(widget, i, default_value)),
+                -1
+            )
+            placeholder_display = (
+                widget.itemText(matching_index) if matching_index >= 0 else default_value
+            )
+
+            was_blocked = widget.blockSignals(True)
+            try:
+                widget.setCurrentIndex(-1)
+
+                if isinstance(widget, NoScrollComboBox):
+                    widget.setPlaceholder(placeholder_display)
+                elif widget.isEditable():
+                    widget.lineEdit().setPlaceholderText(placeholder_display)
+                else:
+                    raise TypeError(
+                        f"{type(widget).__name__} cannot display placeholder text without "
+                        "NoScrollComboBox placeholder support or an editable line edit"
+                    )
+            finally:
+                widget.blockSignals(was_blocked)
+
+            widget.setToolTip(f"{placeholder_text} ({PlaceholderConfig.INTERACTION_HINTS['combobox']})")
+            widget.setProperty("is_placeholder_state", True)
+        except Exception:
+            widget.setToolTip(placeholder_text)
+
+
+PLACEHOLDER_RENDERER = PlaceholderRenderer()
 
 
 def _item_matches_value(widget: QComboBox, index: int, target_value: str) -> bool:
@@ -786,12 +589,12 @@ def _item_matches_value(widget: QComboBox, index: int, target_value: str) -> boo
     target_normalized = target_value.upper()
 
     # Primary: Match enum name (most reliable)
-    if item_data and hasattr(item_data, 'name'):
+    if isinstance(item_data, Enum):
         if item_data.name.upper() == target_normalized:
             return True
 
     # Secondary: Match enum value (case-insensitive)
-    if item_data and hasattr(item_data, 'value'):
+    if isinstance(item_data, Enum):
         if str(item_data.value).upper() == target_normalized:
             return True
 
@@ -804,14 +607,15 @@ def _item_matches_value(widget: QComboBox, index: int, target_value: str) -> boo
 
 # Declarative widget-to-strategy mapping
 WIDGET_PLACEHOLDER_STRATEGIES: Dict[Type, Callable[[Any, str], None]] = {
-    QCheckBox: _apply_checkbox_placeholder,
-    QComboBox: _apply_combobox_placeholder,
-    QSpinBox: _apply_spinbox_placeholder,
-    QDoubleSpinBox: _apply_spinbox_placeholder,
-    NoScrollSpinBox: _apply_spinbox_placeholder,
-    NoScrollDoubleSpinBox: _apply_spinbox_placeholder,
-    NoScrollComboBox: _apply_combobox_placeholder,
-    QLineEdit: _apply_lineedit_placeholder,  # Add standard QLineEdit support
+    QCheckBox: PLACEHOLDER_RENDERER.apply_checkbox,
+    QComboBox: PLACEHOLDER_RENDERER.apply_combobox,
+    QSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
+    QDoubleSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
+    NoScrollSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
+    NoScrollDoubleSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
+    NoScrollComboBox: PLACEHOLDER_RENDERER.apply_combobox,
+    QLineEdit: PLACEHOLDER_RENDERER.apply_lineedit,
+    NoneAwareIntEdit: PLACEHOLDER_RENDERER.apply_lineedit,
 }
 
 # Add Path widget support dynamically to avoid import issues
@@ -819,19 +623,19 @@ def _register_path_widget_strategy():
     """Register Path widget strategy dynamically to avoid circular imports."""
     try:
         from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
-        WIDGET_PLACEHOLDER_STRATEGIES[EnhancedPathWidget] = _apply_path_widget_placeholder
+        WIDGET_PLACEHOLDER_STRATEGIES[EnhancedPathWidget] = PLACEHOLDER_RENDERER.apply_path_widget
     except ImportError:
         pass  # Path widget not available
 
 def _register_none_aware_lineedit_strategy():
     """Register NoneAwareLineEdit strategy."""
-    WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareLineEdit] = _apply_lineedit_placeholder
+    WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareLineEdit] = PLACEHOLDER_RENDERER.apply_lineedit
 
 def _register_none_aware_checkbox_strategy():
     """Register NoneAwareCheckBox strategy dynamically to avoid circular imports."""
     try:
         from pyqt_reactive.widgets import NoneAwareCheckBox
-        WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareCheckBox] = _apply_checkbox_placeholder
+        WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareCheckBox] = PLACEHOLDER_RENDERER.apply_checkbox
     except ImportError:
         pass  # NoneAwareCheckBox not available
 
@@ -839,29 +643,6 @@ def _register_none_aware_checkbox_strategy():
 _register_path_widget_strategy()
 _register_none_aware_lineedit_strategy()
 _register_none_aware_checkbox_strategy()
-
-# Functional signal connection registry
-SIGNAL_CONNECTION_REGISTRY: Dict[str, callable] = {
-    'stateChanged': lambda widget, param_name, callback:
-        widget.stateChanged.connect(lambda: callback(param_name, widget.isChecked())),
-    'textChanged': lambda widget, param_name, callback:
-        widget.textChanged.connect(lambda v: callback(param_name,
-            widget.get_value() if hasattr(widget, 'get_value') else v)),
-    'valueChanged': lambda widget, param_name, callback:
-        widget.valueChanged.connect(lambda v: callback(param_name, v)),
-    'currentIndexChanged': lambda widget, param_name, callback:
-        widget.currentIndexChanged.connect(lambda: callback(param_name,
-            widget.currentData() if hasattr(widget, 'currentData') else widget.currentText())),
-    'path_changed': lambda widget, param_name, callback:
-        widget.path_changed.connect(lambda v: callback(param_name, v)),
-    # Magicgui-specific widget signals
-    'changed': lambda widget, param_name, callback:
-        widget.changed.connect(lambda: callback(param_name, widget.value)),
-}
-
-
-
-
 
 @dataclasses.dataclass(frozen=True)
 class PyQt6WidgetEnhancer:
@@ -872,31 +653,26 @@ class PyQt6WidgetEnhancer:
         """Apply placeholder using declarative widget-strategy mapping."""
         # PERFORMANCE OPTIMIZATION: Skip if placeholder text is unchanged
         # This avoids redundant widget updates during sibling refresh cascades
-        cached_placeholder = getattr(widget, '_cached_placeholder_text', None)
+        if not isinstance(widget, QWidget):
+            raise TypeError(f"Placeholder support requires QWidget, got {type(widget).__name__}")
+
+        cached_placeholder = _get_cached_placeholder_text(widget)
         if cached_placeholder == placeholder_text:
             return  # No change needed
 
-        # Check for checkbox group (QGroupBox with _checkboxes attribute)
-        if hasattr(widget, '_checkboxes'):
-            _apply_checkbox_group_placeholder(widget, placeholder_text)
-            widget._cached_placeholder_text = placeholder_text
-            return
+        if isinstance(widget, CheckboxGroupAdapter):
+            raise TypeError("Checkbox group placeholders require apply_placeholder_with_value")
 
         # Direct widget type mapping for enhanced placeholders
         widget_strategy = WIDGET_PLACEHOLDER_STRATEGIES.get(type(widget))
         if widget_strategy:
             widget_strategy(widget, placeholder_text)
-            widget._cached_placeholder_text = placeholder_text
+            _set_cached_placeholder_text(widget, placeholder_text)
             return
 
-        # Method-based fallback for standard widgets
-        strategy = next(
-            (strategy for method_name, strategy in PLACEHOLDER_STRATEGIES.items()
-             if hasattr(widget, method_name)),
-            lambda w, t: w.setToolTip(t) if hasattr(w, 'setToolTip') else None
+        raise TypeError(
+            f"Widget {type(widget).__name__} has no registered placeholder strategy"
         )
-        strategy(widget, placeholder_text)
-        widget._cached_placeholder_text = placeholder_text
 
     @staticmethod
     def apply_placeholder_with_value(widget: Any, resolved_value: Any, placeholder_text: str) -> None:
@@ -911,15 +687,18 @@ class PyQt6WidgetEnhancer:
             placeholder_text: Formatted placeholder text for display/tooltip
         """
         # PERFORMANCE OPTIMIZATION: Skip if placeholder text is unchanged
-        cached_placeholder = getattr(widget, '_cached_placeholder_text', None)
+        if not isinstance(widget, QWidget):
+            raise TypeError(f"Placeholder support requires QWidget, got {type(widget).__name__}")
+
+        cached_placeholder = _get_cached_placeholder_text(widget)
         if cached_placeholder == placeholder_text:
             return  # No change needed
 
         # Check for checkbox group (QGroupBox with _checkboxes attribute)
         # Use type-safe value directly instead of parsing text
-        if hasattr(widget, '_checkboxes'):
-            _apply_checkbox_group_placeholder_with_value(widget, resolved_value, placeholder_text)
-            widget._cached_placeholder_text = placeholder_text
+        if isinstance(widget, CheckboxGroupAdapter):
+            PLACEHOLDER_RENDERER.apply_checkbox_group_with_value(widget, resolved_value, placeholder_text)
+            _set_cached_placeholder_text(widget, placeholder_text)
             return
 
         # For other widgets, fall back to text-based placeholder
@@ -940,17 +719,17 @@ class PyQt6WidgetEnhancer:
         """
         try:
             if global_config is None:
-                if hasattr(_current_pipeline_config, 'value') and _current_pipeline_config.value:
-                    global_config = _current_pipeline_config.value
-                else:
-                    return  # No global config available
+                return  # No global config available
 
-            # Get the field value from global config
-            if hasattr(global_config, field_name):
-                field_value = getattr(global_config, field_name)
+            if not dataclasses.is_dataclass(global_config):
+                return
+
+            field_names = {field.name for field in dataclasses.fields(global_config)}
+            if field_name in field_names:
+                field_value = object.__getattribute__(global_config, field_name)
 
                 # Format the placeholder text appropriately for different types
-                if hasattr(field_value, 'name'):  # Enum
+                if isinstance(field_value, Enum):
                     from pyqt_reactive.forms.ui_utils import format_enum_placeholder
                     placeholder_text = format_enum_placeholder(field_value)
                 else:
@@ -974,14 +753,13 @@ class PyQt6WidgetEnhancer:
             return wrapped
 
         # Prioritize magicgui signals
-        if magicgui_widget and hasattr(magicgui_widget, 'changed'):
+        if isinstance(magicgui_widget, MagicGuiWidget):
             magicgui_widget.changed.connect(
                 create_wrapped_callback(callback, lambda: magicgui_widget.value)
             )
             return
 
         # Check for CheckboxGroupAdapter using isinstance (anti-duck-typing)
-        from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
         if isinstance(widget, CheckboxGroupAdapter):
             placeholder_aware_callback = lambda pn, val: (
                 PyQt6WidgetEnhancer._clear_placeholder_state(widget),
@@ -990,7 +768,6 @@ class PyQt6WidgetEnhancer:
             PyQt6WidgetEnhancer._connect_checkbox_group_signals(widget, param_name, placeholder_aware_callback)
             return
 
-        from pyqt_reactive.protocols.widget_protocols import ChangeSignalEmitter
         if isinstance(widget, ChangeSignalEmitter):
             def emit_contract_value(value):
                 PyQt6WidgetEnhancer._clear_placeholder_state(widget)
@@ -999,19 +776,25 @@ class PyQt6WidgetEnhancer:
             widget.connect_change_signal(emit_contract_value)
             return
 
-        # Fallback to native PyQt6 signals
-        connector = next(
-            (connector for signal_name, connector in SIGNAL_CONNECTION_REGISTRY.items()
-             if hasattr(widget, signal_name)),
-            None
-        )
+        placeholder_aware_callback = lambda value: (
+            PyQt6WidgetEnhancer._clear_placeholder_state(widget),
+            callback(param_name, value)
+        )[-1]
 
-        if connector:
-            placeholder_aware_callback = lambda pn, val: (
-                PyQt6WidgetEnhancer._clear_placeholder_state(widget),
-                callback(pn, val)
-            )[-1]
-            connector(widget, param_name, placeholder_aware_callback)
+        if isinstance(widget, QCheckBox):
+            widget.stateChanged.connect(lambda: placeholder_aware_callback(widget.isChecked()))
+        elif isinstance(widget, QLineEdit):
+            widget.textChanged.connect(
+                lambda value: placeholder_aware_callback(
+                    widget.get_value() if isinstance(widget, ValueGettable) else value
+                )
+            )
+        elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            widget.valueChanged.connect(placeholder_aware_callback)
+        elif isinstance(widget, QComboBox):
+            widget.currentIndexChanged.connect(lambda: placeholder_aware_callback(widget.currentData()))
+        elif isinstance(widget, EnhancedPathWidget):
+            widget.path_changed.connect(placeholder_aware_callback)
         else:
             raise ValueError(f"Widget {type(widget).__name__} has no supported change signal")
 
@@ -1026,20 +809,16 @@ class PyQt6WidgetEnhancer:
         import logging
         logger = logging.getLogger(__name__)
 
-        if hasattr(widget, '_checkboxes'):
+        if isinstance(widget, CheckboxGroupAdapter):
             # Connect to each checkbox's stateChanged signal
-            for checkbox in widget._checkboxes.values():
+            for checkbox in widget.checkbox_widgets():
                 def make_handler(cb):
                     """Create handler with proper closure to avoid lambda capture issues."""
                     def handler(state):
                         # CRITICAL: When user clicks ANY checkbox, convert ALL checkboxes to concrete
                         # This implements "list of bools" behavior - editing one makes the whole list concrete
-                        for other_checkbox in widget._checkboxes.values():
-                            if hasattr(other_checkbox, '_is_placeholder') and other_checkbox._is_placeholder:
-                                # Convert placeholder to concrete by setting current displayed state
-                                other_checkbox._is_placeholder = False
-                                # Keep the current checked state (which shows the inherited value)
-                                # No need to call setChecked - it's already showing the right state
+                        for other_checkbox in widget.checkbox_widgets():
+                            other_checkbox.convert_placeholder_to_concrete()
 
                         # Clear placeholder state from the group widget itself
                         PyQt6WidgetEnhancer._clear_placeholder_state(widget)
@@ -1064,18 +843,16 @@ class PyQt6WidgetEnhancer:
     def _clear_placeholder_state(widget: Any) -> None:
         """Clear placeholder state using functional approach."""
         # Handle checkbox groups by clearing each checkbox's placeholder state
-        if hasattr(widget, '_checkboxes'):
-            for checkbox in widget._checkboxes.values():
+        if isinstance(widget, CheckboxGroupAdapter):
+            for checkbox in widget.checkbox_widgets():
                 # CRITICAL FIX: Always clear cached placeholder text first, even if
                 # the checkbox is not in placeholder state. This ensures resetting to
                 # None will properly reapply the placeholder (not skip due to cache hit).
-                if hasattr(checkbox, '_cached_placeholder_text'):
-                    del checkbox._cached_placeholder_text
+                checkbox.clear_placeholder_cache()
                 if checkbox.property("is_placeholder_state"):
                     checkbox.setStyleSheet("")
                     checkbox.setProperty("is_placeholder_state", False)
-                    if hasattr(checkbox, '_is_placeholder'):
-                        checkbox._is_placeholder = False
+                    checkbox.convert_placeholder_to_concrete()
                     # Clean checkbox tooltip
                     current_tooltip = checkbox.toolTip()
                     cleaned_tooltip = next(
@@ -1088,16 +865,14 @@ class PyQt6WidgetEnhancer:
             # Clear group widget's placeholder state and cache
             widget.setProperty("is_placeholder_state", False)
             widget.setToolTip("")
-            if hasattr(widget, '_cached_placeholder_text'):
-                del widget._cached_placeholder_text
+            _clear_cached_placeholder_text(widget)
             return
 
         # CRITICAL FIX: Always clear cached placeholder text when exiting placeholder state.
         # This ensures that resetting to None will properly reapply the placeholder
         # (not skip due to cache hit). The cache must be cleared even if the widget
         # is already in non-placeholder state (e.g., user clicked checkbox).
-        if hasattr(widget, '_cached_placeholder_text'):
-            del widget._cached_placeholder_text
+        _clear_cached_placeholder_text(widget)
 
         if not widget.property("is_placeholder_state"):
             return
@@ -1118,11 +893,11 @@ class PyQt6WidgetEnhancer:
     @staticmethod
     def _get_magicgui_wrapper(widget: Any) -> Any:
         """Get magicgui wrapper if widget was created by magicgui."""
-        # Check if widget has a reference to its magicgui wrapper
-        if hasattr(widget, '_magicgui_widget'):
-            return widget._magicgui_widget
-        # If widget itself is a magicgui widget, return it
-        if hasattr(widget, 'changed') and hasattr(widget, 'value'):
+        if isinstance(widget, QWidget):
+            wrapper = widget.property("magicgui_widget")
+            if isinstance(wrapper, MagicGuiWidget):
+                return wrapper
+        if isinstance(widget, MagicGuiWidget):
             return widget
         return None
 
@@ -1146,14 +921,11 @@ class PyQt6WidgetEnhancer:
             elif isinstance(widget, (QDoubleSpinBox, NoScrollDoubleSpinBox)):
                 widget.setValue(float(value) if value is not None else 0.0)
             elif isinstance(widget, (QComboBox, NoScrollComboBox)):
-                for i in range(widget.count()):
-                    if widget.itemData(i) == value:
-                        widget.setCurrentIndex(i)
-                        break
+                _select_combobox_data(widget, value)
             elif isinstance(widget, QLineEdit):
                 widget.setText(str(value) if value is not None else "")
             # Handle magicgui widgets
-            elif hasattr(widget, 'value'):
+            elif isinstance(widget, MagicGuiWidget):
                 widget.value = value
         finally:
             widget.blockSignals(False)

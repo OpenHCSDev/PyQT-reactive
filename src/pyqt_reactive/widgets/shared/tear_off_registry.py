@@ -102,10 +102,12 @@ class TearOffRegistry(QObject):
             return
             
         # Find TearOffTabWidget ancestor
+        from pyqt_reactive.widgets.shared.tear_off_tab_widget import TearOffTabWidget
+
         target = None
         temp = widget
         while temp:
-            if hasattr(temp, '_is_tear_off_tab_widget'):
+            if isinstance(temp, TearOffTabWidget):
                 target = temp
                 break
             temp = temp.parent()

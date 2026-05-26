@@ -48,7 +48,33 @@ logger = logging.getLogger(__name__)
 
 
 InlineDataclassWidgetFactory = Callable[..., Any]
-_INLINE_DATACLASS_WIDGET_FACTORIES: dict[Type, InlineDataclassWidgetFactory] = {}
+
+
+class _InlineDataclassWidgetCatalog:
+    """Private registry authority for dataclasses with structural inline editors."""
+
+    _factories: dict[Type, InlineDataclassWidgetFactory] = {}
+
+    @classmethod
+    def register(
+        cls,
+        dataclass_type: Type,
+        widget_factory: InlineDataclassWidgetFactory,
+    ) -> None:
+        if not is_dataclass(dataclass_type):
+            raise TypeError(
+                "Inline dataclass widgets can only be registered for dataclass types; "
+                f"got {dataclass_type!r}."
+            )
+        cls._factories[dataclass_type] = widget_factory
+
+    @classmethod
+    def factory_for(cls, dataclass_type: Type) -> InlineDataclassWidgetFactory | None:
+        return cls._factories.get(dataclass_type)
+
+    @classmethod
+    def has_factory_for(cls, dataclass_type: Type) -> bool:
+        return dataclass_type in cls._factories
 
 
 def register_inline_dataclass_widget(
@@ -56,21 +82,7 @@ def register_inline_dataclass_widget(
     widget_factory: InlineDataclassWidgetFactory,
 ) -> None:
     """Register a full-row editor for a dataclass type before nested fallback."""
-
-    if not is_dataclass(dataclass_type):
-        raise TypeError(
-            "Inline dataclass widgets can only be registered for dataclass types; "
-            f"got {dataclass_type!r}."
-        )
-    _INLINE_DATACLASS_WIDGET_FACTORIES[dataclass_type] = widget_factory
-
-
-def get_inline_dataclass_widget_factory(
-    dataclass_type: Type,
-) -> InlineDataclassWidgetFactory | None:
-    """Return the inline editor factory registered for a dataclass type."""
-
-    return _INLINE_DATACLASS_WIDGET_FACTORIES.get(dataclass_type)
+    _InlineDataclassWidgetCatalog.register(dataclass_type, widget_factory)
 
 
 @dataclass
@@ -169,8 +181,17 @@ class InlineDataclassWidgetInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
     def matches(param_type: Type) -> bool:
         return (
             is_dataclass(param_type)
-            and get_inline_dataclass_widget_factory(param_type) is not None
+            and _InlineDataclassWidgetCatalog.has_factory_for(param_type)
         )
+
+    def widget_factory(self) -> InlineDataclassWidgetFactory:
+        factory = _InlineDataclassWidgetCatalog.factory_for(self.type)
+        if factory is None:
+            raise ValueError(
+                "No inline dataclass widget registered for "
+                f"{self.type!r}; DirectDataclassInfo should have handled it."
+            )
+        return factory
 
 
 @dataclass

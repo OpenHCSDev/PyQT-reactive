@@ -27,6 +27,7 @@ from contextlib import contextmanager
 
 from python_introspect import UnifiedParameterAnalyzer
 from pyqt_reactive.forms.parameter_form_base import ParameterFormConfig
+from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 from objectstate import get_base_config_type
 
@@ -48,11 +49,25 @@ T = TypeVar('T')
 @dataclass
 class ExtractedParameters:
     """Result of parameter extraction from object_instance."""
-    default_value: Dict[str, Any] = field(default_factory=dict, metadata={'initial_values': True})
-    param_type: Dict[str, Type] = field(default_factory=dict)
+    default_value: Dict[str, Any] = field(
+        default_factory=dict,
+        metadata={'initial_values': True, 'project': lambda name, info, field_id: (name, info.default_value)}
+    )
+    param_type: Dict[str, Type] = field(
+        default_factory=dict,
+        metadata={'project': lambda name, info, field_id: (name, info.param_type)}
+    )
     # description can be a Dict[str, str] or a callable that returns Dict[str, str]
     # This allows lazy retrieval from ObjectState._parameter_descriptions to avoid timing issues
-    description: Any = field(default_factory=dict)
+    description: Any = field(
+        default_factory=dict,
+        metadata={
+            'project': lambda name, info, field_id: (
+                f"{field_id}.{name}" if field_id else name,
+                info.description,
+            )
+        }
+    )
     object_instance: Any = field(default=None, metadata={'computed': lambda obj, *_: obj})
 
 
@@ -74,7 +89,9 @@ class DerivationContext:
 
     @property
     def global_config_type(self) -> Type:
-        return getattr(self.context_obj, 'global_config_type', get_base_config_type())
+        if isinstance(self.context_obj, ParameterFormConfig) and self.context_obj.global_config_type is not None:
+            return self.context_obj.global_config_type
+        return get_base_config_type()
 
     @property
     def placeholder_prefix(self) -> str:
@@ -120,36 +137,90 @@ class BuildConfig:
 # Builder Registry
 # ============================================================================
 
-_BUILDER_REGISTRY: Dict[Type, tuple[str, Callable]] = {}
+@dataclass(frozen=True)
+class BuilderSpec:
+    """Builder declaration before a generated service type exists."""
+
+    output_type: Type
+    service_name: str
+    builder_func: Callable
 
 
-def builder_for(output_type: Type, service_name: str):
-    """Decorator to register builder function and auto-generate service class."""
-    def decorator(func: Callable) -> Callable:
-        _BUILDER_REGISTRY[output_type] = (service_name, func)
-        return func
-    return decorator
+@dataclass(frozen=True)
+class GeneratedServiceLineage:
+    """Exact lineage for a generated initialization service class."""
+
+    service_type: Type
+    output_type: Type
+    service_name: str
+    builder_func: Callable
 
 
-# ============================================================================
-# Initialization Step Factory
-# ============================================================================
+class InitializationServiceCatalog:
+    """Generated initialization-service family with explicit lineage authority."""
 
-class InitializationStepFactory:
-    """Factory for creating metaprogrammed initialization step services."""
-    
-    @staticmethod
-    def create_step(name: str, output_type: Type[T], builder_func: Callable[..., T]) -> Type:
-        """Create a service class with a .build() method."""
-        def build(*args, **kwargs) -> output_type:
-            return builder_func(*args, **kwargs)
-        
-        return type(name, (), {
+    def __init__(self) -> None:
+        self._builders_by_output: Dict[Type, BuilderSpec] = {}
+        self._lineage_by_output: Dict[Type, GeneratedServiceLineage] = {}
+        self._lineage_by_generated: Dict[Type, GeneratedServiceLineage] = {}
+
+    def builder_for(self, output_type: Type, service_name: str):
+        """Decorator to register builder function and auto-generate service class."""
+        def decorator(func: Callable) -> Callable:
+            self._builders_by_output[output_type] = BuilderSpec(output_type, service_name, func)
+            return func
+        return decorator
+
+    def install_generated_services(self, namespace: Dict[str, Any]) -> None:
+        """Generate all registered services into a module namespace."""
+        for spec in self._builders_by_output.values():
+            namespace[spec.service_name] = self._create_service_type(spec)
+
+    def lineage_for_output(self, output_type: Type) -> Optional[GeneratedServiceLineage]:
+        return self._lineage_by_output.get(output_type)
+
+    def lineage_for_generated(self, service_type: Type) -> Optional[GeneratedServiceLineage]:
+        return self._lineage_by_generated.get(service_type)
+
+    def normalize_generated_service(self, service_or_output_type: Type) -> Type:
+        """Return the generated service type for a generated service or its output type."""
+        lineage = (
+            self.lineage_for_generated(service_or_output_type)
+            or self.lineage_for_output(service_or_output_type)
+        )
+        if lineage is None:
+            raise KeyError(
+                "Type is not part of the initialization service family: "
+                f"{service_or_output_type!r}"
+            )
+        return lineage.service_type
+
+    def _create_service_type(self, spec: BuilderSpec) -> Type:
+        """Create a service class with a .build() method and recorded lineage."""
+        def build(*args, **kwargs) -> spec.output_type:
+            return spec.builder_func(*args, **kwargs)
+
+        service_type = type(spec.service_name, (), {
             'build': staticmethod(build),
-            '__doc__': f"{name} - Metaprogrammed initialization step. Returns: {output_type.__name__}",
-            '_output_type': output_type,
-            '_builder_func': builder_func,
+            '__doc__': f"{spec.service_name} - Metaprogrammed initialization step. Returns: {spec.output_type.__name__}",
+            '_output_type': spec.output_type,
+            '_builder_func': spec.builder_func,
         })
+        self._record_lineage(spec, service_type)
+        return service_type
+
+    def _record_lineage(self, spec: BuilderSpec, service_type: Type) -> None:
+        lineage = GeneratedServiceLineage(
+            service_type=service_type,
+            output_type=spec.output_type,
+            service_name=spec.service_name,
+            builder_func=spec.builder_func,
+        )
+        self._lineage_by_output[spec.output_type] = lineage
+        self._lineage_by_generated[service_type] = lineage
+
+
+INITIALIZATION_SERVICES = InitializationServiceCatalog()
 
 
 # ============================================================================
@@ -174,19 +245,18 @@ class ServiceRegistryMeta(type):
         current_module = sys.modules[__name__]
         service_fields = [('service', type(None), field(default=None))]
 
-        for attr_name in dir(current_module):
-            attr = getattr(current_module, attr_name)
+        for _, attr in inspect.getmembers(current_module, inspect.ismodule):
             if not inspect.ismodule(attr):
                 continue
 
             module_name = attr.__name__.split('.')[-1]
             class_name = ''.join(word.capitalize() for word in module_name.split('_'))
 
-            if hasattr(attr, class_name):
-                service_class = getattr(attr, class_name)
-                if inspect.isabstract(service_class):
-                    continue
-                service_fields.append((module_name, service_class, field(default=None)))
+            module_classes = dict(inspect.getmembers(attr, inspect.isclass))
+            service_class = module_classes.get(class_name)
+            if service_class is None or inspect.isabstract(service_class):
+                continue
+            service_fields.append((module_name, service_class, field(default=None)))
 
         return make_dataclass(name, service_fields)
 
@@ -207,19 +277,21 @@ def _auto_generate_builders():
         param_info_dict = UnifiedParameterAnalyzer.analyze(object_instance, exclude_params=exclude_params or [])
         extracted = {}
         computed = {}
- 
+
         for fld in dataclass_fields(ExtractedParameters):
             if 'computed' in fld.metadata:
                 computed[fld.name] = fld.metadata['computed'](object_instance, exclude_params, initial_values)
                 continue
-            if fld.name == "description":
-                prefix = f'{field_id}.' if field_id else ''
-                extracted[fld.name] = {f'{prefix}{name}': getattr(info, "description", None) for name, info in param_info_dict.items()}
-            else:
-                extracted[fld.name] = {name: getattr(info, fld.name) for name, info in param_info_dict.items()}
+            projection = fld.metadata.get('project')
+            if projection is None:
+                raise ValueError(f"Unsupported extracted parameter field: {fld.name}")
+            extracted[fld.name] = dict(
+                projection(name, info, field_id)
+                for name, info in param_info_dict.items()
+            )
             if initial_values and fld.metadata.get('initial_values'):
                 extracted[fld.name].update(initial_values)
- 
+
         return ExtractedParameters(**extracted, **computed)
 
     def _build_config(field_id, extracted, context_obj, color_scheme, parent_manager, service, form_manager_config=None):
@@ -227,17 +299,8 @@ def _auto_generate_builders():
         # Only root managers (parent_manager is None) should have scroll areas
         is_nested = parent_manager is not None
 
-        # Check for use_scroll_area override from FormManagerConfig or from_dataclass_instance
-        # This allows config window and step editor to disable scroll area creation
         if form_manager_config:
-            # Check new API (FormManagerConfig.use_scroll_area field)
-            if hasattr(form_manager_config, 'use_scroll_area') and form_manager_config.use_scroll_area is not None:
-                use_scroll_area = form_manager_config.use_scroll_area
-            # Check old API (temporary _use_scroll_area_override attribute)
-            elif hasattr(form_manager_config, '_use_scroll_area_override'):
-                use_scroll_area = form_manager_config._use_scroll_area_override
-            else:
-                use_scroll_area = not is_nested  # Default: only root managers get scroll areas
+            use_scroll_area = form_manager_config.use_scroll_area
         else:
             use_scroll_area = not is_nested  # Default: only root managers get scroll areas
 
@@ -246,8 +309,9 @@ def _auto_generate_builders():
         logger.debug(f"🔧 Building config for {field_id}: is_nested={is_nested}, use_scroll_area={use_scroll_area}")
 
         obj_type = type(extracted.object_instance) if extracted.object_instance else None
-        config = ParameterFormConfig.for_pyqt(
+        config = ParameterFormConfig(
             field_id=field_id,
+            framework=CONSTANTS.PYQT6_FRAMEWORK,
             color_scheme=color_scheme or PyQt6ColorScheme(),
             function_target=obj_type,
             use_scroll_area=use_scroll_area
@@ -257,12 +321,12 @@ def _auto_generate_builders():
         vars(config).update(vars(ctx))
 
         from pyqt_reactive.forms.parameter_form_service import ParameterAnalysisInput
-        description = getattr(extracted, 'description', None)
+        description = extracted.description
         analysis_input = ParameterAnalysisInput(
             field_id=field_id,
             parent_obj_type=obj_type,
-            default_value=getattr(extracted, 'default_value', {}),
-            param_type=getattr(extracted, 'param_type', {}),
+            default_value=extracted.default_value,
+            param_type=extracted.param_type,
             description=description,
         )
         form_structure = service.analyze_parameters(analysis_input)
@@ -282,17 +346,14 @@ def _auto_generate_builders():
 
         return ManagerServices(**services)
 
-    builder_for(ExtractedParameters, 'ParameterExtractionService')(_extract_parameters)
-    builder_for(ParameterFormConfig, 'ConfigBuilderService')(_build_config)
-    builder_for(ManagerServices, 'ServiceFactoryService')(_create_services)
+    INITIALIZATION_SERVICES.builder_for(ExtractedParameters, 'ParameterExtractionService')(_extract_parameters)
+    INITIALIZATION_SERVICES.builder_for(ParameterFormConfig, 'ConfigBuilderService')(_build_config)
+    INITIALIZATION_SERVICES.builder_for(ManagerServices, 'ServiceFactoryService')(_create_services)
 
 
 _auto_generate_builders()
 
-# Auto-generate service classes from registry
-for output_type, (service_name, builder_func) in _BUILDER_REGISTRY.items():
-    service_class = InitializationStepFactory.create_step(service_name, output_type, builder_func)
-    globals()[service_name] = service_class
+INITIALIZATION_SERVICES.install_generated_services(globals())
 
 
 # ============================================================================
@@ -322,7 +383,7 @@ class FormBuildOrchestrator:
             manager.field_id,
             use_async,
             len(param_infos),
-            getattr(manager, '_pfm_seq', None),
+            manager._pfm_seq,
         )
         if use_async:
             self._build_widgets_async(manager, content_layout, param_infos)
@@ -343,7 +404,7 @@ class FormBuildOrchestrator:
                         manager.field_id,
                         param_info.name,
                         is_nested,
-                        getattr(manager, '_pfm_seq', None),
+                        manager._pfm_seq,
                     )
                     widget = manager._create_widget_for_param(param_info)
                     content_layout.addWidget(widget)
@@ -360,8 +421,6 @@ class FormBuildOrchestrator:
         sync_params = param_infos[:self.config.initial_sync_widgets]
         async_params = param_infos[self.config.initial_sync_widgets:]
 
-        sync_widgets = []
-
         if sync_params:
             with timer(f"        Create {len(sync_params)} initial widgets (sync)", threshold_ms=5.0):
                 for param_info in sync_params:
@@ -369,32 +428,18 @@ class FormBuildOrchestrator:
                         "[BUILD_WIDGETS_ASYNC] phase=sync field_id=%s param=%s manager_seq=%s",
                         manager.field_id,
                         param_info.name,
-                        getattr(manager, '_pfm_seq', None),
+                        manager._pfm_seq,
                     )
                     widget = manager._create_widget_for_param(param_info)
                     content_layout.addWidget(widget)
-                    sync_widgets.append((param_info.name, widget))
-
-            if sync_widgets:
-                # Apply scope accent styling to sync widgets (progressive, so user sees colored borders immediately)
-                dialog = self._get_dialog_from_layout(content_layout)
-                if dialog and hasattr(dialog, '_apply_scope_accent_to_widgets'):
-                    dialog._apply_scope_accent_to_widgets(sync_widgets)
 
         def on_batch_complete(batch_widgets):
-            # Apply scope accent styling to batch widgets (progressive, so user sees colored borders immediately)
-            dialog = self._get_dialog_from_layout(content_layout)
             logger.debug(
-                "[BATCH_COMPLETE] field_id=%s batch_widgets=%s manager_seq=%s dialog=%s has_apply_method=%s",
+                "[BATCH_COMPLETE] field_id=%s batch_widgets=%s manager_seq=%s",
                 manager.field_id,
                 len(batch_widgets),
-                getattr(manager, '_pfm_seq', None),
-                dialog.__class__.__name__ if dialog else None,
-                hasattr(dialog, '_apply_scope_accent_to_widgets') if dialog else False,
+                manager._pfm_seq,
             )
-            if dialog and hasattr(dialog, '_apply_scope_accent_to_widgets'):
-                logger.debug("[BATCH_COMPLETE] Calling _apply_scope_accent_to_widgets")
-                dialog._apply_scope_accent_to_widgets(batch_widgets)
 
         def on_async_complete():
             logger.debug(
@@ -402,7 +447,7 @@ class FormBuildOrchestrator:
                 manager.field_id,
                 len(manager.widgets),
                 self.is_nested_manager(manager),
-                getattr(manager, '_pfm_seq', None),
+                manager._pfm_seq,
             )
 
             # Then notify parent (if this is nested) to track completion
@@ -426,8 +471,6 @@ class FormBuildOrchestrator:
         else:
             on_async_complete()
 
-
-
     def _notify_root_of_completion(self, nested_manager) -> None:
         """Notify root manager that nested manager completed async build."""
         root_manager = nested_manager._parent_manager
@@ -437,19 +480,10 @@ class FormBuildOrchestrator:
         logger.debug(
             "[NESTED_COMPLETE] nested_field_id=%s nested_seq=%s root_field_id=%s root_seq=%s",
             nested_manager.field_id,
-            getattr(nested_manager, '_pfm_seq', None),
+            nested_manager._pfm_seq,
             root_manager.field_id,
-            getattr(root_manager, '_pfm_seq', None),
+            root_manager._pfm_seq,
         )
-
-    def _get_dialog_from_layout(self, layout) -> Any:
-        """Get the dialog window from a layout."""
-        widget = layout.parentWidget()
-        while widget:
-            if hasattr(widget, '_apply_scope_accent_to_widgets'):
-                return widget
-            widget = widget.parent()
-        return None
 
     def _execute_post_build_sequence(self, manager) -> None:
         """Execute standard post-build callback sequence."""
@@ -461,7 +495,7 @@ class FormBuildOrchestrator:
                 manager.field_id,
                 len(manager.widgets),
                 len(manager._on_build_complete_callbacks),
-                getattr(manager, '_pfm_seq', None),
+                manager._pfm_seq,
             )
             for callback in manager._on_build_complete_callbacks:
                 callback()
@@ -478,7 +512,7 @@ class FormBuildOrchestrator:
             logger.debug(
                 "[POST_BUILD] ROOT refresh_with_live_context field_id=%s manager_seq=%s",
                 manager.field_id,
-                getattr(manager, '_pfm_seq', None),
+                manager._pfm_seq,
             )
             manager._parameter_ops_service.refresh_with_live_context(manager, defer=True)
 
@@ -504,7 +538,7 @@ class FormBuildOrchestrator:
             return
         # Refresh all labels in this manager
         for param_name in manager.labels:
-            manager._update_label_styling(param_name)
+            manager.chrome_sync.update_label_styling(param_name)
         # Recursively initialize nested managers
         for nested_manager in manager.nested_managers.values():
             self._initialize_dirty_indicators(nested_manager)

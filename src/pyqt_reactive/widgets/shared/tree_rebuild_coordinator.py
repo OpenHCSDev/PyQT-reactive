@@ -12,8 +12,13 @@ from .tree_state_adapter import TreeStateAdapter
 class TreeRebuildCoordinator:
     """Rebuild tree contents while preserving expansion and selection."""
 
-    def __init__(self, state_adapter: TreeStateAdapter | None = None) -> None:
-        self._state_adapter = state_adapter if state_adapter is not None else TreeStateAdapter()
+    def __init__(self, state_adapter: TreeStateAdapter) -> None:
+        self._state_adapter = state_adapter
+
+    @classmethod
+    def default(cls) -> "TreeRebuildCoordinator":
+        """Build the default dict-payload tree rebuild coordinator."""
+        return cls(TreeStateAdapter.default())
 
     def rebuild(self, tree: QTreeWidget, rebuild_fn: Callable[[], None]) -> None:
         expansion_state = self._state_adapter.capture_expansion_state(tree)

@@ -7,13 +7,14 @@ Provides explicit type-based dispatch instead of duck typing with monkey-patched
 from typing import List, Optional, Type
 from enum import Enum
 
-from PyQt6.QtWidgets import QGroupBox, QVBoxLayout
+from PyQt6.QtWidgets import QVBoxLayout
 from PyQt6.QtCore import pyqtSignal
 
 from pyqt_reactive.widgets import NoneAwareCheckBox
+from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 
 
-class CheckboxGroupWidget(QGroupBox):
+class CheckboxGroupWidget(CheckboxGroupAdapter):
     """
     Multi-selection checkbox group for List[Enum] parameters.
 
@@ -66,11 +67,8 @@ class CheckboxGroupWidget(QGroupBox):
         """Handle checkbox state change - convert all checkboxes from placeholder to concrete."""
         # When ANY checkbox is clicked, convert ALL checkboxes from placeholder to concrete
         # This ensures consistent behavior: either all inherit (None) or all are explicit
-        for checkbox in self._checkboxes.values():
-            if checkbox._is_placeholder:
-                # Convert from placeholder to concrete value
-                checkbox._is_placeholder = False
-                checkbox.setProperty("is_placeholder_state", False)
+        for checkbox in self.checkbox_widgets():
+            checkbox.convert_placeholder_to_concrete()
 
         self.selection_changed.emit()
 
@@ -117,4 +115,3 @@ class CheckboxGroupWidget(QGroupBox):
             # Set concrete values
             for enum_val, checkbox in self._checkboxes.items():
                 checkbox.set_value(enum_val in values)
-

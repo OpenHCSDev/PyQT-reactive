@@ -11,109 +11,96 @@ Following OpenHCS ABC patterns:
 """
 
 from abc import ABC, abstractmethod, ABCMeta
-from dataclasses import dataclass, field, is_dataclass
-from typing import List, Tuple, Dict, Optional, Any, Callable, Iterable, Union, Set, TYPE_CHECKING
-import copy
-import inspect
+from dataclasses import field
+from typing import ClassVar, List, Tuple, Dict, Optional, Any
 import logging
-import os
-
-if TYPE_CHECKING:
-    from objectstate import ObjectState
-
-from python_introspect import is_enableable, ENABLED_FIELD
-
-# Type alias for formatters: either a method name string or a callable
-FieldFormatter = Union[str, Callable[[Any], Optional[str]]]
 
 
-@dataclass(frozen=True)
-class ListItemFormat:
-    """
-    Type-safe declarative configuration for list item display format.
+from pyqt_reactive.widgets.shared.manager_workflows import (
+    ManagerCodeExecutionWorkflow,
+    ManagerDeletionWorkflow,
+    NullManagerCodeExecutionWorkflow,
+    NullManagerDeletionWorkflow,
+)
 
-    Replaces Dict-based LIST_ITEM_FORMAT with a proper dataclass.
-
-    Attributes:
-        first_line: Field paths shown after item name on first line (e.g., ('func',))
-        preview_line: Field paths shown on the └─ preview line
-        detail_line_field: Field path for detail line (e.g., 'path')
-        formatters: Dict mapping field path to formatter (method name str or callable)
-
-    Field abbreviations are declared on config classes via @global_pipeline_config(field_abbreviations=...)
-    and looked up from FIELD_ABBREVIATIONS_REGISTRY. This keeps abbreviations with the config, not the widget.
-
-    Config indicators (NAP, FIJI, MAT, etc.) are auto-discovered via always_viewable_fields
-    registry on config classes via @global_pipeline_config(always_viewable_fields=[...]).
-
-    Formatters receive the field value and return a label string (or None to skip).
-    Method name strings are resolved on the widget instance at runtime.
-
-    Example:
-        LIST_ITEM_FORMAT = ListItemFormat(
-            first_line=('func',),
-            preview_line=('processing_config.variable_components', 'processing_config.group_by'),
-            formatters={
-                'func': '_format_func_preview',
-                'processing_config.group_by': lambda v: f"group_by={v.name}" if v else None,
-            },
-        )
-    """
-    first_line: Tuple[str, ...] = ()
-    preview_line: Tuple[str, ...] = ()
-    detail_line_field: Optional[str] = None
-    formatters: Dict[str, FieldFormatter] = field(default_factory=dict)
 
 from PyQt6.QtWidgets import (
     QWidget, QPushButton, QListWidgetItem, QLabel
 )
-from PyQt6.QtCore import Qt, QRect, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor, QBrush
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from pyqt_reactive.core import ReorderableListWidget
 from pyqt_reactive.widgets.shared.list_item_delegate import (
-    MultilinePreviewItemDelegate,
     LAYOUT_ROLE,
-    DIRTY_FIELDS_ROLE,
-    SIG_DIFF_FIELDS_ROLE,
-    Segment,
     StyledText,
-    StyledTextLayout,
 )
 # Backwards compat alias
 SEGMENTS_ROLE = LAYOUT_ROLE
-from objectstate import ObjectStateRegistry
+from objectstate import ObjectStateRegistry, patch_lazy_constructors
 from pyqt_reactive.widgets.mixins import (
     CrossWindowPreviewMixin,
-    handle_selection_change_with_prevention,
 )
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.strategies import (
     FormattingConfig,
-    PreviewFormattingStrategy,
     DefaultPreviewFormattingStrategy,
-    StatusPresentationInput,
-    DefaultStatusPresentationStrategy,
 )
 from objectstate import LiveContextResolver
-from pyqt_reactive.animation import FlashMixin, get_flash_color, WindowFlashOverlay
-from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
-from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
-    create_manager_header,
-    setup_vertical_manager_layout,
+from pyqt_reactive.animation import FlashMixin
+from pyqt_reactive.widgets.shared.manager_ui_scaffold import setup_manager_widget_ui
+from pyqt_reactive.widgets.shared.manager_item_hooks import (
+    ManagerItemHooks,
 )
+from pyqt_reactive.widgets.shared.manager_item_access import ManagerItemAccess
+from pyqt_reactive.widgets.shared.manager_preview_formatting import ManagerPreviewFieldFormatter
+from pyqt_reactive.widgets.shared.manager_state_binding import ManagerStateBinding
+from pyqt_reactive.widgets.shared.manager_list_updater import (
+    ManagerListUpdater,
+    ManagerListUpdateOperations,
+)
+from pyqt_reactive.widgets.shared.manager_time_travel_binding import ManagerTimeTravelBinding
+from pyqt_reactive.widgets.shared.manager_action_controller import (
+    CodeEditorPayload,
+    ManagerActionController,
+    ManagerActionOperations,
+)
+from pyqt_reactive.widgets.shared.manager_list_visual_state import ManagerListVisualState
+from pyqt_reactive.widgets.shared.manager_item_display_builder import (
+    ListItemFormat,
+    _ManagerItemDisplayBuilder,
+)
+from pyqt_reactive.widgets.shared.manager_selection_controller import (
+    ItemIdSelectionPayloadProjection,
+    ManagerSelectionController,
+    ManagerSelectionOperations,
+    SelectionPayloadProjection,
+)
+from pyqt_reactive.widgets.shared.manager_reorder_controller import (
+    ManagerReorderController,
+    ManagerReorderOperations,
+)
+from pyqt_reactive.widgets.shared.manager_status_controller import ManagerStatusController
+from pyqt_reactive.widgets.shared.manager_config_resolution import ManagerGuiConfigResolution
 from pyqt_reactive.services import AutoRegisterServiceMixin
+from pyqt_reactive.services.window_navigation import (
+    ListNavigationReadinessWindow,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# Combined metaclass for ABC + PyQt6 QWidget (matches ParameterFormManager pattern)
 class _CombinedMeta(ABCMeta, type(QWidget)):
     """Combined metaclass for ABC + PyQt6 QWidget."""
-    pass
 
 
-class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRegisterServiceMixin, ABC, metaclass=_CombinedMeta):
+class AbstractManagerWidget(
+    QWidget,
+    CrossWindowPreviewMixin,
+    FlashMixin,
+    AutoRegisterServiceMixin,
+    ABC,
+    metaclass=_CombinedMeta,
+):
     """
     Abstract base class for item list manager widgets.
 
@@ -130,7 +117,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         1. Subclass-specific state initialization
         2. super().__init__(...) - creates base infrastructure (auto-processes PREVIEW_FIELD_CONFIGS)
         3. setup_ui() - create widgets
-        4. setup_connections() - wire signals (optional, can be in base if simple)
+        4. setup_connections() - wire subclass-specific signals after setup_manager_connections()
     """
 
     # === Subclass MUST override these class attributes ===
@@ -142,6 +129,10 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
     DYNAMIC_ACTIONS: Dict[str, str] = {}  # action_id -> resolver_method_name (for toggles)
     ITEM_NAME_SINGULAR: str = "item"
     ITEM_NAME_PLURAL: str = "items"
+    SELECTION_PAYLOAD_PROJECTION: ClassVar[SelectionPayloadProjection] = ItemIdSelectionPayloadProjection()
+    SELECTION_CLEARED_PAYLOAD: ClassVar[Any] = None
+    SCOPE_ITEM_TYPE: ClassVar[Any | None] = None
+    STATE_BINDING: ClassVar[ManagerStateBinding | None] = None
 
     # === Declarative List Item Format Config ===
     # Type-safe configuration for list item display. See ListItemFormat dataclass.
@@ -153,36 +144,12 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
     # Override in subclasses with FormattingConfig(...) instance or default_factory.
     PREVIEW_FORMATTING_CONFIG: FormattingConfig = field(default_factory=FormattingConfig)
 
-    # === Declarative Item Hooks (replaces trivial one-liner methods) ===
-    # Subclass declares this dict instead of overriding 9 simple abstract methods.
-    # ABC interprets these values to provide default implementations.
-    #
-    # Keys:
-    #   'id_accessor': str | tuple - How to get item ID
-    #       - str: dict key access, e.g., 'path' -> item['path']
-    #       - ('attr', 'name'): getattr access -> getattr(item, 'name', '')
-    #   'backing_attr': str - Attribute name for backing list, e.g., 'plates' -> self.plates
-    #   'selection_attr': str - Attribute for current selection ID, e.g., 'selected_plate_path'
-    #   'selection_signal': str - Signal to emit on selection change, e.g., 'plate_selected'
-    #   'selection_emit_id': bool - True: emit ID, False: emit full item (default: True)
-    #   'selection_clear_value': Any - Value to emit when selection cleared (default: '')
-    #   'items_changed_signal': str | None - Signal to emit on items changed (default: None)
-    #   'preserve_selection_pred': Callable[[self], bool] - Predicate for selection preservation
-    #   'list_item_data': 'item' | 'index' - What to store in UserRole (default: 'item')
-    #
-    # Example (PlateManager):
-    #   ITEM_HOOKS = {
-    #       'id_accessor': 'path',
-    #       'backing_attr': 'plates',
-    #       'selection_attr': 'selected_plate_path',
-    #       'selection_signal': 'plate_selected',
-    #       'selection_emit_id': True,
-    #       'selection_clear_value': '',
-    #       'items_changed_signal': None,
-    #       'preserve_selection_pred': lambda self: bool(self.orchestrators),
-    #       'list_item_data': 'item',
-    #   }
-    ITEM_HOOKS: Dict[str, Any] = {}
+    # === Declarative Item Hooks ===
+    # Subclass declares remaining data-shaped list behavior here. Stateful manager
+    # behavior such as backing storage and selection mutation is expressed through
+    # nominal methods on the manager itself.
+    ITEM_HOOKS: ManagerItemHooks = ManagerItemHooks()
+    CODE_EDITOR_PAYLOAD: CodeEditorPayload = CodeEditorPayload()
 
     # Custom data role for scope border color (kept local to avoid delegate coupling)
     SCOPE_BORDER_ROLE = Qt.ItemDataRole.UserRole + 10
@@ -214,7 +181,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
             # 3. Setup UI (AFTER subclass state is ready)
             self.setup_ui()
-            self.setup_connections()  # Optional
+            self.setup_connections()  # Calls setup_manager_connections() plus subclass wiring
             self.update_button_states()
         """
         super().__init__(parent)
@@ -228,38 +195,33 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         # Core dependencies (REQUIRED)
         self.service_adapter = service_adapter
         self.color_scheme = color_scheme or service_adapter.get_current_color_scheme()
-        self.gui_config = gui_config or self._get_default_gui_config()
+        self.gui_config = ManagerGuiConfigResolution.resolve(gui_config)
         self.style_generator = StyleSheetGenerator(self.color_scheme)  # Create internally
         self.event_bus = service_adapter.get_event_bus() if service_adapter else None
-        self.code_execution_workflow = None
-        self.deletion_workflow = None
+        self.code_execution_workflow: ManagerCodeExecutionWorkflow = (
+            NullManagerCodeExecutionWorkflow()
+        )
+        self.deletion_workflow: ManagerDeletionWorkflow = NullManagerDeletionWorkflow()
 
         # UI components (created in setup_ui)
         self.buttons: Dict[str, QPushButton] = {}
         self.status_label: Optional[QLabel] = None
         self.item_list: Optional[ReorderableListWidget] = None
 
-        # Status scrolling state (only used when ENABLE_STATUS_SCROLLING = True)
+        # Status widgets are created in setup_ui.
         self._status_scroll: Optional[QWidget] = None  # QScrollArea when scrolling enabled
-        self._status_scroll_timer: Optional[Any] = None  # QTimer for animation
-        self._status_scroll_position: int = 0
-        self._status_single_message_width: int = 0
-        self._current_status_message: str = "Ready"
 
         # Live context resolver for config attribute resolution
         self._live_context_resolver = LiveContextResolver()
 
-        # Flash animation state: {scope_id: (ObjectState, callback)}
-        self._flash_subscriptions: Dict[str, tuple] = {}
-        # Dirty state subscriptions: {scope_id: (ObjectState, callback)}
-        # Enables reactive dirty markers without polling
-        self._dirty_subscriptions: Dict[str, tuple] = {}
-        # Time-travel limbo: backing items saved during unregister for re-registration
-        self._time_travel_limbo_items: Dict[str, Any] = {}
-        # Scope to list item mapping for WindowFlashOverlay rect lookup
-        self._scope_to_list_item: Dict[str, QListWidgetItem] = {}
         # Per-update-cycle scope cache: item_id -> scope_id (cleared at start of each update)
         self._item_scope_cache: Dict[int, str] = {}
+        self._item_access = ManagerItemAccess.from_manager(self, self._item_scope_cache)
+        self._list_visual_state = ManagerListVisualState(
+            self,
+            scope_border_role=self.SCOPE_BORDER_ROLE,
+            item_access=self._item_access,
+        )
         self._init_visual_update_mixin()  # Initialize VisualUpdateMixin state
 
         # Create preview formatting strategy
@@ -273,62 +235,27 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         else:
             config = self.PREVIEW_FORMATTING_CONFIG
         self._preview_formatting_strategy = DefaultPreviewFormattingStrategy(config, widget=self)
-        self._status_presentation_strategy = DefaultStatusPresentationStrategy()
+        self._preview_field_formatter = ManagerPreviewFieldFormatter()
+        self._item_display_builder = _ManagerItemDisplayBuilder(
+            preview_formatting_strategy=self._preview_formatting_strategy,
+            field_formatter=self._preview_field_formatter.format_field,
+            signature_diff_fields=self._list_visual_state.signature_diff_fields,
+            scope_for_item=self._item_access.scope_for_item,
+        )
+        self._list_updater = ManagerListUpdater()
+        self._time_travel_binding = ManagerTimeTravelBinding(self, self._item_access)
+        self._action_controller = ManagerActionController()
+        self._selection_controller = ManagerSelectionController()
+        self._reorder_controller = ManagerReorderController()
+        self._status_controller = ManagerStatusController(
+            enable_scrolling=self.ENABLE_STATUS_SCROLLING,
+        )
 
         # Initialize CrossWindowPreviewMixin for preview field configuration API
         # (We override _on_live_context_changed to use unified batching)
         self._init_cross_window_preview_mixin()
 
-        # Register time travel callback for list refresh
-        ObjectStateRegistry.add_time_travel_complete_callback(self.on_time_travel_complete)
-
-    def _get_default_gui_config(self):
-        """Get default GUI config fallback."""
-        from pyqt_reactive.protocols import get_form_config
-        return get_form_config()
-
-    def _discover_preview_fields_from_registry(self, config_source: Any) -> List[str]:
-        """
-        Auto-discover preview fields from PREVIEW_LABEL_REGISTRY.
-
-        Scans config_source's dataclass fields and returns field names
-        whose types are registered in PREVIEW_LABEL_REGISTRY.
-
-        Args:
-            config_source: Dataclass instance to scan for registered preview types
-
-        Returns:
-            List of field names whose types have preview labels registered
-        """
-        from dataclasses import fields, is_dataclass
-        from typing import get_origin, get_args, Union
-        from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
-
-        if not is_dataclass(config_source):
-            return []
-
-        discovered = []
-        for f in fields(config_source):
-            field_type = f.type
-
-            # Unwrap Optional[T] -> T
-            if get_origin(field_type) is Union:
-                args = get_args(field_type)
-                field_type = next((t for t in args if t is not type(None)), field_type)
-
-            # Check if type is in registry
-            if field_type in PREVIEW_LABEL_REGISTRY:
-                discovered.append(f.name)
-                continue
-
-            # Check base classes (for lazy wrapper types)
-            if isinstance(field_type, type):
-                for base in field_type.__mro__[1:]:
-                    if base in PREVIEW_LABEL_REGISTRY:
-                        discovered.append(f.name)
-                        break
-
-        return discovered
+        self._time_travel_binding.connect()
 
     # ========== UI Infrastructure (Concrete) ==========
 
@@ -339,79 +266,27 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         Uses VERTICAL orientation (list above buttons) to match current behavior.
         Subclass can override to add custom elements (e.g., PlateManager status scrolling).
         """
-        header = self._create_header()
-        self.item_list = self._create_list_widget()
-        button_panel = self._create_button_panel()
-        setup_vertical_manager_layout(
+        ui_parts = setup_manager_widget_ui(
             owner=self,
-            header=header,
-            top_widget=self.item_list,
-            bottom_widget=button_panel,
-        )
-
-    def _create_header(self) -> QWidget:
-        """
-        Create header with title and status label.
-
-        When ENABLE_STATUS_SCROLLING is True, uses QScrollArea for marquee animation.
-        """
-        header_parts = create_manager_header(
             title=self.TITLE,
             color_scheme=self.color_scheme,
+            style_generator=self.style_generator,
             enable_status_scrolling=self.ENABLE_STATUS_SCROLLING,
-        )
-        self.status_label = header_parts.status_label
-        self._status_scroll = header_parts.status_scroll
-        return header_parts.header
-
-    def _create_list_widget(self) -> ReorderableListWidget:
-        """Create styled ReorderableListWidget with multiline delegate."""
-        list_widget = ReorderableListWidget()
-        list_widget.setStyleSheet(
-            self.style_generator.generate_list_widget_style()
-        )
-
-        # Use multiline delegate for preview labels with colors from scheme
-        cs = self.color_scheme
-        delegate = MultilinePreviewItemDelegate(
-            name_color=cs.to_qcolor(cs.text_primary),
-            preview_color=cs.to_qcolor(cs.text_secondary),
-            selected_text_color=cs.to_qcolor(cs.selection_text),
-            parent=list_widget,
-            manager=self  # Pass manager reference for flash opacity lookup
-        )
-        list_widget.setItemDelegate(delegate)
-
-        return list_widget
-
-    def _create_button_panel(self) -> QWidget:
-        """
-        Create button panel from BUTTON_CONFIGS using reusable ButtonPanel component.
-
-        Uses BUTTON_GRID_COLUMNS to determine number of columns:
-        - 0: Single row with all buttons (1 x N grid)
-        - N: N columns, buttons wrap to next row
-        """
-        from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
-        
-        panel = ButtonPanel(
             button_configs=self.BUTTON_CONFIGS,
             on_action=self.handle_button_action,
-            style_generator=self.style_generator,
-            grid_columns=self.BUTTON_GRID_COLUMNS,
-            parent=self
+            button_grid_columns=self.BUTTON_GRID_COLUMNS,
         )
-        
-        # Expose buttons dict for backward compatibility
-        self.buttons = panel.buttons
-        
-        return panel
+        self.status_label = ui_parts.status_label
+        self._status_scroll = ui_parts.status_scroll
+        self.item_list = ui_parts.item_list
+        self.buttons = ui_parts.button_panel.buttons
 
-    def _setup_connections(self) -> None:
+    def setup_manager_connections(self) -> None:
         """
-        Setup signal connections for list widget events.
+        Setup base signal connections for list-manager widget events.
 
-        Subclass can override to add additional connections.
+        Subclasses that expose their own setup_connections() should call this
+        first, then wire subclass-specific signals.
         """
         # Selection changes
         self.item_list.itemSelectionChanged.connect(self._on_selection_changed)
@@ -425,91 +300,10 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         # Status messages
         self.status_message.connect(self.update_status)
 
-        # Subscribe to ObjectStateRegistry lifecycle for time-travel binding
-        from objectstate import ObjectStateRegistry
-        ObjectStateRegistry.add_unregister_callback(self._on_registry_unregister)
-        ObjectStateRegistry.add_register_callback(self._on_registry_register)
-
-    def _on_registry_unregister(self, scope_key: str, state: 'ObjectState') -> None:
-        """Handle ObjectState unregistration (time-travel: remove item from UI).
-
-        Uses ITEM_HOOKS['scope_id_attr'] to find backing item by scope_id.
-        """
-        # Find backing item by matching scope_id
-        item = self._find_backing_item_by_scope(scope_key)
-        if item is None:
-            return
-
-        backing_items = self._get_backing_items()
-        if item in backing_items:
-            backing_items.remove(item)
-            self.update_item_list()
-            logger.debug(f"⏱️ TIME_TRAVEL: Removed item from UI: {scope_key}")
-
-    def _on_registry_register(self, scope_key: str, state: 'ObjectState') -> None:
-        """Handle ObjectState registration (time-travel: add item back to UI).
-
-        Only processes during time-travel. Normal registration is handled elsewhere.
-        Uses _time_travel_limbo_items to restore backing items.
-        """
-        from objectstate import ObjectStateRegistry
-
-        # Only process during time-travel (normal registration handled elsewhere)
-        if not ObjectStateRegistry._in_time_travel:
-            return
-
-        # Find backing item from limbo (saved when unregistered)
-        item = self._time_travel_limbo_items.pop(scope_key, None)
-        if item is None:
-            return
-
-        backing_items = self._get_backing_items()
-        if item not in backing_items:
-            insert_idx = self.get_item_insert_index(item, scope_key)
-            if insert_idx is not None:
-                backing_items.insert(insert_idx, item)
-            else:
-                backing_items.append(item)
-            self.update_item_list()
-            logger.debug(f"⏱️ TIME_TRAVEL: Added item back to UI: {scope_key}")
-
-    def _find_backing_item_by_scope(self, scope_key: str) -> Optional[Any]:
-        """Find backing item that matches the given scope_key.
-
-        Uses ITEM_HOOKS['scope_id_builder'] or 'scope_id_attr' to match items.
-        Returns None if no match or neither hook is configured.
-        """
-        hooks = self.ITEM_HOOKS
-        scope_id_builder = hooks.get("scope_id_builder")
-        scope_id_attr = hooks.get("scope_id_attr")
-
-        if not scope_id_builder and not scope_id_attr:
-            return None
-
-        for idx, item in enumerate(self._get_backing_items()):
-            # Use builder if available (for computed scope_ids like PipelineEditor)
-            if scope_id_builder:
-                item_scope = scope_id_builder(item, idx, self)
-            elif isinstance(item, dict):
-                item_scope = item.get(scope_id_attr)
-            else:
-                item_scope = getattr(item, scope_id_attr, None)
-
-            if item_scope == scope_key:
-                # Save to limbo for potential re-registration
-                self._time_travel_limbo_items[scope_key] = item
-                return item
-        return None
-
     def on_time_travel_complete(self, dirty_states, triggering_scope):
         """Refresh list after time travel. Subclasses can override for custom reloads."""
-        self.update_item_list()
-        if hasattr(self, "update_button_states"):
-            self.update_button_states()
-
-    def _on_time_travel_complete(self, dirty_states, triggering_scope):
-        """Compatibility shim for callers still bound to the old private hook."""
-        self.on_time_travel_complete(dirty_states, triggering_scope)
+        del dirty_states, triggering_scope
+        self._time_travel_binding.refresh_after_time_travel(self)
 
     def get_item_insert_index(self, item: Any, scope_key: str) -> Optional[int]:
         """Get the index at which to insert item during time-travel re-registration.
@@ -519,554 +313,139 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """
         return None
 
-    def _get_item_insert_index(self, item: Any, scope_key: str) -> Optional[int]:
-        """Compatibility shim for subclasses still overriding the old private hook."""
-        return self.get_item_insert_index(item, scope_key)
-
     # ========== Action Dispatch (Concrete) ==========
 
     def handle_button_action(self, action: str) -> None:
-        """
-        Dispatch button action using ACTION_REGISTRY or DYNAMIC_ACTIONS.
+        """Dispatch a button action through the manager action controller."""
+        self._action_controller.dispatch(self._action_operations(), action)
 
-        DYNAMIC_ACTIONS allows for runtime action resolution (e.g., Run/Stop toggle).
-        Supports both sync and async methods.
-
-        Args:
-            action: Action identifier from button click
-        """
-        # Check for dynamic action (like run/stop toggle)
-        if action in self.DYNAMIC_ACTIONS:
-            resolver_method_name = self.DYNAMIC_ACTIONS[action]
-            resolved_action_name = getattr(self, resolver_method_name)()  # Call resolver
-            action_func = getattr(self, resolved_action_name)
-        elif action in self.ACTION_REGISTRY:
-            method_name = self.ACTION_REGISTRY[action]
-            action_func = getattr(self, method_name)
-        else:
-            logger.warning(f"Unknown action: {action}")
-            return
-
-        # Handle async methods
-        if inspect.iscoroutinefunction(action_func):
-            self.run_async_action(action_func)
-        else:
-            action_func()
-
-    def run_async_action(self, async_func: Callable) -> None:
-        """
-        Execute async action via service adapter.
-
-        Args:
-            async_func: Async function to execute
-        """
-        self.service_adapter.execute_async_operation(async_func)
+    def _action_operations(self) -> ManagerActionOperations:
+        """Return the nominal operation port consumed by ManagerActionController."""
+        return ManagerActionOperations(
+            widget=self,
+            action_registry=self.ACTION_REGISTRY,
+            dynamic_actions=self.DYNAMIC_ACTIONS,
+            resolve_method=lambda method_name: getattr(self, method_name),
+            run_async=self.service_adapter.execute_async_operation,
+            selected_items=self.get_selected_items,
+            item_name_singular=self.ITEM_NAME_SINGULAR,
+            item_name_plural=self.ITEM_NAME_PLURAL,
+            show_error=self.service_adapter.show_error_dialog,
+            validate_delete=self.validate_delete,
+            perform_delete=self.perform_delete,
+            update_item_list=self.update_item_list,
+            emit_items_changed=self._emit_items_changed,
+            emit_status=self.status_message.emit,
+            show_item_editor=self.show_item_editor,
+            validate_code_action=lambda: True,
+            code_payload=self.CODE_EDITOR_PAYLOAD,
+            pre_code_execution=self._pre_code_execution,
+            patch_lazy_constructors=patch_lazy_constructors,
+            migrate_code_namespace=self.handle_code_execution_error,
+            apply_code_namespace=self.apply_executed_code,
+            post_code_execution=ObjectStateRegistry.increment_token,
+        )
 
     # ========== CRUD Template Methods (Concrete) ==========
 
     def action_delete(self) -> None:
-        """
-        Template: Delete selected items.
-
-        Flow: get items → validate → delete → update → emit → status
-        """
-        items = self.get_selected_items()
-        if not items:
-            self.service_adapter.show_error_dialog(f"No {self.ITEM_NAME_PLURAL} selected")
-            return
-
-        if self.validate_delete(items):
-            self.perform_delete(items)
-            self.update_item_list()
-            self._emit_items_changed()
-            self.status_message.emit(f"Deleted {len(items)} {self.ITEM_NAME_PLURAL}")
+        """Delete selected items through the manager action controller."""
+        self._action_controller.delete_selected(self._action_operations())
 
     def action_edit(self) -> None:
-        """
-        Template: Edit first selected item.
-
-        Flow: get items → validate → show editor
-        """
-        items = self.get_selected_items()
-        if not items:
-            self.service_adapter.show_error_dialog(f"No {self.ITEM_NAME_SINGULAR} selected")
-            return
-
-        self.show_item_editor(items[0])
+        """Edit the first selected item through the manager action controller."""
+        self._action_controller.edit_selected(self._action_operations())
 
     def action_code(self) -> None:
-        """
-        Template: Open code editor.
-
-        Validates before opening editor (allows subclass-specific guards).
-        PlateManager overrides this entirely for multi-plate export.
-        PipelineEditor uses this template with code editor hooks.
-
-        Flow: validate → get code → get metadata → show editor
-        """
-        # Validate action (subclass can block with error dialog)
-        if not self._validate_code_action():
-            return
-
-        code = self._get_code_content()
-        if not code:
-            self.service_adapter.show_error_dialog("No code to display")
-            return
-
-        title = self._get_code_editor_title()
-        code_type = self._get_code_type()
-        code_data = self._get_code_data()
-        self._show_code_editor(code, title, self._handle_edited_code, code_type, code_data)
+        """Open the code editor through the manager action controller."""
+        self._action_controller.open_code_editor(self._action_operations())
 
     # ========== Unified Helper Methods (Concrete) ==========
 
     def get_selected_items(self) -> List[Any]:
-        """
-        Get currently selected items.
-
-        Delegates item extraction to subclass hook.
-        """
-        selected_items = []
-        for list_item in self.item_list.selectedItems():
-            item = self._get_item_from_list_item(list_item)
-            if item is not None:
-                selected_items.append(item)
-        return selected_items
-
-    def _resolve_config_attr(self, item: Any, config: object, attr_name: str,
-                             live_context_snapshot=None, full_path: str = None) -> object:
-        """
-        Resolve config attribute using ObjectState (no context stack rebuild).
-
-        Looks up the ObjectState by scope_id and uses its cached resolved values.
-        ObjectState already handles context stack building and caching internally.
-
-        Args:
-            item: Semantic item (used to get scope_id via subclass hook)
-            config: Config dataclass instance (used to find nested state)
-            attr_name: Name of the attribute to resolve
-            live_context_snapshot: IGNORED - kept for API compatibility
-            full_path: Optional full dotted path for nested field lookup (e.g., 'path_planning_config.well_filter')
-
-        Returns:
-            Resolved attribute value
-        """
-        from objectstate import ObjectStateRegistry
-
-        try:
-            # Get scope from item via cached lookup (avoids repeated calls during update cycle)
-            item_scope = self._get_cached_scope(item)
-
-            # Look up ObjectState by scope
-            state = ObjectStateRegistry.get_by_scope(item_scope)
-            if state is None:
-                # No ObjectState registered - fall back to raw attribute
-                return object.__getattribute__(config, attr_name)
-
-            # Determine lookup path - either explicitly provided or derived from config type
-            if full_path:
-                lookup_path = full_path
-            else:
-                # Use ObjectState's resolve_for_type to find the correct path
-                # This is the RIGHT BOUNDARY for nested config resolution
-                config_type = type(config)
-                resolved = state.resolve_for_type(config_type, attr_name)
-                if resolved is not None:
-                    return resolved
-                # Fall back to direct lookup for top-level fields
-                lookup_path = attr_name
-
-            # With flat storage, all fields are in state.parameters with dotted paths
-            resolved = state.get_resolved_value(lookup_path)
-            if resolved is not None:
-                return resolved
-
-            # Check if it's a nested config by looking at _path_to_type
-            # If lookup_path is in _path_to_type, it's a nested config - reconstruct it
-            if lookup_path in state._path_to_type:
-                # Reconstruct nested config from flat parameters
-                nested_prefix = lookup_path
-                nested_type = state._path_to_type[lookup_path]
-
-                # Collect all parameters for this nested config
-                prefix_dot = f'{nested_prefix}.'
-                nested_params = {}
-                for path, value in state.parameters.items():
-                    if path.startswith(prefix_dot):
-                        remainder = path[len(prefix_dot):]
-                        # Only direct children
-                        if '.' not in remainder:
-                            nested_params[remainder] = value
-
-                # CRITICAL: Do NOT filter out None values!
-                # In OpenHCS, None has semantic meaning: "inherit from parent context"
-                # When a user explicitly resets a field to None, we MUST pass that None
-                # to the dataclass constructor so lazy resolution can walk up the MRO.
-
-                # Instantiate nested config with ALL parameters including None values
-                if nested_params:
-                    return nested_type(**nested_params)
-                else:
-                    return nested_type()
-
-            # Fall back to raw attribute if not in resolved cache
-            return object.__getattribute__(config, attr_name)
-
-        except Exception as e:
-            logger.warning(f"Failed to resolve config.{attr_name}: {e}")
-            return object.__getattribute__(config, attr_name)
-
-    def _merge_with_live_values(self, obj: Any, live_values: Dict[str, Any]) -> Any:
-        """
-        Merge object with live values from ParameterFormManager.
-
-        Uses LiveContextResolver to reconstruct nested dataclass values.
-        Generic implementation works for PipelineConfig, FunctionStep, etc.
-
-        Args:
-            obj: Dataclass instance to merge (PipelineConfig or FunctionStep)
-            live_values: Dict of field_name -> value from ParameterFormManager
-
-        Returns:
-            New instance with live values merged
-        """
-        if not live_values:
-            return obj
-
-        try:
-            obj_clone = copy.deepcopy(obj)
-        except Exception:
-            obj_clone = copy.copy(obj)
-
-        reconstructed_values = self._live_context_resolver.reconstruct_live_values(live_values)
-        for field_name, value in reconstructed_values.items():
-            setattr(obj_clone, field_name, value)
-
-        return obj_clone
-
-    # ========== Code Editor Support (Concrete) ==========
-
-    def _show_code_editor(self, code: str, title: str, callback: Callable,
-                          code_type: str, code_data: Dict[str, Any]) -> None:
-        """
-        Launch code editor with external editor support.
-
-        Honors OPENHCS_USE_EXTERNAL_EDITOR environment variable.
-
-        Args:
-            code: Initial code content
-            title: Editor window title
-            callback: Callback for edited code
-            code_type: Code type identifier (e.g., "pipeline", "orchestrator")
-            code_data: Additional metadata for editor
-        """
-        from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
-
-        editor_service = SimpleCodeEditorService(self)
-
-        # Check if user wants external editor
-        use_external = os.environ.get('OPENHCS_USE_EXTERNAL_EDITOR', '').lower() in ('1', 'true', 'yes')
-
-        editor_service.edit_code(
-            initial_content=code,
-            title=title,
-            callback=callback,
-            use_external=use_external,
-            code_type=code_type,
-            code_data=code_data
+        """Get currently selected backing items."""
+        return self._selection_controller.selected_items(
+            self._selection_operations()
         )
 
     # ========== Event Handlers (Concrete) ==========
 
     def _on_selection_changed(self) -> None:
-        """
-        Handle selection change with deselection prevention.
-
-        Uses handle_selection_change_with_prevention to prevent clearing
-        selection when items exist (current behavior).
-        """
-        def on_selected(items):
-            self._handle_selection_changed(items)
-
-        def on_cleared():
-            self._handle_selection_cleared()
-
-        handle_selection_change_with_prevention(
-            self.item_list,
-            self.get_selected_items,
-            self._get_item_id,
-            self._should_preserve_selection,
-            self._get_current_selection_id,
-            on_selected,
-            on_cleared
+        """Handle selection change with deselection prevention."""
+        self._selection_controller.handle_selection_changed(
+            self._selection_operations()
         )
-
-        self.update_button_states()
 
     def _on_item_double_clicked(self, list_item: QListWidgetItem) -> None:
-        """
-        Handle double-click. Calls overridable hook.
+        """Handle list item double-click activation."""
+        self._selection_controller.handle_item_double_clicked(
+            self._selection_operations(),
+            list_item,
+        )
 
-        Default routes to edit, subclass can override for custom behavior
-        (e.g., PlateManager uses init-only pattern).
-        """
-        item = self._get_item_from_list_item(list_item)
-        if item is not None:
-            self._handle_item_double_click(item)
+    def _selection_operations(self) -> ManagerSelectionOperations:
+        """Return the nominal operation port consumed by ManagerSelectionController."""
+        return ManagerSelectionOperations(
+            list_widget=self.item_list,
+            selected_items=self.get_selected_items,
+            item_from_list_item=self._item_access.item_from_list_item,
+            item_id=self._item_access.item_hooks.item_id,
+            should_preserve_selection=lambda: self._item_access.item_hooks.should_preserve_selection(self),
+            current_selection_id=lambda: self._item_access.state_binding.current_selection_id(self),
+            set_selection_id=lambda item_id: self._item_access.state_binding.set_selection_id(self, item_id),
+            selection_signal=lambda: self._item_access.state_binding.selection_signal(self),
+            selected_payload=self.SELECTION_PAYLOAD_PROJECTION.selected,
+            cleared_payload=self.SELECTION_CLEARED_PAYLOAD,
+            in_time_travel=lambda: self._time_travel_binding.in_time_travel,
+            update_button_states=self.update_button_states,
+            handle_item_double_click=lambda item: self.action_edit(),
+        )
 
     def _on_items_reordered(self, from_index: int, to_index: int) -> None:
-        """
-        Handle item reordering from drag/drop.
+        """Handle item reordering from drag/drop."""
+        self._reorder_controller.handle_reordered(
+            self._reorder_operations(),
+            from_index,
+            to_index,
+        )
 
-        Emits status message to preserve user feedback from current behavior.
-        Delegates actual data mutation to subclass hook.
-
-        Args:
-            from_index: Source index
-            to_index: Destination index
-        """
-        # Get item before reordering (for status message)
-        list_item = self.item_list.item(from_index)
-        item = self._get_item_from_list_item(list_item)
-        item_id = self._get_item_id(item) if item else "Unknown"
-
-        # Coalesce all ObjectState mutations from reorder into one snapshot
-        item_name_plural = getattr(self, "ITEM_NAME_PLURAL", f"{self.ITEM_NAME_SINGULAR}s")
-        with ObjectStateRegistry.atomic(f"reorder {item_name_plural}"):
-            # Delegate to subclass for data mutation
-            self._handle_items_reordered(from_index, to_index)
-            self._emit_items_changed()
-            self.update_item_list()
-
-        # Emit status message (matches current behavior)
-        direction = "up" if to_index < from_index else "down"
-        item_name = self.ITEM_NAME_SINGULAR
-        self.status_message.emit(f"Moved {item_name} '{item_id}' {direction}")
+    def _reorder_operations(self) -> ManagerReorderOperations:
+        """Return the nominal operation port consumed by ManagerReorderController."""
+        return ManagerReorderOperations(
+            list_widget=self.item_list,
+            item_from_list_item=self._item_access.item_from_list_item,
+            item_id=self._item_access.item_hooks.item_id,
+            item_name_singular=self.ITEM_NAME_SINGULAR,
+            item_name_plural=self.ITEM_NAME_PLURAL,
+            reorder_items=self._handle_items_reordered,
+            emit_items_changed=self._emit_items_changed,
+            update_item_list=self.update_item_list,
+            emit_status=self.status_message.emit,
+        )
 
     def update_status(self, message: str) -> None:
-        """
-        Update status label with optional auto-scrolling marquee.
-
-        When ENABLE_STATUS_SCROLLING is True and text is too long, duplicates
-        text and starts seamless looping animation.
-        """
-        if not self.status_label:
-            return
-
-        presentation = self._status_presentation_strategy.present(
-            StatusPresentationInput(message=message, context=self)
+        """Update status label with optional auto-scrolling marquee."""
+        self._status_controller.update(
+            message=message,
+            context=self,
+            status_label=self.status_label,
+            status_scroll=self._status_scroll,
         )
-        rendered_message = presentation.text
-        self._current_status_message = rendered_message
-
-        if not self.ENABLE_STATUS_SCROLLING or not self._status_scroll:
-            # Simple mode: just set text
-            self.status_label.setText(rendered_message)
-            return
-
-        # Scrolling mode: check if text needs animation
-        self.status_label.setText(rendered_message)
-        self.status_label.adjustSize()
-
-        # Calculate single message width for seamless loop reset
-        separator = "     "
-        temp_label = QLabel(f"{rendered_message}{separator}")
-        temp_label.setFont(self.status_label.font())
-        temp_label.adjustSize()
-        self._status_single_message_width = temp_label.width()
-
-        # Check if scrolling needed
-        label_width = self.status_label.width()
-        scroll_width = self._status_scroll.viewport().width()
-
-        if label_width > scroll_width:
-            # Duplicate text for seamless loop
-            display_text = (
-                f"{rendered_message}{separator}{rendered_message}{separator}"
-            )
-            self.status_label.setText(display_text)
-            self.status_label.adjustSize()
-
-        self._restart_status_scrolling()
-
-    def _restart_status_scrolling(self) -> None:
-        """Restart status scrolling animation if text is too long."""
-        if not self._status_scroll:
-            return
-
-        # Stop existing timer
-        if self._status_scroll_timer:
-            self._status_scroll_timer.stop()
-            self._status_scroll_timer = None
-
-        # Reset position
-        self._status_scroll.horizontalScrollBar().setValue(0)
-        self._status_scroll_position = 0
-
-        # Check if scrolling needed
-        label_width = self.status_label.width()
-        scroll_width = self._status_scroll.viewport().width()
-
-        if label_width > scroll_width:
-            # Start animation timer
-            self._status_scroll_timer = QTimer(self)
-            self._status_scroll_timer.setTimerType(Qt.TimerType.PreciseTimer)
-            self._status_scroll_timer.timeout.connect(self._auto_scroll_status)
-            self._status_scroll_timer.start(50)  # 20 fps scrolling
-
-    def _auto_scroll_status(self) -> None:
-        """Auto-scroll status text in seamless loop."""
-        if not self._status_scroll or not self.status_label:
-            return
-
-        scrollbar = self._status_scroll.horizontalScrollBar()
-        max_scroll = scrollbar.maximum()
-
-        if max_scroll == 0:
-            if self._status_scroll_timer:
-                self._status_scroll_timer.stop()
-            return
-
-        # Advance scroll position
-        self._status_scroll_position += 2  # Scroll speed
-
-        # Reset at duplicate boundary for seamless loop
-        reset_point = self._status_single_message_width or (max_scroll / 2)
-        if self._status_scroll_position >= reset_point:
-            self._status_scroll_position = 0
-
-        scrollbar.setValue(int(self._status_scroll_position))
 
     def resizeEvent(self, event) -> None:
         """Handle resize to recalculate status scrolling."""
         super().resizeEvent(event)
-        if self.ENABLE_STATUS_SCROLLING and self._status_scroll:
-            # Re-apply message to recalculate duplication
-            self.update_status(self._current_status_message)
+        self._status_controller.recalculate_after_resize(
+            context=self,
+            status_label=self.status_label,
+            status_scroll=self._status_scroll,
+        )
 
     # ========== Code Editor Hooks (Concrete with defaults) ==========
 
-    def _validate_code_action(self) -> bool:
-        """
-        Validate code action before opening editor.
-
-        Default: Always allow (PlateManager overrides action_code entirely, doesn't use this)
-        PipelineEditor: Check current_plate, show error if none selected
-
-        Returns:
-            True to proceed, False to abort (subclass shows error dialog)
-        """
-        return True  # Default: allow
-
-    def _get_code_content(self) -> str:
-        """
-        Generate code string for editor.
-
-        Default implementation (not abstract) - PlateManager overrides action_code entirely.
-
-        PipelineEditor implementation:
-            from pyqt_reactive.core.code_generator import generate_complete_pipeline_steps_code
-            return generate_complete_pipeline_steps_code(
-                pipeline_steps=list(self.pipeline_steps),
-                clean_mode=True
-            )
-
-        PlateManager: Not called (overrides action_code entirely)
-        """
-        return ""  # Default: no code (subclass must override if using template)
-
-    def _get_code_type(self) -> str:
-        """
-        Return code type identifier for editor metadata.
-
-        Used by SimpleCodeEditorService for feature toggles.
-
-        Examples:
-            PipelineEditor: return "pipeline"
-            PlateManager: Not called (overrides action_code entirely)
-        """
-        return "python"  # Default code type
-
-    def _get_code_data(self) -> Dict[str, Any]:
-        """
-        Return additional metadata for code editor.
-
-        Used for clean_mode toggle and regeneration parameters.
-
-        PipelineEditor example:
-            return {
-                'clean_mode': True,
-                'pipeline_steps': self.pipeline_steps
-            }
-
-        PlateManager: Not called (overrides action_code entirely)
-        """
-        return {}  # Default: no metadata
-
-    def _get_code_editor_title(self) -> str:
-        """
-        Return title for code editor window.
-
-        Examples:
-            PipelineEditor: f"Pipeline Code: {orchestrator.plate_path}"
-            PlateManager: Not called (overrides action_code entirely)
-        """
-        return "Code Editor"  # Default title
-
     def _handle_edited_code(self, code: str) -> None:
-        """
-        Template: Execute edited code and apply to widget state.
-
-        Unified code execution flow:
-        1. Pre-processing hook (PlateManager opens pipeline editor)
-        2. Execute code with lazy constructor patching
-        3. Migration fallback for old-format code (PipelineEditor)
-        4. Apply extracted variables to state (hook)
-        5. Post-processing: broadcast, trigger refresh
-
-        Subclasses implement hooks:
-        - _pre_code_execution() - Pre-processing (optional, default no-op)
-        - handle_code_execution_error(code, error, namespace) - Migration fallback (optional)
-        - apply_executed_code(namespace) -> bool - Extract and apply variables (REQUIRED)
-        - _post_code_execution() - Post-processing (optional, default no-op)
-        """
-        code_type = self._get_code_type()
-        logger.debug(f"{code_type} code edited, processing changes...")
-        try:
-            # Ensure we have a string
-            if not isinstance(code, str):
-                logger.error(f"Expected string, got {type(code)}: {code}")
-                raise ValueError("Invalid code format received from editor")
-
-            # Pre-processing hook
-            self._pre_code_execution()
-
-            # Execute code with lazy constructor patching
-            namespace = {}
-            try:
-                with self._patch_lazy_constructors():
-                    exec(code, namespace)
-            except TypeError as e:
-                # Migration fallback hook (returns new namespace or None to re-raise)
-                migrated_namespace = self.handle_code_execution_error(code, e, namespace)
-                if migrated_namespace is not None:
-                    namespace = migrated_namespace
-                else:
-                    raise
-
-            # Apply extracted variables to state (subclass hook)
-            if not self.apply_executed_code(namespace):
-                raise ValueError(self._get_code_missing_error_message())
-
-            # Post-processing: broadcast, trigger refresh
-            self._post_code_execution()
-
-        except (SyntaxError, Exception) as e:
-            import traceback
-            full_traceback = traceback.format_exc()
-            logger.error(f"Failed to parse edited {code_type} code: {e}\nFull traceback:\n{full_traceback}")
-            # Re-raise so the code editor can handle it (keep dialog open, move cursor to error line)
-            raise
+        """Execute edited code through the manager action controller."""
+        self._action_controller.apply_edited_code(self._action_operations(), code)
 
     # === Code Execution Hooks (for _handle_edited_code template) ===
 
@@ -1088,14 +467,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         PipelineEditor: Handle old-format step constructors (group_by/variable_components)
         PlateManager: Return None (no migration support)
         """
-        workflow = self.code_execution_workflow
-        if workflow is not None and hasattr(workflow, "migration_namespace"):
-            return workflow.migration_namespace(code, error)
-        return None  # Default: re-raise error
-
-    def _handle_code_execution_error(self, code: str, error: Exception, namespace: dict) -> Optional[dict]:
-        """Compatibility shim for subclasses still overriding the old private hook."""
-        return self.handle_code_execution_error(code, error, namespace)
+        return self.code_execution_workflow.migration_namespace(code, error)
 
     def apply_executed_code(self, namespace: dict) -> bool:
         """
@@ -1107,204 +479,27 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         PipelineEditor: Extract 'pipeline_steps', update self.pipeline_steps
         PlateManager: Extract 'plate_paths', 'pipeline_data', etc.
         """
-        workflow = self.code_execution_workflow
-        if workflow is not None and hasattr(workflow, "apply_namespace"):
-            return workflow.apply_namespace(namespace)
+        if self.code_execution_workflow.apply_namespace(namespace):
+            return True
         logger.warning(f"{type(self).__name__}.apply_executed_code not implemented")
         return False  # Default: fail (subclass must override)
-
-    def _apply_executed_code(self, namespace: dict) -> bool:
-        """Compatibility shim for subclasses still overriding the old private hook."""
-        return self.apply_executed_code(namespace)
-
-    def _get_code_missing_error_message(self) -> str:
-        """
-        Error message when expected code variables are missing.
-
-        PipelineEditor: "No 'pipeline_steps = [...]' assignment found in edited code"
-        PlateManager: "No valid assignments found in edited code"
-        """
-        return "No valid assignments found in edited code"
-
-    def _post_code_execution(self) -> None:
-        """
-        Post-processing after successful code execution (optional hook).
-
-        Both: Trigger cross-window refresh via ParameterFormManager
-        PlateManager: Also emit pipeline_data_changed, etc.
-        """
-        # Default: trigger cross-window refresh (common to both)
-        ObjectStateRegistry.increment_token()
-
-    # === Broadcast Utility ===
-
-    def _broadcast_to_event_bus(self, event_type: str, data: Any) -> None:
-        """
-        Broadcast event to global event bus.
-
-        Generic broadcast method that dispatches to event_bus.emit_{event_type}_changed().
-
-        Args:
-            event_type: Event type ('pipeline', 'config')
-            data: Data to broadcast (pipeline_steps list, config object)
-
-        Usage:
-            self._broadcast_to_event_bus('pipeline', steps)
-            self._broadcast_to_event_bus('config', config)
-        """
-        if self.event_bus:
-            emit_method = getattr(self.event_bus, f'emit_{event_type}_changed', None)
-            if emit_method:
-                emit_method(data)
-                logger.debug(f"Broadcasted {event_type}_changed to event bus")
-            else:
-                logger.warning(f"Event bus has no emit_{event_type}_changed method")
-
-    def _handle_item_double_click(self, item: Any) -> None:
-        """
-        Default double-click behavior: Edit item.
-
-        Subclass can override for custom logic (e.g., PlateManager init-only pattern).
-        """
-        self.action_edit()
 
     # ========== Utility Methods (Concrete) ==========
 
     def _find_main_window(self):
-        """Find the main window by traversing parent hierarchy."""
-        widget = self
-        while widget:
-            if hasattr(widget, 'floating_windows'):
-                return widget
-            widget = widget.parent()
-        return None
-
-    def _patch_lazy_constructors(self):
-        """Context manager that patches lazy dataclass constructors to preserve None vs concrete distinction."""
-        from objectstate import patch_lazy_constructors
-        return patch_lazy_constructors()
-
-    # ========== List Item Flash Animation ==========
-
-    def _subscribe_flash_for_item(self, item: Any, list_item: QListWidgetItem, scope_id: str = None) -> None:
-        """Subscribe to ObjectState changes for flash animation and register with overlay.
-
-        Args:
-            item: The backing data item
-            list_item: The QListWidgetItem to flash
-            scope_id: Pre-computed scope_id (uses cached lookup if not provided)
-        """
-        if scope_id is None:
-            scope_id = self._get_cached_scope(item)
-        logger.debug(f"⚡ FLASH_DEBUG _subscribe_flash_for_item: item={type(item).__name__}, scope_id={scope_id}")
-        if not scope_id:
-            logger.debug(f"⚡ FLASH_DEBUG: No scope_id for item {item}, returning")
-            return
-
-        # Store mapping for overlay rect lookup
-        self._scope_to_list_item[scope_id] = list_item
-
-        if scope_id in self._flash_subscriptions:
-            logger.debug(f"⚡ FLASH_DEBUG: Already subscribed to {scope_id}, skipping")
-            return
-
-        # Register FlashElement with WindowFlashOverlay
-        from pyqt_reactive.animation import FlashElement, WindowFlashOverlay
-
-        def get_list_item_rect(window: QWidget) -> Optional[QRect]:
-            """Get list item rect in window coordinates (clipped to viewport)."""
-            if scope_id not in self._scope_to_list_item:
-                logger.debug(f"⚡ FLASH_DEBUG get_list_item_rect: scope_id {scope_id} NOT in _scope_to_list_item (has {len(self._scope_to_list_item)} keys)")
-                return None
-            item = self._scope_to_list_item[scope_id]
-            if item is None:
-                logger.debug(f"⚡ FLASH_DEBUG get_list_item_rect: item is None for {scope_id}")
-                return None
-
-            # Get visual rect from list widget
-            visual_rect = self.item_list.visualItemRect(item)
-            if visual_rect.isEmpty():
-                logger.debug(f"⚡ FLASH_DEBUG get_list_item_rect: visual_rect is empty for {scope_id}")
-                return None
-
-            # Clip to viewport (only flash visible portion)
-            viewport = self.item_list.viewport()
-            if viewport is None:
-                logger.debug(f"⚡ FLASH_DEBUG get_list_item_rect: viewport is None for {scope_id}")
-                return None
-
-            # Intersect with viewport rect to get only visible portion
-            viewport_rect = viewport.rect()
-            clipped_rect = visual_rect.intersected(viewport_rect)
-            if clipped_rect.isEmpty():
-                logger.debug(f"⚡ FLASH_DEBUG get_list_item_rect: clipped_rect is empty for {scope_id}")
-                return None
-
-            # Map from VIEWPORT to window coordinates
-            global_pos = viewport.mapToGlobal(clipped_rect.topLeft())
-            local_pos = window.mapFromGlobal(global_pos)
-            logger.debug(f"⚡ FLASH_DEBUG get_list_item_rect: SUCCESS for {scope_id}, rect={QRect(local_pos, clipped_rect.size())}")
-            return QRect(local_pos, clipped_rect.size())
-
-        def get_model_index():
-            """Get QModelIndex for targeted item update (avoids full viewport repaint)."""
-            if scope_id not in self._scope_to_list_item:
-                return None
-            item = self._scope_to_list_item[scope_id]
-            if item is None:
-                return None
-            # Use indexFromItem directly - O(1) vs row() which may be O(n)
-            return self.item_list.indexFromItem(item)
-
-        element = FlashElement(
-            key=scope_id,
-            get_rect_in_window=get_list_item_rect,
-            needs_scroll_clipping=False,
-            source_id=f"list_item:{id(self)}:{scope_id}",  # Unique per manager instance + scope
-            skip_overlay_paint=True,  # Delegate handles painting flash behind text
-            delegate_widget=self.item_list,  # List widget for targeted updates
-            get_model_index=get_model_index  # For targeted item updates (avoids full viewport repaint)
-        )
-        overlay = WindowFlashOverlay.get_for_window(self)
-        logger.debug(f"⚡ FLASH_DEBUG: get_for_window returned overlay={overlay}, window={self.window()}")
-        if overlay:
-            overlay.register_element(element)
-            logger.debug(f"⚡ FLASH_DEBUG: Registered element for {scope_id}, overlay has {len(overlay._elements)} keys")
-        else:
-            logger.debug(f"⚡ FLASH_DEBUG: No overlay for window, cannot register list item {scope_id}")
-
-        # Subscribe to ObjectState changes
-        from objectstate import ObjectStateRegistry
-        state = ObjectStateRegistry.get_by_scope(scope_id)
-        logger.debug(f"⚡ FLASH_DEBUG: ObjectStateRegistry.get_by_scope({scope_id}) = {state}")
-        if not state:
-            logger.debug(f"⚡ FLASH_DEBUG: No ObjectState for scope {scope_id}, returning")
-            return
-
-        def on_change(changed_paths):
-            logger.debug(f"⚡ FLASH_DEBUG on_change CALLBACK FIRED: scope={scope_id}, paths={changed_paths}")
-            self.queue_flash(scope_id)  # Global flash - list items flash in ALL windows
-            # CRITICAL: Also refresh list item text when resolved values change
-            # on_state_changed only fires when dirty SET changes, not when values change
-            # So if func was already dirty and we reorder, text needs to update too
-            self.queue_visual_update()
-
-        state.on_resolved_changed(on_change)
-        self._flash_subscriptions[scope_id] = (state, on_change)
-        logger.debug(f"⚡ FLASH_DEBUG: Subscribed to {scope_id}, total subscriptions={len(self._flash_subscriptions)}")
-
-        # Subscribe to dirty state changes for reactive dirty markers
-        if scope_id not in self._dirty_subscriptions:
-            def on_state_changed():
-                """Update list item text when materialized state changes."""
-                logger.debug(f"🔧 DIRTY_DEBUG on_state_changed: scope={scope_id}")
-                self.queue_visual_update()  # Refresh list item text
-
-            state.on_state_changed(on_state_changed)
-            self._dirty_subscriptions[scope_id] = (state, on_state_changed)
-            logger.debug(f"🔧 DIRTY_DEBUG: Subscribed to dirty changes for {scope_id}")
+        """Return the main window owned by the required service adapter."""
+        return self.service_adapter.main_window
 
     # VisualUpdateMixin implementation - list items use WindowFlashOverlay (no custom methods needed)
+
+    @property
+    def has_list_navigation_items(self) -> bool:
+        """Return whether list navigation can resolve item ids."""
+        return self._list_visual_state.has_navigation_items
+
+    def clear_list_visual_state(self) -> None:
+        """Clear list flash subscriptions and navigation geometry."""
+        self._list_visual_state.cleanup()
 
     def _visual_repaint(self) -> None:
         """Trigger single repaint after all items updated (VisualUpdateMixin)."""
@@ -1319,90 +514,10 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """Override CrossWindowPreviewMixin to use unified visual update batching."""
         self.queue_visual_update()
 
-    def _cleanup_flash_subscriptions(self) -> None:
-        """Unsubscribe all flash and dirty callbacks and clear scope mappings."""
-        logger.debug(f"⚡ FLASH_DEBUG _cleanup_flash_subscriptions: self={type(self).__name__}, clearing {len(self._flash_subscriptions)} flash + {len(self._dirty_subscriptions)} dirty subscriptions")
-
-        # Cleanup flash subscriptions
-        for scope_id, (state, on_change_callback) in list(self._flash_subscriptions.items()):
-            logger.debug(f"⚡ FLASH_DEBUG: Unsubscribing from {scope_id}")
-            try:
-                state.off_resolved_changed(on_change_callback)
-            except Exception as e:
-                logger.debug(f"⚡ FLASH_DEBUG: Error unsubscribing from {scope_id}: {e}")
-
-            # CRITICAL: Also unregister the FlashElement from the overlay
-            # Otherwise stale geometry callbacks will point to deleted QListWidgetItems
-            overlay = WindowFlashOverlay.get_for_window(self)
-            if overlay:
-                logger.debug(f"⚡ FLASH_DEBUG: Unregistering FlashElement for {scope_id}")
-                overlay.unregister_element(scope_id)
-
-        # Cleanup dirty state subscriptions
-        for scope_id, (state, on_dirty_callback) in list(self._dirty_subscriptions.items()):
-            try:
-                state.off_state_changed(on_dirty_callback)
-            except Exception as e:
-                logger.debug(f"🔧 DIRTY_DEBUG: Error unsubscribing dirty from {scope_id}: {e}")
-
-        self._flash_subscriptions.clear()
-        self._dirty_subscriptions.clear()
-        self._scope_to_list_item.clear()
-        logger.debug(f"⚡ FLASH_DEBUG: Subscriptions cleared")
-
-    # ========== Scope Coloring (optional) ==========
-
-    def _get_list_item_scope(self, item: Any, index: int) -> Optional[Tuple[str, Any]]:
-        """Resolve scope info for list item via ITEM_HOOKS."""
-        hooks = self.ITEM_HOOKS
-        item_type = hooks.get("scope_item_type")
-        if not item_type:
-            return None
-
-        scope_id = None
-        builder = hooks.get("scope_id_builder")
-        if builder:
-            scope_id = builder(item, index, self)
-        else:
-            scope_id_attr = hooks.get("scope_id_attr")
-            if scope_id_attr:
-                if isinstance(item, dict):
-                    scope_id = item.get(scope_id_attr)
-                else:
-                    scope_id = getattr(item, scope_id_attr, None)
-
-        return (scope_id, item_type) if scope_id else None
-
-    def _apply_list_item_scope_color(self, list_item: QListWidgetItem, item: Any, index: int) -> None:
-        """Apply scope-based background and border colors to list item.
-
-        Stores full ScopeColorScheme so delegate can paint layered borders
-        matching the corresponding window's border style.
-
-        The actual list position (index) is passed to get_scope_color_scheme
-        so that border patterns reflect the item's CURRENT position in the list,
-        not the token number which is stable across reordering.
-        """
-        scope_info = self._get_list_item_scope(item, index)
-        if not scope_info:
-            return
-
-        scope_id, item_type = scope_info
-        from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
-        from pyqt_reactive.widgets.shared.list_item_delegate import FLASH_KEY_ROLE
-
-        # Pass actual list position for border pattern (not token number)
-        scheme = get_scope_color_scheme(scope_id, step_index=index)
-
-        bg_color = item_type.get_background_color(scheme)
-        if bg_color:
-            list_item.setBackground(bg_color)
-
-        # Store full scheme for layered border rendering (not just border color)
-        list_item.setData(self.SCOPE_BORDER_ROLE, scheme)
-
-        # Store flash key so delegate can paint flash behind text
-        list_item.setData(FLASH_KEY_ROLE, scope_id)
+    def _get_item_scope_id(self, item: Any, index: int) -> Optional[str]:
+        """Return the ObjectState scope id represented by a list item."""
+        del item, index
+        return None
 
     # ========== List Update Template ==========
 
@@ -1417,105 +532,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         4. Post-update hook (auto-select first if needed)
         5. Update button states
         """
-        from pyqt_reactive.widgets.mixins import preserve_selection_during_update
-
-        # Check for placeholder
-        placeholder = self._get_list_placeholder()
-        if placeholder is not None:
-            self.item_list.clear()
-            text, data = placeholder
-            placeholder_item = QListWidgetItem(text)
-            placeholder_item.setData(Qt.ItemDataRole.UserRole, data)
-            self.item_list.addItem(placeholder_item)
-            self.update_button_states()
-            return
-
-        # Pre-update hook (collect live context, normalize state)
-        update_context = self.prepare_list_update()
-
-        # Clear scope cache at start of update cycle - will be populated lazily
-        self._item_scope_cache.clear()
-
-        def update_func():
-            """Update list items and subscriptions."""
-            backing_items = self._get_backing_items()
-            current_count = self.item_list.count()
-            expected_count = len(backing_items)
-
-            # Check if items have actually changed (not just count)
-            # This detects plate switches where count is same but items are different
-            items_changed = False
-            if current_count == expected_count and current_count > 0:
-                # Compare current scope_ids with subscribed scope_ids
-                current_scope_ids = {self._get_cached_scope(item) for item in backing_items}
-                subscribed_scope_ids = set(self._flash_subscriptions.keys())
-                items_changed = current_scope_ids != subscribed_scope_ids
-                logger.debug(f"⚡ FLASH_DEBUG: count={current_count}, current_scopes={current_scope_ids}, subscribed_scopes={subscribed_scope_ids}, items_changed={items_changed}")
-
-            if current_count == expected_count and current_count > 0 and not items_changed:
-                # Same count AND same items - update text in place (optimization)
-                # DON'T cleanup subscriptions - they're still valid, just update text
-                for index, item_obj in enumerate(backing_items):
-                    list_item = self.item_list.item(index)
-                    if list_item is None:
-                        continue
-
-                    display_text = self._format_list_item(item_obj, index, update_context)
-                    if list_item.text() != display_text:
-                        list_item.setText(display_text)
-
-                    list_item.setData(Qt.ItemDataRole.UserRole, self._get_list_item_data(item_obj, index))
-                    list_item.setToolTip(self._get_list_item_tooltip(item_obj))
-
-                    for role_offset, value in self._get_list_item_extra_data(item_obj, index).items():
-                        list_item.setData(Qt.ItemDataRole.UserRole + role_offset, value)
-
-                    # Per-field styling roles (segments + dirty/sig-diff field sets)
-                    self._set_item_styling_roles(list_item, display_text, item_obj)
-
-                    # Apply scope-based colors
-                    self._apply_list_item_scope_color(list_item, item_obj, index)
-
-                    # Only subscribe if not already subscribed (use cached scope)
-                    scope_id = self._get_cached_scope(item_obj)
-                    if scope_id and scope_id not in self._flash_subscriptions:
-                        self._subscribe_flash_for_item(item_obj, list_item, scope_id)
-            else:
-                # Count changed OR items changed - rebuild list AND subscriptions
-                self._cleanup_flash_subscriptions()
-                self._scope_to_list_item.clear()
-                self.item_list.clear()
-                for index, item_obj in enumerate(backing_items):
-                    display_text = self._format_list_item(item_obj, index, update_context)
-                    list_item = QListWidgetItem(display_text)
-                    list_item.setData(Qt.ItemDataRole.UserRole, self._get_list_item_data(item_obj, index))
-                    list_item.setToolTip(self._get_list_item_tooltip(item_obj))
-
-                    for role_offset, value in self._get_list_item_extra_data(item_obj, index).items():
-                        list_item.setData(Qt.ItemDataRole.UserRole + role_offset, value)
-
-                    # Per-field styling roles (segments + dirty/sig-diff field sets)
-                    self._set_item_styling_roles(list_item, display_text, item_obj)
-
-                    # Apply scope-based colors
-                    self._apply_list_item_scope_color(list_item, item_obj, index)
-
-                    self.item_list.addItem(list_item)
-                    # Pass cached scope to avoid double lookup
-                    scope_id = self._get_cached_scope(item_obj)
-                    self._subscribe_flash_for_item(item_obj, list_item, scope_id)
-
-            # Post-update (e.g., auto-select first)
-            self._post_update_list()
-
-        # Preserve selection during update
-        preserve_selection_during_update(
-            self.item_list,
-            self._get_item_id,
-            self._should_preserve_selection,
-            update_func
-        )
-        self.update_button_states()
+        self._list_updater.update(self._list_update_operations())
 
     # ========== Abstract Methods (Subclass MUST implement) ==========
 
@@ -1541,26 +558,9 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
     # === CRUD Hooks (declarative via ITEM_HOOKS where possible) ===
 
-    def _get_item_from_list_item(self, list_item: QListWidgetItem) -> Any:
-        """Extract item from QListWidgetItem. Interprets ITEM_HOOKS['list_item_data']."""
-        data = list_item.data(Qt.ItemDataRole.UserRole)
-        if self.ITEM_HOOKS.get('list_item_data') == 'index':
-            # Data is index, look up in backing list
-            items = self._get_backing_items()
-            return items[data] if data is not None and 0 <= data < len(items) else None
-        # Data is the item itself
-        return data
-
     def validate_delete(self, items: List[Any]) -> bool:
         """Check if delete is allowed. Default: True. Override for restrictions."""
-        workflow = self.deletion_workflow
-        if workflow is not None and hasattr(workflow, "validate"):
-            return workflow.validate(items)
-        return True
-
-    def _validate_delete(self, items: List[Any]) -> bool:
-        """Compatibility shim for subclasses still overriding the old private hook."""
-        return self.validate_delete(items)
+        return self.deletion_workflow.validate(items)
 
     def perform_delete(self, items: List[Any]) -> None:
         """
@@ -1569,17 +569,7 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         PlateManager: Remove from self.plates, cleanup orchestrators
         PipelineEditor: Remove from self.pipeline_steps, update orchestrator
         """
-        workflow = self.deletion_workflow
-        if workflow is not None and hasattr(workflow, "delete"):
-            workflow.delete(items)
-            return
-        raise NotImplementedError(
-            f"{type(self).__name__}.perform_delete requires a deletion workflow or override"
-        )
-
-    def _perform_delete(self, items: List[Any]) -> None:
-        """Compatibility shim for callers still bound to the old private hook."""
-        self.perform_delete(items)
+        self.deletion_workflow.delete(items)
 
     @abstractmethod
     def show_item_editor(self, item: Any) -> None:
@@ -1591,51 +581,32 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """
         ...
 
-    def _show_item_editor(self, item: Any) -> None:
-        """Compatibility shim for callers still bound to the old private hook."""
-        self.show_item_editor(item)
+    # === List Update Hooks ===
 
-    # === UI Hooks (declarative via ITEM_HOOKS) ===
-
-    def _get_item_id(self, item: Any) -> str:
-        """Get unique ID for selection preservation. Interprets ITEM_HOOKS['id_accessor']."""
-        accessor = self.ITEM_HOOKS.get('id_accessor', 'id')
-        if isinstance(accessor, tuple) and accessor[0] == 'attr':
-            return getattr(item, accessor[1], '')
-        return item.get(accessor) if isinstance(item, dict) else getattr(item, accessor, '')
-
-    def _should_preserve_selection(self) -> bool:
-        """Predicate for selection preservation. Interprets ITEM_HOOKS['preserve_selection_pred']."""
-        pred = self.ITEM_HOOKS.get('preserve_selection_pred')
-        return pred(self) if pred else False
-
-    @abstractmethod
-    def format_item_for_display(self, item: Any, live_ctx=None) -> Tuple[str, str]:
-        """
-        Format item for display with preview.
-
-        Returns:
-            Tuple of (display_text, item_id_for_selection)
-
-        PlateManager: return (multiline_text, plate['path'])
-        PipelineEditor: return (display_text, step.name)
-        """
-        ...
-
-    # === List Update Hooks (partially declarative via ITEM_HOOKS) ===
-
-    def _get_backing_items(self) -> List[Any]:
-        """Get backing list. Interprets ITEM_HOOKS['backing_attr']."""
-        return getattr(self, self.ITEM_HOOKS['backing_attr'])
-
-    def _format_list_item(self, item: Any, index: int, context: Any) -> str:
-        """Format item for list display.
-
-        Calls _format_item_content() which may return:
-        - str: Plain text (no styling)
-        - StyledText with segments: Per-field dirty/sig-diff styling via delegate
-        """
-        return self._format_item_content(item, index, context)
+    def _list_update_operations(self) -> ManagerListUpdateOperations:
+        """Return the nominal operation port consumed by ManagerListUpdater."""
+        return ManagerListUpdateOperations(
+            item_list=self.item_list,
+            backing_items=self._item_access.state_binding.items(self),
+            item_id=self._item_access.item_hooks.item_id,
+            should_preserve_selection=lambda: self._item_access.item_hooks.should_preserve_selection(self),
+            placeholder=self._get_list_placeholder,
+            prepare_update=self.prepare_list_update,
+            clear_scope_cache=self._item_access.clear_scope_cache,
+            subscribed_scope_ids=self._list_visual_state.subscribed_scope_ids,
+            scope_for_item=self._item_access.scope_for_item,
+            cleanup_flash_subscriptions=self._list_visual_state.cleanup,
+            clear_scope_to_list_item=self._list_visual_state.clear_scope_to_list_item,
+            format_item=self._format_item_content,
+            list_item_data_for=self._item_access.item_hooks.list_item_data_for,
+            tooltip_for=self._get_list_item_tooltip,
+            extra_data_for=self._get_list_item_extra_data,
+            set_styling_roles=self._list_visual_state.set_item_styling_roles,
+            apply_scope_color=self._list_visual_state.apply_scope_color,
+            subscribe_flash=self._list_visual_state.subscribe_flash,
+            post_update=self._post_update_list,
+            update_button_states=self.update_button_states,
+        )
 
     @abstractmethod
     def _format_item_content(self, item: Any, index: int, context: Any) -> str:
@@ -1644,53 +615,6 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         May return StyledText with segments for per-field styling.
         """
         ...
-
-    def _get_item_dirty_fields(self, item: Any) -> set:
-        """Get set of dirty field paths for per-field styling."""
-        try:
-            scope_id = self._get_cached_scope(item)
-            state = ObjectStateRegistry.get_by_scope(scope_id)
-            return state.dirty_fields if state else set()
-        except Exception:
-            return set()
-
-    def _get_item_sig_diff_fields(self, item: Any) -> set:
-        """Get set of signature-diff field paths for per-field styling."""
-        try:
-            scope_id = self._get_cached_scope(item)
-            state = ObjectStateRegistry.get_by_scope(scope_id)
-            return state.signature_diff_fields if state else set()
-        except Exception:
-            return set()
-
-    def _set_item_styling_roles(self, list_item: 'QListWidgetItem', display_text: Any, item_obj: Any) -> None:
-        """Set per-field styling roles on a list item.
-
-        Call this from any code that updates list items outside of _update_list()
-        (e.g., single-item refresh methods in subclasses).
-
-        Args:
-            list_item: The QListWidgetItem to set roles on
-            display_text: The display text (StyledText with layout, or plain str)
-            item_obj: The backing data object for dirty/sig-diff field lookup
-        """
-        layout = None
-        if isinstance(display_text, StyledText):
-            layout = display_text.layout
-        elif isinstance(display_text, StyledTextLayout):
-            layout = display_text
-
-        if layout is not None:
-            list_item.setData(LAYOUT_ROLE, layout)
-            list_item.setData(DIRTY_FIELDS_ROLE, self._get_item_dirty_fields(item_obj))
-            list_item.setData(SIG_DIFF_FIELDS_ROLE, self._get_item_sig_diff_fields(item_obj))
-        else:
-            logger.error(f"Cannot set LAYOUT_ROLE: display_text={type(display_text)}, is_StyledText={isinstance(display_text, StyledText)}")
-
-    def _get_list_item_data(self, item: Any, index: int) -> Any:
-        """Get UserRole data. Interprets ITEM_HOOKS['list_item_data']."""
-        strategy = self.ITEM_HOOKS.get('list_item_data', 'item')
-        return index if strategy == 'index' else item
 
     @abstractmethod
     def _get_list_item_tooltip(self, item: Any) -> str:
@@ -1728,16 +652,12 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """
         Pre-update hook: normalize state, collect context.
 
-        Returns context object passed to _format_list_item.
+        Returns context object passed to _format_item_content.
 
         PlateManager: return None
         PipelineEditor: normalize scope tokens, collect live context, return snapshot
         """
         return None  # Default: no context
-
-    def _pre_update_list(self) -> Any:
-        """Compatibility shim for subclasses still overriding the old private hook."""
-        return self.prepare_list_update()
 
     def _post_update_list(self) -> None:
         """
@@ -1748,574 +668,27 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """
         pass  # Default: no-op
 
-    # === Config Preview Building ===
-
-    def _discover_preview_fields_from_registry(self, config_source: Any) -> List[str]:
-        """
-        Auto-discover preview fields from PREVIEW_LABEL_REGISTRY.
-
-        Scans config_source's dataclass fields and returns field names
-        whose types are registered in PREVIEW_LABEL_REGISTRY.
-
-        Args:
-            config_source: Dataclass instance to scan for registered preview types
-
-        Returns:
-            List of field names whose types have preview labels registered
-        """
-        from dataclasses import fields, is_dataclass
-        from typing import get_origin, get_args, Union
-        from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
-
-        if not is_dataclass(config_source):
-            return []
-
-        discovered = []
-        for f in fields(config_source):
-            field_type = f.type
-
-            # Unwrap Optional[T] -> T
-            if get_origin(field_type) is Union:
-                args = get_args(field_type)
-                field_type = next((t for t in args if t is not type(None)), field_type)
-
-            # Check if type is in registry
-            if field_type in PREVIEW_LABEL_REGISTRY:
-                discovered.append(f.name)
-                continue
-
-            # Check base classes (for lazy wrapper types)
-            if isinstance(field_type, type):
-                for base in field_type.__mro__[1:]:
-                    if base in PREVIEW_LABEL_REGISTRY:
-                        discovered.append(f.name)
-                        break
-
-        return discovered
-
-    def _discover_always_viewable_fields(self, state: Optional['ObjectState']) -> Set[str]:
-        """
-        Auto-discover always viewable fields from ALWAYS_VIEWABLE_FIELDS_REGISTRY.
-
-        Scans the ObjectState's config types and returns field paths that should
-        always be shown in previews, as declared by the config types themselves.
-
-        For Enableable config types, automatically includes the 'enabled' field in
-        the preview when resolved to True. Additional fields from
-        ALWAYS_VIEWABLE_FIELDS_REGISTRY are also included when enabled is True.
-        If enabled is None (unresolved) or False, no fields are shown. This allows
-        configs to conditionally show preview fields based on their enabled state.
-
-        Args:
-            state: ObjectState to scan for registered always viewable fields
-
-        Returns:
-            Set of field paths that should always be viewable
-        """
-        from objectstate.lazy_factory import ALWAYS_VIEWABLE_FIELDS_REGISTRY
-        from dataclasses import is_dataclass, fields
-
-        if state is None:
-            return set()
-
-        always_viewable = set()
-
-        # Get all config types from the state
-        for path, config_type in state._path_to_type.items():
-            if not is_dataclass(config_type):
-                continue
-
-            # For Enableable configs: automatically include 'enabled' field when True
-            if is_enableable(config_type):
-                enabled_path = f"{path}.{ENABLED_FIELD}" if path else ENABLED_FIELD
-                resolved_enabled = state.get_resolved_value(enabled_path)
-                if resolved_enabled is True:
-                    always_viewable.add(enabled_path)
-                    logger.debug(f"📐 PREVIEW: Added enabled field {enabled_path} for {config_type.__name__}")
-
-            # Check if this config type has always viewable fields registered
-            registered_fields = None
-            if config_type in ALWAYS_VIEWABLE_FIELDS_REGISTRY:
-                registered_fields = ALWAYS_VIEWABLE_FIELDS_REGISTRY[config_type]
-            else:
-                # Check base classes (for lazy wrapper types)
-                for base in config_type.__mro__[1:]:
-                    if base in ALWAYS_VIEWABLE_FIELDS_REGISTRY:
-                        registered_fields = ALWAYS_VIEWABLE_FIELDS_REGISTRY[base]
-                        break
-
-            if registered_fields:
-                # For Enableable configs, check if enabled resolves to True
-                if is_enableable(config_type):
-                    enabled_path = f"{path}.{ENABLED_FIELD}" if path else ENABLED_FIELD
-                    resolved_enabled = state.get_resolved_value(enabled_path)
-                    # Only show fields if enabled is explicitly True
-                    # If enabled is None (unresolved) or False, don't show
-                    if resolved_enabled is not True:
-                        logger.debug(f"📐 PREVIEW: Skipping always_viewable fields for {config_type.__name__} - enabled={resolved_enabled}")
-                        continue
-
-                # Build full field paths (e.g., 'napari_streaming_config.persistent')
-                for field_name in registered_fields:
-                    if path:
-                        full_path = f"{path}.{field_name}"
-                    else:
-                        full_path = field_name
-                    always_viewable.add(full_path)
-                    logger.debug(f"📐 PREVIEW: Added always_viewable field {full_path} for {config_type.__name__}")
-
-        return always_viewable
-
-    def _build_styled_display_text(
-        self,
-        item_name: str,
-        segments: List[Tuple[str, Optional[str]]],
-    ) -> 'StyledText':
-        """
-        Build StyledText with inline preview format for per-field styling.
-
-        Produces format: "▶ ItemName  (seg1 | seg2 | seg3)"
-
-        Uses structured StyledTextLayout - delegate renders directly from structure.
-
-        Args:
-            item_name: Display name of item
-            segments: List of (label_text, field_path) tuples for preview items
-
-        Returns:
-            StyledText with layout for per-field dirty/sig-diff styling
-        """
-        # Convert tuples to Segment objects with preview grouping support
-        # Grouping is handled by segments having sep_before set on individual segments
-        def _create_segments_with_grouping(segments_list, asterisk_prefix=False):
-            if not segments_list:
-                return []
-            result = []
-            for i, item in enumerate(segments_list):
-                # Handle both 2-tuple (label, path) and 3-tuple (label, path, sep_before)
-                if len(item) == 2:
-                    label, path = item
-                    sep = None
-                else:
-                    label, path, sep = item
-                # Use sep if provided, otherwise None for first item
-                segment_sep = sep if i > 0 else None
-                result.append(Segment(text=label, field_path=path, sep_before=segment_sep, asterisk_prefix=asterisk_prefix))
-            return result
-
-        layout = StyledTextLayout(
-            name=Segment(text=item_name, field_path='', asterisk_prefix=True),
-            status_prefix=status_prefix,
-            first_line_segments=_create_segments_with_grouping(first_line_segments or []),
-            detail_line=detail_line,
-            preview_segments=_create_segments_with_grouping(segments, asterisk_prefix=True),
-            config_segments=_create_segments_with_grouping(config_segments or [], asterisk_prefix=True),
-            multiline=True,
-        )
-        return StyledText(layout)
-
-    def _build_multiline_styled_text(
-        self,
-        item_name: str,
-        segments: List[Tuple[str, Optional[str]]],
-        status_prefix: str = "",
-        detail_line: str = "",
-        config_segments: Optional[List[Tuple[str, Optional[str]]]] = None,
-        first_line_segments: Optional[List[Tuple[str, Optional[str]]]] = None,
-        item: Any = None,
-        state: Optional['ObjectState'] = None,
-    ) -> 'StyledText':
-        """
-        Build StyledText with multiline preview format for per-field styling.
-
-        Produces format:
-            ▶ ItemName (first_seg1 | first_seg2)
-              detail_line
-              └─ seg1 | seg2 | configs=[CFG1, CFG2]
-
-        Uses structured StyledTextLayout - delegate renders directly from structure.
-
-        Args:
-            item_name: Display name of item
-            segments: List of (label_text, field_path) tuples for preview line
-            status_prefix: Optional status prefix (e.g., "✓ Init")
-            detail_line: Optional second line (e.g., path or description)
-            config_segments: Optional config segments (NAP, FIJI, MAT) shown in brackets
-            first_line_segments: Optional segments to show on first line after name
-            item: Optional item for auto-including sig-diff fields in preview
-            state: ObjectState with pre-cached resolved values (passed from entry point)
-
-        Returns:
-            StyledText with layout for per-field dirty/sig-diff styling
-        """
-        # Auto-include sig-diff fields that aren't already in segments
-        if item is not None and state is not None:
-            sig_diff_fields = self._get_item_sig_diff_fields(item)
-            # Extract paths from segments (handle both 2-tuple and 3-tuple)
-            existing_paths = {seg[1] for seg in segments if len(seg) > 1 and seg[1]}
-            if config_segments:
-                existing_paths.update(seg[1] for seg in config_segments if len(seg) > 1 and seg[1])
-            if first_line_segments:
-                existing_paths.update(seg[1] for seg in first_line_segments if len(seg) > 1 and seg[1])
-
-            # Collect sig-diff field paths that need to be added
-            sig_diff_paths_to_add = []
-            for field_path in sig_diff_fields:
-                # Skip 'name' - it's already shown as item title
-                if field_path == 'name':
-                    continue
-                # Skip if already covered by existing segment (exact or prefix)
-                if any(field_path == p or field_path.startswith(p + '.') for p in existing_paths):
-                    continue
-                sig_diff_paths_to_add.append(field_path)
-
-            # Add sig-diff fields using strategy for consistent grouping
-            if sig_diff_paths_to_add:
-                sig_diff_segments = self._preview_formatting_strategy.collect_and_render(
-                    state, sig_diff_paths_to_add, {}, self._format_field_value
-                )
-                # If there are existing segments, prepend separator to first sig-diff segment
-                if segments and sig_diff_segments:
-                    first_label, first_path, _ = sig_diff_segments[0]
-                    sig_diff_segments[0] = (first_label, first_path, " | ")
-                segments.extend(sig_diff_segments)
-
-        # Convert tuples to Segment objects with preview grouping support
-        def _create_segments_with_grouping(segments_list, sep_before_first=None, asterisk_prefix=False):
-            """Convert segment tuples to Segment objects, preserving grouping info.
-
-            Handles both 2-tuples (label, path) and 3-tuples (label, path, sep_before).
-            The sep_before field contains the strategy's grouping decisions.
-            """
-            if not segments_list:
-                return []
-            result = []
-            for i, item in enumerate(segments_list):
-                # Handle both 2-tuple (label, path) and 3-tuple (label, path, sep_before)
-                if len(item) == 2:
-                    label, path = item
-                    sep = None
-                else:
-                    label, path, sep = item
-
-                # Use strategy's sep_before if provided, otherwise use default
-                if sep is not None:
-                    seg = Segment(text=label, field_path=path, sep_before=sep, asterisk_prefix=asterisk_prefix)
-                elif i > 0:
-                    seg = Segment(text=label, field_path=path, sep_before=sep_before_first, asterisk_prefix=asterisk_prefix)
-                else:
-                    seg = Segment(text=label, field_path=path, sep_before=None, asterisk_prefix=asterisk_prefix)
-                result.append(seg)
-            return result
-
-        layout = StyledTextLayout(
-            name=Segment(text=item_name, field_path='', asterisk_prefix=True),
-            status_prefix=status_prefix,
-            first_line_segments=_create_segments_with_grouping(first_line_segments or []),
-            detail_line=detail_line,
-            preview_segments=_create_segments_with_grouping(segments, sep_before_first=" | ", asterisk_prefix=True),
-            config_segments=_create_segments_with_grouping(config_segments or [], sep_before_first=" | ", asterisk_prefix=True),
-            multiline=True,
-        )
-        return StyledText(layout)
-
-    def _build_item_display_from_format(
+    def build_item_display_from_format(
         self,
         item: Any,
         item_name: str,
         status_prefix: str = "",
         detail_line: str = "",
     ) -> 'StyledText':
-        """
-        Build StyledText using declarative LIST_ITEM_FORMAT config.
-
-        Gets ObjectState ONCE and passes it down. No fallbacks.
-
-        Args:
-            item: The item to format (used for scope lookup and sig-diff detection)
-            item_name: Display name
-            status_prefix: Optional status prefix (e.g., "✓ Init")
-            detail_line: Optional detail line (e.g., path)
-
-        Returns:
-            StyledText with segments for per-field styling
-        """
-        from objectstate import ObjectStateRegistry
-
-        fmt = self.LIST_ITEM_FORMAT
-        if fmt is None:
-            return self._build_multiline_styled_text(
-                item_name=item_name, segments=[], status_prefix=status_prefix,
-                detail_line=detail_line, item=item, state=None,
-            )
-
-        # Get ObjectState ONCE at entry point
-        scope_id = self._get_cached_scope(item) if item else None
-        state = ObjectStateRegistry.get_by_scope(scope_id) if scope_id else None
-
-        # Build segments from declared field paths
-        first_line_segments = self._format_segments_from_config(state, list(fmt.first_line))
-        preview_segments = self._format_segments_from_config(state, list(fmt.preview_line))
-
-        # Add always viewable fields from ALWAYS_VIEWABLE_FIELDS_REGISTRY
-        # These are merged into preview_segments to appear inline with other preview fields
-        always_viewable = self._discover_always_viewable_fields(state)
-        if always_viewable:
-            logger.debug(f"📐 PREVIEW: Adding always_viewable fields to preview: {always_viewable}")
-            # Format the always viewable fields
-            always_viewable_segments = self._format_segments_from_config(state, list(always_viewable))
-            # If there are existing preview segments, ensure first always_viewable has separator
-            if preview_segments and always_viewable_segments:
-                first_seg = always_viewable_segments[0]
-                # Tuple is (label, path, sep_before) - update sep_before to " | "
-                always_viewable_segments[0] = (first_seg[0], first_seg[1], " | ")
-            preview_segments.extend(always_viewable_segments)
-
-        # Detail line from ObjectState
-        if not detail_line and fmt.detail_line_field and state:
-            detail_line = state.get_resolved_value(fmt.detail_line_field) or ""
-
-        return self._build_multiline_styled_text(
-            item_name=item_name,
-            segments=preview_segments,
-            status_prefix=status_prefix,
-            detail_line=detail_line,
-            config_segments=None,  # Removed old PREVIEW_FIELD_CONFIGS fallback
-            first_line_segments=first_line_segments,
+        """Build StyledText using declarative LIST_ITEM_FORMAT config."""
+        return self._item_display_builder.build_from_format(
             item=item,
-            state=state,
+            item_name=item_name,
+            item_format=self.LIST_ITEM_FORMAT,
+            status_prefix=status_prefix,
+            detail_line=detail_line,
         )
-
-    def _format_segments_from_config(
-        self,
-        state: Optional['ObjectState'],
-        field_paths: List[str],
-    ) -> List[Tuple[str, str, Optional[str]]]:
-        """
-        Build segments from declarative field paths, grouped by container.
-
-        Reads from ObjectState's pre-cached resolved values. Groups fields by
-        their dataclass container with abbr { } labels.
-
-        Args:
-            state: ObjectState with pre-cached resolved values
-            field_paths: List of field path strings (e.g., ['func', 'processing_config.group_by'])
-
-        Returns:
-            List of (label_text, field_path, sep_before) tuples for styling
-            where sep_before is the separator before this segment
-        """
-        fmt = self.LIST_ITEM_FORMAT
-        formatters = fmt.formatters if fmt else {}
-        return self._preview_formatting_strategy.collect_and_render(
-            state, field_paths, formatters, self._format_field_value
-        )
-
-    def _format_field_value(self, field_path: str, value: Any) -> Optional[str]:
-        """Simple type-based formatting for field values. No fallbacks."""
-        if value is None:
-            return None
-
-        field_name = field_path.split('.')[-1]
-        # Look up abbreviation from registry (declared on config classes)
-        abbrev = self._get_field_abbreviation(field_name, type(value))
-
-        # Dataclass config - delegate to config_preview_formatters (returns full indicator)
-        if is_dataclass(value) and not isinstance(value, type):
-            from pyqt_reactive.protocols import PreviewFormatterRegistry
-            formatted = PreviewFormatterRegistry.format_field(value, field_name)
-            if formatted is None:
-                formatted = self._get_preview_label_for_config(value)
-            return formatted
-
-        # All other values: format value, prepend field name
-        formatted = self._format_preview_value(value)
-        if formatted is None:
-            return None
-        return f"{abbrev}:{formatted}"
-
-    def _format_preview_value(self, value: Any) -> Optional[str]:
-        """Format a value for preview display."""
-        from enum import Enum
-
-        if value is None:
-            return None
-        if isinstance(value, Enum):
-            if value.value is None:
-                return None
-            return value.name
-        if isinstance(value, list):
-            if not value:
-                return None
-            if isinstance(value[0], Enum):
-                return ','.join(v.value for v in value)
-            return f'[{len(value)}]'
-        if callable(value) and not isinstance(value, type):
-            return getattr(value, '__name__', str(value))
-        return str(value)
-
-    def _get_preview_label_for_config(self, config_obj: Any) -> Optional[str]:
-        """Return preview label from PREVIEW_LABEL_REGISTRY for a config object."""
-        from dataclasses import is_dataclass, fields
-        from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
-
-        config_type = type(config_obj)
-        # Respect enabled field if present
-        if is_dataclass(config_obj):
-            field_names = {f.name for f in fields(config_obj)}
-            if "enabled" in field_names:
-                try:
-                    if not bool(getattr(config_obj, "enabled")):
-                        return None
-                except Exception:
-                    pass
-
-        if config_type in PREVIEW_LABEL_REGISTRY:
-            return PREVIEW_LABEL_REGISTRY[config_type]
-
-        for base in config_type.__mro__[1:]:
-            if base in PREVIEW_LABEL_REGISTRY:
-                return PREVIEW_LABEL_REGISTRY[base]
-
-        return None
-
-    def _get_field_abbreviation(self, field_name: str, config_type: Optional[type] = None) -> str:
-        """Look up field abbreviation from registry."""
-        from objectstate.lazy_factory import FIELD_ABBREVIATIONS_REGISTRY
-
-        if config_type is not None:
-            if config_type in FIELD_ABBREVIATIONS_REGISTRY:
-                abbrevs = FIELD_ABBREVIATIONS_REGISTRY[config_type]
-                if field_name in abbrevs:
-                    return abbrevs[field_name]
-            for base in config_type.__mro__[1:]:
-                if base in FIELD_ABBREVIATIONS_REGISTRY:
-                    abbrevs = FIELD_ABBREVIATIONS_REGISTRY[base]
-                    if field_name in abbrevs:
-                        return abbrevs[field_name]
-
-        for abbrevs in FIELD_ABBREVIATIONS_REGISTRY.values():
-            if field_name in abbrevs:
-                return abbrevs[field_name]
-
-        return field_name
-
-    def _get_nested_attr(self, obj: Any, path: str) -> Any:
-        """Get nested attribute value by dotted path."""
-        parts = path.split('.')
-        for part in parts:
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                obj = obj.get(part)
-            else:
-                obj = getattr(obj, part, None)
-        return obj
-
-    def _build_config_indicators(
-        self,
-        item: Any,
-        config_source: Any,
-        config_attrs: Iterable[str],
-        live_context_snapshot: Any = None
-    ) -> List[str]:
-        """
-        Build config indicator strings for display (direct attribute iteration).
-
-        Alternative to _build_preview_labels() for cases where you want to iterate
-        over specific config attributes rather than using get_enabled_preview_fields().
-
-        Args:
-            item: Semantic item for context stack (orchestrator or step)
-            config_source: Object to get config attributes from (pipeline_config or step)
-            config_attrs: Iterable of config attribute names to check
-            live_context_snapshot: Optional live context for resolving lazy values
-
-        Returns:
-            List of formatted indicator strings (e.g., ["NAP", "FIJI", "MAT"])
-        """
-        from pyqt_reactive.protocols import PreviewFormatterRegistry
-
-        indicators = []
-        for config_attr in config_attrs:
-            config = getattr(config_source, config_attr, None)
-            if config is None:
-                continue
-
-            # Create resolver function that uses live context
-            # _resolve_config_attr uses resolve_for_type internally to find the correct path
-            def resolve_attr(parent_obj, config_obj, attr_name, context,
-                             i=item, snapshot=live_context_snapshot):
-                return self._resolve_config_attr(i, config_obj, attr_name, snapshot)
-
-            # Use registered formatter if available
-            indicator_text = PreviewFormatterRegistry.format_field(config, config_attr)
-            if indicator_text is None:
-                indicator_text = self._get_preview_label_for_config(config)
-
-            if indicator_text:
-                indicators.append(indicator_text)
-
-        return indicators
-
-    @abstractmethod
-    def _get_current_orchestrator(self):
-        """
-        Get orchestrator for current context.
-
-        PlateManager: return self.orchestrators.get(self.selected_plate_path)
-        PipelineEditor: return self._current_orchestrator (explicitly injected)
-        """
-        ...
-
-    # === Selection Hooks (declarative via ITEM_HOOKS) ===
-
-    def _handle_selection_changed(self, items: List[Any]) -> None:
-        """Handle selection change. Interprets ITEM_HOOKS for attr/signal.
-
-        NOTE: During time-travel, we update the selection attr but DON'T emit
-        the signal. This prevents cascading side-effects like set_current_plate()
-        clearing pipeline_steps before step unregister callbacks can save to limbo.
-        """
-        from objectstate import ObjectStateRegistry
-
-        item = items[0]
-        item_id = self._get_item_id(item)
-        setattr(self, self.ITEM_HOOKS['selection_attr'], item_id)
-
-        # Don't emit selection signal during time-travel to prevent side-effects
-        if ObjectStateRegistry._in_time_travel:
-            return
-
-        signal = getattr(self, self.ITEM_HOOKS['selection_signal'])
-        signal.emit(item_id if self.ITEM_HOOKS.get('selection_emit_id', True) else item)
-
-    def _handle_selection_cleared(self) -> None:
-        """Handle selection cleared. Interprets ITEM_HOOKS for attr/signal/clear_value.
-
-        NOTE: During time-travel, we update the selection attr but DON'T emit
-        the signal. This prevents cascading side-effects.
-        """
-        from objectstate import ObjectStateRegistry
-
-        setattr(self, self.ITEM_HOOKS['selection_attr'], '')
-
-        # Don't emit selection signal during time-travel to prevent side-effects
-        if ObjectStateRegistry._in_time_travel:
-            return
-
-        signal = getattr(self, self.ITEM_HOOKS['selection_signal'])
-        signal.emit(self.ITEM_HOOKS.get('selection_clear_value', ''))
-
-    def _get_current_selection_id(self) -> str:
-        """Get current selection ID. Interprets ITEM_HOOKS['selection_attr']."""
-        return getattr(self, self.ITEM_HOOKS['selection_attr'])
 
     # === Reorder Hook (declarative base + optional post-hook) ===
 
     def _handle_items_reordered(self, from_index: int, to_index: int) -> None:
         """Reorder backing list and call _post_reorder() hook."""
-        items = self._get_backing_items()
+        items = self._item_access.state_binding.items(self)
         item = items.pop(from_index)
         items.insert(to_index, item)
         self._post_reorder()
@@ -2324,14 +697,11 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
         """Post-reorder hook. Override for additional cleanup (e.g., normalize tokens)."""
         pass
 
-    # === Items Changed Hook (declarative via ITEM_HOOKS) ===
+    # === Items Changed Hook ===
 
     def _emit_items_changed(self) -> None:
-        """Emit items changed signal. Interprets ITEM_HOOKS['items_changed_signal']."""
-        signal_name = self.ITEM_HOOKS.get('items_changed_signal')
-        if signal_name:
-            signal = getattr(self, signal_name)
-            signal.emit(self._get_backing_items())
+        """Emit manager-specific item-list changes."""
+        pass
 
     # === Config Resolution Hook (subclass must implement) ===
 
@@ -2339,17 +709,6 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
     def _get_scope_for_item(self, item: Any) -> str:
         """Get scope_id for an item (for ObjectState lookup). Subclass must implement."""
         ...
-
-    def _get_cached_scope(self, item: Any) -> str:
-        """Get scope_id with per-update-cycle caching.
-
-        Uses _item_scope_cache to avoid repeated _get_scope_for_item calls
-        during a single update cycle. Cache is cleared at start of each update.
-        """
-        item_id = id(item)
-        if item_id not in self._item_scope_cache:
-            self._item_scope_cache[item_id] = self._get_scope_for_item(item) or ''
-        return self._item_scope_cache[item_id]
 
     # === CrossWindowPreviewMixin Hook (overridden by VisualUpdateMixin) ===
 
@@ -2361,5 +720,8 @@ class AbstractManagerWidget(QWidget, CrossWindowPreviewMixin, FlashMixin, AutoRe
 
     def closeEvent(self, event):
         """Ensure time travel callbacks are unregistered."""
-        ObjectStateRegistry.remove_time_travel_complete_callback(self.on_time_travel_complete)
+        self._time_travel_binding.disconnect()
         super().closeEvent(event)
+
+
+ListNavigationReadinessWindow.register(AbstractManagerWidget)

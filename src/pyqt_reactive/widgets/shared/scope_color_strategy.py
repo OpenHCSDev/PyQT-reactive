@@ -12,6 +12,8 @@ import colorsys
 import hashlib
 import logging
 
+from metaclass_registry import AutoRegisterMeta
+
 logger = logging.getLogger(__name__)
 
 # Predetermined palette of maximally distinct colors (12 primary colors)
@@ -40,9 +42,13 @@ class ColorStrategyType(Enum):
     MANUAL = auto()
 
 
-class ScopeColorStrategy(ABC):
+class ScopeColorStrategy(ABC, metaclass=AutoRegisterMeta):
     """Abstract base for color generation strategies."""
 
+    __registry_key__ = "strategy_id"
+    __skip_if_no_key__ = True
+
+    strategy_id: str
     strategy_type: ColorStrategyType
 
     @abstractmethod
@@ -55,15 +61,24 @@ class ScopeColorStrategy(ABC):
         """
         raise NotImplementedError
 
+    @classmethod
+    def create_registry(cls) -> Dict[ColorStrategyType, "ScopeColorStrategy"]:
+        """Instantiate all registered scope-color strategies keyed by strategy type."""
+        return {
+            strategy_cls.strategy_type: strategy_cls()
+            for strategy_cls in cls.__registry__.values()
+        }
+
 
 class IndexBasedStrategy(ScopeColorStrategy):
     """Color by orchestrator from predetermined palette in discovery order.
 
     Orchestrators (plates) get distinct BASE colors from the primary palette
     assigned in the order they are first seen. Steps inherit their orchestrator's
-    base color. Tint/pattern variation is handled in _build_color_scheme_from_rgb.
+    base color. Tint/pattern variation is handled in build_color_scheme_from_rgb.
     """
 
+    strategy_id = "index_based"
     strategy_type = ColorStrategyType.INDEX_BASED
 
     def __init__(self) -> None:
@@ -94,6 +109,7 @@ class IndexBasedStrategy(ScopeColorStrategy):
 class MD5HashStrategy(ScopeColorStrategy):
     """Deterministic color from MD5 hash of scope_id (fallback)."""
 
+    strategy_id = "md5_hash"
     strategy_type = ColorStrategyType.MD5_HASH
     PALETTE_SIZE = 50
 
@@ -141,6 +157,7 @@ class MD5HashStrategy(ScopeColorStrategy):
 class ManualColorStrategy(ScopeColorStrategy):
     """User-selected colors with persistence."""
 
+    strategy_id = "manual"
     strategy_type = ColorStrategyType.MANUAL
 
     def __init__(self) -> None:
@@ -163,4 +180,6 @@ class ManualColorStrategy(ScopeColorStrategy):
         self._colors.update(colors)
 
     def generate_color(self, scope_id: str, step_index: Optional[int] = None) -> Tuple[int, int, int]:
-        return self._colors.get(scope_id) or self._fallback.generate_color(scope_id, step_index)
+        if scope_id in self._colors:
+            return self._colors[scope_id]
+        return self._fallback.generate_color(scope_id, step_index)

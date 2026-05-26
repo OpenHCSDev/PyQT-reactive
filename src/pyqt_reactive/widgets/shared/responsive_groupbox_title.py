@@ -28,6 +28,11 @@ class ResponsiveGroupBoxTitle(QWidget):
     Row 1: [Title] [Help] [inline widgets]
     Row 2: [Reset All] [Enabled] etc. - only when narrow
     """
+
+    TITLE_GROUP = "title"
+    HELP_GROUP = "help"
+    INLINE_GROUP = "inline"
+    RIGHT_GROUP = "right"
     
     def __init__(self, parent=None, width_threshold: int = 300):
         super().__init__(parent)
@@ -131,47 +136,6 @@ class ResponsiveGroupBoxTitle(QWidget):
             return
         self._refresh_groups()
     
-    def _calc_width(self):
-        from PyQt6.QtWidgets import QLabel
-        from PyQt6.QtGui import QFontMetrics
-        
-        total = 0
-        spacing = self._title_layout.spacing()
-        
-        def get_width(w):
-            if isinstance(w, QLabel) and w.text():
-                fm = QFontMetrics(w.font())
-                return fm.horizontalAdvance(w.text()) + 16
-            return w.sizeHint().width()
-        
-        # Title and help always included
-        if self._title_widget:
-            total += get_width(self._title_widget)
-        if self._help_widget:
-            total += get_width(self._help_widget)
-        
-        # Inline widgets (always with title)
-        for w, _ in self._inline_widgets:
-            total += get_width(w)
-        
-        # Count widgets for spacing calculation
-        widget_count = (1 if self._title_widget else 0) + (1 if self._help_widget else 0) + len(self._inline_widgets)
-        
-        # Right widgets only counted in horizontal mode
-        if self._is_horizontal:
-            for w, _ in self._right_widgets:
-                total += get_width(w)
-            widget_count += len(self._right_widgets)
-        
-        # Add spacing between widgets
-        if widget_count > 1:
-            total += spacing * (widget_count - 1)
-        
-        margins = self._title_layout.contentsMargins()
-        total += margins.left() + margins.right()
-        
-        return total
-    
     def _do_switch(self):
         self._refresh_groups()
     
@@ -209,22 +173,22 @@ class ResponsiveGroupBoxTitle(QWidget):
     def _refresh_groups(self):
         if self._help_inline:
             groups = [
-                ("title", self._title_group),
-                ("inline", self._inline_group),
-                ("right", self._right_group),
+                (self.TITLE_GROUP, self._title_group),
+                (self.INLINE_GROUP, self._inline_group),
+                (self.RIGHT_GROUP, self._right_group),
             ]
-            stay_priority = ["title", "inline", "right"]
+            stay_priority = [self.TITLE_GROUP, self.INLINE_GROUP, self.RIGHT_GROUP]
         else:
             groups = [
-                ("title", self._title_group),
-                ("help", self._help_group),
-                ("inline", self._inline_group),
-                ("right", self._right_group),
+                (self.TITLE_GROUP, self._title_group),
+                (self.HELP_GROUP, self._help_group),
+                (self.INLINE_GROUP, self._inline_group),
+                (self.RIGHT_GROUP, self._right_group),
             ]
-            stay_priority = ["title", "help", "inline", "right"]
+            stay_priority = [self.TITLE_GROUP, self.HELP_GROUP, self.INLINE_GROUP, self.RIGHT_GROUP]
 
         self._staged_layout.set_groups(
             groups,
             stay_priority,
-            right_align_names=["right"],
+            right_align_names=[self.RIGHT_GROUP],
         )

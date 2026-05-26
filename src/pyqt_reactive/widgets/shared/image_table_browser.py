@@ -46,9 +46,8 @@ class ImageTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
         columns = [ColumnDef(name="Filename", key="filename", width=200)]
 
         for key in self._metadata_keys:
-            display_name = key.replace('_', ' ').title()
             width = self._COLUMN_WIDTHS.get(key.lower())
-            columns.append(ColumnDef(name=display_name, key=key, width=width))
+            columns.append(ColumnDef(name=key.replace('_', ' ').title(), key=key, width=width))
 
         return columns
     

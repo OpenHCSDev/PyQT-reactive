@@ -14,14 +14,21 @@ from dataclasses import fields, is_dataclass
 from typing import Dict, Type, Optional, Iterable
 
 from PyQt6.QtCore import Qt, QRect
-from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics
+from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QBrush
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle
+
+from objectstate import is_ui_hidden_config_type
+from pyqt_reactive.widgets.shared.config_tree_contracts import (
+    ConfigTreeFlashManager,
+    ScopeColorSchemeHost,
+    TreeFlashColorProvider,
+)
+from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
 
 # Custom data role for flash key (matches list_item_delegate pattern)
 TREE_FLASH_KEY_ROLE = Qt.ItemDataRole.UserRole + 20
-
 
 class TreeItemFlashDelegate(QStyledItemDelegate):
     """Custom delegate for tree items with flash behind text.
@@ -31,7 +38,7 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
     so text remains readable during flash animations.
     """
 
-    def __init__(self, parent=None, manager=None):
+    def __init__(self, parent=None, manager: Optional[TreeFlashColorProvider] = None):
         """Initialize delegate.
 
         Args:
@@ -56,23 +63,21 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
         if flash_key and self._manager is not None:
             flash_color = self._manager.get_flash_color_for_key(flash_key)
             if flash_color and flash_color.alpha() > 0:
-                # Override flash color to match window's scope color scheme
-                # Find parent window with _scope_color_scheme
+                # Override flash color to match the owning window's scope color scheme.
                 window = self.parent()
                 while window is not None:
-                    scheme = getattr(window, '_scope_color_scheme', None)
-                    if scheme:
-                        from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
-                        base_rgb = getattr(scheme, 'base_color_rgb', None)
-                        layers = getattr(scheme, 'step_border_layers', None)
-                        if base_rgb and layers:
-                            _, tint_idx, _ = (layers[0] + ("solid",))[:3]
-                            scheme_color = tint_color_perceptual(base_rgb, tint_idx).darker(120)
-                            # Keep animation alpha from coordinator
-                            flash_color = QColor(scheme_color.red(), scheme_color.green(),
-                                                scheme_color.blue(), flash_color.alpha())
+                    if isinstance(window, ScopeColorSchemeHost) and window._scope_color_scheme is not None:
+                        scheme_color = self._scheme_flash_color(window._scope_color_scheme)
+                        if scheme_color is not None:
+                            # Keep animation alpha from coordinator.
+                            flash_color = QColor(
+                                scheme_color.red(),
+                                scheme_color.green(),
+                                scheme_color.blue(),
+                                flash_color.alpha(),
+                            )
                         break
-                    window = window.parent() if hasattr(window, 'parent') else None
+                    window = window.parent()
                 painter.fillRect(option.rect, flash_color)
 
         # Let the style draw selection, hover, backgrounds (except text)
@@ -108,7 +113,12 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
             # Check for custom foreground (ui_hidden items use gray)
             fg = index.data(Qt.ItemDataRole.ForegroundRole)
             if fg:
-                color = fg.color() if hasattr(fg, 'color') else QColor(fg)
+                if isinstance(fg, QColor):
+                    color = fg
+                elif isinstance(fg, QBrush):
+                    color = fg.color()
+                else:
+                    color = QColor(fg)
             else:
                 color = option.palette.text().color()
 
@@ -116,6 +126,17 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
         painter.drawText(x_offset, y_offset, text)
 
         painter.restore()
+
+    @staticmethod
+    def _scheme_flash_color(scheme: ScopeColorScheme) -> Optional[QColor]:
+        """Return the scheme-tinted flash color for tree rows."""
+        if not scheme.base_color_rgb or not scheme.step_border_layers:
+            return None
+
+        from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
+
+        _, tint_idx, _ = (scheme.step_border_layers[0] + ("solid",))[:3]
+        return tint_color_perceptual(scheme.base_color_rgb, tint_idx).darker(120)
 
 
 class ConfigHierarchyTreeHelper:
@@ -137,6 +158,7 @@ class ConfigHierarchyTreeHelper:
         self._path_to_item: Dict[str, QTreeWidgetItem] = {}
         self._dirty_callback = None
         self._tree_for_dirty: Optional[QTreeWidget] = None
+        self._strip_config_suffix = False
         # Dirty tracking subscription
         self._state: Optional['ObjectState'] = None
 
@@ -145,7 +167,7 @@ class ConfigHierarchyTreeHelper:
         *,
         header_label: str = "Configuration Hierarchy",
         minimum_width: int = 0,  # Allow collapsing to 0 for splitter
-        flash_manager: Optional['ConfigWindow'] = None,
+        flash_manager: Optional[ConfigTreeFlashManager] = None,
         state: Optional['ObjectState'] = None,
         strip_config_suffix: bool = False,
     ) -> QTreeWidget:
@@ -161,6 +183,12 @@ class ConfigHierarchyTreeHelper:
         tree.setHeaderLabel(header_label)
         tree.setMinimumWidth(minimum_width)  # 0 allows free movement in splitter
         tree.setExpandsOnDoubleClick(False)
+
+        if flash_manager is not None and not isinstance(flash_manager, ConfigTreeFlashManager):
+            raise TypeError(
+                "Config hierarchy tree flash support requires ConfigTreeFlashManager "
+                f"but received {type(flash_manager).__name__}."
+            )
 
         # Store flash manager for use during population
         self._flash_manager = flash_manager
@@ -184,7 +212,7 @@ class ConfigHierarchyTreeHelper:
         # ASYNC FIX: Re-run dirty styling when async form build completes
         # During async build, nested_managers are populated incrementally, so
         # groupbox dirty markers need to be updated again after all are ready
-        if flash_manager is not None and hasattr(flash_manager, '_on_build_complete_callbacks'):
+        if flash_manager is not None:
             flash_manager._on_build_complete_callbacks.append(
                 lambda: self.initialize_dirty_styling()
             )
@@ -218,7 +246,7 @@ class ConfigHierarchyTreeHelper:
             return
         dirty_fields = self._state.dirty_fields
         self.update_dirty_styling(dirty_fields)
-        if hasattr(self, '_tree_for_dirty') and self._tree_for_dirty:
+        if self._tree_for_dirty:
             self._tree_for_dirty.viewport().update()
 
     def cleanup_subscriptions(self) -> None:
@@ -229,7 +257,7 @@ class ConfigHierarchyTreeHelper:
                 self._dirty_callback = None
             self._state = None
 
-    def apply_scope_background(self, tree: QTreeWidget, scheme) -> None:
+    def apply_scope_background(self, tree: QTreeWidget, scheme: ScopeColorScheme) -> None:
         """Apply scope-colored background tint to tree widget.
 
         Args:
@@ -239,11 +267,11 @@ class ConfigHierarchyTreeHelper:
         from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
         from pyqt_reactive.widgets.shared.scope_visual_config import ScopeVisualConfig
 
-        base_rgb = getattr(scheme, 'base_color_rgb', None)
+        base_rgb = scheme.base_color_rgb
         if not base_rgb:
             return
 
-        layers = getattr(scheme, 'step_border_layers', None)
+        layers = scheme.step_border_layers
         if layers:
             _, tint_idx, _ = (layers[0] + ("solid",))[:3]
         else:
@@ -291,7 +319,7 @@ class ConfigHierarchyTreeHelper:
             meta = item.data(0, Qt.ItemDataRole.UserRole) or {}
             field_name = meta.get("field_name")
             class_type = meta.get("class")
-            alt_name = self._to_snake_case(getattr(class_type, "__name__", "")) if class_type else None
+            alt_name = self._to_snake_case(class_type.__name__) if isinstance(class_type, type) else None
 
             is_dirty = self._matches_prefix(path, field_name, alt_name, dirty_prefixes)
             has_sig_diff = self._matches_prefix(path, field_name, alt_name, sig_diff_prefixes)
@@ -341,16 +369,12 @@ class ConfigHierarchyTreeHelper:
         """
         if self._flash_manager is None or self._current_tree is None:
             return
-        if not hasattr(self._flash_manager, 'register_flash_tree_item'):
-            return
 
         # Tree items use separate key namespace to avoid groupbox collision
         tree_key = f"tree::{field_path}"
 
         # Get scoped key from flash manager (matches what's used for color lookup)
-        scoped_key = tree_key
-        if hasattr(self._flash_manager, '_get_scoped_flash_key'):
-            scoped_key = self._flash_manager._get_scoped_flash_key(tree_key)
+        scoped_key = self._flash_manager._get_scoped_flash_key(tree_key)
 
         # Store SCOPED flash key in item data for delegate to look up
         item.setData(0, TREE_FLASH_KEY_ROLE, scoped_key)
@@ -390,7 +414,7 @@ class ConfigHierarchyTreeHelper:
         self._current_tree = tree
         for field_name, obj_type in dataclass_mapping.items():
             base_type = self.get_base_type(obj_type)
-            label = self._format_label(getattr(base_type, "__name__", field_name))
+            label = self._format_label(base_type.__name__)
             path = field_name
             alt_path = self._to_snake_case(base_type.__name__)
 
@@ -433,7 +457,7 @@ class ConfigHierarchyTreeHelper:
                 continue
 
             base_type = self.get_base_type(field_type)
-            display_name = self._format_label(getattr(base_type, "__name__", field.name))
+            display_name = self._format_label(base_type.__name__)
             ui_hidden = self.is_field_ui_hidden(obj_type, field.name, field_type)
 
             if is_root and skip_root_ui_hidden and ui_hidden:
@@ -503,7 +527,7 @@ class ConfigHierarchyTreeHelper:
 
     def _format_label(self, label: str) -> str:
         """Optionally strip 'Config' suffix from labels for presentation only."""
-        if getattr(self, "_strip_config_suffix", False) and label.endswith("Config"):
+        if self._strip_config_suffix and label.endswith("Config"):
             return label[:-6]
         return label
 
@@ -522,11 +546,7 @@ class ConfigHierarchyTreeHelper:
             pass
 
         base_type = self.get_base_type(field_type)
-        if (
-            hasattr(base_type, "__dict__")
-            and "_ui_hidden" in base_type.__dict__
-            and base_type._ui_hidden
-        ):
+        if is_ui_hidden_config_type(base_type):
             return True
 
         return False
@@ -555,18 +575,14 @@ class ConfigHierarchyTreeHelper:
         for cls in obj_type.__bases__:
             if cls.__name__ == "object":
                 continue
-            if not hasattr(cls, "__dataclass_fields__"):
+            if not is_dataclass(cls):
                 continue
 
             base_type = self.get_base_type(cls)
             direct_bases.append(base_type)
 
         for base_class in direct_bases:
-            ui_hidden = (
-                hasattr(base_class, "__dict__")
-                and "_ui_hidden" in base_class.__dict__
-                and base_class._ui_hidden
-            )
+            ui_hidden = is_ui_hidden_config_type(base_class)
 
             base_item = QTreeWidgetItem([base_class.__name__])
             base_item.setData(

@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 _EXPORTS = {
     "ParameterFormManager": ("pyqt_reactive.forms.parameter_form_manager", "ParameterFormManager"),
     "FormManagerConfig": ("pyqt_reactive.forms.parameter_form_manager", "FormManagerConfig"),
-    "ParameterFormManagerBase": ("pyqt_reactive.forms.parameter_form_base", "ParameterFormManagerBase"),
     "ParameterFormService": ("pyqt_reactive.forms.parameter_form_service", "ParameterFormService"),
     "ParameterTypeUtils": ("pyqt_reactive.forms.parameter_type_utils", "ParameterTypeUtils"),
     "WidgetCreationConfig": ("pyqt_reactive.forms.widget_creation_types", "WidgetCreationConfig"),
@@ -50,7 +49,6 @@ _EXPORTS = {
     "ParameterInfo": ("pyqt_reactive.forms.parameter_info_types", "ParameterInfo"),
     "create_parameter_info": ("pyqt_reactive.forms.parameter_info_types", "create_parameter_info"),
     "register_inline_dataclass_widget": ("pyqt_reactive.forms.parameter_info_types", "register_inline_dataclass_widget"),
-    "get_inline_dataclass_widget_factory": ("pyqt_reactive.forms.parameter_info_types", "get_inline_dataclass_widget_factory"),
 }
 
 

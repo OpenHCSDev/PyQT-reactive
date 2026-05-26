@@ -1,9 +1,4 @@
-"""
-Functional widget creation registry for OpenHCS UI frameworks.
-
-Provides extensible type-to-widget dispatch using simple dicts and functions,
-eliminating class-based abstractions while maintaining clean extensibility.
-"""
+"""Shared annotation helpers for widget creation strategies."""
 
 from types import UnionType
 from typing import Type, get_origin, get_args, Union
@@ -52,20 +47,3 @@ def get_enum_from_list(param_type: Type) -> Type:
     """Extract enum type from List[Enum]."""
     return get_args(param_type)[0]
 
-
-# Registry factory functions - return actual widget creators
-def create_textual_registry():
-    """Return Textual widget creator function."""
-    return create_textual_widget
-
-
-def create_pyqt6_registry():
-    """Return PyQt6 widget creator function."""
-    try:
-        from pyqt_reactive.forms.widget_strategies import MagicGuiWidgetFactory
-        factory = MagicGuiWidgetFactory()
-        return factory.create_widget
-    except ImportError:
-        def fallback_creator(*args, **kwargs):
-            raise ImportError("PyQt6 not available - install with pip install 'pyqt-reactor[gui]'")
-        return fallback_creator

@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from pyqt_reactive.forms.widget_strategies import _get_enum_display_text
+from pyqt_reactive.forms.ui_utils import format_enum_display
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class GroupBySelectorDialog(QDialog):
     
     def setup_ui(self):
         """Setup the user interface (mirrors Textual TUI layout)."""
-        component_display = _get_enum_display_text(self.group_by).title()
+        component_display = format_enum_display(self.group_by).title()
 
         self.setWindowTitle(f"Select {component_display}s")
         self.setModal(True)
@@ -197,7 +197,7 @@ class GroupBySelectorDialog(QDialog):
         Returns:
             Formatted display string (e.g., "Channel 1 | HOECHST 33342" or "Channel 1")
         """
-        component_display = _get_enum_display_text(self.group_by).title()
+        component_display = format_enum_display(self.group_by).title()
         base_text = f"{component_display} {component_key}"
 
         # Get metadata name if callback is available

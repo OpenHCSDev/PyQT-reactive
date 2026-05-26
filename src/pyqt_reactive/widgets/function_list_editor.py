@@ -32,7 +32,8 @@ from objectstate import ObjectStateRegistry
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.forms.widget_strategies import _get_enum_display_text
+from pyqt_reactive.forms.ui_utils import format_enum_display
+from pyqt_reactive.services.window_navigation import FieldNavigableWindow
 
 logger = logging.getLogger(__name__)
 
@@ -1800,8 +1801,7 @@ class FunctionListEditorWidget(QWidget):
         if self.current_group_by is None or self.current_group_by == self._groupby_enum.NONE:
             return "Component: None"
 
-        # Use the existing _get_enum_display_text function for consistent enum display handling
-        component_type = _get_enum_display_text(self.current_group_by).title()
+        component_type = format_enum_display(self.current_group_by).title()
 
         if self.is_dict_mode and isinstance(self.pattern_data, dict):
             keys = sorted(self.pattern_data.keys())
@@ -2207,3 +2207,6 @@ class FunctionListEditorWidget(QWidget):
             self.pattern_data = self.functions.copy()
             self._set_tokens_for_current_view(self._current_function_tokens)
         self._persist_pattern_tokens_to_state()
+
+
+FieldNavigableWindow.register(FunctionListEditorWidget)

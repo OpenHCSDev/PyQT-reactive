@@ -5,7 +5,8 @@ Provides a clean abstraction for creating tabbed interfaces where each tab
 shows one or more ParameterFormManagers, all sharing the same ObjectState.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
+from types import SimpleNamespace
 from typing import List, Optional, Any
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea
 from pyqt_reactive.widgets.shared.tear_off_tab_widget import TearOffTabWidget
@@ -214,16 +215,16 @@ class TabbedFormWidget(QWidget):
         """
         obj = self.state.object_instance
 
-        # Try dataclass fields first
-        if hasattr(obj, '__dataclass_fields__'):
-            return list(obj.__dataclass_fields__.keys())
-
-        # Fall back to instance attributes (for SimpleNamespace, etc.)
-        elif hasattr(obj, '__dict__'):
+        if is_dataclass(obj):
+            return [field.name for field in fields(obj)]
+        if isinstance(obj, SimpleNamespace):
             return list(vars(obj).keys())
-
-        # Last resort: empty list
-        return []
+        if isinstance(obj, dict):
+            return list(obj.keys())
+        raise TypeError(
+            "TabbedFormWidget requires a dataclass, SimpleNamespace, or dict root object, "
+            f"got {type(obj).__name__}."
+        )
 
     def _on_parameter_changed(self, param_name: str, value: Any):
         """Forward parameter changes from child PFMs to aggregate signal."""
@@ -262,4 +263,3 @@ class TabbedFormWidget(QWidget):
             PFM instance for the current tab, or None
         """
         return self.get_tab_form(self.tab_widget.currentIndex())
-

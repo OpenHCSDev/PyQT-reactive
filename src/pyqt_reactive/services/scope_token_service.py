@@ -41,10 +41,7 @@ class ScopeTokenGenerator:
         if not self.attr_name:
             return
         for obj in objects or []:
-            try:
-                token = getattr(obj, self.attr_name, None)
-            except Exception:
-                token = None
+            token = self._get_existing(obj)
             if token:
                 self._register_existing(token)
 
@@ -80,11 +77,17 @@ class ScopeTokenGenerator:
     def _get_existing(self, obj: Optional[Any]) -> Optional[str]:
         if obj is None or not self.attr_name:
             return None
-        try:
-            token = getattr(obj, self.attr_name, None)
-        except Exception:
-            token = None
+        token = self.existing_token(obj, self.attr_name)
         return token
+
+    @staticmethod
+    def existing_token(obj: object, attr_name: str) -> Optional[str]:
+        """Return an existing token from the configured storage attribute."""
+        try:
+            token = getattr(obj, attr_name, None)
+        except Exception:
+            return None
+        return token if isinstance(token, str) and token else None
 
     def _attach(self, obj: Optional[Any], token: str) -> None:
         if obj is None or not self.attr_name:
@@ -153,6 +156,11 @@ class ScopeTokenService:
         parent_scope = cls._normalize_scope(parent_scope)
         prefix = cls._get_prefix(obj)
         return cls.get_generator(parent_scope, prefix).ensure(obj)
+
+    @classmethod
+    def object_token(cls, obj: object) -> str | None:
+        """Return an object's existing scope token without creating one."""
+        return ScopeTokenGenerator.existing_token(obj, "_scope_token")
 
     # PERFORMANCE: Cache scope_id strings per (parent_scope, object_id)
     _scope_id_cache: dict[tuple[str, int], str] = {}

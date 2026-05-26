@@ -16,6 +16,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pyqt_reactive.core import ReorderableListWidget
+from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
+from pyqt_reactive.widgets.shared.list_item_delegate import MultilinePreviewItemDelegate
+
 
 @dataclass(frozen=True)
 class ManagerHeaderParts:
@@ -24,6 +28,17 @@ class ManagerHeaderParts:
     header: QWidget
     status_label: QLabel
     status_scroll: QScrollArea | None
+
+
+@dataclass(frozen=True)
+class ManagerWidgetUiParts:
+    """Widgets created for a standard manager list UI."""
+
+    header: QWidget
+    status_label: QLabel
+    status_scroll: QScrollArea | None
+    item_list: ReorderableListWidget
+    button_panel: ButtonPanel
 
 
 def create_manager_header(
@@ -96,6 +111,71 @@ def create_manager_header(
         header=header,
         status_label=status_label,
         status_scroll=None,
+    )
+
+
+def create_manager_list_widget(
+    *,
+    color_scheme,
+    style_generator,
+    delegate_manager,
+) -> ReorderableListWidget:
+    """Create a styled manager list widget with the multiline preview delegate."""
+    list_widget = ReorderableListWidget()
+    list_widget.setStyleSheet(style_generator.generate_list_widget_style())
+
+    delegate = MultilinePreviewItemDelegate(
+        name_color=color_scheme.to_qcolor(color_scheme.text_primary),
+        preview_color=color_scheme.to_qcolor(color_scheme.text_secondary),
+        selected_text_color=color_scheme.to_qcolor(color_scheme.selection_text),
+        parent=list_widget,
+        manager=delegate_manager,
+    )
+    list_widget.setItemDelegate(delegate)
+    return list_widget
+
+
+def setup_manager_widget_ui(
+    *,
+    owner: QWidget,
+    title: str,
+    color_scheme,
+    style_generator,
+    enable_status_scrolling: bool,
+    button_configs,
+    on_action,
+    button_grid_columns: int,
+) -> ManagerWidgetUiParts:
+    """Create and lay out the standard manager header, list, and button panel."""
+    header_parts = create_manager_header(
+        title=title,
+        color_scheme=color_scheme,
+        enable_status_scrolling=enable_status_scrolling,
+    )
+    item_list = create_manager_list_widget(
+        color_scheme=color_scheme,
+        style_generator=style_generator,
+        delegate_manager=owner,
+    )
+    button_panel = ButtonPanel(
+        button_configs=button_configs,
+        on_action=on_action,
+        style_generator=style_generator,
+        grid_columns=button_grid_columns,
+        parent=owner,
+    )
+    setup_vertical_manager_layout(
+        owner=owner,
+        header=header_parts.header,
+        top_widget=item_list,
+        bottom_widget=button_panel,
+    )
+    return ManagerWidgetUiParts(
+        header=header_parts.header,
+        status_label=header_parts.status_label,
+        status_scroll=header_parts.status_scroll,
+        item_list=item_list,
+        button_panel=button_panel,
     )
 
 

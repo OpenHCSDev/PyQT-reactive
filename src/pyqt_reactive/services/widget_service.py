@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 import logging
-from pyqt_reactive.forms.ui_utils import format_param_name
 
 logger = logging.getLogger(__name__)
 
@@ -128,51 +127,27 @@ class WidgetService:
         if manager is None:
             return {}
         
-        # Get display info from service (may include description)
-        # Pass description parameter if provided
-        display_info = manager.service.get_parameter_display_info(param_name, param_type, description=description)
+        resolved_description = description
+        param_info = manager.form_structure.get_parameter_info(param_name)
+        if resolved_description is None and param_info is not None:
+            resolved_description = param_info.description
 
-        # If description is present already, use it
-        if display_info.get('description'):
-            logger.debug(f"🔍 get_parameter_display_info: param_name={param_name}, using description from display_info: {display_info['description'][:100]}")
-            return display_info
+        if resolved_description is None:
+            dotted = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+            raw = manager.state.parameter_descriptions.get(dotted)
+            if raw is not None:
+                resolved_description = raw if isinstance(raw, str) else raw.description
 
-        # Try to obtain description from the manager's FormStructure ParameterInfo
-        try:
-            form_struct = getattr(manager, 'form_structure', None)
-            if form_struct is not None:
-                try:
-                    param_info = form_struct.get_parameter_info(param_name)
-                    if getattr(param_info, 'description', None):
-                        display_info['description'] = param_info.description
-                        logger.debug(f"🔍 get_parameter_display_info: param_name={param_name}, using description from form_structure ParameterInfo")
-                        return display_info
-                except Exception:
-                    # ignore missing param_info
-                    pass
-        except Exception:
-            pass
-
-        # Last resort: consult ObjectState._parameter_descriptions using the canonical full dotted path
-        try:
-            # Use the canonical field_id from the manager (do not recompute from other sources)
-            base_id = getattr(manager, 'field_id', None)
-            dotted = f"{base_id}.{param_name}" if base_id else param_name
-            state = getattr(manager, 'state', None)
-            if state is not None and hasattr(state, '_parameter_descriptions'):
-                raw = state._parameter_descriptions.get(dotted)
-                logger.debug(f"🔍 lookup ObjectState._parameter_descriptions for key={dotted}: {'FOUND' if raw is not None else 'MISSING'}")
-                if raw is not None:
-                    display_info['description'] = raw if isinstance(raw, str) else getattr(raw, 'description', None)
-                    logger.debug(f"🔍 get_parameter_display_info: param_name={param_name}, using description from ObjectState for {dotted}")
-                    if display_info.get('description'):
-                        return display_info
-        except Exception:
-            pass
-
-        # Fallback: generic description
-        display_info['description'] = f"Parameter: {format_param_name(param_name)}"
-        logger.debug(f"🔍 get_parameter_display_info: param_name={param_name}, using fallback description: {display_info['description']}")
+        display_info = manager.service.get_parameter_display_info(
+            param_name,
+            param_type,
+            description=resolved_description,
+        )
+        logger.debug(
+            "get_parameter_display_info: param_name=%s, description=%s",
+            param_name,
+            display_info.get("description"),
+        )
         return display_info
 
     # ========== WIDGET STYLING (from WidgetStylingService) ==========
@@ -242,9 +217,8 @@ class WidgetService:
     @staticmethod
     def apply_error_styling(widget: QWidget, color_scheme) -> None:
         """Apply error styling to a widget."""
-        if hasattr(color_scheme, 'error'):
-            error_color = color_scheme.to_hex(color_scheme.error)
-            widget.setStyleSheet(f"border: 2px solid {error_color};")
+        error_color = color_scheme.to_hex(color_scheme.status_error)
+        widget.setStyleSheet(f"border: 2px solid {error_color};")
 
     @staticmethod
     def remove_error_styling(widget: QWidget) -> None:

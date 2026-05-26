@@ -166,7 +166,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         self.servers: List[Dict[str, Any]] = []
         self._last_known_servers: Dict[int, Dict[str, Any]] = {}
         self._lifecycle_state = BrowserLifecycleState()
-        self._tree_state_adapter = TreeStateAdapter()
+        self._tree_state_adapter = TreeStateAdapter.default()
         self._tree_rebuild_coordinator = TreeRebuildCoordinator(self._tree_state_adapter)
 
         self._button_actions: Dict[str, Callable[[], None]] = {

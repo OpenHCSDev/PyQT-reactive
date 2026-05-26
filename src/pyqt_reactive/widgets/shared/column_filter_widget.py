@@ -241,15 +241,7 @@ class ColumnFilterWidget(QFrame):
         Args:
             block_signals: If True, block signals while updating checkboxes
         """
-        for checkbox in self.checkboxes.values():
-            if block_signals:
-                checkbox.blockSignals(True)
-            checkbox.setChecked(True)
-            if block_signals:
-                checkbox.blockSignals(False)
-
-        if block_signals:
-            self._update_count_label()
+        self._set_all_checkboxes(True, block_signals=block_signals)
 
     def select_none(self, block_signals: bool = False):
         """
@@ -258,10 +250,14 @@ class ColumnFilterWidget(QFrame):
         Args:
             block_signals: If True, block signals while updating checkboxes
         """
+        self._set_all_checkboxes(False, block_signals=block_signals)
+
+    def _set_all_checkboxes(self, checked: bool, *, block_signals: bool = False) -> None:
+        """Apply one checked state to all filter checkboxes."""
         for checkbox in self.checkboxes.values():
             if block_signals:
                 checkbox.blockSignals(True)
-            checkbox.setChecked(False)
+            checkbox.setChecked(checked)
             if block_signals:
                 checkbox.blockSignals(False)
 
@@ -519,4 +515,3 @@ class MultiColumnFilterPanel(QWidget):
         """Reset all filters to select all values."""
         for filter_widget in self.column_filters.values():
             filter_widget.select_all()
-

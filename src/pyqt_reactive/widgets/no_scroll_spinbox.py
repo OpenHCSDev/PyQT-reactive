@@ -4,12 +4,21 @@ No-scroll spinbox widgets for PyQt6.
 Prevents accidental value changes from mouse wheel events.
 """
 
+from enum import Enum
+
 from PyQt6.QtWidgets import QCheckBox, QStyleOptionComboBox, QStyle, QApplication
 from PyQt6.QtGui import QWheelEvent, QFont, QColor, QPainter
 from PyQt6.QtCore import Qt
 
 # Import adapters that already implement ValueGettable/ValueSettable
-from pyqt_reactive.protocols import SpinBoxAdapter, DoubleSpinBoxAdapter, ComboBoxAdapter
+from pyqt_reactive.protocols import (
+    ComboBoxAdapter,
+    DoubleSpinBoxAdapter,
+    PyQtWidgetMeta,
+    SpinBoxAdapter,
+    ValueGettable,
+    ValueSettable,
+)
 
 
 class NoScrollSpinBox(SpinBoxAdapter):
@@ -152,7 +161,19 @@ class NoScrollComboBox(ComboBoxAdapter):
             super().paintEvent(event)
 
 
-class NoneAwareCheckBox(QCheckBox):
+class CheckboxValueState(Enum):
+    """Value ownership state for None-aware checkboxes."""
+
+    PLACEHOLDER = "placeholder"
+    CONCRETE = "concrete"
+
+
+class NoneAwareCheckBox(
+    QCheckBox,
+    ValueGettable,
+    ValueSettable,
+    metaclass=PyQtWidgetMeta,
+):
     """
     QCheckBox that supports None state for lazy dataclass contexts.
 
@@ -162,29 +183,53 @@ class NoneAwareCheckBox(QCheckBox):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._is_placeholder = False
+        self._value_state = CheckboxValueState.CONCRETE
+        self._cached_placeholder_text = None
         # Prevent horizontal stretching - checkbox should only be as wide as its content
         from PyQt6.QtWidgets import QSizePolicy
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
     def get_value(self):
         """Get value, returning None if in placeholder state."""
-        if self._is_placeholder:
+        if self.is_placeholder():
             return None
         return self.isChecked()
+
+    def is_placeholder(self) -> bool:
+        """Return whether the checkbox is currently displaying inherited state."""
+        return self._value_state is CheckboxValueState.PLACEHOLDER
 
     def set_value(self, value):
         """Set value, handling None by leaving in placeholder state."""
         if value is None:
             # Don't change state - placeholder system will set the preview value
-            self._is_placeholder = True
+            self._value_state = CheckboxValueState.PLACEHOLDER
             # Set grey palette for placeholder checkmark
             self._apply_placeholder_palette()
         else:
-            self._is_placeholder = False
+            self._value_state = CheckboxValueState.CONCRETE
             self.setChecked(bool(value))
             # Restore normal palette
             self._apply_concrete_palette()
+
+    def set_placeholder_preview(self, checked: bool) -> None:
+        """Display an inherited checkbox value without making it concrete."""
+        self.setChecked(checked)
+        self._value_state = CheckboxValueState.PLACEHOLDER
+        self.setProperty("is_placeholder_state", True)
+        self._apply_placeholder_palette()
+
+    def convert_placeholder_to_concrete(self) -> None:
+        """Keep the displayed value but mark it as a user-controlled value."""
+        if not self.is_placeholder():
+            return
+        self._value_state = CheckboxValueState.CONCRETE
+        self.setProperty("is_placeholder_state", False)
+        self._apply_concrete_palette()
+
+    def clear_placeholder_cache(self) -> None:
+        """Clear cached placeholder text set by the placeholder enhancer."""
+        self._cached_placeholder_text = None
 
     def _apply_placeholder_palette(self):
         """Apply grey palette to make checkmark dim like placeholder text."""
@@ -205,8 +250,8 @@ class NoneAwareCheckBox(QCheckBox):
 
     def mousePressEvent(self, event):
         """On click, switch from placeholder to explicit value."""
-        if self._is_placeholder:
-            self._is_placeholder = False
+        if self.is_placeholder():
+            self._value_state = CheckboxValueState.CONCRETE
             # Clear placeholder property so get_value returns actual boolean
             self.setProperty("is_placeholder_state", False)
             # Restore normal palette
@@ -219,7 +264,7 @@ class NoneAwareCheckBox(QCheckBox):
         For placeholder state, draw the checkbox with grey text color
         to make the checkmark appear dimmed.
         """
-        if not self._is_placeholder:
+        if not self.is_placeholder():
             # Concrete value: Normal styling
             super().paintEvent(event)
             return
@@ -242,11 +287,6 @@ class NoneAwareCheckBox(QCheckBox):
         
         painter.end()
 
-
-# Register NoneAwareCheckBox as implementing ValueGettable and ValueSettable
-from pyqt_reactive.protocols import ValueGettable, ValueSettable
-ValueGettable.register(NoneAwareCheckBox)
-ValueSettable.register(NoneAwareCheckBox)
 
 # NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox inherit from adapters
 # which are already registered, so no additional registration needed

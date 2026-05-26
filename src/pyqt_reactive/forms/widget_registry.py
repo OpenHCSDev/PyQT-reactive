@@ -55,9 +55,9 @@ class WidgetMeta(ABCMeta):
         new_class = super().__new__(cls, name, bases, attrs)
         
         # Only register concrete implementations (no abstract methods remaining)
-        if not getattr(new_class, '__abstractmethods__', None):
-            # Extract widget identifier
-            widget_id = getattr(new_class, '_widget_id', None)
+        if not new_class.__abstractmethods__:
+            # Only concrete classes that declare their widget id participate in registration.
+            widget_id = attrs.get("_widget_id")
             
             if widget_id is None:
                 # No _widget_id - skip registration (might be intermediate base class)
@@ -102,10 +102,9 @@ class WidgetMeta(ABCMeta):
             )
         else:
             # Abstract class - log for debugging
-            abstract_methods = getattr(new_class, '__abstractmethods__', set())
             logger.debug(
                 f"Skipping registration for {name} - abstract methods remaining: "
-                f"{abstract_methods}"
+                f"{new_class.__abstractmethods__}"
             )
         
         return new_class
@@ -166,4 +165,3 @@ def list_widgets_with_capability(capability: Type) -> list[Type]:
         for widget_class, capabilities in WIDGET_CAPABILITIES.items()
         if capability in capabilities
     ]
-

@@ -6,6 +6,7 @@ and drag them into other windows to dock them.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Optional, List, Callable
 from PyQt6.QtWidgets import (
     QTabWidget, QTabBar, QWidget, QVBoxLayout, QDialog,
@@ -17,6 +18,33 @@ from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QCursor
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class FloatingWindowDragState:
+    """Drag-state projection for a floating torn-off tab window."""
+
+    start_pos: Optional[QPoint] = None
+    active: bool = False
+
+    @classmethod
+    def begin(cls, start_pos: QPoint) -> "FloatingWindowDragState":
+        return cls(start_pos=start_pos, active=False)
+
+    def activate_if_threshold_met(
+        self,
+        current_pos: QPoint,
+        threshold: int,
+    ) -> "FloatingWindowDragState":
+        if self.start_pos is None or self.active:
+            return self
+        distance = (current_pos - self.start_pos).manhattanLength()
+        if distance <= threshold:
+            return self
+        return FloatingWindowDragState(start_pos=self.start_pos, active=True)
+
+    def moved_to(self, current_pos: QPoint) -> "FloatingWindowDragState":
+        return FloatingWindowDragState(start_pos=current_pos, active=self.active)
+
+
 class TabDragData:
     """Data container for tab drag operations."""
     
@@ -26,9 +54,6 @@ class TabDragData:
         self.tab_index = tab_index
         self.tab_text = tab_text
         self.tab_widget = tab_widget
-        self.drag_start_pos: Optional[QPoint] = None
-
-
 class TearOffTabBar(QTabBar):
     """Custom tab bar that supports tear-off drag operations."""
     
@@ -110,9 +135,6 @@ class TearOffTabWidget(QTabWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        # Marker for TearOffRegistry to identify tear-off capable widgets
-        self._is_tear_off_tab_widget = True
 
         # Replace default tab bar with tear-off capable one
         self._tear_off_bar = TearOffTabBar(self)
@@ -315,6 +337,7 @@ class FloatingTabWindow(QDialog):
         self.source_tab_widget = source_tab_widget
         self.content_widget = content_widget
         self.title = title
+        self._drag_state = FloatingWindowDragState()
         
         # Window settings
         self.setWindowTitle(title)
@@ -323,10 +346,6 @@ class FloatingTabWindow(QDialog):
         
         # Setup UI
         self._setup_ui()
-        
-        # Track dragging for docking
-        self._is_dragging = False
-        self._drag_start_pos: Optional[QPoint] = None
         
     def _setup_ui(self):
         """Setup the floating window UI."""
@@ -339,26 +358,24 @@ class FloatingTabWindow(QDialog):
     def mousePressEvent(self, event):
         """Start tracking for window drag."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start_pos = event.globalPos()
-            self._is_dragging = False
+            self._drag_state = FloatingWindowDragState.begin(event.globalPos())
         super().mousePressEvent(event)
         
     def mouseMoveEvent(self, event):
         """Handle window dragging and check for dock targets."""
         from pyqt_reactive.widgets.shared.tear_off_registry import TearOffRegistry
         
-        if self._drag_start_pos and event.buttons() == Qt.MouseButton.LeftButton:
-            # Check if actually dragging (moved enough)
-            if not self._is_dragging:
-                distance = (event.globalPos() - self._drag_start_pos).manhattanLength()
-                if distance > 10:
-                    self._is_dragging = True
-                    
-            if self._is_dragging:
+        if self._drag_state.start_pos and event.buttons() == Qt.MouseButton.LeftButton:
+            self._drag_state = self._drag_state.activate_if_threshold_met(
+                event.globalPos(),
+                threshold=10,
+            )
+
+            if self._drag_state.active:
                 # Move window
-                delta = event.globalPos() - self._drag_start_pos
+                delta = event.globalPos() - self._drag_state.start_pos
                 self.move(self.pos() + delta)
-                self._drag_start_pos = event.globalPos()
+                self._drag_state = self._drag_state.moved_to(event.globalPos())
                 
                 # Check if over a dock target
                 TearOffRegistry.check_hover(self, event.globalPos())
@@ -369,7 +386,7 @@ class FloatingTabWindow(QDialog):
         """Handle drop - dock if over a target."""
         from pyqt_reactive.widgets.shared.tear_off_registry import TearOffRegistry
         
-        if self._is_dragging and event.button() == Qt.MouseButton.LeftButton:
+        if self._drag_state.active and event.button() == Qt.MouseButton.LeftButton:
             # Check if we should dock
             target = TearOffRegistry.get_drop_target(self)
             if target:
@@ -380,8 +397,7 @@ class FloatingTabWindow(QDialog):
             else:
                 logger.debug("No dock target found, keeping window floating")
                 
-        self._drag_start_pos = None
-        self._is_dragging = False
+        self._drag_state = FloatingWindowDragState()
         super().mouseReleaseEvent(event)
         
     def closeEvent(self, event):
