@@ -305,7 +305,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
     def _move_enabled_widget_to_title(self):
         """Move enabled widget using shared groupbox machinery."""
-        from pyqt_reactive.forms.widget_creation_config import _move_enabled_widget_to_title
+        from pyqt_reactive.forms.widget_creation_config import WidgetCreationHandlers
         from python_introspect import ENABLED_FIELD
 
         if self._enabled_widget_moved or not self.form_manager:
@@ -315,7 +315,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             return
 
         self._enabled_widget_moved = True
-        _move_enabled_widget_to_title(self.form_manager, self, self.form_manager.field_id, ENABLED_FIELD)
+        WidgetCreationHandlers._move_enabled_widget_to_title(
+            self.form_manager,
+            self,
+            self.form_manager.field_id,
+            ENABLED_FIELD,
+        )
         logger.debug(f"Moved enabled widget to title for function {self.func.__name__}")
 
     def set_scope_color_scheme(self, scheme) -> None:
@@ -411,6 +416,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 use_scroll_area=False,            # Let outer FunctionListWidget manage scrolling
                 exclude_params=exclude_params,
                 scope_step_index=self.scope_index,  # Align scope styling with pipeline order
+                function_target=self.func,
             )
         )
 

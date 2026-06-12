@@ -62,6 +62,7 @@ class FormManagerConfig:
     render_enabled_in_header: bool = False  # If True, 'enabled' checkbox is rendered in container header, not as a form row
     scope_accent_color: Optional[Any] = None  # Scope accent color for help buttons (QColor or None)
     scope_step_index: Optional[int] = None  # Optional step index to align scope styling with pipeline order
+    function_target: Optional[Any] = None  # Callable/class documentation owner for parameter help
 
 
 class ParameterFormManager(
@@ -266,6 +267,7 @@ class ParameterFormManager(
                     render_enabled_in_header=True,
                     scope_accent_color=config.scope_accent_color,
                     scope_step_index=config.scope_step_index,
+                    function_target=config.function_target,
                 )
         except ImportError:
             pass
@@ -649,6 +651,7 @@ class ParameterFormManager(
             field_id=nested_id,  # Scope access to nested fields
             scope_accent_color=self._scope_accent_color,  # Inherit scope accent color
             scope_step_index=self._scope_step_index,  # Preserve step index for scope styling
+            function_target=self.function_target,
         )
         nested_manager = ParameterFormManager(
             state=self.state,  # CRITICAL: Share the same ObjectState instance

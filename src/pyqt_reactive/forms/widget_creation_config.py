@@ -900,6 +900,7 @@ class WidgetCreationPipeline:
         label = LabelWithHelp(
             text=rt.ctx.display_info['field_label'],
             help_context=HelpContext(
+                help_target=rt.manager.function_target,
                 param_name=rt.param_info.name,
                 param_description=rt.ctx.display_info['description'],
                 param_type=rt.param_info.type,

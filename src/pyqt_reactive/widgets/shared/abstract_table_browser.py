@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLineEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QLabel
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QItemSelectionModel
 
 from pyqt_reactive.theming import ColorScheme
 
@@ -198,6 +198,40 @@ class AbstractTableBrowser(QWidget, Generic[T]):
             keys.append(key_item.data(Qt.ItemDataRole.UserRole))
         return keys
 
+    def select_key(self, key: str) -> bool:
+        """Select one row by semantic item key."""
+        return bool(self.select_keys([key]))
+
+    def select_keys(self, keys: List[str]) -> List[str]:
+        """Select rows by semantic item keys and return the keys found."""
+        key_set = set(keys)
+        found: List[str] = []
+        selection_model = self.table_widget.selectionModel()
+        self.table_widget.clearSelection()
+
+        for row in range(self.table_widget.rowCount()):
+            key_item = self.table_widget.item(row, 0)
+            if key_item is None:
+                continue
+            row_key = key_item.data(Qt.ItemDataRole.UserRole)
+            if row_key not in key_set:
+                continue
+
+            found.append(row_key)
+            index = self.table_widget.model().index(row, 0)
+            selection_model.select(
+                index,
+                QItemSelectionModel.SelectionFlag.Select
+                | QItemSelectionModel.SelectionFlag.Rows,
+            )
+
+        if found:
+            first_row = _first_row_for_key(self.table_widget, found[0])
+            if first_row is not None:
+                self.table_widget.scrollToItem(self.table_widget.item(first_row, 0))
+
+        return found
+
     def _update_status(self):
         """Update status label with current counts."""
         total = len(self.all_items)
@@ -376,3 +410,11 @@ class AbstractTableBrowser(QWidget, Generic[T]):
     def on_item_double_clicked(self, key: str, item: T):
         """Called when an item is double-clicked. Override to handle action."""
         pass
+
+
+def _first_row_for_key(table_widget: QTableWidget, key: str) -> int | None:
+    for row in range(table_widget.rowCount()):
+        key_item = table_widget.item(row, 0)
+        if key_item is not None and key_item.data(Qt.ItemDataRole.UserRole) == key:
+            return row
+    return None

@@ -85,16 +85,17 @@ class HelpContext:
         """Show the help target or parameter documentation if this context has one."""
         from pyqt_reactive.windows.help_window_manager import HelpWindowManager
 
-        if self.help_target:
-            HelpWindowManager.show_docstring_help(self.help_target, parent=parent_widget)
-            return True
         if self.param_name:
             HelpWindowManager.show_parameter_help(
                 self.param_name,
                 self.resolved_param_description,
                 self.param_type,
+                help_target=self.help_target,
                 parent=parent_widget,
             )
+            return True
+        if self.help_target:
+            HelpWindowManager.show_docstring_help(self.help_target, parent=parent_widget)
             return True
         return False
 

@@ -309,11 +309,16 @@ def _auto_generate_builders():
         logger.debug(f"🔧 Building config for {field_id}: is_nested={is_nested}, use_scroll_area={use_scroll_area}")
 
         obj_type = type(extracted.object_instance) if extracted.object_instance else None
+        function_target = (
+            form_manager_config.function_target
+            if form_manager_config and form_manager_config.function_target is not None
+            else obj_type
+        )
         config = ParameterFormConfig(
             field_id=field_id,
             framework=CONSTANTS.PYQT6_FRAMEWORK,
             color_scheme=color_scheme or PyQt6ColorScheme(),
-            function_target=obj_type,
+            function_target=function_target,
             use_scroll_area=use_scroll_area
         )
 
