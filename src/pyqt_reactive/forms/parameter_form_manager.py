@@ -11,6 +11,7 @@ from pyqt_reactive.animation import FlashMixin
 # FlashableGroupBox not extracted - OpenHCS specific
 from objectstate import (
     DataclassFieldAccess,
+    FieldAccessError,
     register_hierarchy_relationship,
     unregister_hierarchy_relationship,
 )
@@ -76,6 +77,34 @@ class FormManagerConfig:
     scope_accent_color: Optional[QColor] = None  # Scope accent color for help buttons
     scope_step_index: Optional[int] = None  # Optional step index to align scope styling with pipeline order
     function_target: Optional[Callable | type] = None  # Callable/class documentation owner for parameter help
+
+
+class FormTargetPathAccess:
+    """Path resolver for form targets that may be dataclasses or object-backed."""
+
+    @classmethod
+    def raw_path(cls, root, field_path: str):
+        current = root
+        for part in tuple(part for part in field_path.split(".") if part):
+            current = cls.raw_value(current, part)
+        return current
+
+    @classmethod
+    def raw_value(cls, instance, field_name: str):
+        if is_dataclass(type(instance)):
+            return DataclassFieldAccess.raw_value(instance, field_name)
+
+        if type(instance).__dictoffset__ == 0:
+            raise FieldAccessError(
+                f"{type(instance).__name__} has no addressable instance fields."
+            )
+
+        storage = vars(instance)
+        if field_name not in storage:
+            raise FieldAccessError(
+                f"{type(instance).__name__}.{field_name} is not stored on the instance."
+            )
+        return storage[field_name]
 
 
 class ParameterFormManager(
@@ -269,7 +298,7 @@ class ParameterFormManager(
         # _extraction_target is editable config object (e.g., PipelineConfig)
         target_obj = state.saved_object
         if self.field_id:
-            target_obj = DataclassFieldAccess.raw_path(target_obj, self.field_id)
+            target_obj = FormTargetPathAccess.raw_path(target_obj, self.field_id)
 
         # Auto-set render_enabled_in_header for nested enableable objects
         # If target_obj is enableable and this is a nested form, render enabled in header
