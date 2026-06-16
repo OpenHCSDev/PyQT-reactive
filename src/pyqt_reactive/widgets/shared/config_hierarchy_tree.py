@@ -10,7 +10,8 @@ widgets only need to provide their dataclass inputs and navigation callbacks.
 from __future__ import annotations
 
 import logging
-from dataclasses import fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
+from enum import Enum
 from typing import Dict, Type, Optional, Iterable
 
 from PyQt6.QtCore import Qt, QRect
@@ -29,6 +30,35 @@ logger = logging.getLogger(__name__)
 
 # Custom data role for flash key (matches list_item_delegate pattern)
 TREE_FLASH_KEY_ROLE = Qt.ItemDataRole.UserRole + 20
+
+
+class ConfigTreeItemKind(str, Enum):
+    """Closed item kinds stored in config hierarchy tree payloads."""
+
+    DATACLASS = "dataclass"
+    INHERITANCE_LINK = "inheritance_link"
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigTreeItemPayload:
+    """Nominal payload stored on config hierarchy tree items."""
+
+    item_type: ConfigTreeItemKind
+    class_obj: Type | None = None
+    field_name: str | None = None
+    field_path: str | None = None
+    target_class: Type | None = None
+    ui_hidden: bool = False
+
+    @property
+    def navigation_path(self) -> str | None:
+        return self.field_path or self.field_name
+
+    def alternate_class_field_name(self, formatter) -> str | None:
+        if self.class_obj is None:
+            return None
+        return formatter(self.class_obj.__name__)
+
 
 class TreeItemFlashDelegate(QStyledItemDelegate):
     """Custom delegate for tree items with flash behind text.
@@ -316,10 +346,9 @@ class ConfigHierarchyTreeHelper:
                 continue
             seen_items.add(id(item))
 
-            meta = item.data(0, Qt.ItemDataRole.UserRole) or {}
-            field_name = meta.get("field_name")
-            class_type = meta.get("class")
-            alt_name = self._to_snake_case(class_type.__name__) if isinstance(class_type, type) else None
+            payload = self._required_item_payload(item)
+            field_name = payload.field_name
+            alt_name = payload.alternate_class_field_name(self._to_snake_case)
 
             is_dirty = self._matches_prefix(path, field_name, alt_name, dirty_prefixes)
             has_sig_diff = self._matches_prefix(path, field_name, alt_name, sig_diff_prefixes)
@@ -340,6 +369,18 @@ class ConfigHierarchyTreeHelper:
         # Update groupbox titles using same prefixes (single source of truth)
         if self._flash_manager is not None:
             self._flash_manager.update_groupbox_dirty_markers(dirty_prefixes, sig_diff_prefixes)
+
+    def _required_item_payload(
+        self,
+        item: QTreeWidgetItem,
+    ) -> ConfigTreeItemPayload:
+        payload = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(payload, ConfigTreeItemPayload):
+            raise TypeError(
+                "Config hierarchy tree item data must be ConfigTreeItemPayload; "
+                f"got {type(payload).__name__}."
+            )
+        return payload
 
     def _compute_prefixes(self, fields: set) -> set:
         """Compute field paths and all their ancestor prefixes."""
@@ -422,13 +463,13 @@ class ConfigHierarchyTreeHelper:
             item.setData(
                 0,
                 Qt.ItemDataRole.UserRole,
-                {
-                    "type": "dataclass",
-                    "class": obj_type,
-                    "field_name": field_name,
-                    "field_path": path,
-                    "ui_hidden": False,
-                },
+                ConfigTreeItemPayload(
+                    item_type=ConfigTreeItemKind.DATACLASS,
+                    class_obj=obj_type,
+                    field_name=field_name,
+                    field_path=path,
+                    ui_hidden=False,
+                ),
             )
             tree.addTopLevelItem(item)
             # Store mapping for dirty styling updates (support both field and snake_case type name)
@@ -472,13 +513,13 @@ class ConfigHierarchyTreeHelper:
             item.setData(
                 0,
                 Qt.ItemDataRole.UserRole,
-                {
-                    "type": "dataclass",
-                    "class": field_type,
-                    "field_name": field.name,
-                    "field_path": path,
-                    "ui_hidden": ui_hidden,
-                },
+                ConfigTreeItemPayload(
+                    item_type=ConfigTreeItemKind.DATACLASS,
+                    class_obj=field_type,
+                    field_name=field.name,
+                    field_path=path,
+                    ui_hidden=ui_hidden,
+                ),
             )
 
             if ui_hidden:
@@ -588,11 +629,11 @@ class ConfigHierarchyTreeHelper:
             base_item.setData(
                 0,
                 Qt.ItemDataRole.UserRole,
-                {
-                    "type": "inheritance_link",
-                    "target_class": base_class,
-                    "ui_hidden": ui_hidden,
-                },
+                ConfigTreeItemPayload(
+                    item_type=ConfigTreeItemKind.INHERITANCE_LINK,
+                    target_class=base_class,
+                    ui_hidden=ui_hidden,
+                ),
             )
 
             if ui_hidden:

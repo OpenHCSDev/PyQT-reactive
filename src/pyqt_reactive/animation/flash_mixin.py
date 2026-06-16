@@ -650,7 +650,7 @@ def create_groupbox_element(
         """
         nonlocal _last_groupbox_size, _cached_child_widgets
 
-        logger.info(f"[FLASH] get_child_rects START: leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}, label_widget={type(label_widget).__name__ if label_widget else None}, groupbox={type(groupbox).__name__}")
+        logger.debug(f"[FLASH] get_child_rects START: leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}, label_widget={type(label_widget).__name__ if label_widget else None}, groupbox={type(groupbox).__name__}")
         
         # If the groupbox isn't visible to this window (e.g., tab not selected), skip masking
         if not groupbox.isVisible() or not groupbox.isVisibleTo(window):
@@ -661,7 +661,7 @@ def create_groupbox_element(
         # INVERSE MODE: Mask title row + leaf_widget + label_widget only
         # All other widgets get flashed
         if leaf_widget is not None:
-            logger.info(f"[FLASH] INVERSE MODE: Masking title + leaf_widget + label_widget only")
+            logger.debug(f"[FLASH] INVERSE MODE: Masking title + leaf_widget + label_widget only")
             exclusions: List[Tuple[QRect, bool]] = []
             try:
                 if not leaf_widget.isVisible():
@@ -734,11 +734,11 @@ def create_groupbox_element(
             except Exception as e:
                 logger.error(f"[FLASH INVERSE] Outer exception: {e}", exc_info=True)
                 return []
-            logger.info(f"[FLASH] INVERSE MODE: Returning {len(exclusions)} exclusions")
+            logger.debug(f"[FLASH] INVERSE MODE: Returning {len(exclusions)} exclusions")
             return exclusions
 
         # STANDARD MODE: Mask all children
-        logger.info(f"[FLASH] STANDARD MODE: Masking all children")
+        logger.debug(f"[FLASH] STANDARD MODE: Masking all children")
         child_rects: List[Tuple[QRect, bool]] = []
         groupbox_global = groupbox.mapToGlobal(QPoint(0, 0))
         groupbox_window = window.mapFromGlobal(groupbox_global)
@@ -791,7 +791,7 @@ def create_groupbox_element(
         if child_rects:
             first_children = [f"({r.x()},{r.y()})" for r, _ in child_rects[:2]]
             logger.debug(f"[FLASH] GET_CHILD_RECTS groupbox_id={id(groupbox)} groupbox_window_pos=({groupbox_window.x()},{groupbox_window.y()}) first_children={first_children} total={len(child_rects)}")
-        logger.info(f"[FLASH] STANDARD MODE: Returning {len(child_rects)} exclusions")
+        logger.debug(f"[FLASH] STANDARD MODE: Returning {len(child_rects)} exclusions")
         return child_rects
 
     # Extract corner radius from groupbox stylesheet (cached)
@@ -1845,7 +1845,7 @@ class _GlobalFlashCoordinator:
         if self._tick_count % 30 == 0:
             overlay_paint_count = sum(1 for wid in active_windows_this_frame
                                        if wid in WindowFlashOverlay._overlays)
-            logger.info(f"[FLASH PERF] tick={self._tick_count} colors={len(self._computed_colors)} overlays_painted={overlay_paint_count} total_overlays={len(WindowFlashOverlay._overlays)}")
+            logger.debug(f"[FLASH PERF] tick={self._tick_count} colors={len(self._computed_colors)} overlays_painted={overlay_paint_count} total_overlays={len(WindowFlashOverlay._overlays)}")
 
         # Stop timer if nothing active
         self._maybe_stop_timer()
@@ -1968,7 +1968,7 @@ class VisualUpdateMixin:
 
         Uses the unified create_groupbox_element with leaf_widget and label_widget parameters.
         """
-        logger.info(f"[FLASH TRAIL] register_flash_leaf: key={key}, groupbox={type(groupbox).__name__}, leaf_widget={type(leaf_widget).__name__}, label_widget={type(label_widget).__name__ if label_widget else None}")
+        logger.debug(f"[FLASH TRAIL] register_flash_leaf: key={key}, groupbox={type(groupbox).__name__}, leaf_widget={type(leaf_widget).__name__}, label_widget={type(label_widget).__name__ if label_widget else None}")
         self._register_flash_element_internal(
             key,
             lambda k: create_groupbox_element(k, groupbox, leaf_widget=leaf_widget, label_widget=label_widget),  # type: ignore
@@ -2064,9 +2064,14 @@ class VisualUpdateMixin:
         if self._text_update_pending:
             self._text_update_pending = False
             self._execute_text_update()
+            self._visual_repaint()
 
     def _execute_text_update(self) -> None:
         """Execute text/placeholder update. Override in subclass."""
+        pass
+
+    def _visual_repaint(self) -> None:
+        """Repaint visual surfaces after role-only updates. Override in subclass."""
         pass
 
 

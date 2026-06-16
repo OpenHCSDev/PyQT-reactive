@@ -8,12 +8,19 @@ Uses standard Qt dialogs for consistency with the rest of OpenHCS.
 import logging
 import re
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from PyQt6.QtWidgets import QWidget, QLineEdit, QPushButton, QHBoxLayout, QFileDialog
 from PyQt6.QtCore import pyqtSignal
 
+from pyqt_reactive.protocols import (
+    ChangeSignalEmitter,
+    PyQtWidgetMeta,
+    ValueGettable,
+    ValueSettable,
+)
 from pyqt_reactive.theming import ColorScheme
 
 # Optional path cache - stub if not available
@@ -37,6 +44,28 @@ class PathBehavior:
     cache_key: PathCacheKey = PathCacheKey.GENERAL
     description: str = "path"
 
+    @classmethod
+    def from_extensions(cls, extensions: List[str]) -> "PathBehavior":
+        if len(extensions) == 1:
+            description = f"{extensions[0].upper()} file"
+        else:
+            description = f"file ({', '.join(ext.upper() for ext in extensions)})"
+
+        return cls(
+            is_directory=False,
+            extensions=extensions,
+            cache_key=PathCacheKey.FILE_SELECTION,
+            description=description,
+        )
+
+    def with_cache_key(self, cache_key: PathCacheKey) -> "PathBehavior":
+        return PathBehavior(
+            is_directory=self.is_directory,
+            extensions=self.extensions,
+            cache_key=cache_key,
+            description=self.description,
+        )
+
     @property
     def title(self) -> str:
         """Generate appropriate dialog title."""
@@ -54,7 +83,10 @@ class PathBehavior:
         if self.extensions:
             # Create filter like "Image Files (*.tiff *.png);;All Files (*)"
             ext_pattern = " ".join(f"*{ext}" for ext in self.extensions)
-            filter_name = f"{self.extensions[0].upper()} Files" if len(self.extensions) == 1 else "Files"
+            if len(self.extensions) == 1:
+                filter_name = f"{self.extensions[0].upper()} Files"
+            else:
+                filter_name = "Files"
             return f"{filter_name} ({ext_pattern});;All Files (*)"
         else:
             return "All Files (*)"
@@ -82,21 +114,14 @@ class PathBehaviorDetector:
         if param_info and param_info.description:
             docstring_behavior = PathBehaviorDetector._parse_docstring_hints(param_info.description)
             if docstring_behavior:
-                # Merge: docstring extensions + parameter name cache key
-                return PathBehavior(
-                    is_directory=docstring_behavior.is_directory,
-                    extensions=docstring_behavior.extensions,
-                    cache_key=base_behavior.cache_key if base_behavior else PathCacheKey.GENERAL,
-                    description=docstring_behavior.description
-                )
+                if base_behavior:
+                    return docstring_behavior.with_cache_key(base_behavior.cache_key)
+                return docstring_behavior.with_cache_key(PathCacheKey.GENERAL)
 
         # Fall back to base behavior or smart default
-        return base_behavior or PathBehavior(
-            is_directory=False,
-            extensions=None,
-            cache_key=PathCacheKey.GENERAL,
-            description="file or directory"
-        )
+        if base_behavior:
+            return base_behavior
+        return DEFAULT_PATH_BEHAVIOR
 
     @staticmethod
     def _parse_docstring_hints(description: str) -> Optional[PathBehavior]:
@@ -105,7 +130,7 @@ class PathBehaviorDetector:
 
         # Directory specification
         if any(pattern in desc_lower for pattern in ["directory only", "folder only", "dir only"]):
-            return PathBehavior(is_directory=True, cache_key=PathCacheKey.DIRECTORY_SELECTION, description="directory")
+            return DIRECTORY_PATH_BEHAVIOR
 
         # Extension patterns: (.ext only), (.ext1, .ext2), (.ext1/.ext2), etc.
         patterns = [
@@ -124,41 +149,143 @@ class PathBehaviorDetector:
                 extensions = [f".{ext.strip().lstrip('.')}" for ext in raw_exts if ext.strip()]
 
                 if extensions:
-                    desc = f"{extensions[0].upper()} file" if len(extensions) == 1 else f"file ({', '.join(ext.upper() for ext in extensions)})"
-                    return PathBehavior(is_directory=False, extensions=extensions, cache_key=PathCacheKey.FILE_SELECTION, description=desc)
+                    return PathBehavior.from_extensions(extensions)
 
         return None
 
     @staticmethod
     def _detect_from_parameter_name(param_name: str) -> Optional[PathBehavior]:
         """Detect behavior from parameter name patterns."""
-        name_lower = param_name.lower()
+        tokens = PathParameterNameTokens.parse(param_name)
+        role_spec = PATH_NAME_ROLE_CLASSIFIER.classify(tokens)
+        if role_spec is None:
+            return None
+        return role_spec.behavior
 
-        # Directory patterns
-        if any(pattern in name_lower for pattern in ['dir', 'folder', 'directory']):
-            return PathBehavior(is_directory=True, cache_key=PathCacheKey.DIRECTORY_SELECTION, description="directory")
 
-        # File patterns
-        if any(pattern in name_lower for pattern in ['file']):
-            return PathBehavior(is_directory=False, cache_key=PathCacheKey.FILE_SELECTION, description="file")
+class PathNameRole(Enum):
+    """Nominal path behavior roles inferred from parameter-name tokens."""
 
-        # Context-specific cache keys (NO EXTENSIONS - docstring handles that)
-        if 'pipeline' in name_lower:
-            return PathBehavior(is_directory=False, cache_key=PathCacheKey.PIPELINE_FILES, description="pipeline file")
-        if 'step' in name_lower:
-            return PathBehavior(is_directory=False, cache_key=PathCacheKey.STEP_SETTINGS, description="step file")
-        if 'function' in name_lower or 'func' in name_lower:
-            return PathBehavior(is_directory=False, cache_key=PathCacheKey.FUNCTION_PATTERNS, description="function file")
+    DIRECTORY = "directory"
+    FILE = "file"
+    PIPELINE = "pipeline"
+    STEP = "step"
+    FUNCTION = "function"
 
+
+DIRECTORY_PATH_BEHAVIOR = PathBehavior(
+    is_directory=True,
+    cache_key=PathCacheKey.DIRECTORY_SELECTION,
+    description="directory",
+)
+DEFAULT_PATH_BEHAVIOR = PathBehavior(
+    is_directory=False,
+    extensions=None,
+    cache_key=PathCacheKey.GENERAL,
+    description="file or directory",
+)
+
+
+@dataclass(frozen=True)
+class PathNameRoleSpec:
+    """One authoritative row for parameter-name path behavior inference."""
+
+    role: PathNameRole
+    tokens: frozenset[str]
+    behavior: PathBehavior
+
+
+PATH_NAME_ROLE_SPECS = (
+    PathNameRoleSpec(
+        role=PathNameRole.DIRECTORY,
+        tokens=frozenset({"dir", "directory", "folder"}),
+        behavior=DIRECTORY_PATH_BEHAVIOR,
+    ),
+    PathNameRoleSpec(
+        role=PathNameRole.FILE,
+        tokens=frozenset({"file", "filepath", "filename"}),
+        behavior=PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.FILE_SELECTION,
+            description="file",
+        ),
+    ),
+    PathNameRoleSpec(
+        role=PathNameRole.PIPELINE,
+        tokens=frozenset({"pipeline"}),
+        behavior=PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.PIPELINE_FILES,
+            description="pipeline file",
+        ),
+    ),
+    PathNameRoleSpec(
+        role=PathNameRole.STEP,
+        tokens=frozenset({"step"}),
+        behavior=PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.STEP_SETTINGS,
+            description="step file",
+        ),
+    ),
+    PathNameRoleSpec(
+        role=PathNameRole.FUNCTION,
+        tokens=frozenset({"function", "func"}),
+        behavior=PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.FUNCTION_PATTERNS,
+            description="function file",
+        ),
+    ),
+)
+
+
+@dataclass(frozen=True)
+class PathParameterNameTokens:
+    """Boundary parse of external parameter names into exact tokens."""
+
+    values: frozenset[str]
+
+    @classmethod
+    def parse(cls, param_name: str) -> "PathParameterNameTokens":
+        camel_split = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", param_name)
+        return cls(frozenset(re.findall(r"[a-z0-9]+", camel_split.lower())))
+
+    def contains_any(self, candidates: frozenset[str]) -> bool:
+        return bool(self.values.intersection(candidates))
+
+
+class PathNameRoleClassifier:
+    """Classify parsed path-name tokens into a nominal behavior role."""
+
+    def classify(self, tokens: PathParameterNameTokens) -> PathNameRoleSpec | None:
+        for role_spec in PATH_NAME_ROLE_SPECS:
+            if tokens.contains_any(role_spec.tokens):
+                return role_spec
         return None
 
 
-class EnhancedPathWidget(QWidget):
+PATH_NAME_ROLE_CLASSIFIER = PathNameRoleClassifier()
+
+
+class EnhancedPathWidget(
+    QWidget,
+    ValueGettable,
+    ValueSettable,
+    ChangeSignalEmitter,
+    metaclass=PyQtWidgetMeta,
+):
     """Enhanced path widget with browse button using standard Qt dialogs."""
 
     path_changed = pyqtSignal(str)
 
-    def __init__(self, param_name: str, current_value: Any, param_info: Optional[ParameterInfo] = None, color_scheme=None):
+    def __init__(
+        self,
+        param_name: str,
+        current_value: Path | str | None,
+        param_info: Optional[ParameterInfo] = None,
+        color_scheme=None,
+    ):
         """
         Initialize enhanced path widget.
 
@@ -218,7 +345,7 @@ class EnhancedPathWidget(QWidget):
         """Handle text change in path input."""
         self.path_changed.emit(text)
 
-    def set_path(self, value: Any):
+    def set_path(self, value: Path | str | None) -> None:
         """Set path value without triggering signals."""
         self.path_input.blockSignals(True)
         try:
@@ -232,18 +359,31 @@ class EnhancedPathWidget(QWidget):
         finally:
             self.path_input.blockSignals(False)
 
-    def get_path(self):
+    def get_path(self) -> str | None:
         """Get current path value, returning None for empty strings."""
         text = self.path_input.text().strip()
-        return None if text == "" else text
+        if text == "":
+            return None
+        return text
 
-    def get_value(self):
+    def get_value(self) -> str | None:
         """Implement ValueGettable ABC - alias for get_path()."""
         return self.get_path()
 
-    def set_value(self, value: Any):
+    def set_value(self, value: Path | str | None) -> None:
         """Implement ValueSettable ABC - alias for set_path()."""
         self.set_path(value)
+
+    def connect_change_signal(self, callback: Callable[[str], None]) -> None:
+        """Implement ChangeSignalEmitter ABC."""
+        self.path_changed.connect(callback)
+
+    def disconnect_change_signal(self, callback: Callable[[str], None]) -> None:
+        """Implement ChangeSignalEmitter ABC."""
+        try:
+            self.path_changed.disconnect(callback)
+        except TypeError:
+            pass
 
     def _open_dialog(self):
         """Open appropriate Qt dialog based on behavior."""

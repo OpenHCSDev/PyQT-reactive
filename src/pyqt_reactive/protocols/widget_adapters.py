@@ -354,7 +354,19 @@ if PYQT6_AVAILABLE:
             Connects to all checkboxes in the group.
             """
             for checkbox in self._checkboxes.values():
-                checkbox.stateChanged.connect(lambda: callback(self.get_value()))
+                checkbox.stateChanged.connect(
+                    self._make_checkbox_group_handler(callback)
+                )
+
+        def _make_checkbox_group_handler(self, callback: Callable[[Any], None]) -> Callable[[Any], None]:
+            """Return a handler that promotes the whole enum list to concrete."""
+            def handler(_state: Any) -> None:
+                for checkbox in self.checkbox_widgets():
+                    checkbox.convert_placeholder_to_concrete()
+                self.setProperty("is_placeholder_state", False)
+                callback(self.get_value())
+
+            return handler
 
         def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
             """Implement ChangeSignalEmitter ABC."""
@@ -396,4 +408,3 @@ if PYQT6_AVAILABLE:
         for abc_type in abc_types:
             if issubclass(adapter_class, abc_type):
                 capabilities.add(abc_type)
-

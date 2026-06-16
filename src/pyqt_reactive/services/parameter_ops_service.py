@@ -37,7 +37,7 @@ except ImportError:
         return None
 
 if TYPE_CHECKING:
-    from pyqt_reactive.forms import (
+    from pyqt_reactive.forms.parameter_info_types import (
         OptionalDataclassInfo,
         DirectDataclassInfo,
         GenericInfo
@@ -66,7 +66,7 @@ class ParameterOpsService(ParameterServiceABC):
     def __init__(self):
         """Initialize with widget operations dependency."""
         super().__init__()
-        from pyqt_reactive.forms import WidgetOperations
+        from pyqt_reactive.forms.widget_operations import WidgetOperations
         self.widget_ops = WidgetOperations
 
     @staticmethod
@@ -344,4 +344,3 @@ class ParameterOpsService(ParameterServiceABC):
                         if placeholder_text:
                             # Use type-safe method that passes actual value for checkbox groups
                             PyQt6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
-

@@ -17,7 +17,7 @@ class EnabledFieldStylingService:
 
     def __init__(self):
         """Initialize enabled field styling service (stateless - imports dependencies)."""
-        from pyqt_reactive.forms import WidgetOperations
+        from pyqt_reactive.forms.widget_operations import WidgetOperations
         self.widget_ops = WidgetOperations
         self._last_enabled_values: WeakKeyDictionary[Any, bool] = WeakKeyDictionary()
         self._direct_widgets_by_manager: WeakKeyDictionary[Any, list] = WeakKeyDictionary()
@@ -172,7 +172,7 @@ class EnabledFieldStylingService:
                 if nested_manager is manager:
                     param_type = manager._parent_manager.parameter_types.get(param_name)
                     if param_type:
-                        from pyqt_reactive.forms import ParameterTypeUtils
+                        from pyqt_reactive.forms.parameter_type_utils import ParameterTypeUtils
                         if ParameterTypeUtils.is_optional_dataclass(param_type):
                             instance = manager._parent_manager.parameters.get(param_name)
                             logger.debug(f"[{log_prefix}] field_id={manager.field_id}, optional dataclass check: param_name={param_name}, instance={instance}, is_none={instance is None}")

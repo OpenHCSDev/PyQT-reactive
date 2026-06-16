@@ -13,7 +13,7 @@ from pyqt_reactive.widgets.shared.tear_off_tab_widget import TearOffTabWidget
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QIcon
 
-from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 from pyqt_reactive.theming import StyleSheetGenerator
 
 

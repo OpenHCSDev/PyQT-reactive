@@ -14,6 +14,8 @@ Key features:
 4. Enum-driven dispatch for initial refresh strategy
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field, make_dataclass, fields as dataclass_fields
 from typing import Any, Dict, Optional, Type, Callable, List, TypeVar
 from enum import Enum, auto
@@ -28,6 +30,15 @@ from contextlib import contextmanager
 from python_introspect import UnifiedParameterAnalyzer
 from pyqt_reactive.forms.parameter_form_base import ParameterFormConfig
 from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
+from pyqt_reactive.forms.parameter_value_contracts import (
+    FormContext,
+    FormObject,
+    GeneratedServiceNamespace,
+    ParameterDefaultsByName,
+    ParameterDescriptionByPath,
+    ParameterDescriptionProvider,
+    ParameterInfoSequence,
+)
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 from objectstate import get_base_config_type
 
@@ -49,8 +60,8 @@ T = TypeVar('T')
 @dataclass
 class ExtractedParameters:
     """Result of parameter extraction from object_instance."""
-    default_value: Dict[str, Any] = field(
-        default_factory=dict,
+    default_value: ParameterDefaultsByName = field(
+        default_factory=ParameterDefaultsByName,
         metadata={'initial_values': True, 'project': lambda name, info, field_id: (name, info.default_value)}
     )
     param_type: Dict[str, Type] = field(
@@ -59,8 +70,8 @@ class ExtractedParameters:
     )
     # description can be a Dict[str, str] or a callable that returns Dict[str, str]
     # This allows lazy retrieval from ObjectState._parameter_descriptions to avoid timing issues
-    description: Any = field(
-        default_factory=dict,
+    description: ParameterDescriptionByPath | ParameterDescriptionProvider = field(
+        default_factory=ParameterDescriptionByPath,
         metadata={
             'project': lambda name, info, field_id: (
                 f"{field_id}.{name}" if field_id else name,
@@ -68,14 +79,14 @@ class ExtractedParameters:
             )
         }
     )
-    object_instance: Any = field(default=None, metadata={'computed': lambda obj, *_: obj})
+    object_instance: FormObject | None = field(default=None, metadata={'computed': lambda obj, *_: obj})
 
 
 @dataclass
 class ConfigBuildResult:
     """Result of ConfigBuilderService.build() - bundles config + analysis."""
-    config: Any  # The real ParameterFormConfig from parameter_form_base
-    form_structure: Any
+    config: ParameterFormConfig
+    form_structure: 'FormStructure'
     global_config_type: Type
     placeholder_prefix: str
 
@@ -83,9 +94,9 @@ class ConfigBuildResult:
 @dataclass
 class DerivationContext:
     """Context for computing derived config values via properties."""
-    context_obj: Any
+    context_obj: ParameterFormConfig | FormContext | None
     extracted: ExtractedParameters
-    color_scheme: Any
+    color_scheme: PyQt6ColorScheme | None
 
     @property
     def global_config_type(self) -> Type:
@@ -171,7 +182,7 @@ class InitializationServiceCatalog:
             return func
         return decorator
 
-    def install_generated_services(self, namespace: Dict[str, Any]) -> None:
+    def install_generated_services(self, namespace: GeneratedServiceNamespace) -> None:
         """Generate all registered services into a module namespace."""
         for spec in self._builders_by_output.values():
             namespace[spec.service_name] = self._create_service_type(spec)
@@ -227,15 +238,13 @@ INITIALIZATION_SERVICES = InitializationServiceCatalog()
 # Service Registry Meta
 # ============================================================================
 
-# Import service modules
-from pyqt_reactive.services import (
-    widget_service,
-    value_collection_service,
-    signal_service,
-    parameter_ops_service,
-    enabled_field_styling_service,
-    enum_dispatch_service,
-)
+# Import service modules explicitly so the services package has no runtime export dispatch.
+import pyqt_reactive.services.widget_service as widget_service
+import pyqt_reactive.services.value_collection_service as value_collection_service
+import pyqt_reactive.services.signal_service as signal_service
+import pyqt_reactive.services.parameter_ops_service as parameter_ops_service
+import pyqt_reactive.services.enabled_field_styling_service as enabled_field_styling_service
+import pyqt_reactive.services.enum_dispatch_service as enum_dispatch_service
 
 
 class ServiceRegistryMeta(type):
@@ -379,7 +388,7 @@ class FormBuildOrchestrator:
     def is_nested_manager(manager) -> bool:
         return manager._parent_manager is not None
 
-    def build_widgets(self, manager, content_layout: QVBoxLayout, param_infos: List[Any], use_async: bool) -> None:
+    def build_widgets(self, manager, content_layout: QVBoxLayout, param_infos: ParameterInfoSequence, use_async: bool) -> None:
         """Build widgets using unified async/sync path."""
         pass  # timer decorator - optional
 
@@ -395,7 +404,7 @@ class FormBuildOrchestrator:
         else:
             self._build_widgets_sync(manager, content_layout, param_infos)
 
-    def _build_widgets_sync(self, manager, content_layout: QVBoxLayout, param_infos: List[Any]) -> None:
+    def _build_widgets_sync(self, manager, content_layout: QVBoxLayout, param_infos: ParameterInfoSequence) -> None:
         """Synchronous widget creation path."""
         pass  # timer decorator - optional
         from .parameter_info_types import DirectDataclassInfo, OptionalDataclassInfo
@@ -416,7 +425,7 @@ class FormBuildOrchestrator:
 
         self._execute_post_build_sequence(manager)
 
-    def _build_widgets_async(self, manager, content_layout: QVBoxLayout, param_infos: List[Any]) -> None:
+    def _build_widgets_async(self, manager, content_layout: QVBoxLayout, param_infos: ParameterInfoSequence) -> None:
         """Asynchronous widget creation path."""
         pass  # timer decorator - optional
 
@@ -566,7 +575,7 @@ class InitialRefreshStrategy:
     """Enum-driven dispatch for initial placeholder refresh."""
 
     @staticmethod
-    def execute(manager: Any) -> None:
+    def execute(manager) -> None:
         """Execute the appropriate refresh strategy for the manager."""
         pass  # timer decorator - optional
 

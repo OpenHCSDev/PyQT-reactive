@@ -1,6 +1,6 @@
 """PyQt parameter form manager - VIEW layer for ObjectState MODEL."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 import logging
 from typing import Any, Dict, Type, Optional, List, Set, Callable
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
@@ -9,7 +9,11 @@ from PyQt6.QtGui import QColor
 
 from pyqt_reactive.animation import FlashMixin
 # FlashableGroupBox not extracted - OpenHCS specific
-from objectstate import register_hierarchy_relationship, unregister_hierarchy_relationship
+from objectstate import (
+    DataclassFieldAccess,
+    register_hierarchy_relationship,
+    unregister_hierarchy_relationship,
+)
 
 from .widget_creation_types import ParameterFormManager as ParameterFormManagerABC, _CombinedMeta
 # timer decorator made optional
@@ -18,12 +22,21 @@ from .widget_strategies import create_pyqt6_widget
 from .layout_constants import CURRENT_LAYOUT
 from .parameter_form_chrome_sync import ParameterFormChromeSync
 from .parameter_form_tree_index import ParameterFormTreeIndex
-from pyqt_reactive.services import ValueCollectionService
-from pyqt_reactive.services import SignalService
-from pyqt_reactive.services import FieldChangeDispatcher, FieldChangeEvent
+from pyqt_reactive.services.value_collection_service import ValueCollectionService
+from pyqt_reactive.services.signal_service import SignalService
+from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 # LiveContextService deleted - functionality moved to ObjectStateRegistry
-from pyqt_reactive.services import FlagContextManager
+from pyqt_reactive.services.flag_context_manager import FlagContextManager
 from .form_init_service import FormBuildOrchestrator
+from pyqt_reactive.forms.parameter_info_types import ParameterInfo
+from pyqt_reactive.forms.parameter_value_contracts import (
+    FormContext,
+    ParameterTypesByName,
+    ParameterDefaultsByName,
+    ParameterValue,
+    WidgetValue,
+)
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.config_tree_contracts import ConfigTreeFlashManager
 from pyqt_reactive.services.window_navigation import FormNavigationManager
 from contextlib import contextmanager
@@ -48,21 +61,21 @@ class FormManagerConfig:
     Follows OpenHCS dataclass-based configuration patterns.
     """
     parent: Optional[QWidget] = None
-    context_obj: Optional[Any] = None
+    context_obj: Optional[FormContext] = None
     exclude_params: Optional[List[str]] = None
-    initial_values: Optional[Dict[str, Any]] = None
+    initial_values: Optional[ParameterDefaultsByName] = None
     parent_manager: Optional['ParameterFormManager'] = None
     read_only: bool = False
     scope_id: Optional[str] = None
-    color_scheme: Optional[Any] = None
+    color_scheme: Optional[ColorScheme] = None
     # Windows that manage scrolling must set this explicitly.
     use_scroll_area: bool = False
-    state: Optional[Any] = None  # ObjectState instance - if provided, PFM delegates to it
+    state: Optional['ObjectState'] = None  # ObjectState instance - if provided, PFM delegates to it
     field_id: str = ''  # Canonical dotted path id for this form (e.g., 'well_filter_config')
     render_enabled_in_header: bool = False  # If True, 'enabled' checkbox is rendered in container header, not as a form row
-    scope_accent_color: Optional[Any] = None  # Scope accent color for help buttons (QColor or None)
+    scope_accent_color: Optional[QColor] = None  # Scope accent color for help buttons
     scope_step_index: Optional[int] = None  # Optional step index to align scope styling with pipeline order
-    function_target: Optional[Any] = None  # Callable/class documentation owner for parameter help
+    function_target: Optional[Callable | type] = None  # Callable/class documentation owner for parameter help
 
 
 class ParameterFormManager(
@@ -122,6 +135,7 @@ class ParameterFormManager(
     ASYNC_WIDGET_CREATION = True  # Create widgets progressively to avoid UI blocking
     ASYNC_THRESHOLD = 5  # Minimum number of parameters to trigger async widget creation
     INITIAL_SYNC_WIDGETS = 10  # Number of widgets to create synchronously for fast initial render
+    CROSS_WINDOW_PLACEHOLDER_REFRESH_MS = 20
 
     @classmethod
     def should_use_async(cls, param_count: int) -> bool:
@@ -132,7 +146,7 @@ class ParameterFormManager(
     # ObjectState is single source of truth - PFM delegates all state access
 
     @property
-    def parameters(self) -> Dict[str, Any]:
+    def parameters(self) -> ParameterDefaultsByName:
         """Get parameters scoped to this PFM's field_id.
 
         With flat storage, filters state.parameters to only include fields
@@ -149,7 +163,9 @@ class ParameterFormManager(
         """
         if not self.field_id:
             # Root PFM: return only top-level parameters (no dots)
-            return {k: v for k, v in self.state.parameters.items() if '.' not in k}
+            return ParameterDefaultsByName(
+                (k, v) for k, v in self.state.parameters.items() if '.' not in k
+            )
 
         # Nested PFM: filter by prefix and strip prefix from keys
         # ALSO: For enableable types, include the 'enabled' field specially
@@ -157,7 +173,7 @@ class ParameterFormManager(
         from python_introspect import ENABLED_FIELD
 
         prefix_dot = f'{self.field_id}.'
-        result = {}
+        result = ParameterDefaultsByName()
         for path, value in self.state.parameters.items():
             if path.startswith(prefix_dot):
                 remainder = path[len(prefix_dot):]
@@ -170,7 +186,7 @@ class ParameterFormManager(
         return result
 
     @property
-    def parameter_types(self) -> Dict[str, Any]:
+    def parameter_types(self) -> ParameterTypesByName:
         """Derive parameter types from object_instance using UnifiedParameterAnalyzer.
 
         Single code path for all object types - that's the point of UnifiedParameterAnalyzer.
@@ -179,18 +195,27 @@ class ParameterFormManager(
         """
         from python_introspect import UnifiedParameterAnalyzer
         param_info_dict = UnifiedParameterAnalyzer.analyze(self.object_instance)
-        return {name: info.param_type for name, info in param_info_dict.items() if name in self.parameters}
+        return ParameterTypesByName(
+            (name, info.param_type)
+            for name, info in param_info_dict.items()
+            if name in self.parameters
+        )
 
     @property
-    def param_defaults(self) -> Dict[str, Any]:
+    def param_defaults(self) -> ParameterDefaultsByName:
         """Derive defaults from object_instance (the saved baseline).
 
         Uses self.object_instance (target object for this PFM's scope), NOT self.state.object_instance (root).
         Uses self.parameters keys (already scoped/stripped for nested PFMs).
         """
-        return {name: object.__getattribute__(self.object_instance, name)
-                for name in self.parameters.keys()
-                if hasattr(self.object_instance, name)}
+        if not is_dataclass(type(self.object_instance)):
+            return ParameterDefaultsByName()
+        return ParameterDefaultsByName(
+            DataclassFieldAccess.raw_items(
+                self.object_instance,
+                iter(self.parameters.keys()),
+            )
+        )
 
     @property
     def _parameter_descriptions(self) -> Dict[str, str]:
@@ -242,10 +267,9 @@ class ParameterFormManager(
         # CRITICAL: Use _extraction_target for parameter analysis, NOT object_instance
         # object_instance is lifecycle object (e.g., orchestrator), while
         # _extraction_target is editable config object (e.g., PipelineConfig)
-        target_obj = state._extraction_target
+        target_obj = state.saved_object
         if self.field_id:
-            for part in self.field_id.split('.'):
-                target_obj = getattr(target_obj, part)
+            target_obj = DataclassFieldAccess.raw_path(target_obj, self.field_id)
 
         # Auto-set render_enabled_in_header for nested enableable objects
         # If target_obj is enableable and this is a nested form, render enabled in header
@@ -374,6 +398,7 @@ class ParameterFormManager(
             # STEP 4: VIEW-only flags (state tracking is in ObjectState)
             self._initial_load_complete, self._block_cross_window_updates, self._in_reset = False, False, False
             self._dispatching = False
+            self._cross_window_refresh_timer: Optional[QTimer] = None
             self.shared_reset_fields = set()  # VIEW-only: tracks field paths for cross-window reset styling
 
             # CROSS-WINDOW: Connect to change notifications (only root managers)
@@ -432,9 +457,6 @@ class ParameterFormManager(
                 # TODO: Remove this after all callers are updated to use context manager
                 SignalService.register_cross_window_signals(self)
 
-            # Debounce timer for cross-window placeholder refresh
-            self._cross_window_refresh_timer = None
-
             # Flash animation: Subscribe to resolved value changes (root only)
             # NOTE: _init_visual_update_mixin() is called earlier (before setup_ui)
             if self._parent_manager is None:
@@ -456,7 +478,7 @@ class ParameterFormManager(
             self._initial_load_complete = True
             if not is_nested:
                 self._apply_to_nested_managers(
-                    lambda name, manager: setattr(manager, '_initial_load_complete', True)
+                    lambda name, manager: manager.mark_initial_load_complete()
                 )
 
             # STEP 10: Initial refresh - REMOVED (now done in _execute_post_build_sequence)
@@ -466,6 +488,10 @@ class ParameterFormManager(
             pass
 
     # ==================== WIDGET CREATION METHODS ====================
+
+    def mark_initial_load_complete(self) -> None:
+        """Mark this form as fully initialized after root build completion."""
+        self._initial_load_complete = True
 
     def setup_ui(self):
         """Set up the UI layout."""
@@ -539,7 +565,7 @@ class ParameterFormManager(
         self._form_widget = content_widget
         return content_widget
 
-    def _create_widget_for_param(self, param_info: Any) -> Any:
+    def _create_widget_for_param(self, param_info: ParameterInfo) -> QWidget:
         """Create widget for a parameter. Type auto-detected from param_info."""
         from pyqt_reactive.forms.widget_creation_config import WidgetCreationPipeline
         logger.debug(
@@ -629,7 +655,12 @@ class ParameterFormManager(
         # Start creating widgets
         QTimer.singleShot(0, create_next_batch)
 
-    def _create_nested_form_inline(self, param_name: str, unwrapped_type: Type = None, current_value: Any = None) -> Any:
+    def _create_nested_form_inline(
+        self,
+        param_name: str,
+        unwrapped_type: type | None = None,
+        current_value=None,
+    ) -> 'ParameterFormManager':
         """Create nested PFM that shares root ObjectState with different field_id.
 
         With flat storage, nested PFMs share the same ObjectState instance as the parent,
@@ -651,7 +682,7 @@ class ParameterFormManager(
             field_id=nested_id,  # Scope access to nested fields
             scope_accent_color=self._scope_accent_color,  # Inherit scope accent color
             scope_step_index=self._scope_step_index,  # Preserve step index for scope styling
-            function_target=self.function_target,
+            function_target=unwrapped_type,
         )
         nested_manager = ParameterFormManager(
             state=self.state,  # CRITICAL: Share the same ObjectState instance
@@ -689,7 +720,7 @@ class ParameterFormManager(
 
         return nested_manager
 
-    def _convert_widget_value(self, value: Any, param_name: str) -> Any:
+    def _convert_widget_value(self, value: WidgetValue, param_name: str) -> ParameterValue:
         """
         Convert widget value to proper type.
 
@@ -741,7 +772,7 @@ class ParameterFormManager(
             # a final update to reflect the complete reset state
             self.chrome_sync.update_owning_groupbox_dirty_marker()
 
-    def update_parameter(self, param_name: str, value: Any) -> None:
+    def update_parameter(self, param_name: str, value: ParameterValue) -> None:
         """Update parameter value using shared service layer.
 
         With flat storage, prepends field_id to create full dotted path.
@@ -830,7 +861,7 @@ class ParameterFormManager(
         """Synchronize visible field chrome after ObjectState accepts a change."""
         self.chrome_sync.after_model_field_change(param_name, full_path)
 
-    def sync_enabled_field_visuals(self, value: Any) -> None:
+    def sync_enabled_field_visuals(self, value: ParameterValue) -> None:
         """Synchronize enabled-field dependent styling after an enabled change."""
         self.chrome_sync.enabled_field_visuals(value)
 
@@ -888,20 +919,35 @@ class ParameterFormManager(
 
         Schedule a placeholder refresh so this form shows updated inherited values.
         Uses emit_signal=False to prevent infinite ping-pong between forms.
-
-        PERFORMANCE: This is called for ALL root managers when ANY value changes.
-        We skip refresh entirely here - the form's values are already correct,
-        only inherited placeholder text might need updates. Those can be lazy.
         """
         # Skip if this form triggered the change
         if self._block_cross_window_updates:
             return
-        # PERFORMANCE FIX: Don't do full tree refresh on every cross-window change.
-        # The ObjectState already has correct values - we only need to update
-        # placeholder TEXT display, which can wait for next explicit refresh.
-        # This prevents O(n²) refresh cascade when multiple forms are open.
-        logger.debug(f"[CROSS-WINDOW] {self.field_id}: Skipping full refresh (lazy placeholder update)")
-        # Only queue a visual update for the flash overlay, don't refresh all placeholders
+
+        logger.debug(
+            "[CROSS-WINDOW] %s: scheduling debounced placeholder refresh",
+            self.field_id,
+        )
+        self.queue_visual_update()
+        self._schedule_cross_window_placeholder_refresh()
+
+    def _schedule_cross_window_placeholder_refresh(self) -> None:
+        """Debounce inherited placeholder refreshes after cross-window edits."""
+        timer = self._cross_window_refresh_timer
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._refresh_cross_window_placeholders)
+            self._cross_window_refresh_timer = timer
+
+        timer.start(self.CROSS_WINDOW_PLACEHOLDER_REFRESH_MS)
+
+    def _refresh_cross_window_placeholders(self) -> None:
+        """Refresh placeholder text for fields still inheriting from context."""
+        if self._block_cross_window_updates:
+            return
+
+        self._parameter_ops_service.refresh_with_live_context(self)
         self.queue_visual_update()
 
     def unregister_from_cross_window_updates(self):

@@ -5,6 +5,7 @@ Prevents accidental value changes from mouse wheel events.
 """
 
 from enum import Enum
+from typing import Callable
 
 from PyQt6.QtWidgets import QCheckBox, QStyleOptionComboBox, QStyle, QApplication
 from PyQt6.QtGui import QWheelEvent, QFont, QColor, QPainter
@@ -13,6 +14,7 @@ from PyQt6.QtCore import Qt
 # Import adapters that already implement ValueGettable/ValueSettable
 from pyqt_reactive.protocols import (
     ComboBoxAdapter,
+    ChangeSignalEmitter,
     DoubleSpinBoxAdapter,
     PyQtWidgetMeta,
     SpinBoxAdapter,
@@ -21,26 +23,24 @@ from pyqt_reactive.protocols import (
 )
 
 
-class NoScrollSpinBox(SpinBoxAdapter):
+class IgnoreWheelEventMixin:
+    """Shared wheel-event policy for widgets that should not scroll values."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()
+
+
+class NoScrollSpinBox(IgnoreWheelEventMixin, SpinBoxAdapter):
     """SpinBox that ignores wheel events to prevent accidental value changes.
 
     Inherits from SpinBoxAdapter which already implements ValueGettable/ValueSettable ABCs.
     """
 
-    def wheelEvent(self, event: QWheelEvent):
-        """Ignore wheel events to prevent accidental value changes."""
-        event.ignore()
-
-
-class NoScrollDoubleSpinBox(DoubleSpinBoxAdapter):
+class NoScrollDoubleSpinBox(IgnoreWheelEventMixin, DoubleSpinBoxAdapter):
     """DoubleSpinBox that ignores wheel events to prevent accidental value changes.
 
     Inherits from DoubleSpinBoxAdapter which already implements ValueGettable/ValueSettable ABCs.
     """
-
-    def wheelEvent(self, event: QWheelEvent):
-        """Ignore wheel events to prevent accidental value changes."""
-        event.ignore()
 
     def textFromValue(self, value: float) -> str:
         """Convert value to string without trailing zeros for clean display.
@@ -61,10 +61,12 @@ class NoScrollDoubleSpinBox(DoubleSpinBoxAdapter):
         if '.' in text:
             text = text.rstrip('0').rstrip('.')
 
-        return text if text else '0'
+        if text:
+            return text
+        return '0'
 
 
-class NoScrollComboBox(ComboBoxAdapter):
+class NoScrollComboBox(IgnoreWheelEventMixin, ComboBoxAdapter):
     """ComboBox that ignores wheel events to prevent accidental value changes.
 
     Inherits from ComboBoxAdapter which already implements ValueGettable/ValueSettable ABCs.
@@ -75,10 +77,6 @@ class NoScrollComboBox(ComboBoxAdapter):
         super().__init__(parent)
         self._placeholder = placeholder
         self._placeholder_active = True
-
-    def wheelEvent(self, event: QWheelEvent):
-        """Ignore wheel events to prevent accidental value changes."""
-        event.ignore()
 
     def setPlaceholder(self, text: str):
         """Set the placeholder text shown when currentIndex == -1."""
@@ -172,6 +170,7 @@ class NoneAwareCheckBox(
     QCheckBox,
     ValueGettable,
     ValueSettable,
+    ChangeSignalEmitter,
     metaclass=PyQtWidgetMeta,
 ):
     """
@@ -212,6 +211,17 @@ class NoneAwareCheckBox(
             # Restore normal palette
             self._apply_concrete_palette()
 
+    def connect_change_signal(self, callback: Callable[[bool | None], None]) -> None:
+        """Implement ChangeSignalEmitter ABC."""
+        self.stateChanged.connect(lambda: callback(self.get_value()))
+
+    def disconnect_change_signal(self, callback: Callable[[bool | None], None]) -> None:
+        """Implement ChangeSignalEmitter ABC."""
+        try:
+            self.stateChanged.disconnect(callback)
+        except TypeError:
+            pass
+
     def set_placeholder_preview(self, checked: bool) -> None:
         """Display an inherited checkbox value without making it concrete."""
         self.setChecked(checked)
@@ -226,6 +236,11 @@ class NoneAwareCheckBox(
         self._value_state = CheckboxValueState.CONCRETE
         self.setProperty("is_placeholder_state", False)
         self._apply_concrete_palette()
+
+    def toggle(self) -> None:
+        """Toggle as a user action, committing placeholder state first."""
+        self.convert_placeholder_to_concrete()
+        super().toggle()
 
     def clear_placeholder_cache(self) -> None:
         """Clear cached placeholder text set by the placeholder enhancer."""
@@ -250,12 +265,7 @@ class NoneAwareCheckBox(
 
     def mousePressEvent(self, event):
         """On click, switch from placeholder to explicit value."""
-        if self.is_placeholder():
-            self._value_state = CheckboxValueState.CONCRETE
-            # Clear placeholder property so get_value returns actual boolean
-            self.setProperty("is_placeholder_state", False)
-            # Restore normal palette
-            self._apply_concrete_palette()
+        self.convert_placeholder_to_concrete()
         super().mousePressEvent(event)
 
     def paintEvent(self, event):

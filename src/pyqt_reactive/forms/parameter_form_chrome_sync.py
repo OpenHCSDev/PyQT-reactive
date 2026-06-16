@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Set
 
-from pyqt_reactive.services import FieldChangeDispatcher, FieldChangeEvent
+from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 
 
 class ParameterFormChromeSync:

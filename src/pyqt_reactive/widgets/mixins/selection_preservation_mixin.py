@@ -6,19 +6,21 @@ similar to the ButtonListWidget pattern used in the Textual TUI.
 """
 
 import logging
-from typing import Callable, Any
+from typing import Callable, TypeVar
 from PyQt6.QtWidgets import QListWidget
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSignalBlocker, Qt
 
 logger = logging.getLogger(__name__)
+
+SelectionItem = TypeVar("SelectionItem")
 
 
 def preserve_selection_during_update(
     list_widget: QListWidget,
-    get_identifier_func: Callable[[Any], str],
+    get_identifier_func: Callable[[SelectionItem], str],
     should_preserve_func: Callable[[], bool],
     update_func: Callable[[], None]
-):
+) -> None:
     """
     Execute a list update function while preserving selection.
 
@@ -52,8 +54,8 @@ def preserve_selection_during_update(
 def restore_selection_by_id(
     list_widget: QListWidget,
     item_id: str,
-    get_identifier_func: Callable[[Any], str]
-):
+    get_identifier_func: Callable[[SelectionItem], str],
+) -> None:
     """
     Restore selection to an item by its identifier.
 
@@ -62,24 +64,34 @@ def restore_selection_by_id(
         item_id: Identifier of the item to select
         get_identifier_func: Function to extract unique ID from item data
     """
-    for i in range(list_widget.count()):
-        item = list_widget.item(i)
+    current_item = list_widget.currentItem()
+    if current_item is not None:
+        current_data = current_item.data(Qt.ItemDataRole.UserRole)
+        if current_data and get_identifier_func(current_data) == item_id:
+            return
+
+    for index in range(list_widget.count()):
+        item = list_widget.item(index)
         item_data = item.data(Qt.ItemDataRole.UserRole)
         if item_data and get_identifier_func(item_data) == item_id:
-            list_widget.setCurrentRow(i)
+            signal_blocker = QSignalBlocker(list_widget)
+            try:
+                list_widget.setCurrentRow(index)
+            finally:
+                del signal_blocker
             logger.debug(f"Restored selection to: {item_id}")
             break
 
 
 def handle_selection_change_with_prevention(
     list_widget: QListWidget,
-    get_selected_func: Callable,
-    get_identifier_func: Callable[[Any], str],
+    get_selected_func: Callable[[], list[SelectionItem]],
+    get_identifier_func: Callable[[SelectionItem], str],
     should_preserve_func: Callable[[], bool],
     get_current_id_func: Callable[[], str],
-    on_selected_func: Callable,
-    on_cleared_func: Callable
-):
+    on_selected_func: Callable[[list[SelectionItem]], None],
+    on_cleared_func: Callable[[], None],
+) -> None:
     """
     Handle selection changes with automatic deselection prevention.
 

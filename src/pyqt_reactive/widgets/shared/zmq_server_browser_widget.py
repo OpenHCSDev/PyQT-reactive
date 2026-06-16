@@ -20,10 +20,12 @@ from PyQt6.QtWidgets import (
 
 from objectstate import spawn_thread_with_context
 
-from pyqt_reactive.services import (
+from pyqt_reactive.services.zmq_server_info_parser import (
     BaseServerInfo,
     DefaultServerInfoParser,
     ServerInfoParserABC,
+)
+from pyqt_reactive.services.zmq_server_scan_service import (
     ZMQServerScanService,
 )
 from pyqt_reactive.theming import StyleSheetGenerator

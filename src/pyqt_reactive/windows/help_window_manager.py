@@ -2,9 +2,12 @@
 
 import inspect
 import logging
+import ast
 import re
-from dataclasses import dataclass
-from typing import Union, Callable, Optional
+from dataclasses import dataclass, fields, is_dataclass
+from enum import Enum
+from typing import Annotated, Union, Callable, Optional, get_args, get_origin
+from types import UnionType
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QTextEdit, QScrollArea, QWidget, QMessageBox
@@ -13,7 +16,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCursor, QGuiApplication
 
 # REUSE the actual working Textual TUI help components
-from python_introspect import DocstringExtractor
+from python_introspect import DocstringExtractor, DocstringInfo, UnifiedParameterAnalyzer
+from objectstate.lazy_factory import get_base_type_for_lazy, is_lazy_dataclass
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 
@@ -25,6 +29,7 @@ HELP_WINDOW_LARGE_WIDTH = 820
 HELP_WINDOW_MAX_WIDTH = 900
 HELP_WINDOW_MAX_HEIGHT = 720
 HELP_WINDOW_SCREEN_MARGIN = 64
+ABSENT_VALUE_LABEL = "None"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +57,222 @@ class ParameterDescriptionBody:
     description: str
 
 
+class DataclassDocstringResolutionKind(Enum):
+    """Provenance for source-authored dataclass docstring resolution."""
+
+    FOUND = "found"
+    CLASS_NOT_FOUND = "class_not_found"
+    DOCSTRING_MISSING = "docstring_missing"
+
+
+@dataclass(frozen=True, slots=True)
+class DataclassDocstringResolution:
+    """Result of resolving a source-authored dataclass docstring."""
+
+    kind: DataclassDocstringResolutionKind
+    docstring: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ParameterDescriptionFormatter:
+    """Display formatter for compact parameter help prose."""
+
+    def strip_rst_directives(self, text: str) -> str:
+        """Remove inline RST directives that are not useful in a compact popup."""
+        text = re.sub(r"\s*\.\. image:: \{[^}]+\}", "", text)
+        text = re.sub(r"\s*\.\. _\w+:\s+\S+", "", text)
+        return text.strip()
+
+    def format_inline_list_markers(self, text: str) -> str:
+        """Give flattened CellProfiler list markers paragraph breaks."""
+        text = re.sub(r"\s+-\s+(\{[^}]+\}:)", r"\n\n- \1", text)
+        text = re.sub(r"\s+References\s+-\s+", "\n\nReferences\n\n- ", text)
+        text = text.replace(" NOTE ", "\n\nNOTE ")
+        return text.strip()
+
+    def format_body(self, text: str) -> str:
+        """Return display-ready body prose for parameter help."""
+        return self.format_inline_list_markers(self.strip_rst_directives(text))
+
+
+PARAMETER_DESCRIPTION_FORMATTER = ParameterDescriptionFormatter()
+
+
+def dataclass_type_for_target(target: Union[Callable, type, None]) -> type | None:
+    """Return the dataclass type represented by a help target."""
+    if target is None:
+        return None
+    if inspect.isclass(target) and is_dataclass(target):
+        return target
+    target_type = type(target)
+    if is_dataclass(target_type):
+        return target_type
+    return None
+
+
+def source_dataclass_type(dataclass_type: type) -> type:
+    """Return the source-authored dataclass for generated lazy dataclass types."""
+    if is_lazy_dataclass(dataclass_type):
+        base_type = get_base_type_for_lazy(dataclass_type)
+        if base_type is None:
+            raise RuntimeError(
+                f"Lazy dataclass {dataclass_type.__qualname__} is missing its "
+                "registered source dataclass type."
+            )
+        if not is_dataclass(base_type):
+            raise RuntimeError(
+                f"Lazy dataclass {dataclass_type.__qualname__} resolves to "
+                f"non-dataclass source type {base_type!r}."
+            )
+        return base_type
+
+    return dataclass_type
+
+
+def source_class_docstring_resolution(dataclass_type: type) -> DataclassDocstringResolution:
+    """Extract the authored class docstring instead of dataclass' rendered signature."""
+    source_type = source_dataclass_type(dataclass_type)
+    source = inspect.getsource(source_type)
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == source_type.__name__:
+            docstring = ast.get_docstring(node)
+            if docstring is None:
+                return DataclassDocstringResolution(
+                    kind=DataclassDocstringResolutionKind.DOCSTRING_MISSING,
+                    docstring=None,
+                )
+            return DataclassDocstringResolution(
+                kind=DataclassDocstringResolutionKind.FOUND,
+                docstring=docstring,
+            )
+    return DataclassDocstringResolution(
+        kind=DataclassDocstringResolutionKind.CLASS_NOT_FOUND,
+        docstring=None,
+    )
+
+
+def is_signature_docstring(text: str | None, type_name: str) -> bool:
+    """Return whether a dataclass docstring is just the generated constructor signature."""
+    if text is None:
+        return False
+    return text.lstrip().startswith(f"{type_name}(")
+
+
+def class_docstring_text(dataclass_type: type) -> str | None:
+    """Return a human-authored dataclass docstring when one is available."""
+    source_type = source_dataclass_type(dataclass_type)
+    source_docstring = source_class_docstring_resolution(source_type)
+    if source_docstring.kind is DataclassDocstringResolutionKind.FOUND:
+        return source_docstring.docstring
+    logger.debug(
+        "Dataclass source docstring resolution for %s ended with %s.",
+        source_type.__qualname__,
+        source_docstring.kind.value,
+    )
+
+    inspected_docstring = inspect.getdoc(source_type)
+    if is_signature_docstring(inspected_docstring, source_type.__name__):
+        return None
+    return inspected_docstring
+
+
+def split_docstring_summary(docstring: str | None, fallback: str) -> tuple[str, str | None]:
+    """Split a docstring into summary and optional remaining description."""
+    if not docstring:
+        return fallback, None
+    lines = docstring.strip().splitlines()
+    if not lines:
+        summary = fallback
+    else:
+        summary = lines[0].strip()
+    description = "\n".join(line.rstrip() for line in lines[1:]).strip()
+    if description == "":
+        return summary, None
+    return summary, description
+
+
+def dataclass_type_from_annotation(annotation) -> type | None:
+    """Return a dataclass type represented by a field annotation."""
+    if inspect.isclass(annotation) and is_dataclass(annotation):
+        return annotation
+
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        annotated_args = get_args(annotation)
+        if not annotated_args:
+            return None
+        return dataclass_type_from_annotation(annotated_args[0])
+
+    if origin in (Union, UnionType):
+        dataclass_args = tuple(
+            arg for arg in get_args(annotation)
+            if inspect.isclass(arg) and is_dataclass(arg)
+        )
+        if len(dataclass_args) == 1:
+            return dataclass_args[0]
+    return None
+
+
+def dataclass_field_description(description: str | None, annotation) -> str | None:
+    """Return displayable docs for one dataclass field."""
+    field_type = dataclass_type_from_annotation(annotation)
+    if description and (
+        field_type is None
+        or not is_signature_docstring(description, field_type.__name__)
+    ):
+        return description
+
+    if field_type is None:
+        return description
+
+    class_docstring = class_docstring_text(field_type)
+    summary, description_body = split_docstring_summary(
+        class_docstring,
+        f"{source_dataclass_type(field_type).__name__} configuration fields.",
+    )
+    if description_body:
+        return f"{summary}\n\n{description_body}"
+    return summary
+
+
+def dataclass_parameter_descriptions(dataclass_type: type) -> dict[str, str]:
+    """Return field descriptions for a dataclass using the shared introspection path."""
+    analyzed = UnifiedParameterAnalyzer.analyze(dataclass_type)
+    dataclass_fields = {field.name: field for field in fields(dataclass_type)}
+    descriptions: dict[str, str] = {}
+    for name, info in analyzed.items():
+        if name in dataclass_fields:
+            annotation = dataclass_fields[name].type
+        else:
+            annotation = None
+        description = dataclass_field_description(info.description, annotation)
+        if description:
+            descriptions[name] = description
+    return descriptions
+
+
+def docstring_info_for_target(target: Union[Callable, type]) -> DocstringInfo:
+    """Return help-window documentation, using field docs for dataclass targets."""
+    dataclass_type = dataclass_type_for_target(target)
+    if dataclass_type is None:
+        return DocstringExtractor.extract(target)
+
+    source_type = source_dataclass_type(dataclass_type)
+    summary, description = split_docstring_summary(
+        class_docstring_text(dataclass_type),
+        source_type.__name__,
+    )
+    return DocstringInfo(
+        summary=summary,
+        description=description,
+        parameters=dataclass_parameter_descriptions(dataclass_type),
+        returns="",
+        examples="",
+    )
+
+
 def parameter_description_from_target(
     help_target: Union[Callable, type, None],
     param_name: str,
@@ -59,10 +280,20 @@ def parameter_description_from_target(
     """Return parsed documentation for one parameter from a callable/class target."""
     if help_target is None:
         return None
+
+    dataclass_type = dataclass_type_for_target(help_target)
+    if dataclass_type is not None:
+        descriptions = dataclass_parameter_descriptions(dataclass_type)
+        if param_name not in descriptions:
+            return None
+        return descriptions[param_name]
+
     docstring_info = DocstringExtractor.extract(help_target)
     if not docstring_info.parameters:
         return None
-    return docstring_info.parameters.get(param_name)
+    if param_name not in docstring_info.parameters:
+        return None
+    return docstring_info.parameters[param_name]
 
 
 def resolved_parameter_description(
@@ -148,28 +379,13 @@ def parse_parameter_description(description: str) -> ParsedParameterDescription:
     )
 
 
-def _strip_rst_directives(text: str) -> str:
-    """Remove inline RST directives that are not useful in a compact popup."""
-    text = re.sub(r"\s*\.\. image:: \{[^}]+\}", "", text)
-    text = re.sub(r"\s*\.\. _\w+:\s+\S+", "", text)
-    return text.strip()
-
-
-def _format_inline_list_markers(text: str) -> str:
-    """Give flattened CellProfiler list markers paragraph breaks."""
-    text = re.sub(r"\s+-\s+(\{[^}]+\}:)", r"\n\n- \1", text)
-    text = re.sub(r"\s+References\s+-\s+", "\n\nReferences\n\n- ", text)
-    text = text.replace(" NOTE ", "\n\nNOTE ")
-    return text.strip()
-
-
 def parameter_description_body(description: str) -> ParameterDescriptionBody:
     """Split CellProfiler setting metadata from the prose body."""
     setting_prefix = "CellProfiler setting '"
     if not description.startswith(setting_prefix):
         return ParameterDescriptionBody(
             setting_name=None,
-            description=_format_inline_list_markers(_strip_rst_directives(description)),
+            description=PARAMETER_DESCRIPTION_FORMATTER.format_body(description),
         )
 
     setting_start = len(setting_prefix)
@@ -177,7 +393,7 @@ def parameter_description_body(description: str) -> ParameterDescriptionBody:
     if setting_end < 0:
         return ParameterDescriptionBody(
             setting_name=None,
-            description=_format_inline_list_markers(_strip_rst_directives(description)),
+            description=PARAMETER_DESCRIPTION_FORMATTER.format_body(description),
         )
 
     setting_name = description[setting_start:setting_end]
@@ -186,7 +402,7 @@ def parameter_description_body(description: str) -> ParameterDescriptionBody:
         remainder = remainder[1:].lstrip()
     return ParameterDescriptionBody(
         setting_name=setting_name,
-        description=_format_inline_list_markers(_strip_rst_directives(remainder)),
+        description=PARAMETER_DESCRIPTION_FORMATTER.format_body(remainder),
     )
 
 
@@ -347,8 +563,9 @@ class DocstringHelpWindow(BaseHelpWindow):
                  color_scheme: Optional[ColorScheme] = None, parent=None):
         self.target = target
 
-        # REUSE Textual TUI docstring extraction logic
-        self.docstring_info = DocstringExtractor.extract(target)
+        # Reuse Textual TUI docstring parsing for callables, but use
+        # source-aware field docs for dataclass configuration targets.
+        self.docstring_info = docstring_info_for_target(target)
 
         # Generate title from target if not provided
         if title is None:
@@ -368,7 +585,12 @@ class DocstringHelpWindow(BaseHelpWindow):
         logger.info(f"🔍 docstring_info.parameters: {bool(self.docstring_info.parameters)}")
         logger.info(f"🔍 docstring_info.returns: {bool(self.docstring_info.returns)}")
         logger.info(f"🔍 docstring_info.examples: {bool(self.docstring_info.examples)}")
-        logger.info(f"🔍 Window parent: {self.parent()}, type: {type(self.parent()).__name__ if self.parent() else 'None'}")
+        parent_widget = self.parent()
+        if parent_widget is None:
+            parent_type_name = ABSENT_VALUE_LABEL
+        else:
+            parent_type_name = type(parent_widget).__name__
+        logger.info(f"🔍 Window parent: {parent_widget}, type: {parent_type_name}")
         logger.info(f"🔍 Color scheme: {self.color_scheme}")
 
         content_widget = QWidget()
@@ -468,7 +690,10 @@ class DocstringHelpWindow(BaseHelpWindow):
     def resize_to_content(self, content_widget: QWidget) -> None:
         """Resize to fit content where possible, bounded by available screen size."""
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
-        available = screen.availableGeometry() if screen is not None else None
+        if screen is None:
+            available = None
+        else:
+            available = screen.availableGeometry()
         if available is None:
             max_width = HELP_WINDOW_MAX_WIDTH
             max_height = HELP_WINDOW_MAX_HEIGHT
@@ -529,7 +754,11 @@ class HelpWindowManager:
         logger = logging.getLogger(__name__)
         
         logger.info(f"🔍 show_docstring_help() CALLED - target={target}, title={title}")
-        logger.info(f"🔍 show_docstring_help() parent={parent}, parent_type={type(parent).__name__ if parent else 'None'}")
+        if parent is None:
+            parent_type_name = ABSENT_VALUE_LABEL
+        else:
+            parent_type_name = type(parent).__name__
+        logger.info(f"🔍 show_docstring_help() parent={parent}, parent_type={parent_type_name}")
         
         try:
             # Check if existing window is still valid
@@ -538,7 +767,7 @@ class HelpWindowManager:
                     if not cls._help_window.isHidden():
                         logger.info(f"🔍 Reusing existing help window")
                         cls._help_window.target = target
-                        cls._help_window.docstring_info = DocstringExtractor.extract(target)
+                        cls._help_window.docstring_info = docstring_info_for_target(target)
                         if title is None:
                             window_title = f"Help: {help_target_display_name(target)}"
                         else:
@@ -613,7 +842,7 @@ class HelpWindowManager:
             if param_desc:
                 log_description = param_desc[:50]
             else:
-                log_description = "None"
+                log_description = ABSENT_VALUE_LABEL
             logger.debug(f"🔍 show_parameter_help: param_name={param_name}, param_description={log_description}")
 
             # Check if existing window is still valid

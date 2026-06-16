@@ -22,7 +22,7 @@ from python_introspect import SignatureAnalyzer, is_enableable, ENABLED_FIELD
 # Import PyQt6 help components (using same pattern as Textual TUI)
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-from pyqt_reactive.forms import ParameterFormManager
+from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.animation import FlashMixin
 
@@ -358,7 +358,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Create the ParameterFormManager with help and reset functionality
         # Import the enhanced PyQt6 ParameterFormManager
-        from pyqt_reactive.forms import ParameterFormManager as PyQtParameterFormManager, FormManagerConfig
+        from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager as PyQtParameterFormManager, FormManagerConfig
 
         # Create form manager with initial_values to load saved kwargs.
         # scope_id is the parent context scope used for function state inheritance.

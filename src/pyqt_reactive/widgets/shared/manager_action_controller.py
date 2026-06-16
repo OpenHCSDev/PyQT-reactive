@@ -8,9 +8,13 @@ import os
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
 logger = logging.getLogger(__name__)
+
+
+ManagerActionHandler: TypeAlias = Callable[[], None]
+ManagerDynamicActionHandler: TypeAlias = Callable[[], ManagerActionHandler]
 
 
 @dataclass(frozen=True)
@@ -29,9 +33,8 @@ class ManagerActionOperations:
     """Nominal operation port consumed by ManagerActionController."""
 
     widget: Any
-    action_registry: Mapping[str, str]
-    dynamic_actions: Mapping[str, str]
-    resolve_method: Callable[[str], Callable[..., Any]]
+    action_handlers: Mapping[str, ManagerActionHandler]
+    dynamic_action_handlers: Mapping[str, ManagerDynamicActionHandler]
     run_async: Callable[[Callable[..., Any]], None]
     selected_items: Callable[[], list[Any]]
     item_name_singular: str
@@ -147,16 +150,13 @@ class ManagerActionController:
         self,
         operations: ManagerActionOperations,
         action: str,
-    ) -> Optional[Callable[..., Any]]:
-        if action in operations.dynamic_actions:
-            resolver_name = operations.dynamic_actions[action]
-            resolved_action_name = operations.resolve_method(resolver_name)()
-            return operations.resolve_method(resolved_action_name)
+    ) -> Optional[ManagerActionHandler]:
+        if action in operations.dynamic_action_handlers:
+            return operations.dynamic_action_handlers[action]()
 
-        method_name = operations.action_registry.get(action)
-        if method_name is None:
-            return None
-        return operations.resolve_method(method_name)
+        if action in operations.action_handlers:
+            return operations.action_handlers[action]
+        return None
 
     def show_code_editor(
         self,

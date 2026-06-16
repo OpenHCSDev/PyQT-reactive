@@ -14,6 +14,8 @@ OPTIONAL_NESTED reuses the same nested form creation logic as NESTED, with addit
 handlers for checkbox title widget and None/instance toggle logic.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -21,7 +23,7 @@ import logging
 import itertools
 
 logger = logging.getLogger(__name__)
-from typing import Any, Callable, ClassVar, Optional, Type, Tuple
+from typing import Any, Callable, ClassVar, Optional, TYPE_CHECKING, Type, Tuple
 from metaclass_registry import AutoRegisterMeta
 
 from .widget_creation_types import (
@@ -32,6 +34,15 @@ from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher
 from pyqt_reactive.services.widget_service import WidgetService
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveParameterRow
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+
+if TYPE_CHECKING:
+    from PyQt6.QtWidgets import QGroupBox, QLayout, QWidget
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+    from pyqt_reactive.widgets.shared.clickable_help_components import (
+        GroupBoxWithHelp,
+        InlineDataclassGroupBox,
+        ProvenanceButton,
+    )
 
 _WIDGET_CREATE_SEQ = itertools.count(1)
 
@@ -111,10 +122,236 @@ class ResetButtonStyler:
         )
 
 
+@dataclass(slots=True)
+class EnabledTitleWidgetMoveRequest:
+    """Request to move an enableable field widget into its group title."""
+
+    nested_manager: ParameterFormManager
+    parent_manager: ParameterFormManager | GroupBoxWithHelp
+    nested_param_name: str
+    enabled_field: str
+
+
+@dataclass(slots=True)
+class EnabledTitleWidgetMoveContext:
+    """Resolved widgets and layouts for enabled-title relocation."""
+
+    request: EnabledTitleWidgetMoveRequest
+    container: GroupBoxWithHelp
+    source_layout: QLayout
+    enabled_widget: QWidget
+    title_widget: QWidget
+    checkbox_widget: NoneAwareCheckBox | None
+    enabled_reset_button: QWidget | None
+
+
+class EnabledTitleWidgetMoveAuthority:
+    """Moves an enableable checkbox into the nested config title row."""
+
+    def move(self, request: EnabledTitleWidgetMoveRequest) -> None:
+        context = self.resolve_context(request)
+        self.detach_source_row_widgets(context)
+        self.wrap_checkbox_for_title(context)
+        self.bind_title_toggle(context)
+        self.prepare_reset_button(context)
+        provenance_button = self.create_provenance_button(context)
+        context.container.addEnableableWidgets(
+            context.title_widget,
+            context.enabled_reset_button,
+            provenance_button,
+        )
+        self.remove_empty_source_row(context)
+        logger.debug("🔍 _move_enabled_widget_to_title: COMPLETE")
+
+    def resolve_context(
+        self,
+        request: EnabledTitleWidgetMoveRequest,
+    ) -> EnabledTitleWidgetMoveContext:
+        from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+
+        enabled_widget = self.enabled_widget(request)
+        enabled_reset_button = request.nested_manager.reset_buttons.get(
+            request.enabled_field
+        )
+        container = self.groupbox_container(request)
+        source_layout = self.source_layout(enabled_widget)
+        checkbox_widget = None
+        if isinstance(enabled_widget, NoneAwareCheckBox):
+            checkbox_widget = enabled_widget
+
+        logger.debug(
+            "🔍 _move_enabled_widget_to_title: resolved enabled_widget=%s reset=%s",
+            enabled_widget,
+            enabled_reset_button,
+        )
+        return EnabledTitleWidgetMoveContext(
+            request=request,
+            container=container,
+            source_layout=source_layout,
+            enabled_widget=enabled_widget,
+            title_widget=enabled_widget,
+            checkbox_widget=checkbox_widget,
+            enabled_reset_button=enabled_reset_button,
+        )
+
+    def enabled_widget(self, request: EnabledTitleWidgetMoveRequest) -> QWidget:
+        if request.enabled_field in request.nested_manager.widgets:
+            return request.nested_manager.widgets[request.enabled_field]
+        raise RuntimeError(
+            f"Enableable field {request.enabled_field!r} is missing from "
+            f"{request.nested_manager.field_id!r} widgets."
+        )
+
+    def groupbox_container(
+        self,
+        request: EnabledTitleWidgetMoveRequest,
+    ) -> GroupBoxWithHelp:
+        from pyqt_reactive.widgets.shared.clickable_help_components import (
+            GroupBoxWithHelp,
+        )
+
+        if isinstance(request.parent_manager, ParameterFormManager):
+            container = request.parent_manager.widgets.get(request.nested_param_name)
+            if isinstance(container, GroupBoxWithHelp):
+                return container
+        if isinstance(request.parent_manager, GroupBoxWithHelp):
+            return request.parent_manager
+        raise RuntimeError(
+            f"Enableable container {request.nested_param_name!r} is not a "
+            "GroupBoxWithHelp."
+        )
+
+    def source_layout(self, enabled_widget: QWidget) -> QLayout:
+        enabled_widget_parent = enabled_widget.parent()
+        if enabled_widget_parent is None:
+            raise RuntimeError("Enableable widget has no parent row.")
+
+        enabled_widget_layout = enabled_widget_parent.layout()
+        if enabled_widget_layout is None:
+            raise RuntimeError("Enableable widget parent has no layout.")
+        return enabled_widget_layout
+
+    def detach_source_row_widgets(self, context: EnabledTitleWidgetMoveContext) -> None:
+        enabled_label = context.request.nested_manager.labels.get(
+            context.request.enabled_field
+        )
+        if enabled_label is not None:
+            context.source_layout.removeWidget(enabled_label)
+            enabled_label.hide()
+
+        context.source_layout.removeWidget(context.enabled_widget)
+        if context.enabled_reset_button is not None:
+            context.source_layout.removeWidget(context.enabled_reset_button)
+
+    def wrap_checkbox_for_title(self, context: EnabledTitleWidgetMoveContext) -> None:
+        if context.checkbox_widget is None:
+            return
+
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QHBoxLayout, QStyle, QWidget
+
+        parent_manager = context.request.parent_manager
+        bg_color = parent_manager.color_scheme.to_hex(
+            parent_manager.color_scheme.button_normal_bg
+        )
+        checkbox_container = QWidget()
+        checkbox_container.setStyleSheet(f"background-color: {bg_color};")
+        indicator_w = context.checkbox_widget.style().pixelMetric(
+            QStyle.PixelMetric.PM_IndicatorWidth
+        )
+        indicator_h = context.checkbox_widget.style().pixelMetric(
+            QStyle.PixelMetric.PM_IndicatorHeight
+        )
+        checkbox_container.setFixedSize(indicator_w, indicator_h)
+        layout = QHBoxLayout(checkbox_container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        context.checkbox_widget.setStyleSheet("padding: 0px; margin: 0px;")
+        context.checkbox_widget.setFixedSize(indicator_w, indicator_h)
+        context.checkbox_widget.setParent(checkbox_container)
+        layout.addWidget(context.checkbox_widget)
+        context.title_widget = checkbox_container
+
+    def bind_title_toggle(self, context: EnabledTitleWidgetMoveContext) -> None:
+        if context.checkbox_widget is None:
+            return
+
+        from PyQt6.QtCore import Qt
+
+        title_label = context.container._title_label
+
+        def on_title_click(event):
+            context.checkbox_widget.toggle()
+
+        title_label.mousePressEvent = on_title_click
+        title_label.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def prepare_reset_button(self, context: EnabledTitleWidgetMoveContext) -> None:
+        if context.enabled_reset_button is None:
+            return
+
+        from pyqt_reactive.utils.styling_utils import update_reset_button_styling
+
+        parent_manager = context.request.parent_manager
+        ResetButtonStyler.apply(context.enabled_reset_button, parent_manager.color_scheme)
+        context.enabled_reset_button.setMaximumWidth(60)
+        context.enabled_reset_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+        update_reset_button_styling(
+            context.enabled_reset_button,
+            context.request.nested_manager.state,
+            context.request.nested_manager.field_id,
+            context.request.enabled_field,
+        )
+
+    def create_provenance_button(
+        self,
+        context: EnabledTitleWidgetMoveContext,
+    ) -> ProvenanceButton:
+        from pyqt_reactive.widgets.shared.clickable_help_components import (
+            ProvenanceButton,
+        )
+
+        dotted_path = (
+            f"{context.request.nested_manager.field_id}.{context.request.enabled_field}"
+            if context.request.nested_manager.field_id
+            else context.request.enabled_field
+        )
+        provenance_button = ProvenanceButton(
+            text="^",
+            color_scheme=context.request.parent_manager.color_scheme,
+        )
+        provenance_button.setMaximumWidth(25)
+        provenance_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+        ResetButtonStyler.apply(
+            provenance_button,
+            context.request.parent_manager.color_scheme,
+        )
+        provenance_button.set_provenance_info(
+            context.request.nested_manager.state,
+            dotted_path,
+        )
+        provenance_button.setVisible(provenance_button._has_provenance())
+        return provenance_button
+
+    def remove_empty_source_row(
+        self,
+        context: EnabledTitleWidgetMoveContext,
+    ) -> None:
+        from PyQt6.QtWidgets import QWidget
+
+        if context.source_layout.count() != 0:
+            return
+
+        row_parent = context.source_layout.parent()
+        if isinstance(row_parent, QWidget):
+            row_parent.setParent(None)
+
+
 class WidgetCreationHandlers:
     """Nominal owner for widget creation operation handlers."""
 
-    def _create_nested_form(ctx: WidgetBuildContext) -> Any:
+    def _create_nested_form(ctx: WidgetBuildContext) -> QWidget:
         """
         Handler for creating nested form.
 
@@ -177,152 +414,18 @@ class WidgetCreationHandlers:
 
         The enabled checkbox is placed after the title label and help button in the title layout.
         """
-        import logging
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtWidgets import QWidget, QLabel
-        from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
-
-        logger = logging.getLogger(__name__)
         logger.debug(f"🔍 _move_enabled_widget_to_title: enabled_field={enabled_field}, nested_param_name={nested_param_name}")
         logger.debug(f"🔍 _move_enabled_widget_to_title: nested_manager.widgets keys={list(nested_manager.widgets.keys())}")
         if isinstance(parent_manager, ParameterFormManager):
             logger.debug(f"🔍 _move_enabled_widget_to_title: parent_manager.widgets keys={list(parent_manager.widgets.keys())}")
-
-        if enabled_field not in nested_manager.widgets:
-            logger.warning(f"⚠️  _move_enabled_widget_to_title: enabled_field '{enabled_field}' not in nested_manager.widgets")
-            return
-
-        enabled_widget = nested_manager.widgets[enabled_field]
-        enabled_reset_button = nested_manager.reset_buttons.get(enabled_field)
-
-        logger.debug(f"🔍 _move_enabled_widget_to_title: found enabled_widget={enabled_widget}, enabled_reset_button={enabled_reset_button}")
-
-        # Find the container (GroupBoxWithHelp) for the nested form
-        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-        container = parent_manager.widgets.get(nested_param_name) if isinstance(parent_manager, ParameterFormManager) else None
-        if not isinstance(container, GroupBoxWithHelp):
-            # Function pane case: parent_manager *is* the container
-            if isinstance(parent_manager, GroupBoxWithHelp):
-                container = parent_manager
-            else:
-                logger.warning(f"⚠️  _move_enabled_widget_to_title: container '{nested_param_name}' not found or not a GroupBoxWithHelp")
-                return
-
-        logger.debug(f"🔍 _move_enabled_widget_to_title: found container with title_layout")
-
-        # Find the row layout that contains the enabled widget
-        enabled_widget_parent = enabled_widget.parent()
-        if not enabled_widget_parent:
-            logger.warning(f"⚠️  _move_enabled_widget_to_title: enabled_widget has no parent")
-            return
-
-        # Find the enabled widget's layout and remove the row
-        enabled_widget_layout = enabled_widget_parent.layout()
-        if not enabled_widget_layout:
-            logger.warning(f"⚠️  _move_enabled_widget_to_title: enabled_widget parent has no layout")
-            return
-
-        logger.debug(f"🔍 _move_enabled_widget_to_title: removing enabled widget from row layout")
-
-        # Remove the label (which contains the help button) from the row layout
-        enabled_label = nested_manager.labels.get(enabled_field)
-        if enabled_label:
-            enabled_widget_layout.removeWidget(enabled_label)
-            enabled_label.hide()  # Hide the label so it's not visible
-            logger.debug(f"🔍 _move_enabled_widget_to_title: removed and hidden label with help button from row layout")
-
-        # Remove the enabled widget from the row layout
-        enabled_widget_layout.removeWidget(enabled_widget)
-
-        # Remove the enabled reset button from the row layout if it exists
-        if enabled_reset_button:
-            enabled_widget_layout.removeWidget(enabled_reset_button)
-            logger.debug(f"🔍 _move_enabled_widget_to_title: removed reset button from row layout")
-
-        # Find the title label in the container and make it clickable
-        title_label = container._title_label
-        logger.debug(f"🔍 _move_enabled_widget_to_title: using container._title_label={title_label}")
-
-        # Keep reference to original checkbox for toggle functionality
-        checkbox_widget = enabled_widget
-
-        # Wrap checkbox in container with background color to match form row appearance
-        if isinstance(enabled_widget, NoneAwareCheckBox):
-            from PyQt6.QtWidgets import QWidget, QHBoxLayout, QStyle
-            from PyQt6.QtCore import Qt
-            bg_color = parent_manager.color_scheme.to_hex(parent_manager.color_scheme.button_normal_bg)
-            checkbox_container = QWidget()
-            checkbox_container.setStyleSheet(f"background-color: {bg_color};")
-            indicator_w = enabled_widget.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth)
-            indicator_h = enabled_widget.style().pixelMetric(QStyle.PixelMetric.PM_IndicatorHeight)
-            checkbox_container.setFixedSize(indicator_w, indicator_h)
-            layout = QHBoxLayout(checkbox_container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(0)
-            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            enabled_widget.setStyleSheet("padding: 0px; margin: 0px;")
-            enabled_widget.setFixedSize(indicator_w, indicator_h)
-            enabled_widget.setParent(checkbox_container)
-            layout.addWidget(enabled_widget)
-            enabled_widget = checkbox_container
-            logger.debug(f"🔍 _move_enabled_widget_to_title: wrapped checkbox in background container")
-
-        # Make title clickable to toggle enabled checkbox
-        if title_label and isinstance(checkbox_widget, NoneAwareCheckBox):
-            def on_title_click(e):
-                checkbox_widget.toggle()
-                # Ensure checkmark color is correct (white in dark mode)
-                checkbox_widget._apply_concrete_palette()
-            title_label.mousePressEvent = on_title_click
-            title_label.setCursor(Qt.CursorShape.PointingHandCursor)
-            logger.debug(f"🔍 _move_enabled_widget_to_title: made title_label clickable")
-
-        logger.debug(f"🔍 _move_enabled_widget_to_title: adding enabled widget to title_layout (count={container.title_layout.count()})")
-
-        if enabled_reset_button is not None:
-            ResetButtonStyler.apply(enabled_reset_button, parent_manager.color_scheme)
-            enabled_reset_button.setMaximumWidth(60)
-            enabled_reset_button.setFixedHeight(CURRENT_LAYOUT.button_height)
-        
-            # Apply * and _ styling to reset button
-            from pyqt_reactive.utils.styling_utils import update_reset_button_styling
-            update_reset_button_styling(enabled_reset_button, nested_manager.state, nested_manager.field_id, enabled_field)
-
-        # Create provenance navigation button
-        from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceButton
-
-        # Compute dotted path for enabled field
-        dotted_path = f'{nested_manager.field_id}.{enabled_field}' if nested_manager.field_id else enabled_field
-
-        # Create and configure provenance button
-        provenance_button = ProvenanceButton(
-            text="^",
-            color_scheme=parent_manager.color_scheme
+        EnabledTitleWidgetMoveAuthority().move(
+            EnabledTitleWidgetMoveRequest(
+                nested_manager=nested_manager,
+                parent_manager=parent_manager,
+                nested_param_name=nested_param_name,
+                enabled_field=enabled_field,
+            )
         )
-        provenance_button.setMaximumWidth(25)
-        provenance_button.setFixedHeight(CURRENT_LAYOUT.button_height)
-
-        # Apply same styling as reset button (hover/pressed states)
-        ResetButtonStyler.apply(provenance_button, parent_manager.color_scheme)
-
-        # Set provenance info for navigation
-        provenance_button.set_provenance_info(nested_manager.state, dotted_path)
-
-        # Set initial visibility based on provenance
-        provenance_button.setVisible(provenance_button._has_provenance())
-
-        container.addEnableableWidgets(enabled_widget, enabled_reset_button, provenance_button)
-        logger.debug(f"🔍 _move_enabled_widget_to_title: added widgets to container")
-
-        # Clean up the empty row layout if possible
-        if enabled_widget_layout.count() == 0:
-            # Remove the empty row from its parent
-            row_parent = enabled_widget_layout.parent()
-            if isinstance(row_parent, QWidget):
-                row_parent.setParent(None)
-                logger.debug(f"🔍 _move_enabled_widget_to_title: removed empty row parent")
-
-        logger.debug(f"🔍 _move_enabled_widget_to_title: COMPLETE")
 
     def _create_optional_title_widget(ctx: WidgetBuildContext):
         """
@@ -456,7 +559,7 @@ class WidgetCreationHandlers:
 
         manager._on_build_complete_callbacks.append(apply_initial_styling)
 
-    def _create_regular_container(ctx: WidgetBuildContext) -> Any:
+    def _create_regular_container(ctx: WidgetBuildContext) -> QWidget:
         """Create container for REGULAR widget type."""
         from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
             ResponsiveParameterRow, is_wrapping_enabled as is_row_wrapping_enabled
@@ -480,7 +583,7 @@ class WidgetCreationHandlers:
 
         return container
 
-    def _create_nested_container(ctx: WidgetBuildContext) -> Any:
+    def _create_nested_container(ctx: WidgetBuildContext) -> GroupBoxWithHelp:
         """Create container for NESTED widget type."""
         from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp as GBH
         from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
@@ -522,7 +625,7 @@ class WidgetCreationHandlers:
 
     def _create_inline_dataclass_container(
         ctx: WidgetBuildContext,
-    ) -> Any:
+    ) -> InlineDataclassGroupBox:
         """Create dataclass chrome for a registered inline dataclass editor."""
         from pyqt_reactive.widgets.shared.clickable_help_components import (
             InlineDataclassGroupBox,
@@ -549,7 +652,7 @@ class WidgetCreationHandlers:
 
     def _create_inline_dataclass_widget(
         ctx: WidgetBuildContext,
-    ) -> Any:
+    ) -> QWidget:
         """Create the registered inline editor for a structural dataclass value."""
         from .parameter_info_types import InlineDataclassWidgetInfo
 
@@ -570,7 +673,7 @@ class WidgetCreationHandlers:
             parent=manager,
         )
 
-    def _create_optional_nested_container(ctx: WidgetBuildContext) -> Any:
+    def _create_optional_nested_container(ctx: WidgetBuildContext) -> QGroupBox:
         """Create container for OPTIONAL_NESTED widget type."""
         from PyQt6.QtWidgets import QGroupBox
         from PyQt6.QtGui import QPalette
@@ -722,22 +825,24 @@ class LayoutStrategy(ABC, metaclass=AutoRegisterMeta):
         return cls.__registry__[layout_kind]()
 
     @abstractmethod
-    def create_layout(self, container: Any) -> Any:
+    def create_layout(self, container: QWidget) -> QLayout | None:
         pass
 
 
 class HorizontalRowLayoutStrategy(LayoutStrategy):
     layout_kind = LayoutKind.HORIZONTAL_ROW
 
-    def create_layout(self, container: Any) -> Any:
+    def create_layout(self, container: QWidget) -> QLayout | None:
         from PyQt6.QtWidgets import QHBoxLayout
-        return None if isinstance(container, ResponsiveParameterRow) else QHBoxLayout(container)
+        if isinstance(container, ResponsiveParameterRow):
+            return None
+        return QHBoxLayout(container)
 
 
 class VerticalBoxLayoutStrategy(LayoutStrategy):
     layout_kind = LayoutKind.VERTICAL_BOX
 
-    def create_layout(self, container: Any) -> Any:
+    def create_layout(self, container: QWidget) -> QLayout:
         from PyQt6.QtWidgets import QVBoxLayout
         return QVBoxLayout(container)
 
@@ -745,14 +850,14 @@ class VerticalBoxLayoutStrategy(LayoutStrategy):
 class PreconfiguredGroupBoxLayoutStrategy(LayoutStrategy):
     layout_kind = LayoutKind.PRECONFIGURED_GROUPBOX
 
-    def create_layout(self, container: Any) -> Any:
+    def create_layout(self, container: QWidget) -> None:
         return None
 
 
 class GroupBoxWithHelpLayoutStrategy(LayoutStrategy):
     layout_kind = LayoutKind.GROUPBOX_WITH_HELP
 
-    def create_layout(self, container: Any) -> Any:
+    def create_layout(self, container: QWidget) -> QLayout | None:
         return container.layout()
 
 
@@ -771,10 +876,10 @@ class WidgetCreationRuntime:
     ops: dict[str, Callable]
     ctx: WidgetBuildContext
     create_seq: int
-    container: Any = None
-    layout: Any = None
+    container: QWidget | None = None
+    layout: QLayout | None = None
     title_components: OptionalTitleComponents | None = None
-    main_widget: Any = None
+    main_widget: QWidget | None = None
 
 
 class WidgetCreationPipeline:
@@ -795,7 +900,9 @@ class WidgetCreationPipeline:
         )
         field_ids = manager.service.generate_field_ids_direct(manager.config.field_id, param_info.name)
         current_value = manager.parameters.get(param_info.name)
-        unwrapped_type = _unwrap_optional_type(param_info.type) if config.needs_unwrap_type else None
+        unwrapped_type = None
+        if config.needs_unwrap_type:
+            unwrapped_type = _unwrap_optional_type(param_info.type)
         ctx = WidgetBuildContext(
             manager=manager,
             param_info=param_info,
@@ -824,7 +931,7 @@ class WidgetCreationPipeline:
             config.is_optional,
         )
 
-    def run(self) -> Any:
+    def run(self) -> QWidget:
         """Run the widget creation stages."""
         self.create_container()
         self.configure_nested_container()
@@ -874,6 +981,11 @@ class WidgetCreationPipeline:
             return
         rt.title_components = rt.ops['create_title_widget'](rt.ctx)
         rt.layout.addWidget(rt.title_components.title_widget)
+        reset_button_class = None
+        reset_button_id = None
+        if rt.title_components.reset_all_button is not None:
+            reset_button_class = type(rt.title_components.reset_all_button).__name__
+            reset_button_id = id(rt.title_components.reset_all_button)
         logger.debug(
             "[WIDGET_CREATE] seq=%s stage=title_widget type=%s param=%s manager_seq=%s title_cls=%s title_id=%s checkbox_cls=%s checkbox_id=%s reset_cls=%s reset_id=%s",
             rt.create_seq,
@@ -884,8 +996,8 @@ class WidgetCreationPipeline:
             id(rt.title_components.title_widget),
             type(rt.title_components.checkbox).__name__,
             id(rt.title_components.checkbox),
-            type(rt.title_components.reset_all_button).__name__ if rt.title_components.reset_all_button is not None else None,
-            id(rt.title_components.reset_all_button) if rt.title_components.reset_all_button is not None else None,
+            reset_button_class,
+            reset_button_id,
         )
 
     def add_regular_label(self) -> None:
@@ -1049,10 +1161,21 @@ class WidgetCreationPipeline:
         else:
             FieldChangeDispatcher.instance().dispatch(event)
 
-    def _log_widget(self, stage: str, widget: Any) -> None:
+    def _log_widget(self, stage: str, widget: QWidget | None) -> None:
         rt = self.runtime
         try:
-            parent_obj = widget.parent() if widget is not None else None
+            parent_obj = None
+            widget_class = None
+            widget_name = None
+            widget_id = None
+            parent_class = None
+            if widget is not None:
+                parent_obj = widget.parent()
+                widget_class = type(widget).__name__
+                widget_name = widget.objectName()
+                widget_id = id(widget)
+            if parent_obj is not None:
+                parent_class = type(parent_obj).__name__
             logger.debug(
                 "[WIDGET_CREATE] seq=%s stage=%s type=%s param=%s field_id=%s manager_seq=%s widget_cls=%s obj_name=%s id=%s parent_cls=%s",
                 rt.create_seq,
@@ -1061,10 +1184,10 @@ class WidgetCreationPipeline:
                 rt.param_info.name,
                 rt.manager.config.field_id,
                 rt.manager._pfm_seq,
-                type(widget).__name__ if widget is not None else None,
-                widget.objectName() if widget is not None else None,
-                id(widget) if widget is not None else None,
-                type(parent_obj).__name__ if parent_obj is not None else None,
+                widget_class,
+                widget_name,
+                widget_id,
+                parent_class,
             )
         except Exception:
             logger.debug("[WIDGET_CREATE] seq=%s stage=%s param=%s log_failed", rt.create_seq, stage, rt.param_info.name)

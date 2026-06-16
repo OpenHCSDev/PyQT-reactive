@@ -10,9 +10,13 @@ Uses React-style discriminated unions for type-safe parameter handling.
 
 import dataclasses
 
-from objectstate import UIParameterVisibilityRequest, should_hide_ui_parameter
+from objectstate import (
+    DataclassFieldAccess,
+    UIParameterVisibilityRequest,
+    should_hide_ui_parameter,
+)
 from dataclasses import dataclass
-from typing import Dict, Any, Type, Optional, List, Tuple
+from typing import Dict, Type, Optional, List
 
 from objectstate import LazyDefaultPlaceholderService
 # Old field path detection removed - using simple field name matching
@@ -22,6 +26,15 @@ from pyqt_reactive.forms.ui_utils import FieldDisplayText, debug_param
 from .parameter_info_types import (
     ParameterInfo,
     create_parameter_info
+)
+from pyqt_reactive.forms.parameter_value_contracts import (
+    FormObject,
+    NestedManagerMap,
+    ParameterDefaultsByName,
+    ParameterDescriptionByPath,
+    ParameterDescriptionProvider,
+    ParameterTypesByName,
+    ParameterValue,
 )
 
 
@@ -38,11 +51,11 @@ class ParameterAnalysisInput:
     Field names match UnifiedParameterInfo for automatic extraction.
     This enforces unification across all functions that analyze parameters.
     """
-    default_value: Dict[str, Any]
+    default_value: ParameterDefaultsByName
     param_type: Dict[str, Type]
     field_id: str
     # Dotted-path description map (may be provided lazily via a callable).
-    description: Optional[Any] = None
+    description: Optional[ParameterDescriptionByPath | ParameterDescriptionProvider] = None
     parent_obj_type: Optional[Type] = None
 
 
@@ -238,7 +251,7 @@ class ParameterFormService:
             return False
         return field_obj.metadata.get("ui_hidden", False)
 
-    def convert_value_to_type(self, value: Any, param_type: Type, param_name: str, obj_type: Type = None) -> Any:
+    def convert_value_to_type(self, value: ParameterValue, param_type: Type, param_name: str, obj_type: Type = None) -> ParameterValue | None:
         """
         Convert a value to the appropriate type for a parameter.
 
@@ -399,7 +412,7 @@ class ParameterFormService:
 
         return True
     
-    def should_use_concrete_values(self, current_value: Any, is_global_editing: bool = False) -> bool:
+    def should_use_concrete_values(self, current_value: ParameterValue | None, is_global_editing: bool = False) -> bool:
         """
         Determine whether to use concrete values for a dataclass parameter.
         
@@ -426,8 +439,12 @@ class ParameterFormService:
         
         return False
     
-    def extract_nested_parameters(self, dataclass_instance: Any, obj_type: Type,
-                                parent_obj_type: Optional[Type] = None) -> Tuple[Dict[str, Any], Dict[str, Type]]:
+    def extract_nested_parameters(
+        self,
+        dataclass_instance: FormObject | None,
+        obj_type: Type,
+        parent_obj_type: Optional[Type] = None,
+    ) -> tuple[ParameterDefaultsByName, ParameterTypesByName]:
         """
         Extract parameters and types from a dataclass instance.
 
@@ -436,10 +453,10 @@ class ParameterFormService:
         not by discarding concrete values during parameter extraction.
         """
         if not dataclasses.is_dataclass(obj_type):
-            return {}, {}
+            return ParameterDefaultsByName(), ParameterTypesByName()
 
-        parameters = {}
-        parameter_types = {}
+        parameters = ParameterDefaultsByName()
+        parameter_types = ParameterTypesByName()
 
         for field in dataclasses.fields(obj_type):
             # Always extract actual field values when dataclass instance exists
@@ -454,21 +471,13 @@ class ParameterFormService:
 
         return parameters, parameter_types
 
-    def _get_field_value(self, dataclass_instance: Any, field: Any) -> Any:
+    def _get_field_value(self, dataclass_instance: FormObject | None, field: dataclasses.Field) -> ParameterValue:
         """Extract a single field value from a dataclass instance."""
         if dataclass_instance is None:
             return field.default
+        return DataclassFieldAccess.raw_value(dataclass_instance, field.name)
 
-        field_name = field.name
-
-        if self._type_utils.has_resolve_field_value(dataclass_instance):
-            # Lazy dataclass - get raw value
-            return object.__getattribute__(dataclass_instance, field_name)
-        else:
-            # Concrete dataclass - get attribute value
-            return object.__getattribute__(dataclass_instance, field_name)
-
-    def _create_parameter_info(self, param_name: str, param_type: Type, current_value: Any,
+    def _create_parameter_info(self, param_name: str, param_type: Type, current_value: ParameterValue,
                              parameter_info: Optional[Dict] = None, full_param_path: str = None) -> ParameterInfo:
         """
         Create parameter information object using discriminated union factory.
@@ -493,7 +502,7 @@ class ParameterFormService:
     # Class-level cache for nested dataclass parameter info (descriptions only)
     _nested_param_info_cache = {}
 
-    def _analyze_nested_dataclass(self, param_name: str, param_type: Type, current_value: Any,
+    def _analyze_nested_dataclass(self, param_name: str, param_type: Type, current_value: ParameterValue | None,
                                 nested_field_id: str, parent_obj_type: Type = None) -> FormStructure:
         """Analyze a nested dataclass parameter."""
         # Get the actual dataclass type
@@ -524,10 +533,13 @@ class ParameterFormService:
         # Create type-safe input for recursive analysis
         # CRITICAL FIX: Use dotted paths for descriptions to match state._parameter_descriptions
         # This ensures lookups work correctly when descriptions come from ObjectState
-        description = {}
+        description = ParameterDescriptionByPath()
         if nested_param_info:
             prefix = f'{nested_field_id}.' if nested_field_id else ''
-            description = {f'{prefix}{name}': info.description for name, info in nested_param_info.items()}
+            description = ParameterDescriptionByPath(
+                (f'{prefix}{name}', info.description)
+                for name, info in nested_param_info.items()
+            )
 
         nested_input = ParameterAnalysisInput(
             default_value=nested_params,
@@ -565,15 +577,15 @@ class ParameterFormService:
             obj_type, param_name, placeholder_prefix
         )
 
-    def reset_nested_managers(self, nested_managers: Dict[str, Any],
-                            obj_type: Type, current_config: Any) -> None:
+    def reset_nested_managers(self, nested_managers: NestedManagerMap,
+                            obj_type: Type, current_config) -> None:
         """Reset all nested managers - fail loud, no defensive programming."""
         for nested_manager in nested_managers.values():
             # All nested managers must have reset_all_parameters method
             nested_manager.reset_all_parameters()
 
     def get_reset_value_for_parameter(self, param_name: str, param_type: Type,
-                                    obj_type: Type, is_global_config_editing: Optional[bool] = None) -> Any:
+                                    obj_type: Type, is_global_config_editing: Optional[bool] = None) -> ParameterValue | None:
         """
         Get appropriate reset value using existing OpenHCS patterns.
 
@@ -608,7 +620,7 @@ class ParameterFormService:
             # instead of concrete values from thread-local context
             return None
 
-    def _get_actual_dataclass_field_default(self, param_name: str, obj_type: Type) -> Any:
+    def _get_actual_dataclass_field_default(self, param_name: str, obj_type: Type) -> ParameterValue | None:
         """
         Get the actual default value for a parameter.
 

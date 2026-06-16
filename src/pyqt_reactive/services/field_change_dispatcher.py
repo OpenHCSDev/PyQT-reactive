@@ -28,160 +28,184 @@ class FieldChangeEvent:
     is_reset: bool = False                 # True if this is a reset operation (don't track as user-set)
 
 
-class FieldChangeDispatcher:
-    """Singleton dispatcher for all field changes. Stateless."""
+@dataclass(frozen=True)
+class FieldDispatchContext:
+    """Resolved dispatch facts shared by field-change stages."""
 
-    _instance = None
+    event: FieldChangeEvent
+    source: 'ParameterFormManager'
+    root: 'ParameterFormManager'
+    source_path: str
+    root_path: str
 
-    @classmethod
-    def instance(cls) -> 'FieldChangeDispatcher':
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
 
-    def dispatch(self, event: FieldChangeEvent) -> None:
-        """Handle a field change event."""
-        source = event.source_manager
+class DispatchReentrancyGuard:
+    """Owns dispatch-entry state for one source manager."""
 
-        if DEBUG_DISPATCHER:
-            reset_tag = " [RESET]" if event.is_reset else ""
-            logger.info(f"🚀 DISPATCH{reset_tag}: {source.field_id}.{event.field_name} = {repr(event.value)[:50]}")
-
-        # Reentrancy guard
-        if getattr(source, '_dispatching', False):
-            if DEBUG_DISPATCHER:
-                logger.warning(f"🚫 DISPATCH BLOCKED: {source.field_id} already dispatching (reentrancy guard)")
+    def log_start(self, event: FieldChangeEvent) -> None:
+        if not DEBUG_DISPATCHER:
             return
-        source._dispatching = True
+        reset_tag = " [RESET]" if event.is_reset else ""
+        source = event.source_manager
+        logger.info(
+            "🚀 DISPATCH%s: %s.%s = %s",
+            reset_tag,
+            source.field_id,
+            event.field_name,
+            repr(event.value)[:50],
+        )
 
-        try:
-            if source._in_reset:
-                if DEBUG_DISPATCHER:
-                    logger.warning(f"🚫 DISPATCH BLOCKED: {source.field_id} has _in_reset=True")
-                return
-
-            logger.debug(f"🔬 RESET_TRACE: DISPATCHER: is_reset={event.is_reset}, field={event.field_name}, value={repr(event.value)[:50]}")
-
-            # 1. Update source's data model via ObjectState
-            # ObjectState.update_parameter() enforces the invariant: state mutation → global cache invalidation
-            # (calls ObjectStateRegistry.increment_token(notify=False) internally)
-            # CRITICAL: Compute full dotted path for nested PFMs
-            full_path = f"{source.field_id}.{event.field_name}" if source.field_id else event.field_name
-            source.state.update_parameter(full_path, event.value)
-            source.sync_after_model_field_change(event.field_name, full_path)
+    def enter(self, source: 'ParameterFormManager') -> bool:
+        if source._dispatching:
             if DEBUG_DISPATCHER:
-                reset_note = " (reset to None)" if event.is_reset else ""
-                logger.info(f"  ✅ Updated state.parameters[{full_path}]{reset_note}")
+                logger.warning(
+                    "🚫 DISPATCH BLOCKED: %s already dispatching (reentrancy guard)",
+                    source.field_id,
+                )
+            return False
+        source._dispatching = True
+        return True
 
-            # 3. Refresh siblings that have the same field
-            parent = source._parent_manager
-            if parent:
-                if DEBUG_DISPATCHER:
-                    logger.info(f"  🔍 Looking for siblings with field '{event.field_name}' in {parent.field_id}")
-                    logger.info(f"  🔍 Parent has {len(parent.nested_managers)} nested managers: {list(parent.nested_managers.keys())}")
+    def is_reset_blocked(self, source: 'ParameterFormManager') -> bool:
+        if not source._in_reset:
+            return False
+        if DEBUG_DISPATCHER:
+            logger.warning(
+                "🚫 DISPATCH BLOCKED: %s has _in_reset=True",
+                source.field_id,
+            )
+        return True
 
-                siblings_refreshed = 0
-                for name, sibling in parent.nested_managers.items():
-                    if sibling is source:
-                        if DEBUG_DISPATCHER:
-                            logger.debug(f"    ⏭️  Skipping {name} (is source)")
-                        continue
+    def exit(self, source: 'ParameterFormManager') -> None:
+        source._dispatching = False
 
-                    # Check if sibling has the same field (simpler than isinstance for Lazy wrappers)
-                    has_field = event.field_name in sibling.widgets
 
-                    if DEBUG_DISPATCHER:
-                        sibling_type = type(sibling.object_instance).__name__ if sibling.object_instance else 'None'
-                        logger.info(f"    🔍 Sibling {name}: type={sibling_type}, has_field={has_field}")
+class FieldDispatchContextFactory:
+    """Builds the path context shared by dispatch stages."""
 
-                    if has_field:
-                        self._refresh_single_field(sibling, event.field_name)
-                        siblings_refreshed += 1
-
-                if DEBUG_DISPATCHER:
-                    logger.info(f"  ✅ Refreshed {siblings_refreshed} sibling(s)")
-            else:
-                if DEBUG_DISPATCHER:
-                    logger.info(f"  ℹ️  No parent manager (root-level field)")
-
-            # 4. Notify listeners (after sibling refresh)
-            # This allows sibling refreshes to share the cached live context
-            # (first sibling computes and caches, subsequent siblings get cache hits)
-            root = self._get_root_manager(source)
-            root._block_cross_window_updates = True
-            try:
-                from objectstate import ObjectStateRegistry
-                ObjectStateRegistry._notify_change()
-                if DEBUG_DISPATCHER:
-                    logger.info(f"  📣 Notified {len(ObjectStateRegistry._change_callbacks)} listeners")
-            finally:
-                root._block_cross_window_updates = False
-
-            # 3. Handle 'enabled' field styling
-            if event.field_name == 'enabled':
-                source.sync_enabled_field_visuals(event.value)
-                if DEBUG_DISPATCHER:
-                    logger.info(f"  ✅ Applied enabled styling")
-
-            # 4. Emit from ROOT with full path (for all listeners)
-            # This ensures listeners connected to root get notified of ALL changes
-            # (including nested) with full paths like "processing_config.group_by"
-            root = self._get_root_manager(source)
-            full_path = self._get_full_path(source, event.field_name)
-
-            logger.debug(f"🔔 DISPATCHER: Emitting parameter_changed from root")
-            logger.debug(f"  source.field_id={source.field_id}")
-            logger.debug(f"  root.field_id={root.field_id}")
-            logger.debug(f"  event.field_name={event.field_name}")
-            logger.debug(f"  full_path={full_path}")
-            logger.debug(f"  value type={type(event.value).__name__}")
-
-            root.parameter_changed.emit(full_path, event.value)
-            logger.debug(f"  ✅ Emitted parameter_changed({full_path}, ...) from root")
-
-            # 5. Emit cross-window signal from ROOT
-            self._emit_cross_window(root, full_path, event.value)
-
-        finally:
-            source._dispatching = False
+    def build(self, event: FieldChangeEvent) -> FieldDispatchContext:
+        source = event.source_manager
+        return FieldDispatchContext(
+            event=event,
+            source=source,
+            root=self._get_root_manager(source),
+            source_path=self._field_path(source, event.field_name),
+            root_path=self._get_full_path(source, event.field_name),
+        )
 
     def _get_root_manager(self, manager: 'ParameterFormManager') -> 'ParameterFormManager':
-        """Walk up to root manager."""
         current = manager
         while current._parent_manager is not None:
             current = current._parent_manager
         return current
 
-    def _get_full_path(self, source: 'ParameterFormManager', field_name: str) -> str:
-        """Build full path by walking up parent chain.
+    def _field_path(self, manager: 'ParameterFormManager', field_name: str) -> str:
+        if manager.field_id:
+            return f"{manager.field_id}.{field_name}"
+        return field_name
 
-        Example: "GlobalPipelineConfig.pipeline_config.well_filter_config.well_filter"
-        """
+    def _get_full_path(self, source: 'ParameterFormManager', field_name: str) -> str:
         parts = [field_name]
         current = source
         while current is not None:
-            parts.insert(0, current.field_id)
+            if current.field_id:
+                parts.insert(0, current.field_id)
             current = current._parent_manager
         return ".".join(parts)
 
-    def _emit_cross_window(self, root_manager: 'ParameterFormManager', full_path: str, value: Any) -> None:
-        """Emit context_changed from root with scope_id and field path."""
-        logger.debug(f"  🔍 _emit_cross_window: checking should_skip_updates() for {root_manager.field_id}")
-        logger.debug(f"    state._in_reset={root_manager.state._in_reset}, state._block_cross_window_updates={root_manager.state._block_cross_window_updates}")
-        if root_manager.state.should_skip_updates():
-            logger.warning(f"  🚫 Cross-window BLOCKED: _should_skip_updates()=True for {root_manager.field_id}")
+
+class SourceStateUpdateStage:
+    """Applies the edited value to ObjectState and syncs the source widget."""
+
+    def run(self, context: FieldDispatchContext) -> None:
+        # ObjectState.update_parameter() enforces the invariant:
+        # state mutation -> global cache invalidation.
+        context.source.state.update_parameter(
+            context.source_path,
+            context.event.value,
+        )
+        context.source.sync_after_model_field_change(
+            context.event.field_name,
+            context.source_path,
+        )
+        if DEBUG_DISPATCHER:
+            reset_note = " (reset to None)" if context.event.is_reset else ""
+            logger.info(
+                "  ✅ Updated state.parameters[%s]%s",
+                context.source_path,
+                reset_note,
+            )
+
+
+class SiblingPlaceholderRefreshStage:
+    """Refreshes inherited placeholders in sibling forms under the same parent."""
+
+    def run(self, context: FieldDispatchContext) -> None:
+        parent = context.source._parent_manager
+        if parent is None:
+            if DEBUG_DISPATCHER:
+                logger.info("  ℹ️  No parent manager (root-level field)")
             return
 
-        # REMOVED: update_thread_local_global_config() call
-        # Thread-local should ONLY be updated on SAVE, not on every keystroke!
-        # Descendants (plates, steps) should see the SAVED global config, not unsaved edits.
+        if DEBUG_DISPATCHER:
+            logger.info(
+                "  🔍 Looking for siblings with field %r in %s",
+                context.event.field_name,
+                parent.field_id,
+            )
+            logger.info(
+                "  🔍 Parent has %d nested managers: %s",
+                len(parent.nested_managers),
+                list(parent.nested_managers.keys()),
+            )
 
-        logger.debug(f"  📡 Emitting context_changed: scope={root_manager.scope_id}, path={full_path}")
-        root_manager.context_changed.emit(root_manager.scope_id or "", full_path)
-        logger.debug(f"  ✅ context_changed emitted")
+        siblings_refreshed = 0
+        for name, sibling in parent.nested_managers.items():
+            if self._refresh_sibling_if_affected(context, name, sibling):
+                siblings_refreshed += 1
+
+        if DEBUG_DISPATCHER:
+            logger.info("  ✅ Refreshed %d sibling(s)", siblings_refreshed)
+
+    def _refresh_sibling_if_affected(
+        self,
+        context: FieldDispatchContext,
+        name: str,
+        sibling: 'ParameterFormManager',
+    ) -> bool:
+        if sibling is context.source:
+            if DEBUG_DISPATCHER:
+                logger.debug("    ⏭️  Skipping %s (is source)", name)
+            return False
+
+        has_field = context.event.field_name in sibling.widgets
+        if DEBUG_DISPATCHER:
+            self._log_sibling_match(name, sibling, has_field)
+
+        if not has_field:
+            return False
+
+        self._refresh_single_field(sibling, context.event.field_name)
+        return True
+
+    def _log_sibling_match(
+        self,
+        name: str,
+        sibling: 'ParameterFormManager',
+        has_field: bool,
+    ) -> None:
+        if sibling.object_instance is None:
+            sibling_type = "None"
+        else:
+            sibling_type = type(sibling.object_instance).__name__
+        logger.info(
+            "    🔍 Sibling %s: type=%s, has_field=%s",
+            name,
+            sibling_type,
+            has_field,
+        )
 
     def _refresh_single_field(self, manager: 'ParameterFormManager', field_name: str) -> None:
-        """Refresh just one field's placeholder in a sibling manager."""
         if DEBUG_DISPATCHER:
             logger.info(f"      🔄 _refresh_single_field: {manager.field_id}.{field_name}")
 
@@ -205,3 +229,117 @@ class FieldChangeDispatcher:
             logger.info(f"      ✅ Refreshing placeholder for {manager.field_id}.{field_name}")
 
         manager._parameter_ops_service.refresh_single_placeholder(manager, field_name)
+
+
+class LiveContextNotificationStage:
+    """Broadcasts ObjectState live-context changes to form/list listeners."""
+
+    def run(self) -> None:
+        # Do not block the source root here: live placeholder/list refreshes are
+        # read-only, and the source window also needs to repaint inherited values
+        # affected by this edit.
+        from objectstate import ObjectStateRegistry
+        ObjectStateRegistry._notify_change()
+        if DEBUG_DISPATCHER:
+            logger.info(
+                "  📣 Notified %d listeners",
+                len(ObjectStateRegistry._change_callbacks),
+            )
+
+
+class EnabledFieldStyleStage:
+    """Keeps the special enabled field's visuals in sync with model changes."""
+
+    def run(self, context: FieldDispatchContext) -> None:
+        if context.event.field_name != 'enabled':
+            return
+        context.source.sync_enabled_field_visuals(context.event.value)
+        if DEBUG_DISPATCHER:
+            logger.info("  ✅ Applied enabled styling")
+
+
+class RootSignalStage:
+    """Emits root-manager signals consumed by editor and cross-window listeners."""
+
+    def run(self, context: FieldDispatchContext) -> None:
+        logger.debug("🔔 DISPATCHER: Emitting parameter_changed from root")
+        logger.debug("  source.field_id=%s", context.source.field_id)
+        logger.debug("  root.field_id=%s", context.root.field_id)
+        logger.debug("  event.field_name=%s", context.event.field_name)
+        logger.debug("  full_path=%s", context.root_path)
+        logger.debug("  value type=%s", type(context.event.value).__name__)
+
+        context.root.parameter_changed.emit(context.root_path, context.event.value)
+        logger.debug(
+            "  ✅ Emitted parameter_changed(%s, ...) from root",
+            context.root_path,
+        )
+
+        self._emit_cross_window(context)
+
+    def _emit_cross_window(self, context: FieldDispatchContext) -> None:
+        root_manager = context.root
+        full_path = context.root_path
+        logger.debug(f"  🔍 _emit_cross_window: checking should_skip_updates() for {root_manager.field_id}")
+        logger.debug(f"    state._in_reset={root_manager.state._in_reset}, state._block_cross_window_updates={root_manager.state._block_cross_window_updates}")
+        if root_manager.state.should_skip_updates():
+            logger.warning(f"  🚫 Cross-window BLOCKED: _should_skip_updates()=True for {root_manager.field_id}")
+            return
+
+        # REMOVED: update_thread_local_global_config() call
+        # Thread-local should ONLY be updated on SAVE, not on every keystroke!
+        # Descendants (plates, steps) should see the SAVED global config, not unsaved edits.
+
+        logger.debug(f"  📡 Emitting context_changed: scope={root_manager.scope_id}, path={full_path}")
+        root_manager.context_changed.emit(root_manager.scope_id or "", full_path)
+        logger.debug(f"  ✅ context_changed emitted")
+
+
+class FieldChangeDispatcher:
+    """Singleton coordinator for all field changes."""
+
+    _instance = None
+
+    def __init__(self) -> None:
+        self._guard = DispatchReentrancyGuard()
+        self._context_factory = FieldDispatchContextFactory()
+        self._source_state_update = SourceStateUpdateStage()
+        self._sibling_placeholder_refresh = SiblingPlaceholderRefreshStage()
+        self._live_context_notification = LiveContextNotificationStage()
+        self._enabled_field_style = EnabledFieldStyleStage()
+        self._root_signals = RootSignalStage()
+
+    @classmethod
+    def instance(cls) -> 'FieldChangeDispatcher':
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def dispatch(self, event: FieldChangeEvent) -> None:
+        """Handle a field change event."""
+        source = event.source_manager
+        self._guard.log_start(event)
+
+        if not self._guard.enter(source):
+            return
+
+        try:
+            if self._guard.is_reset_blocked(source):
+                return
+
+            logger.debug(
+                "🔬 RESET_TRACE: DISPATCHER: is_reset=%s, field=%s, value=%s",
+                event.is_reset,
+                event.field_name,
+                repr(event.value)[:50],
+            )
+
+            context = self._context_factory.build(event)
+            self._source_state_update.run(context)
+            self._sibling_placeholder_refresh.run(context)
+            self._live_context_notification.run()
+            self._enabled_field_style.run(context)
+            self._root_signals.run(context)
+
+        finally:
+            self._guard.exit(source)

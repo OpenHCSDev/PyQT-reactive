@@ -586,7 +586,7 @@ class ProvenanceNavigationMixin:
             return
 
         # Use the same WindowManager.show_or_focus path as other windows
-        from pyqt_reactive.services import WindowFactory
+        from pyqt_reactive.services.scope_window_factory import WindowFactory
 
         if WindowManager.is_open(source_scope_id):
             # Window is already open - just focus and navigate, don't move it

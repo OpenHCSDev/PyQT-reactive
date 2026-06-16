@@ -8,18 +8,20 @@ Framework-agnostic - can be used by any UI framework (PyQt, Textual, etc.).
 """
 
 import copy
-from typing import Union, List, Dict, Tuple, Optional, Callable, Any
+from typing import Union, List, Dict, Tuple, Optional, Callable, Any, NewType
 
 from objectstate.object_state_metadata import (
     ObjectStateMetadataContract,
     ObjectStateMetadataContractRegistry,
 )
+from pyqt_reactive.pattern_metadata import SCOPE_TOKEN_KEY
+
+PatternKey = NewType("PatternKey", str)
 
 
 # Internal metadata key stored in kwargs for per-entry identity.
 # This is used by the PyQt/ObjectState integration to create stable, per-occurrence
 # scopes for duplicate functions in patterns.
-SCOPE_TOKEN_KEY = "__pyqt_reactive_scope_token__"
 
 # Namespaced metadata keys for ObjectState.metadata
 FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY = "pyqt_reactive.func_editor.selected_pattern_key"
@@ -166,7 +168,7 @@ class PatternDataManager:
             return False
     
     @staticmethod
-    def get_current_functions(pattern: Union[List, Dict], key: Any, is_dict: bool) -> List:
+    def get_current_functions(pattern: Union[List, Dict], key: PatternKey, is_dict: bool) -> List:
         """
         Extract function list for current context.
         
@@ -179,14 +181,16 @@ class PatternDataManager:
             List of functions for current context
         """
         if is_dict and isinstance(pattern, dict):
-            return pattern.get(key, [])
+            if key in pattern:
+                return pattern[key]
+            return []
         elif not is_dict and isinstance(pattern, list):
             return pattern
         else:
             return []
     
     @staticmethod
-    def update_pattern_functions(pattern: Union[List, Dict], key: Any, is_dict: bool, 
+    def update_pattern_functions(pattern: Union[List, Dict], key: PatternKey, is_dict: bool,
                                new_functions: List) -> Union[List, Dict]:
         """
         Update functions in pattern for current context.
@@ -230,7 +234,7 @@ class PatternDataManager:
         return new_pattern
     
     @staticmethod
-    def remove_key(pattern: Dict, key_to_remove: Any) -> Union[List, Dict]:
+    def remove_key(pattern: Dict, key_to_remove: PatternKey) -> Union[List, Dict]:
         """
         Remove key from dict pattern.
 

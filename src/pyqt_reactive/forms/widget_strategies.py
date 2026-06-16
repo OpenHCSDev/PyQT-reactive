@@ -4,13 +4,20 @@ import dataclasses
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Type, Callable, get_origin
+from typing import ClassVar, Dict, Type, Callable, get_origin
 
 from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QGroupBox, QVBoxLayout, QSpinBox, QDoubleSpinBox, QWidget
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIntValidator, QValidator
 from magicgui.widgets import Widget as MagicGuiWidget, create_widget
 from magicgui.type_map import register_type
+from objectstate import DataclassFieldAccess
+from pyqt_reactive.forms.parameter_info_types import ParameterInfo
+from pyqt_reactive.forms.parameter_value_contracts import (
+    FormObject,
+    ParameterValue,
+    WidgetValue,
+)
 
 from pyqt_reactive.widgets import (
     NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox, NoneAwareCheckBox
@@ -36,15 +43,44 @@ except Exception:  # pragma: no cover - optional performance monitoring
         yield
 
 logger = logging.getLogger(__name__)
+WidgetChangeCallback = Callable[[str, WidgetValue | None], None]
+ParameterSignalCallback = Callable[[ParameterValue | None], None]
+WidgetSignalCallback = Callable[[WidgetValue | None], None]
+WidgetBoundaryTarget = QWidget | MagicGuiWidget
+TypeResolvedBoundaryEntry = Callable
 
 
 # ==================== None-Aware Widget Classes ====================
 # Defined at top so they can be used throughout this file.
 
+class NoneAwareTextValueMixin:
+    """Shared text assignment for widgets that encode None as empty text."""
+
+    def set_value(self, value: ParameterValue | None) -> None:
+        if value is None:
+            text_value = ""
+        else:
+            text_value = str(value)
+        self.setText(text_value)
+
+    def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
+        """Implement ChangeSignalEmitter ABC."""
+        self.textChanged.connect(lambda: callback(self.get_value()))
+
+    def disconnect_change_signal(self, callback: ParameterSignalCallback) -> None:
+        """Implement ChangeSignalEmitter ABC."""
+        try:
+            self.textChanged.disconnect(callback)
+        except TypeError:
+            pass
+
+
 class NoneAwareLineEdit(
+    NoneAwareTextValueMixin,
     QLineEdit,
     ValueGettable,
     ValueSettable,
+    ChangeSignalEmitter,
     metaclass=PyQtWidgetMeta,
 ):
     """QLineEdit that properly handles None values for lazy dataclass contexts."""
@@ -52,17 +88,17 @@ class NoneAwareLineEdit(
     def get_value(self):
         """Get value, returning None for empty text instead of empty string."""
         text = self.text().strip()
-        return None if text == "" else text
-
-    def set_value(self, value):
-        """Set value, handling None properly."""
-        self.setText("" if value is None else str(value))
+        if text == "":
+            return None
+        return text
 
 
 class NoneAwareIntEdit(
+    NoneAwareTextValueMixin,
     QLineEdit,
     ValueGettable,
     ValueSettable,
+    ChangeSignalEmitter,
     metaclass=PyQtWidgetMeta,
 ):
     """QLineEdit that only allows digits and properly handles None values for integer fields."""
@@ -84,10 +120,6 @@ class NoneAwareIntEdit(
             raise ValueError(f"Invalid integer text in NoneAwareIntEdit: {text!r}")
         return int(text)
 
-    def set_value(self, value):
-        """Set value, handling None properly."""
-        self.setText("" if value is None else str(value))
-
 
 @dataclasses.dataclass(frozen=True)
 class WidgetConfig:
@@ -97,7 +129,296 @@ class WidgetConfig:
     FLOAT_PRECISION: int = 15  # Practical limit for double precision (effectively unlimited)
 
 
-def create_enhanced_path_widget(param_name: str = "", current_value: Any = None, parameter_info: Any = None):
+@dataclasses.dataclass(frozen=True)
+class WidgetCreationRequest:
+    """Public widget creation request carried through the creation authority."""
+
+    param_name: str
+    param_type: Type
+    current_value: ParameterValue | None
+    widget_id: str
+    parameter_info: ParameterInfo | None
+
+
+@dataclasses.dataclass(frozen=True)
+class ResolvedWidgetRequest:
+    """Widget request after optional/enum wrappers have been projected."""
+
+    source: WidgetCreationRequest
+    resolved_type: Type
+    current_value: ParameterValue | None
+
+
+class WidgetTypeLabel:
+    """Stable type labels for diagnostics and timer names."""
+
+    @staticmethod
+    def render(param_type: Type) -> str:
+        if isinstance(param_type, type):
+            return param_type.__name__
+        return str(param_type)
+
+
+class DirectWidgetFactory:
+    """Typed factory for simple widgets that bypass magicgui."""
+
+    def create_int(self, current_value: ParameterValue | None = None) -> NoneAwareIntEdit:
+        widget = NoneAwareIntEdit()
+        if current_value is not None:
+            widget.set_value(current_value)
+        return widget
+
+    def create_float(self, current_value: ParameterValue | None = None) -> NoScrollDoubleSpinBox:
+        widget = NoScrollDoubleSpinBox()
+        widget.setRange(WidgetConfig.NUMERIC_RANGE_MIN, WidgetConfig.NUMERIC_RANGE_MAX)
+        widget.setDecimals(WidgetConfig.FLOAT_PRECISION)
+        if current_value is not None:
+            widget.setValue(float(current_value))
+        else:
+            widget.clear()
+        return widget
+
+    def create_bool(self, current_value: ParameterValue | None = None) -> NoneAwareCheckBox:
+        widget = NoneAwareCheckBox()
+        if current_value is not None:
+            widget.setChecked(bool(current_value))
+        return widget
+
+    def create_string(self, current_value: ParameterValue | None = None) -> QLineEdit:
+        widget = NoneAwareLineEdit()
+        widget.set_value(current_value)
+        return widget
+
+
+DIRECT_WIDGET_FACTORY = DirectWidgetFactory()
+
+
+class CheckboxGroupWidgetFactory:
+    """Factory for List[Enum] checkbox groups."""
+
+    def create(
+        self,
+        param_name: str,
+        param_type: Type,
+        current_value: ParameterValue | None,
+    ) -> CheckboxGroupAdapter:
+        enum_type = get_enum_from_list(param_type)
+        widget = CheckboxGroupAdapter()
+        widget.setStyleSheet("QGroupBox { background-color: transparent; border: none; }")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(2)
+
+        for enum_value in enum_type:
+            checkbox = NoneAwareCheckBox()
+            checkbox.setText(enum_value.value)
+            checkbox.setObjectName(f"{param_name}_{enum_value.value}")
+            widget._checkboxes[enum_value] = checkbox
+            layout.addWidget(checkbox)
+
+        widget.set_value(current_value)
+        return widget
+
+
+CHECKBOX_GROUP_WIDGET_FACTORY = CheckboxGroupWidgetFactory()
+
+
+class CustomWidgetFactory:
+    """Factory for pyqt-reactive widgets that are not owned by magicgui."""
+
+    def create(self, request: ResolvedWidgetRequest) -> QWidget | None:
+        if request.resolved_type is not Path:
+            return None
+
+        return create_enhanced_path_widget(
+            request.source.param_name,
+            request.current_value,
+            request.source.parameter_info,
+        )
+
+
+CUSTOM_WIDGET_FACTORY = CustomWidgetFactory()
+
+
+class MagicGuiValueBoundary:
+    """Formal boundary defaults required by magicgui widget construction."""
+
+    @staticmethod
+    def project(resolved_type: Type, extracted_value: ParameterValue | None) -> ParameterValue | None:
+        if extracted_value is not None:
+            return extracted_value
+
+        if resolved_type == int:
+            return 0
+        if resolved_type == float:
+            return 0.0
+        if resolved_type == bool:
+            return False
+        if get_origin(resolved_type) is list:
+            return []
+        if get_origin(resolved_type) is tuple:
+            return ()
+        return None
+
+
+class MagicGuiWidgetFactory:
+    """Magicgui creation plus fail-loud projection back to PyQt widgets."""
+
+    def create(self, request: ResolvedWidgetRequest) -> QWidget:
+        try:
+            with timer("            prepare magicgui value", threshold_ms=0.1):
+                magicgui_value = MagicGuiValueBoundary.project(
+                    request.resolved_type,
+                    request.current_value,
+                )
+
+            label = WidgetTypeLabel.render(request.resolved_type)
+            with timer(
+                f"            magicgui.create_widget({request.source.param_name}, {label})",
+                threshold_ms=0.0,
+            ):
+                created_widget = create_widget(
+                    annotation=request.resolved_type,
+                    value=magicgui_value,
+                )
+
+            return self._project_widget(request, created_widget)
+        except Exception as exc:
+            logger.debug(
+                "Widget creation failed for %s (%s): %s",
+                request.source.param_name,
+                request.resolved_type,
+                exc,
+            )
+            return DIRECT_WIDGET_FACTORY.create_string(request.current_value)
+
+    def _project_widget(
+        self,
+        request: ResolvedWidgetRequest,
+        created_widget: QWidget | MagicGuiWidget,
+    ) -> QWidget:
+        with timer("            check magicgui result", threshold_ms=0.1):
+            native_widget = self._native_widget(created_widget)
+            if isinstance(native_widget, QWidget) and type(native_widget) is QWidget:
+                logger.warning(
+                    "magicgui returned basic QWidget for %s (%s), using fallback",
+                    request.source.param_name,
+                    request.resolved_type,
+                )
+                return DIRECT_WIDGET_FACTORY.create_string(request.current_value)
+
+            if type(created_widget) is QWidget:
+                logger.warning(
+                    "magicgui returned basic QWidget for %s (%s), using fallback",
+                    request.source.param_name,
+                    request.resolved_type,
+                )
+                return DIRECT_WIDGET_FACTORY.create_string(request.current_value)
+
+            if request.current_value is None and native_widget is not None:
+                self._clear_magicgui_none_preview(native_widget, request.resolved_type)
+
+            if native_widget is not None:
+                native_widget.setProperty("magicgui_widget", created_widget)
+                return native_widget
+
+            if isinstance(created_widget, QWidget):
+                return created_widget
+
+            raise TypeError(
+                f"magicgui produced {type(created_widget).__name__} without a native QWidget"
+            )
+
+    @staticmethod
+    def _native_widget(created_widget: QWidget | MagicGuiWidget) -> QWidget | None:
+        if isinstance(created_widget, MagicGuiWidget):
+            native = created_widget.native
+            if isinstance(native, QWidget):
+                return native
+        return None
+
+    @staticmethod
+    def _clear_magicgui_none_preview(native_widget: QWidget, resolved_type: Type) -> None:
+        if isinstance(native_widget, QLineEdit):
+            native_widget.setText("")
+            return
+        if isinstance(native_widget, QCheckBox) and resolved_type == bool:
+            native_widget.setChecked(False)
+
+
+MAGICGUI_WIDGET_FACTORY = MagicGuiWidgetFactory()
+
+
+class PyQt6WidgetCreationAuthority:
+    """Nominal authority for choosing the widget creation path."""
+
+    direct_factories: ClassVar[Dict[Type, Callable[[ParameterValue | None], QWidget]]] = {
+        int: DIRECT_WIDGET_FACTORY.create_int,
+        float: DIRECT_WIDGET_FACTORY.create_float,
+        bool: DIRECT_WIDGET_FACTORY.create_bool,
+        str: DIRECT_WIDGET_FACTORY.create_string,
+    }
+
+    def create(self, request: WidgetCreationRequest) -> QWidget:
+        with timer("            resolve_optional", threshold_ms=0.1):
+            resolved = self._resolve_request(request)
+
+        if is_list_of_enums(resolved.resolved_type):
+            with timer("            create checkbox group", threshold_ms=0.5):
+                return CHECKBOX_GROUP_WIDGET_FACTORY.create(
+                    request.param_name,
+                    resolved.resolved_type,
+                    resolved.current_value,
+                )
+
+        if is_enum(resolved.resolved_type):
+            with timer("            create enum widget", threshold_ms=0.5):
+                return create_enum_widget_unified(
+                    resolved.resolved_type,
+                    resolved.current_value,
+                )
+
+        direct_factory = self.direct_factories.get(resolved.resolved_type)
+        if direct_factory is not None:
+            label = WidgetTypeLabel.render(resolved.resolved_type)
+            with timer(f"            create {label} widget (fast path)", threshold_ms=0.5):
+                return direct_factory(resolved.current_value)
+
+        with timer("            registry lookup", threshold_ms=0.1):
+            custom_widget = CUSTOM_WIDGET_FACTORY.create(resolved)
+        if custom_widget is not None:
+            return custom_widget
+
+        return MAGICGUI_WIDGET_FACTORY.create(resolved)
+
+    def _resolve_request(self, request: WidgetCreationRequest) -> ResolvedWidgetRequest:
+        resolved_type = resolve_optional(request.param_type)
+        enum_type = enum_member_type(resolved_type)
+        if enum_type is not None:
+            resolved_type = enum_type
+
+        return ResolvedWidgetRequest(
+            source=request,
+            resolved_type=resolved_type,
+            current_value=self._extract_single_enum_value(request.current_value),
+        )
+
+    @staticmethod
+    def _extract_single_enum_value(value: ParameterValue | None) -> ParameterValue | None:
+        if not isinstance(value, list):
+            return value
+        if len(value) != 1:
+            return value
+        first_value = value[0]
+        if isinstance(first_value, Enum):
+            return first_value
+        return value
+
+
+PYQT6_WIDGET_CREATION = PyQt6WidgetCreationAuthority()
+
+
+def create_enhanced_path_widget(param_name: str = "", current_value: ParameterValue | None = None, parameter_info: ParameterInfo | None = None) -> EnhancedPathWidget:
     """Factory function for OpenHCS enhanced path widgets."""
     return EnhancedPathWidget(param_name, current_value, parameter_info, PyQt6ColorScheme())
 
@@ -109,40 +430,10 @@ def _create_none_aware_int_widget():
 
 def _create_none_aware_checkbox():
     """Factory function for NoneAwareCheckBox widgets."""
-    from pyqt_reactive.widgets import NoneAwareCheckBox
     return NoneAwareCheckBox()
 
 
-def _create_direct_int_widget(current_value: Any = None):
-    """Fast path: Create int widget directly without magicgui overhead."""
-    widget = NoneAwareIntEdit()
-    if current_value is not None:
-        widget.set_value(current_value)
-    return widget
-
-
-def _create_direct_float_widget(current_value: Any = None):
-    """Fast path: Create float widget directly without magicgui overhead."""
-    widget = NoScrollDoubleSpinBox()
-    widget.setRange(WidgetConfig.NUMERIC_RANGE_MIN, WidgetConfig.NUMERIC_RANGE_MAX)
-    widget.setDecimals(WidgetConfig.FLOAT_PRECISION)
-    if current_value is not None:
-        widget.setValue(float(current_value))
-    else:
-        widget.clear()
-    return widget
-
-
-def _create_direct_bool_widget(current_value: Any = None):
-    """Fast path: Create bool widget directly without magicgui overhead."""
-    from pyqt_reactive.widgets import NoneAwareCheckBox
-    widget = NoneAwareCheckBox()
-    if current_value is not None:
-        widget.setChecked(bool(current_value))
-    return widget
-
-
-def convert_widget_value_to_type(value: Any, param_type: Type) -> Any:
+def convert_widget_value_to_type(value: WidgetValue | None, param_type: Type) -> ParameterValue | None:
     """
     PyQt-specific type conversions for widget values.
 
@@ -159,7 +450,9 @@ def convert_widget_value_to_type(value: Any, param_type: Type) -> Any:
     # Handle Path widgets - they return strings that need conversion
     try:
         if param_type is Path and isinstance(value, str):
-            return Path(value) if value else None
+            if value == "":
+                return None
+            return Path(value)
     except Exception:
         pass
 
@@ -203,31 +496,13 @@ def register_openhcs_widgets():
     register_type(Path, widget_type="FileEdit")
 
 
-# Functional widget replacement registry
-WIDGET_REPLACEMENT_REGISTRY: Dict[Type, callable] = {
-    str: lambda current_value, **kwargs: create_string_fallback_widget(current_value=current_value),
-    bool: lambda current_value, **kwargs: (
-        lambda w: (w.set_value(current_value), w)[1]
-    )(_create_none_aware_checkbox()),
-    int: lambda current_value, **kwargs: (
-        lambda w: (w.set_value(current_value), w)[1]
-    )(_create_none_aware_int_widget()),
-    float: lambda current_value, **kwargs: (
-        lambda w: (w.setValue(float(current_value)), w)[1] if current_value is not None else w
-    )(NoScrollDoubleSpinBox()),
-    Path: lambda current_value, param_name, parameter_info, **kwargs:
-        create_enhanced_path_widget(param_name, current_value, parameter_info),
-}
-
 # String fallback widget for any type magicgui cannot handle
-def create_string_fallback_widget(current_value: Any, **kwargs) -> QLineEdit:
+def create_string_fallback_widget(current_value: ParameterValue | None, **kwargs) -> QLineEdit:
     """Create string fallback widget for unsupported types."""
-    widget = NoneAwareLineEdit()
-    widget.set_value(current_value)
-    return widget
+    return DIRECT_WIDGET_FACTORY.create_string(current_value)
 
 
-def create_enum_widget_unified(enum_type: Type, current_value: Any, **kwargs) -> QComboBox:
+def create_enum_widget_unified(enum_type: Type, current_value: ParameterValue | None, **kwargs) -> QComboBox:
     """Unified enum widget creator with consistent display text."""
     from pyqt_reactive.forms.ui_utils import format_enum_display
 
@@ -245,7 +520,7 @@ def create_enum_widget_unified(enum_type: Type, current_value: Any, **kwargs) ->
     return widget
 
 
-def _select_combobox_data(widget: QComboBox, value: Any) -> None:
+def _select_combobox_data(widget: QComboBox, value: ParameterValue) -> None:
     """Select the first combobox entry whose item data matches value."""
     for index in range(widget.count()):
         if widget.itemData(index) == value:
@@ -253,142 +528,23 @@ def _select_combobox_data(widget: QComboBox, value: Any) -> None:
             return
 
 
-def _type_label(param_type: Type) -> str:
-    """Return a stable label for diagnostics and timer names."""
-    return param_type.__name__ if isinstance(param_type, type) else str(param_type)
-
-
-def create_pyqt6_widget(param_name: str, param_type: Type, current_value: Any,
-                       widget_id: str, parameter_info: Any = None) -> Any:
+def create_pyqt6_widget(
+    param_name: str,
+    param_type: Type,
+    current_value: ParameterValue | None,
+    widget_id: str,
+    parameter_info: ParameterInfo | None = None,
+) -> QWidget:
     """Create a PyQt6 widget using the functional widget strategy."""
-    with timer("            resolve_optional", threshold_ms=0.1):
-        resolved_type = resolve_optional(param_type)
-        enum_type = enum_member_type(resolved_type)
-        if enum_type is not None:
-            resolved_type = enum_type
-
-    # Handle direct List[Enum] types - create multi-selection checkbox group
-    if is_list_of_enums(resolved_type):
-        with timer("            create checkbox group", threshold_ms=0.5):
-            return _create_checkbox_group_widget(param_name, resolved_type, current_value)
-
-    # Extract enum from list wrapper for other cases
-    with timer("            extract enum value", threshold_ms=0.1):
-        extracted_value = (current_value[0] if isinstance(current_value, list) and
-                          len(current_value) == 1 and isinstance(current_value[0], Enum)
-                          else current_value)
-
-    # Handle direct enum types
-    if is_enum(resolved_type):
-        with timer("            create enum widget", threshold_ms=0.5):
-            return create_enum_widget_unified(resolved_type, extracted_value)
-
-    # OPTIMIZATION: Fast path for simple types - bypass magicgui overhead (~0.3ms per widget)
-    # This saves ~36ms for 120 widgets
-    if resolved_type == int:
-        with timer("            create int widget (fast path)", threshold_ms=0.5):
-            return _create_direct_int_widget(extracted_value)
-    elif resolved_type == float:
-        with timer("            create float widget (fast path)", threshold_ms=0.5):
-            return _create_direct_float_widget(extracted_value)
-    elif resolved_type == bool:
-        with timer("            create bool widget (fast path)", threshold_ms=0.5):
-            return _create_direct_bool_widget(extracted_value)
-    elif resolved_type == str:
-        with timer("            create string widget (fast path)", threshold_ms=0.5):
-            return create_string_fallback_widget(current_value=extracted_value)
-
-    # Check for OpenHCS custom widget replacements
-    with timer("            registry lookup", threshold_ms=0.1):
-        replacement_factory = WIDGET_REPLACEMENT_REGISTRY.get(resolved_type)
-
-    if replacement_factory:
-        with timer(f"            call replacement factory for {_type_label(resolved_type)}", threshold_ms=0.5):
-            widget = replacement_factory(
-                current_value=extracted_value,
-                param_name=param_name,
-                parameter_info=parameter_info
-            )
-    else:
-        # Try magicgui for complex types, with string fallback for unsupported types
-        try:
-            # Handle None values to prevent magicgui from converting None to literal "None" string
-            with timer("            prepare magicgui value", threshold_ms=0.1):
-                magicgui_value = extracted_value
-                if extracted_value is None:
-                    # Use appropriate default values for magicgui to prevent "None" string conversion
-                    # CRITICAL FIX: Use minimal defaults that won't look like concrete user values
-                    if resolved_type == int:
-                        magicgui_value = 0  # magicgui needs a value, placeholder will override display
-                    elif resolved_type == float:
-                        magicgui_value = 0.0  # magicgui needs a value, placeholder will override display
-                    elif resolved_type == bool:
-                        magicgui_value = False
-                    elif get_origin(resolved_type) is list:
-                        magicgui_value = []  # Empty list for List[T] types
-                    elif get_origin(resolved_type) is tuple:
-                        magicgui_value = ()  # Empty tuple for tuple[T, ...] types
-                    # For other types, let magicgui handle None (might still cause issues but less common)
-
-            with timer(f"            magicgui.create_widget({param_name}, {_type_label(resolved_type)})", threshold_ms=0.0):
-                widget = create_widget(annotation=resolved_type, value=magicgui_value)
-
-            # Check if magicgui returned a basic QWidget (which indicates failure)
-            with timer("            check magicgui result", threshold_ms=0.1):
-                native_widget = widget.native if isinstance(widget, MagicGuiWidget) else None
-                if isinstance(native_widget, QWidget) and type(native_widget) is QWidget:
-                    logger.warning(f"magicgui returned basic QWidget for {param_name} ({resolved_type}), using fallback")
-                    widget = create_string_fallback_widget(current_value=extracted_value)
-                elif type(widget) is QWidget:
-                    logger.warning(f"magicgui returned basic QWidget for {param_name} ({resolved_type}), using fallback")
-                    widget = create_string_fallback_widget(current_value=extracted_value)
-                else:
-                    # If original value was None, clear the widget to show placeholder behavior
-                    if extracted_value is None and native_widget is not None:
-                        if isinstance(native_widget, QLineEdit):
-                            native_widget.setText("")  # Clear text for None values
-                        elif isinstance(native_widget, QCheckBox) and resolved_type == bool:
-                            native_widget.setChecked(False)  # Uncheck for None bool values
-
-                    # Extract native PyQt6 widget from magicgui wrapper if needed
-                    if native_widget is not None:
-                        native_widget.setProperty("magicgui_widget", widget)
-                        widget = native_widget
-        except Exception as e:
-            # Fallback to string widget for any type magicgui cannot handle
-            # Use DEBUG level since this is expected for complex Union types (e.g., well_filter)
-            logger.debug(f"Widget creation failed for {param_name} ({resolved_type}): {e}")
-            widget = create_string_fallback_widget(current_value=extracted_value)
-
-    return widget
-
-
-def _create_checkbox_group_widget(param_name: str, param_type: Type, current_value: Any):
-    """Create multi-selection checkbox group for List[Enum] parameters."""
-    from pyqt_reactive.widgets import NoneAwareCheckBox
-    from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
-
-    enum_type = get_enum_from_list(param_type)
-    widget = CheckboxGroupAdapter()
-    # Don't set title - label is added separately in widget_creation_config.py
-    # Transparent background so parent's scope-tinted background shows through
-    widget.setStyleSheet("QGroupBox { background-color: transparent; border: none; }")
-    layout = QVBoxLayout(widget)
-    layout.setContentsMargins(4, 2, 4, 2)  # Minimal margins for checkbox group
-    layout.setSpacing(2)
-
-    # Populate checkboxes for each enum value
-    for enum_value in enum_type:
-        checkbox = NoneAwareCheckBox()
-        checkbox.setText(enum_value.value)
-        checkbox.setObjectName(f"{param_name}_{enum_value.value}")
-        widget._checkboxes[enum_value] = checkbox
-        layout.addWidget(checkbox)
-
-    # Set current value using ABC method
-    widget.set_value(current_value)
-
-    return widget
+    return PYQT6_WIDGET_CREATION.create(
+        WidgetCreationRequest(
+            param_name=param_name,
+            param_type=param_type,
+            current_value=current_value,
+            widget_id=widget_id,
+            parameter_info=parameter_info,
+        )
+    )
 
 
 class PlaceholderConfig:
@@ -405,7 +561,9 @@ class PlaceholderConfig:
 def _get_cached_placeholder_text(widget: QWidget) -> str | None:
     """Return cached placeholder text stored on the Qt object."""
     cached = widget.property("cached_placeholder_text")
-    return cached if isinstance(cached, str) else None
+    if isinstance(cached, str):
+        return cached
+    return None
 
 
 def _set_cached_placeholder_text(widget: QWidget, placeholder_text: str) -> None:
@@ -511,7 +669,7 @@ class PlaceholderRenderer:
     def apply_checkbox_group_with_value(
         self,
         widget: CheckboxGroupAdapter,
-        resolved_value: Any,
+        resolved_value: ParameterValue | None,
         placeholder_text: str
     ) -> None:
         """Apply checkbox-group placeholder from the resolved enum list."""
@@ -548,13 +706,11 @@ class PlaceholderRenderer:
         """Apply placeholder to combobox while preserving None as no concrete selection."""
         try:
             default_value = self.extract_default_value(placeholder_text)
-            matching_index = next(
-                (i for i in range(widget.count())
-                 if _item_matches_value(widget, i, default_value)),
-                -1
-            )
-            placeholder_display = (
-                widget.itemText(matching_index) if matching_index >= 0 else default_value
+            matching_index = _find_matching_combobox_index(widget, default_value)
+            placeholder_display = _combobox_placeholder_display(
+                widget,
+                matching_index,
+                default_value,
             )
 
             was_blocked = widget.blockSignals(True)
@@ -605,8 +761,36 @@ def _item_matches_value(widget: QComboBox, index: int, target_value: str) -> boo
     return False
 
 
+def _find_matching_combobox_index(widget: QComboBox, target_value: str) -> int:
+    """Return the matching item index, or -1 for an explicit cache miss."""
+    for index in range(widget.count()):
+        if _item_matches_value(widget, index, target_value):
+            return index
+    return -1
+
+
+def _combobox_placeholder_display(
+    widget: QComboBox,
+    matching_index: int,
+    default_value: str,
+) -> str:
+    """Project a combobox placeholder label from a match or cache miss."""
+    if matching_index >= 0:
+        return widget.itemText(matching_index)
+    return default_value
+
+
+def _tooltip_without_interaction_hints(current_tooltip: str) -> str:
+    """Remove any known placeholder interaction suffix from a tooltip."""
+    for hint in PlaceholderConfig.INTERACTION_HINTS.values():
+        suffix = f" ({hint})"
+        if suffix in current_tooltip:
+            return current_tooltip.replace(suffix, "")
+    return current_tooltip
+
+
 # Declarative widget-to-strategy mapping
-WIDGET_PLACEHOLDER_STRATEGIES: Dict[Type, Callable[[Any, str], None]] = {
+WIDGET_PLACEHOLDER_STRATEGIES: Dict[Type, Callable[[QWidget, str], None]] = {
     QCheckBox: PLACEHOLDER_RENDERER.apply_checkbox,
     QComboBox: PLACEHOLDER_RENDERER.apply_combobox,
     QSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
@@ -644,12 +828,202 @@ _register_path_widget_strategy()
 _register_none_aware_lineedit_strategy()
 _register_none_aware_checkbox_strategy()
 
+
+@dataclasses.dataclass(frozen=True)
+class WidgetTypeEntryResolver:
+    """MRO-aware lookup for raw widget boundary entries."""
+
+    mapping: Dict[Type, TypeResolvedBoundaryEntry]
+
+    def entry_for(self, widget: WidgetBoundaryTarget) -> TypeResolvedBoundaryEntry | None:
+        for widget_type in type(widget).__mro__:
+            entry = self.mapping.get(widget_type)
+            if entry is not None:
+                return entry
+        return None
+
+
+class MagicguiWrapperFamilyAuthority:
+    """Projects magicgui wrapper identity from native or wrapper widgets."""
+
+    def get(self, widget: WidgetBoundaryTarget) -> MagicGuiWidget | None:
+        if isinstance(widget, QWidget):
+            wrapper = widget.property("magicgui_widget")
+            if isinstance(wrapper, MagicGuiWidget):
+                return wrapper
+        if isinstance(widget, MagicGuiWidget):
+            return widget
+        return None
+
+
+MAGICGUI_WRAPPER_FAMILY = MagicguiWrapperFamilyAuthority()
+
+
+def _connect_raw_checkbox(widget: QCheckBox, callback: WidgetSignalCallback) -> None:
+    widget.stateChanged.connect(lambda: callback(widget.isChecked()))
+
+
+def _connect_raw_lineedit(widget: QLineEdit, callback: WidgetSignalCallback) -> None:
+    def emit_text(value: str) -> None:
+        if isinstance(widget, ValueGettable):
+            callback(widget.get_value())
+            return
+        callback(value)
+
+    widget.textChanged.connect(emit_text)
+
+
+def _connect_raw_spinbox(widget: QSpinBox | QDoubleSpinBox, callback: WidgetSignalCallback) -> None:
+    widget.valueChanged.connect(callback)
+
+
+def _connect_raw_combobox(widget: QComboBox, callback: WidgetSignalCallback) -> None:
+    widget.currentIndexChanged.connect(lambda: callback(widget.currentData()))
+
+
+RawWidgetSignalConnector = Callable[[QWidget, WidgetSignalCallback], None]
+
+RAW_WIDGET_SIGNAL_CONNECTORS: Dict[Type, RawWidgetSignalConnector] = {
+    QCheckBox: _connect_raw_checkbox,
+    QLineEdit: _connect_raw_lineedit,
+    QSpinBox: _connect_raw_spinbox,
+    QDoubleSpinBox: _connect_raw_spinbox,
+    QComboBox: _connect_raw_combobox,
+}
+RAW_WIDGET_SIGNAL_RESOLVER = WidgetTypeEntryResolver(RAW_WIDGET_SIGNAL_CONNECTORS)
+
+
+class WidgetSignalConnectionAuthority:
+    """Boundary authority for connecting widget change signals."""
+
+    def connect(
+        self,
+        widget: WidgetBoundaryTarget,
+        param_name: str,
+        callback: WidgetChangeCallback,
+    ) -> None:
+        magicgui_widget = MAGICGUI_WRAPPER_FAMILY.get(widget)
+        if magicgui_widget is not None:
+            magicgui_widget.changed.connect(
+                self._wrapped_callback(widget, param_name, callback, lambda: magicgui_widget.value)
+            )
+            return
+
+        if isinstance(widget, ChangeSignalEmitter):
+            widget.connect_change_signal(
+                lambda value: self._emit_value(widget, param_name, callback, value)
+            )
+            return
+
+        connector = RAW_WIDGET_SIGNAL_RESOLVER.entry_for(widget)
+        if connector is not None:
+            connector(
+                widget,
+                lambda value: self._emit_value(widget, param_name, callback, value),
+            )
+            return
+
+        raise ValueError(f"Widget {type(widget).__name__} has no supported change signal")
+
+    def _wrapped_callback(
+        self,
+        widget: WidgetBoundaryTarget,
+        param_name: str,
+        callback: WidgetChangeCallback,
+        value_getter: Callable[[], WidgetValue | None],
+    ) -> Callable[[], None]:
+        def wrapped() -> None:
+            self._emit_value(widget, param_name, callback, value_getter())
+
+        return wrapped
+
+    @staticmethod
+    def _emit_value(
+        widget: WidgetBoundaryTarget,
+        param_name: str,
+        callback: WidgetChangeCallback,
+        value: WidgetValue | None,
+    ) -> None:
+        if isinstance(widget, QWidget):
+            PyQt6WidgetEnhancer._clear_placeholder_state(widget)
+        callback(param_name, value)
+
+
+def _set_raw_checkbox(widget: QCheckBox, value: ParameterValue | None) -> None:
+    widget.setChecked(bool(value))
+
+
+def _set_raw_spinbox(widget: QSpinBox, value: ParameterValue | None) -> None:
+    if value is None:
+        widget_value = 0
+    else:
+        widget_value = int(value)
+    widget.setValue(widget_value)
+
+
+def _set_raw_double_spinbox(widget: QDoubleSpinBox, value: ParameterValue | None) -> None:
+    if value is None:
+        widget_value = 0.0
+    else:
+        widget_value = float(value)
+    widget.setValue(widget_value)
+
+
+def _set_raw_combobox(widget: QComboBox, value: ParameterValue | None) -> None:
+    _select_combobox_data(widget, value)
+
+
+def _set_raw_lineedit(widget: QLineEdit, value: ParameterValue | None) -> None:
+    if value is None:
+        widget_value = ""
+    else:
+        widget_value = str(value)
+    widget.setText(widget_value)
+
+
+def _set_magicgui_widget(widget: MagicGuiWidget, value: ParameterValue | None) -> None:
+    widget.value = value
+
+
+RawWidgetValueSetter = Callable[[WidgetBoundaryTarget, ParameterValue | None], None]
+
+RAW_WIDGET_VALUE_SETTERS: Dict[Type, RawWidgetValueSetter] = {
+    QCheckBox: _set_raw_checkbox,
+    QSpinBox: _set_raw_spinbox,
+    QDoubleSpinBox: _set_raw_double_spinbox,
+    QComboBox: _set_raw_combobox,
+    QLineEdit: _set_raw_lineedit,
+    MagicGuiWidget: _set_magicgui_widget,
+}
+RAW_WIDGET_VALUE_SETTER_RESOLVER = WidgetTypeEntryResolver(RAW_WIDGET_VALUE_SETTERS)
+
+
+class WidgetValueAssignmentAuthority:
+    """Boundary authority for assigning values to widgets."""
+
+    def assign(self, widget: WidgetBoundaryTarget, value: ParameterValue | None) -> None:
+        if isinstance(widget, ValueSettable):
+            widget.set_value(value)
+            return
+
+        setter = RAW_WIDGET_VALUE_SETTER_RESOLVER.entry_for(widget)
+        if setter is not None:
+            setter(widget, value)
+            return
+
+        raise TypeError(f"Widget {type(widget).__name__} has no supported value assignment")
+
+
+WIDGET_SIGNAL_CONNECTION = WidgetSignalConnectionAuthority()
+WIDGET_VALUE_ASSIGNMENT = WidgetValueAssignmentAuthority()
+
+
 @dataclasses.dataclass(frozen=True)
 class PyQt6WidgetEnhancer:
     """Widget enhancement using functional dispatch patterns."""
 
     @staticmethod
-    def apply_placeholder_text(widget: Any, placeholder_text: str) -> None:
+    def apply_placeholder_text(widget: QWidget, placeholder_text: str) -> None:
         """Apply placeholder using declarative widget-strategy mapping."""
         # PERFORMANCE OPTIMIZATION: Skip if placeholder text is unchanged
         # This avoids redundant widget updates during sibling refresh cascades
@@ -675,7 +1049,7 @@ class PyQt6WidgetEnhancer:
         )
 
     @staticmethod
-    def apply_placeholder_with_value(widget: Any, resolved_value: Any, placeholder_text: str) -> None:
+    def apply_placeholder_with_value(widget: QWidget, resolved_value: ParameterValue | None, placeholder_text: str) -> None:
         """Apply placeholder using actual resolved value for type-safe handling.
         
         This method passes the actual value (not just formatted text) to enable
@@ -705,7 +1079,7 @@ class PyQt6WidgetEnhancer:
         PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
 
     @staticmethod
-    def apply_global_config_placeholder(widget: Any, field_name: str, global_config: Any = None) -> None:
+    def apply_global_config_placeholder(widget: QWidget, field_name: str, global_config: FormObject) -> None:
         """
         Apply placeholder to standalone widget using global config.
 
@@ -715,18 +1089,14 @@ class PyQt6WidgetEnhancer:
         Args:
             widget: The widget to apply placeholder to
             field_name: Name of the field in the global config
-            global_config: Global config instance (uses thread-local if None)
+            global_config: Global config instance
         """
         try:
-            if global_config is None:
-                return  # No global config available
-
             if not dataclasses.is_dataclass(global_config):
                 return
 
-            field_names = {field.name for field in dataclasses.fields(global_config)}
-            if field_name in field_names:
-                field_value = object.__getattribute__(global_config, field_name)
+            if DataclassFieldAccess.has_field(global_config, field_name):
+                field_value = DataclassFieldAccess.raw_value(global_config, field_name)
 
                 # Format the placeholder text appropriately for different types
                 if isinstance(field_value, Enum):
@@ -741,106 +1111,12 @@ class PyQt6WidgetEnhancer:
             pass
 
     @staticmethod
-    def connect_change_signal(widget: Any, param_name: str, callback: Any) -> None:
+    def connect_change_signal(widget: QWidget | MagicGuiWidget, param_name: str, callback: WidgetChangeCallback) -> None:
         """Connect signal with placeholder state management."""
-        magicgui_widget = PyQt6WidgetEnhancer._get_magicgui_wrapper(widget)
-
-        # Create placeholder-aware callback wrapper
-        def create_wrapped_callback(original_callback, value_getter):
-            def wrapped():
-                PyQt6WidgetEnhancer._clear_placeholder_state(widget)
-                original_callback(param_name, value_getter())
-            return wrapped
-
-        # Prioritize magicgui signals
-        if isinstance(magicgui_widget, MagicGuiWidget):
-            magicgui_widget.changed.connect(
-                create_wrapped_callback(callback, lambda: magicgui_widget.value)
-            )
-            return
-
-        # Check for CheckboxGroupAdapter using isinstance (anti-duck-typing)
-        if isinstance(widget, CheckboxGroupAdapter):
-            placeholder_aware_callback = lambda pn, val: (
-                PyQt6WidgetEnhancer._clear_placeholder_state(widget),
-                callback(pn, val)
-            )[-1]
-            PyQt6WidgetEnhancer._connect_checkbox_group_signals(widget, param_name, placeholder_aware_callback)
-            return
-
-        if isinstance(widget, ChangeSignalEmitter):
-            def emit_contract_value(value):
-                PyQt6WidgetEnhancer._clear_placeholder_state(widget)
-                callback(param_name, value)
-
-            widget.connect_change_signal(emit_contract_value)
-            return
-
-        placeholder_aware_callback = lambda value: (
-            PyQt6WidgetEnhancer._clear_placeholder_state(widget),
-            callback(param_name, value)
-        )[-1]
-
-        if isinstance(widget, QCheckBox):
-            widget.stateChanged.connect(lambda: placeholder_aware_callback(widget.isChecked()))
-        elif isinstance(widget, QLineEdit):
-            widget.textChanged.connect(
-                lambda value: placeholder_aware_callback(
-                    widget.get_value() if isinstance(widget, ValueGettable) else value
-                )
-            )
-        elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-            widget.valueChanged.connect(placeholder_aware_callback)
-        elif isinstance(widget, QComboBox):
-            widget.currentIndexChanged.connect(lambda: placeholder_aware_callback(widget.currentData()))
-        elif isinstance(widget, EnhancedPathWidget):
-            widget.path_changed.connect(placeholder_aware_callback)
-        else:
-            raise ValueError(f"Widget {type(widget).__name__} has no supported change signal")
+        WIDGET_SIGNAL_CONNECTION.connect(widget, param_name, callback)
 
     @staticmethod
-    def _connect_checkbox_group_signals(widget: Any, param_name: str, callback: Any) -> None:
-        """Connect signals for checkbox group widgets.
-
-        Treats List[Enum] like a list of independent bools:
-        - When user clicks ANY checkbox, ALL checkboxes convert from placeholder to concrete
-        - This ensures the entire list becomes concrete once the user starts editing
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-
-        if isinstance(widget, CheckboxGroupAdapter):
-            # Connect to each checkbox's stateChanged signal
-            for checkbox in widget.checkbox_widgets():
-                def make_handler(cb):
-                    """Create handler with proper closure to avoid lambda capture issues."""
-                    def handler(state):
-                        # CRITICAL: When user clicks ANY checkbox, convert ALL checkboxes to concrete
-                        # This implements "list of bools" behavior - editing one makes the whole list concrete
-                        for other_checkbox in widget.checkbox_widgets():
-                            other_checkbox.convert_placeholder_to_concrete()
-
-                        # Clear placeholder state from the group widget itself
-                        PyQt6WidgetEnhancer._clear_placeholder_state(widget)
-
-                        # Get selected values (now all concrete) using ABC method
-                        selected = widget.get_value()
-                        # Handle None (placeholder state) in logging
-                        selected_str = "None (inherit from parent)" if selected is None else [v.name for v in selected]
-                        logger.debug(
-                            "Checkbox %s changed to %s, selected values: %s",
-                            cb.text(),
-                            state,
-                            selected_str,
-                        )
-
-                        callback(param_name, selected)
-                    return handler
-
-                checkbox.stateChanged.connect(make_handler(checkbox))
-
-    @staticmethod
-    def _clear_placeholder_state(widget: Any) -> None:
+    def _clear_placeholder_state(widget: QWidget) -> None:
         """Clear placeholder state using functional approach."""
         # Handle checkbox groups by clearing each checkbox's placeholder state
         if isinstance(widget, CheckboxGroupAdapter):
@@ -855,12 +1131,7 @@ class PyQt6WidgetEnhancer:
                     checkbox.convert_placeholder_to_concrete()
                     # Clean checkbox tooltip
                     current_tooltip = checkbox.toolTip()
-                    cleaned_tooltip = next(
-                        (current_tooltip.replace(f" ({hint})", "")
-                         for hint in PlaceholderConfig.INTERACTION_HINTS.values()
-                         if f" ({hint})" in current_tooltip),
-                        current_tooltip
-                    )
+                    cleaned_tooltip = _tooltip_without_interaction_hints(current_tooltip)
                     checkbox.setToolTip(cleaned_tooltip)
             # Clear group widget's placeholder state and cache
             widget.setProperty("is_placeholder_state", False)
@@ -882,27 +1153,16 @@ class PyQt6WidgetEnhancer:
 
         # Clean tooltip using functional pattern
         current_tooltip = widget.toolTip()
-        cleaned_tooltip = next(
-            (current_tooltip.replace(f" ({hint})", "")
-             for hint in PlaceholderConfig.INTERACTION_HINTS.values()
-             if f" ({hint})" in current_tooltip),
-            current_tooltip
-        )
+        cleaned_tooltip = _tooltip_without_interaction_hints(current_tooltip)
         widget.setToolTip(cleaned_tooltip)
 
     @staticmethod
-    def _get_magicgui_wrapper(widget: Any) -> Any:
+    def _get_magicgui_wrapper(widget: QWidget | MagicGuiWidget) -> MagicGuiWidget | None:
         """Get magicgui wrapper if widget was created by magicgui."""
-        if isinstance(widget, QWidget):
-            wrapper = widget.property("magicgui_widget")
-            if isinstance(wrapper, MagicGuiWidget):
-                return wrapper
-        if isinstance(widget, MagicGuiWidget):
-            return widget
-        return None
+        return MAGICGUI_WRAPPER_FAMILY.get(widget)
 
     @staticmethod
-    def set_widget_value(widget: Any, value: Any) -> None:
+    def set_widget_value(widget: QWidget | MagicGuiWidget, value: ParameterValue | None) -> None:
         """
         Set widget value without triggering signals.
 
@@ -914,18 +1174,6 @@ class PyQt6WidgetEnhancer:
         widget.blockSignals(True)
 
         try:
-            if isinstance(widget, QCheckBox):
-                widget.setChecked(bool(value))
-            elif isinstance(widget, (QSpinBox, NoScrollSpinBox)):
-                widget.setValue(int(value) if value is not None else 0)
-            elif isinstance(widget, (QDoubleSpinBox, NoScrollDoubleSpinBox)):
-                widget.setValue(float(value) if value is not None else 0.0)
-            elif isinstance(widget, (QComboBox, NoScrollComboBox)):
-                _select_combobox_data(widget, value)
-            elif isinstance(widget, QLineEdit):
-                widget.setText(str(value) if value is not None else "")
-            # Handle magicgui widgets
-            elif isinstance(widget, MagicGuiWidget):
-                widget.value = value
+            WIDGET_VALUE_ASSIGNMENT.assign(widget, value)
         finally:
             widget.blockSignals(False)

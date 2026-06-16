@@ -39,15 +39,17 @@ Architecture:
     - create_parameter_info(): Factory that auto-selects correct type
 """
 
-from typing import Callable, Type, Any, Optional, List, Union, get_origin, get_args
+from typing import Callable, Type, Optional, List, Union, get_origin, get_args
 from dataclasses import dataclass, is_dataclass
 from abc import ABC, ABCMeta
 import logging
 
+from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
+
 logger = logging.getLogger(__name__)
 
 
-InlineDataclassWidgetFactory = Callable[..., Any]
+InlineDataclassWidgetFactory = Callable
 
 
 class _InlineDataclassWidgetCatalog:
@@ -90,7 +92,7 @@ class ParameterInfoBase(ABC):
     """ABC for parameter information objects - enforces explicit interface."""
     name: str
     type: Type
-    current_value: Any
+    current_value: ParameterValue | None
     description: Optional[str] = None
 
     # Widget creation type - subclasses override. Imported lazily to avoid circular imports.
@@ -140,7 +142,7 @@ class OptionalDataclassInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
         def process(config: Optional[ProcessingConfig]): ...
         def analyze(settings: Optional[AnalysisSettings]): ...
     """
-    default_value: Any = None
+    default_value: ParameterValue | None = None
     is_required: bool = True
     widget_creation_type: str = "OPTIONAL_NESTED"
 
@@ -173,7 +175,7 @@ class InlineDataclassWidgetInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
     - Use a registered widget instead of the default nested field form
     - Fall back to DirectDataclassInfo when no inline widget is registered
     """
-    default_value: Any = None
+    default_value: ParameterValue | None = None
     is_required: bool = True
     widget_creation_type: str = "INLINE_DATACLASS"
 
@@ -209,7 +211,7 @@ class DirectDataclassInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
         def process(config: ProcessingConfig): ...
         def analyze(settings: AnalysisSettings): ...
     """
-    default_value: Any = None
+    default_value: ParameterValue | None = None
     is_required: bool = True
     widget_creation_type: str = "NESTED"
 
@@ -241,7 +243,7 @@ class GenericInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
         def analyze(input_path: Path): ...
         def filter(sigma: float): ...
     """
-    default_value: Any = None
+    default_value: ParameterValue | None = None
     is_required: bool = True
 
     @staticmethod
@@ -267,8 +269,8 @@ ParameterInfo = Union[
 def create_parameter_info(
     name: str,
     param_type: Type,
-    current_value: Any,
-    default_value: Any = None,
+    current_value: ParameterValue | None,
+    default_value: ParameterValue | None = None,
     description: Optional[str] = None,
     is_required: bool = True
 ) -> ParameterInfo:
