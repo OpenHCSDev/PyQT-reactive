@@ -32,7 +32,7 @@ from pyqt_reactive.services.function_navigation import parse_function_field_targ
 from python_introspect import SignatureAnalyzer
 from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
 from objectstate import ObjectStateRegistry
-from pyqt_reactive.theming import ColorScheme, ColorSchemeResolution, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.ui_utils import format_enum_display
 from pyqt_reactive.widgets.shared.detachable_action_bar import (
@@ -124,12 +124,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                   invocation_badge_provider: Optional[Callable[[str, int, Callable], Optional[str]]] = None):
         super().__init__(parent)
 
-        # Initialize color scheme
-        self.color_scheme = ColorSchemeResolution(color_scheme).resolve()
+        # Initialize theme surface
+        self.theme = WidgetTheme.from_optional(color_scheme)
         self._render_header = render_header
         self.header_label: Optional[QLabel] = None
         self._button_style = button_style  # Store centralized button style
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         # Context configuration properties (mirrors Textual TUI)
         self.current_group_by = None  # Current GroupBy setting from context form
@@ -977,7 +976,10 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             
             # Store as instance attribute for scope accent styling
             self.header_label = QLabel("Functions")
-            self.header_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-weight: bold; font-size: 14px;")
+            self.header_label.setStyleSheet(
+                f"color: {self.theme.scheme.to_hex(self.theme.scheme.text_accent)}; "
+                "font-weight: bold; font-size: 14px;"
+            )
             header_layout.addWidget(self.header_label)
             
             header_layout.addStretch()
@@ -1000,8 +1002,8 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setStyleSheet(f"""
             QScrollArea {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
-                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
+                background-color: {self.theme.scheme.to_hex(self.theme.scheme.panel_bg)};
+                border: 1px solid {self.theme.scheme.to_hex(self.theme.scheme.border_color)};
                 border-radius: 4px;
             }}
         """)
@@ -1066,11 +1068,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
         if self._button_style:
-            return self.style_generator.require_config_button_style(self._button_style)
+            return self.theme.styles.require_config_button_style(self._button_style)
 
         return f"""
             QPushButton {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                background-color: {self.theme.scheme.to_hex(self.theme.scheme.input_bg)};
                 color: white;
                 border: none;
                 border-radius: 3px;
@@ -1078,10 +1080,10 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 font-size: 11px;
             }}
             QPushButton:hover {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+                background-color: {self.theme.scheme.to_hex(self.theme.scheme.button_hover_bg)};
             }}
             QPushButton:pressed {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
+                background-color: {self.theme.scheme.to_hex(self.theme.scheme.button_pressed_bg)};
             }}
         """
 
@@ -1135,7 +1137,10 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             # Show empty state
             empty_label = QLabel("No functions defined. Click 'Add' to begin.")
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; font-style: italic; padding: 20px;")
+            empty_label.setStyleSheet(
+                f"color: {self.theme.scheme.to_hex(self.theme.scheme.text_disabled)}; "
+                "font-style: italic; padding: 20px;"
+            )
             self.function_layout.addWidget(empty_label)
         else:
             # Create function panes
@@ -1148,7 +1153,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                     func_item,
                     i,
                     self.service_adapter,
-                    color_scheme=self.color_scheme,
+                    color_scheme=self.theme.scheme,
                     scope_id=self.scope_id,
                     func_scope_prefix=func_scope_prefix,
                     func_scope_token=self._current_function_tokens[i],
