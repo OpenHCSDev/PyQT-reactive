@@ -5,7 +5,6 @@ Shared widget utilities and components.
 from __future__ import annotations
 
 import importlib
-from typing import Any
 
 _EXPORTS = {
     "ScrollableFormMixin": (
@@ -40,9 +39,21 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.base_form_dialog",
         "BaseFormDialog",
     ),
+    "ManagedStateRestorePolicy": (
+        "pyqt_reactive.widgets.shared.base_form_dialog",
+        "ManagedStateRestorePolicy",
+    ),
+    "ManagedWindowActionCapabilities": (
+        "pyqt_reactive.widgets.shared.base_form_dialog",
+        "ManagedWindowActionCapabilities",
+    ),
     "DirtyWindowPresentation": (
         "pyqt_reactive.widgets.shared.dirty_window_presenter",
         "DirtyWindowPresentation",
+    ),
+    "DirtyWindowStateTracker": (
+        "pyqt_reactive.widgets.shared.dirty_window_presenter",
+        "DirtyWindowStateTracker",
     ),
     "DirtyWindowPresenter": (
         "pyqt_reactive.widgets.shared.dirty_window_presenter",
@@ -151,11 +162,16 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:
-    if name in _EXPORTS:
-        module_name, attr_name = _EXPORTS[name]
+def _load_exports() -> None:
+    for public_name, export_target in _EXPORTS.items():
+        module_name, attr_name = export_target
         module = importlib.import_module(module_name)
-        value = getattr(module, attr_name)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        module_attributes = vars(module)
+        if attr_name not in module_attributes:
+            raise AttributeError(
+                f"module {module_name!r} has no exported attribute {attr_name!r}"
+            )
+        globals()[public_name] = module_attributes[attr_name]
+
+
+_load_exports()

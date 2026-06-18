@@ -49,10 +49,9 @@ class ZMQServerScanService:
     def ping_server(self, port: int) -> Optional[Dict[str, Any]]:
         """Ping one server data port and return pong payload when available."""
         control_port = port + self.control_port_offset
-        control_context = None
         control_socket = None
         try:
-            control_context = zmq.Context()
+            control_context = zmq.Context.instance()
             control_socket = control_context.socket(zmq.REQ)
             control_socket.setsockopt(zmq.LINGER, 0)
             control_socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
@@ -75,11 +74,6 @@ class ZMQServerScanService:
         finally:
             if control_socket is not None:
                 try:
-                    control_socket.close()
-                except Exception:
-                    pass
-            if control_context is not None:
-                try:
-                    control_context.term()
+                    control_socket.close(linger=0)
                 except Exception:
                     pass

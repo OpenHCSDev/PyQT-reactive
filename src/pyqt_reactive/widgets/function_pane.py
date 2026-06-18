@@ -93,22 +93,20 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             parent=parent
         )
 
-
-
+        self._func_state = None
         # Store explicit title container for flash masking (function panes only)
         self._flash_title_container = None
-        if hasattr(self, "title_layout"):
-            if isinstance(self.title_layout, QWidget):
-                self._flash_title_container = self.title_layout
-            elif hasattr(self.title_layout, "parentWidget"):
-                self._flash_title_container = self.title_layout.parentWidget()
+        if isinstance(self.title_layout, QWidget):
+            self._flash_title_container = self.title_layout
+        elif isinstance(self.title_layout, QLayout):
+            self._flash_title_container = self.title_layout.parentWidget()
 
         # Flash behavior: include title + module label in flash region
         self._flash_include_title = True
         self._flash_unmasked_widgets = set()
         if isinstance(self._title_label, QLabel):
             self._flash_unmasked_widgets.add(self._title_label)
-        if isinstance(getattr(self, "_help_button", None), QWidget):
+        if isinstance(self._help_button, QWidget):
             self._flash_unmasked_widgets.add(self._help_button)
 
         # Initialize color scheme
@@ -131,7 +129,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         self.func_scope_token = str(func_scope_token) if func_scope_token else None
 
         # Register this pane for whole-pane flashing (after scope_id is set)
-        if not getattr(self, "_flash_key", ""):
+        if self._flash_key == "":
             self._flash_key = f"function_pane::{id(self)}"
         self.register_flash_groupbox_full(self._flash_key, self)
         try:
@@ -484,7 +482,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         """Unregister ObjectState on widget destruction."""
         try:
             from objectstate import ObjectStateRegistry
-            if hasattr(self, '_func_state') and self._func_state:
+            if self._func_state is not None:
                 ObjectStateRegistry.unregister(self._func_state)
                 self._func_state = None
         except ImportError:
@@ -702,6 +700,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             self.kwargs = reconstructed
         else:
             self.kwargs = self._internal_kwargs.copy()
+
+    def flash_for_navigation(self) -> None:
+        """Flash this pane after navigation selected it."""
+        if self._flash_key == "":
+            raise RuntimeError("Function pane flash key was not registered")
+        self.queue_flash_local(self._flash_key)
     
     def update_function(self, func_item: Tuple[Callable, Dict]):
         """
@@ -790,10 +794,9 @@ class FunctionListWidget(QWidget):
         # This prevents RuntimeError when new widgets try to connect to deleted managers
         for pane in self.function_panes:
             # Unregister ObjectState
-            if hasattr(pane, 'cleanup_object_state'):
-                pane.cleanup_object_state()
+            pane.cleanup_object_state()
             # Explicitly unregister the form manager before scheduling deletion
-            if hasattr(pane, 'form_manager') and pane.form_manager is not None:
+            if pane.form_manager is not None:
                 pane.form_manager.unregister_from_cross_window_updates()
             pane.deleteLater()  # Schedule for deletion - triggers destroyed signal
         self.function_panes.clear()

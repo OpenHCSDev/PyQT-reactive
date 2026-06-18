@@ -86,9 +86,6 @@ from pyqt_reactive.widgets.shared.manager_reorder_controller import (
 from pyqt_reactive.widgets.shared.manager_status_controller import ManagerStatusController
 from pyqt_reactive.widgets.shared.manager_config_resolution import ManagerGuiConfigResolution
 from pyqt_reactive.services.service_registry import AutoRegisterServiceMixin
-from pyqt_reactive.services.window_navigation import (
-    ListNavigationReadinessWindow,
-)
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
 
 logger = logging.getLogger(__name__)
@@ -769,6 +766,3 @@ class AbstractManagerWidget(
     ) -> Optional[str]:
         """Return the ObjectState scope id represented by a list item."""
         ...
-
-
-ListNavigationReadinessWindow.register(AbstractManagerWidget)

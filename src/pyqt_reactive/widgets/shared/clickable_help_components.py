@@ -14,7 +14,6 @@ from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
 from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
-from pyqt_reactive.services.window_navigation import FieldNavigableWindow
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
     PyQtWidgetMeta,
@@ -558,8 +557,6 @@ class ProvenanceNavigationMixin:
             source_type: The TYPE that has the concrete value (may differ from local
                          container type due to MRO inheritance)
         """
-        from pyqt_reactive.services.window_manager import WindowManager
-
         # Extract field_name from our local dotted path
         field_name = self._dotted_path.split('.')[-1] if '.' in self._dotted_path else self._dotted_path
 
@@ -585,51 +582,43 @@ class ProvenanceNavigationMixin:
             self._scroll_within_current_window(target_path)
             return
 
-        # Use the same WindowManager.show_or_focus path as other windows
-        from pyqt_reactive.services.scope_window_factory import WindowFactory
+        from pyqt_reactive.services.scope_window_navigation import (
+            ScopeWindowNavigationService,
+        )
+        from pyqt_reactive.services.window_navigation import WindowNavigationRequest
 
-        if WindowManager.is_open(source_scope_id):
-            # Window is already open - just focus and navigate, don't move it
-            WindowManager.focus_and_navigate(
+        current_window = self.window()
+        avoid_widgets = ()
+        if current_window is not None:
+            avoid_widgets = (current_window,)
+
+        result = ScopeWindowNavigationService.navigate(
+            WindowNavigationRequest(
                 scope_id=source_scope_id,
                 field_path=target_path,
+                create_if_missing=True,
+                avoid_widgets=avoid_widgets,
             )
+        )
+        if result.focused:
             logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
             return
-
-        def _factory():
-            return WindowFactory.create_window_for_scope(source_scope_id)
-
-        window = WindowManager.show_or_focus(source_scope_id, _factory)
-        if window:
-            window._avoid_widgets = [self.window()] if self.window() else []
-            WindowManager.position_window_near_cursor(
-                window,
-                avoid_widgets=[self.window()] if self.window() else None,
-            )
-            # Navigate to field after window is shown
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(100, lambda: WindowManager.focus_and_navigate(
-                scope_id=source_scope_id,
-                field_path=target_path
-            ))
-            logger.info(f"✅ Navigated to source: scope={source_scope_id}, path={target_path}")
-        else:
-            logger.warning(f"Could not create or focus window for scope: {source_scope_id}")
+        logger.warning(f"Could not create or focus window for scope: {source_scope_id}")
 
     def _scroll_within_current_window(self, target_path: str) -> None:
         """Scroll to target_path within the current window (same scope).
 
         Used for sibling MRO inheritance navigation where source is in same window.
         """
-        # Find the window that has ScrollableFormMixin
-        current = self.parent()
-        while current:
-            if isinstance(current, FieldNavigableWindow):
-                current.select_and_scroll_to_field(target_path)
-                logger.info(f"✅ Scrolled to {target_path} in current window")
-                return
-            current = current.parent()
+        from pyqt_reactive.services.window_manager import WindowManager
+
+        current_window = self.window()
+        if current_window is not None and WindowManager.focus_widget_and_navigate(
+            current_window,
+            field_path=target_path,
+        ):
+            logger.info(f"✅ Scrolled to {target_path} in current window")
+            return
 
         logger.warning(f"Could not find scrollable parent to navigate to {target_path}")
 

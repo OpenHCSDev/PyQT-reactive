@@ -33,7 +33,7 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.ui_utils import format_enum_display
-from pyqt_reactive.services.window_navigation import FieldNavigableWindow
+from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -161,13 +161,13 @@ class FunctionListEditorWidget(QWidget):
         self.invocation_badge_provider = invocation_badge_provider
 
         # Scope color scheme for styling newly created panes
-        self._scope_color_scheme = None
+        self._scope_color_scheme: ScopeColorScheme | None = None
 
         # Initialize pattern data and mode
         self._initialize_pattern_data(initial_functions)
 
         # UI components
-        self.function_panes = []
+        self.function_panes: list[FunctionPaneWidget] = []
 
         self.setup_ui()
         self.setup_connections()
@@ -967,9 +967,7 @@ class FunctionListEditorWidget(QWidget):
             self.scroll_area.ensureWidgetVisible(target_pane, 0, 20)
 
             # Flash the pane for local feedback.
-            flash_key = getattr(target_pane, "_flash_key", None)
-            if flash_key and hasattr(target_pane, "queue_flash_local"):
-                target_pane.queue_flash_local(flash_key)  # type: ignore[attr-defined]
+            target_pane.flash_for_navigation()
         else:
             # No panes (empty state): just move to top.
             self.scroll_area.verticalScrollBar().setValue(0)
@@ -1659,7 +1657,7 @@ class FunctionListEditorWidget(QWidget):
         self._update_pattern_data()
         self._populate_function_list()
 
-    def set_scope_color_scheme(self, scheme) -> None:
+    def set_scope_color_scheme(self, scheme: ScopeColorScheme | None) -> None:
         """Set scope color scheme for styling function panes.
 
         Called by parent window after scope styling is initialized.
@@ -1684,24 +1682,22 @@ class FunctionListEditorWidget(QWidget):
         """Update scope index used for styling future panes."""
         self.scope_index = scope_index
 
-    def _apply_scope_styling_to_children(self, scheme) -> None:
+    def _apply_scope_styling_to_children(self, scheme: ScopeColorScheme | None) -> None:
         """Apply scope styling to all child widgets that need it.
 
         This mirrors the logic in base_form_dialog._apply_accent_to_help_buttons().
         """
-        if not scheme:
+        if scheme is None:
+            return
+        if not scheme.step_border_layers:
             return
 
         from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton, HelpIndicator, GroupBoxWithHelp
         from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
 
         # Compute accent color from scheme (same logic as ScopedBorderMixin.get_scope_accent_color)
-        layers = getattr(scheme, 'step_border_layers', None)
-        if layers:
-            _, tint_idx, _ = (layers[0] + ("solid",))[:3]
-            accent_color = tint_color_perceptual(scheme.base_color_rgb, tint_idx).darker(120)
-        else:
-            accent_color = tint_color_perceptual(scheme.base_color_rgb, 0).darker(120)
+        _, tint_idx, _ = scheme.step_border_layers[0]
+        accent_color = tint_color_perceptual(scheme.base_color_rgb, tint_idx).darker(120)
 
         # Apply to all HelpButtons
         help_btns = self.findChildren(HelpButton)
@@ -2168,8 +2164,7 @@ class FunctionListEditorWidget(QWidget):
         # CRITICAL: Sync all function panes to get reconstructed kwargs from ObjectState
         # before reading self.functions. Otherwise we get stale flattened kwargs!
         for pane in self.function_panes:
-            if pane and hasattr(pane, 'sync_kwargs'):
-                pane.sync_kwargs()
+            pane.sync_kwargs()
 
         sanitized_functions = []
         for item in self.functions:
@@ -2207,6 +2202,3 @@ class FunctionListEditorWidget(QWidget):
             self.pattern_data = self.functions.copy()
             self._set_tokens_for_current_view(self._current_function_tokens)
         self._persist_pattern_tokens_to_state()
-
-
-FieldNavigableWindow.register(FunctionListEditorWidget)

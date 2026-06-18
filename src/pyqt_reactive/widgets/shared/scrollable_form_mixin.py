@@ -10,7 +10,10 @@ from typing import Any, Optional
 
 from PyQt6.QtWidgets import QScrollArea, QWidget
 
-from pyqt_reactive.services.window_navigation import FieldNavigableWindow, FormManagedWindow
+from pyqt_reactive.services.window_navigation import (
+    FormFieldWindowNavigationDriver,
+    WindowNavigationDriver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +230,7 @@ class ScrollableFormMixin:
         elif target.section_path:
             logger.info(
                 f"⚡ FLASH_DEBUG: Calling queue_flash_local({target.section_path}) "
-                f"on form_manager scope_id={getattr(self.form_manager, 'scope_id', 'NONE')}"
+                f"on form_manager scope_id={self.form_manager.scope_id}"
             )
             self.form_manager.queue_flash_local(target.section_path)
             self.form_manager.queue_flash_local(f"tree::{target.section_path}")
@@ -321,6 +324,9 @@ class ScrollableFormMixin:
         """
         self._scroll_to_section(field_path, flash=True)
 
-
-FieldNavigableWindow.register(ScrollableFormMixin)
-FormManagedWindow.register(ScrollableFormMixin)
+    def window_navigation_driver(self) -> WindowNavigationDriver:
+        """Return explicit form-field navigation behavior for WindowManager."""
+        return FormFieldWindowNavigationDriver(
+            select_field=self.select_and_scroll_to_field,
+            form_manager=lambda: self.form_manager,
+        )

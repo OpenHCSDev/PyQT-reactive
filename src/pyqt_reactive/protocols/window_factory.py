@@ -17,8 +17,9 @@ Example:
 """
 
 from abc import ABC, abstractmethod
-from typing import Protocol, Optional, Any
+from typing import Protocol, Optional
 
+from objectstate import ObjectState
 from PyQt6.QtWidgets import QWidget
 
 
@@ -28,7 +29,11 @@ class WindowFactoryProtocol(Protocol):
     Use this for duck-typed checking. For implementation, prefer WindowFactoryABC.
     """
 
-    def create_window_for_scope(self, scope_id: str, object_state: Optional[Any] = None) -> Optional[QWidget]:
+    def create_window_for_scope(
+        self,
+        scope_id: str,
+        object_state: ObjectState | None = None,
+    ) -> Optional[QWidget]:
         """Create and show a window for the given scope id."""
         ...
 
@@ -44,7 +49,11 @@ class WindowFactoryABC(ABC):
     """
 
     @abstractmethod
-    def create_window_for_scope(self, scope_id: str, object_state: Optional[Any] = None) -> Optional[QWidget]:
+    def create_window_for_scope(
+        self,
+        scope_id: str,
+        object_state: ObjectState | None = None,
+    ) -> Optional[QWidget]:
         """Create and show a window for the given scope_id.
 
         Args:
@@ -76,4 +85,3 @@ def register_window_factory(factory: WindowFactoryProtocol) -> None:
 def get_window_factory() -> Optional[WindowFactoryProtocol]:
     """Get the registered window factory."""
     return _window_factory
-

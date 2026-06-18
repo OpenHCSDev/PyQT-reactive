@@ -10,6 +10,11 @@ from typing import Optional
 from PyQt6.QtWidgets import QDialog
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.animation import WindowFlashOverlay
+from pyqt_reactive.services.window_navigation import (
+    NullWindowNavigationDriver,
+    WindowNavigationDriver,
+)
+from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +42,12 @@ class BaseManagedWindow(QDialog):
             logger.debug(f"[SINGLETON] Focused existing window for {scope_key}")
             return
 
-        WindowManager.register(scope_key, self)
+        WindowManager.register(
+            scope_key,
+            self,
+            navigation_driver=self.window_navigation_driver(),
+            code_document_driver=self.window_code_document_driver(),
+        )
         super().show()
         logger.debug(f"[SINGLETON] Registered and showed new window for {scope_key}")
 
@@ -50,4 +60,12 @@ class BaseManagedWindow(QDialog):
 
     def _get_window_scope_key(self) -> Optional[str]:
         """Get unique key for WindowManager. Subclasses override."""
+        return None
+
+    def window_navigation_driver(self) -> WindowNavigationDriver:
+        """Return the WindowManager navigation driver for this window."""
+        return NullWindowNavigationDriver()
+
+    def window_code_document_driver(self) -> WindowCodeDocumentDriver | None:
+        """Return the optional code-document driver for this window."""
         return None
