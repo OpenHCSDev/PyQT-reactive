@@ -6,9 +6,10 @@ Uses GroupBoxWithHelp as the main container for consistent formatting
 and enableable support.
 """
 
+from abc import ABC, abstractmethod
 import logging
 import inspect
-from typing import Any, Dict, Callable, Optional, Tuple, List, Set
+from typing import Any, ClassVar, Dict, Callable, Optional, Tuple, List, Set
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -24,9 +25,65 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
+from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
 from pyqt_reactive.animation import FlashMixin
+from metaclass_registry import AutoRegisterMeta
 
 logger = logging.getLogger(__name__)
+
+
+class FunctionPaneButtonCommand(ABC, metaclass=AutoRegisterMeta):
+    """Executable title-button command for a function pane."""
+
+    __registry_key__ = "__name__"
+    __registry__: dict[str, type["FunctionPaneButtonCommand"]] = {}
+
+    label: ClassVar[str]
+    tooltip: ClassVar[str | None] = None
+
+    @classmethod
+    def ordered(cls) -> tuple["FunctionPaneButtonCommand", ...]:
+        return tuple(command_type() for command_type in cls.__registry__.values())
+
+    @abstractmethod
+    def invoke(self, pane: "FunctionPaneWidget") -> None:
+        """Execute the command against the pane that owns the button."""
+
+
+class MoveUpFunctionButtonCommand(FunctionPaneButtonCommand):
+    label = "↑"
+
+    def invoke(self, pane: "FunctionPaneWidget") -> None:
+        pane.move_function.emit(pane.index, -1)
+
+
+class MoveDownFunctionButtonCommand(FunctionPaneButtonCommand):
+    label = "↓"
+
+    def invoke(self, pane: "FunctionPaneWidget") -> None:
+        pane.move_function.emit(pane.index, 1)
+
+
+class AddFunctionButtonCommand(FunctionPaneButtonCommand):
+    label = "Add"
+
+    def invoke(self, pane: "FunctionPaneWidget") -> None:
+        pane.add_function.emit(pane.index + 1)
+
+
+class RemoveFunctionButtonCommand(FunctionPaneButtonCommand):
+    label = "Del"
+
+    def invoke(self, pane: "FunctionPaneWidget") -> None:
+        pane.remove_function.emit(pane.index)
+
+
+class ResetParametersButtonCommand(FunctionPaneButtonCommand):
+    label = "Reset"
+
+    def invoke(self, pane: "FunctionPaneWidget") -> None:
+        pane.reset_all_parameters()
 
 
 class FunctionPaneWidget(GroupBoxWithHelp):
@@ -262,16 +319,6 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
     def _add_control_buttons_to_title(self):
         """Add control buttons (move, add, delete, reset) to the title area."""
-        # Button configurations: (symbol, action, tooltip)
-        # Using symbols only for cleaner UI, tooltips provide context
-        button_configs = [
-            ("↑", "move_up", None),  # Removed "Move function up" label
-            ("↓", "move_down", None),  # Removed "Move function down" label
-            ("Add", "add_func", None),  # Removed "Add new function" label
-            ("Del", "remove_func", None),  # Removed "Delete this function" label
-            ("Reset", "reset_all", None),  # Removed "Reset all parameters" label
-        ]
-
         button_style = f"""
             QPushButton {{
                 background-color: {self.color_scheme.to_hex(self.color_scheme.button_normal_bg)};
@@ -288,15 +335,16 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             }}
         """
 
-        for name, action, tooltip in button_configs:
-            button = QPushButton(name)
-            button.setToolTip(tooltip)
+        for command in FunctionPaneButtonCommand.ordered():
+            button = QPushButton(command.label)
+            button.setToolTip(command.tooltip)
             button.setStyleSheet(button_style)
-            button.setMaximumWidth(40 if len(name) <= 2 else 50)
+            button.setMaximumWidth(40 if len(command.label) <= 2 else 50)
             button.setFixedHeight(CURRENT_LAYOUT.button_height)
 
-            # Connect button to action
-            button.clicked.connect(lambda checked, a=action: self.handle_button_action(a))
+            button.clicked.connect(
+                lambda checked, command=command: command.invoke(self)
+            )
 
             self.addTitleWidget(button)
             self._flash_unmasked_widgets.add(button)
@@ -554,24 +602,6 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         """Setup signal/slot connections."""
         return
     
-    def handle_button_action(self, action: str):
-        """
-        Handle button actions (extracted from Textual version).
-        
-        Args:
-            action: Action identifier
-        """
-        if action == "move_up":
-            self.move_function.emit(self.index, -1)
-        elif action == "move_down":
-            self.move_function.emit(self.index, 1)
-        elif action == "add_func":
-            self.add_function.emit(self.index + 1)
-        elif action == "remove_func":
-            self.remove_function.emit(self.index)
-        elif action == "reset_all":
-            self.reset_all_parameters()
-    
     def handle_parameter_change(self, param_name: str, value: Any):
         """
         Handle parameter value changes (extracted from Textual version).
@@ -614,7 +644,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         self.reset_parameters.emit(self.index)
     
-    def update_widget_value(self, widget: QWidget, value: Any):
+    def update_widget_value(self, widget: QWidget, value: ParameterValue | None) -> None:
         """
         Update widget value without triggering signals.
         
@@ -622,31 +652,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             widget: Widget to update
             value: New value
         """
-        from PyQt6.QtWidgets import QLineEdit, QCheckBox, QSpinBox, QDoubleSpinBox, QComboBox
-        # Import the no-scroll classes from single source of truth
-        from pyqt_reactive.widgets import (
-            NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox
-        )
-        
-        # Temporarily block signals to avoid recursion
-        widget.blockSignals(True)
-        
-        try:
-            if isinstance(widget, QCheckBox):
-                widget.setChecked(bool(value))
-            elif isinstance(widget, (QSpinBox, NoScrollSpinBox)):
-                widget.setValue(int(value) if value is not None else 0)
-            elif isinstance(widget, (QDoubleSpinBox, NoScrollDoubleSpinBox)):
-                widget.setValue(float(value) if value is not None else 0.0)
-            elif isinstance(widget, (QComboBox, NoScrollComboBox)):
-                for i in range(widget.count()):
-                    if widget.itemData(i) == value:
-                        widget.setCurrentIndex(i)
-                        break
-            elif isinstance(widget, QLineEdit):
-                widget.setText(str(value) if value is not None else "")
-        finally:
-            widget.blockSignals(False)
+        PyQt6WidgetEnhancer.set_widget_value(widget, value)
     
     def get_current_kwargs(self) -> Dict[str, Any]:
         """
