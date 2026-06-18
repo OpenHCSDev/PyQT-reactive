@@ -13,13 +13,15 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
-from typing import Callable, ClassVar, Dict, Type, Optional, Iterable
+from types import UnionType
+from typing import Callable, ClassVar, Dict, Type, Optional, Iterable, Mapping, Union, get_args, get_origin
 
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QBrush
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 
 from metaclass_registry import AutoRegisterMeta
+from objectstate.lazy_factory import get_base_type_for_lazy, is_lazy_dataclass
 from objectstate import is_ui_hidden_config_type
 from pyqt_reactive.widgets.shared.config_tree_contracts import (
     ConfigTreeFlashManager,
@@ -148,7 +150,6 @@ def activate_config_tree_item(
         payload,
         navigation,
     )
-
 
 class TreeItemFlashDelegate(QStyledItemDelegate):
     """Custom delegate for tree items with flash behind text.
@@ -522,11 +523,10 @@ class ConfigHierarchyTreeHelper:
         self,
         item: QTreeWidgetItem,
     ) -> ConfigTreeItemPayload:
-        payload = item.data(0, Qt.ItemDataRole.UserRole)
-        if not isinstance(payload, ConfigTreeItemPayload):
+        payload = self._item_payload(item)
+        if payload is None:
             raise TypeError(
-                "Config hierarchy tree item data must be ConfigTreeItemPayload; "
-                f"got {type(payload).__name__}."
+                "Config hierarchy tree item data must be ConfigTreeItemPayload; got None."
             )
         return payload
 
@@ -745,16 +745,94 @@ class ConfigHierarchyTreeHelper:
     def get_base_type(self, obj_type: Type) -> Type:
         """Return the non-lazy base type for a dataclass.
 
-        If obj_type is a Lazy* class (e.g., LazyVFSConfig), returns its
-        non-Lazy base (e.g., VFSConfig). This strips the Lazy wrapper
-        so the tree shows clean config names.
+        Lazy dataclass identity is provided by ObjectState's LazyDataclass base
+        and registry, not by class-name shape.
         """
-        # If name starts with "Lazy", find the non-Lazy base
-        if obj_type.__name__.startswith("Lazy"):
-            for base in obj_type.__bases__:
-                if base.__name__ != "object" and not base.__name__.startswith("Lazy"):
-                    return base
+        if is_lazy_dataclass(obj_type):
+            base_type = get_base_type_for_lazy(obj_type)
+            if base_type is not None:
+                return base_type
         return obj_type
+
+    def activate_item(
+        self,
+        item: QTreeWidgetItem,
+        *,
+        scroll_to_section: ScrollToSection,
+        field_for_class: FieldForClass,
+    ) -> None:
+        """Apply standard activation behavior for a tree widget item."""
+        payload = self._item_payload(item)
+        if payload is None:
+            return
+        activate_config_tree_item(
+            payload,
+            scroll_to_section=scroll_to_section,
+            field_for_class=field_for_class,
+        )
+
+    def _item_payload(self, item: QTreeWidgetItem) -> ConfigTreeItemPayload | None:
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if data is None:
+            return None
+        if not isinstance(data, ConfigTreeItemPayload):
+            raise TypeError(
+                "Config tree item data must be ConfigTreeItemPayload; got "
+                f"{type(data).__name__}."
+            )
+        return data
+
+    def field_for_class_in_dataclass_instance(
+        self,
+        root_config,
+        target_class: Type,
+    ) -> str | None:
+        """Find the root dataclass field that edits target_class."""
+        if not is_dataclass(root_config):
+            return None
+        return self.field_for_class_in_dataclass_type(type(root_config), target_class)
+
+    def field_for_class_in_dataclass_type(
+        self,
+        root_type: Type,
+        target_class: Type,
+    ) -> str | None:
+        """Find the dataclass field whose annotation resolves to target_class."""
+        for field in fields(root_type):
+            if self.annotation_matches_class(field.type, target_class):
+                return field.name
+        return None
+
+    def field_for_class_in_mapping(
+        self,
+        dataclass_params: Mapping[str, Type],
+        target_class: Type,
+    ) -> str | None:
+        """Find the parameter name whose dataclass type resolves to target_class."""
+        for field_name, obj_type in dataclass_params.items():
+            if self.annotation_matches_class(obj_type, target_class):
+                return field_name
+        return None
+
+    def annotation_matches_class(self, annotation, target_class: Type) -> bool:
+        """Return True when a type annotation represents target_class."""
+        for candidate_type in self._annotation_candidate_types(annotation):
+            if candidate_type is target_class:
+                return True
+            if self.get_base_type(candidate_type) is target_class:
+                return True
+        return False
+
+    def _annotation_candidate_types(self, annotation) -> Iterable[Type]:
+        if isinstance(annotation, type):
+            yield annotation
+            return
+
+        origin = get_origin(annotation)
+        if origin in (Union, UnionType):
+            for arg in get_args(annotation):
+                if arg is not type(None) and isinstance(arg, type):
+                    yield arg
 
     def add_inheritance_info(
         self,
