@@ -8,8 +8,11 @@ Displays a scrollable list of function panes with Add/Load/Save/Code controls.
 import logging
 import os
 import copy
+from abc import ABC, abstractmethod
 from contextlib import contextmanager, nullcontext
-from typing import List, Union, Dict, Optional, Any, Callable
+from dataclasses import dataclass
+from enum import Enum
+from typing import List, Union, Dict, Optional, Any, Callable, TypeAlias
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
@@ -38,8 +41,67 @@ from pyqt_reactive.widgets.shared.detachable_action_bar import (
     DetachableActionBarHost,
 )
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 
 logger = logging.getLogger(__name__)
+
+
+class FunctionAuthority(ABC):
+    """Callable identity owned by a function pattern entry."""
+
+    __name__: str
+
+    @abstractmethod
+    def __call__(self, *args, **kwargs):
+        """Invoke the function with its declared backend signature."""
+        raise NotImplementedError
+
+
+FunctionKwargs: TypeAlias = dict[str, ParameterValue]
+FunctionPatternItem: TypeAlias = tuple[FunctionAuthority, FunctionKwargs]
+FunctionPatternList: TypeAlias = list[FunctionPatternItem]
+FunctionPatternByKey: TypeAlias = dict[str, FunctionPatternList]
+PatternTokens: TypeAlias = list[str] | dict[str, list[str]]
+
+
+@dataclass(frozen=True)
+class TokenizedFunctionEntry:
+    """Function pattern entry paired with its stable ObjectState token."""
+
+    func: FunctionAuthority
+    kwargs: FunctionKwargs
+    token: str
+
+
+@dataclass(frozen=True)
+class FunctionPatternValue:
+    """Current callable and kwargs for one stable function token."""
+
+    func: FunctionAuthority
+    kwargs: FunctionKwargs
+
+
+@dataclass(frozen=True)
+class PatternMutation:
+    """One function-pattern mutation plus its synchronization policy."""
+
+    label: str | None
+    mutate: Callable[[], None]
+    refresh_ui: Callable[[], None] | None = None
+    persist_selected_key: bool = True
+
+    @classmethod
+    def refreshed(
+        cls,
+        label: str,
+        mutate: Callable[[], None],
+        refresh_ui: Callable[[], None],
+    ) -> "PatternMutation":
+        return cls(label, mutate, refresh_ui)
+
+    @classmethod
+    def parameter_update(cls, mutate: Callable[[], None]) -> "PatternMutation":
+        return cls(None, mutate, None, False)
 
 
 class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
@@ -318,18 +380,26 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         )
 
     @staticmethod
-    def _sanitize_pattern_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _sanitize_pattern_kwargs(kwargs: dict | None) -> FunctionKwargs:
         """Validate kwargs and reject internal scope-token metadata."""
         from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
 
-        if not isinstance(kwargs, dict):
+        if kwargs is None:
             return {}
         if SCOPE_TOKEN_KEY in kwargs:
             raise RuntimeError(
                 "Function kwargs contain internal scope-token metadata. "
                 "Tokens must be stored in ObjectState metadata."
             )
-        return dict(kwargs)
+        clean_kwargs: FunctionKwargs = {}
+        for key, value in kwargs.items():
+            if not isinstance(key, str):
+                raise TypeError(
+                    "Function kwargs must be keyed by parameter name; "
+                    f"got key {key!r}."
+                )
+            clean_kwargs[key] = value
+        return clean_kwargs
 
     def _get_tokens_for_current_view(self) -> List[str]:
         if self.is_dict_mode and isinstance(self._pattern_tokens, dict):
@@ -750,7 +820,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         return True
 
     @staticmethod
-    def _same_function_authority(left: Any, right: Any) -> bool:
+    def _same_function_authority(left: FunctionAuthority, right: FunctionAuthority) -> bool:
         """Return whether two callable objects represent the same function authority."""
         return left is right or left == right
 
@@ -778,7 +848,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
     def _unregister_function_states_for_functions(
         self,
-        func_items: List[Any],
+        func_items: FunctionPatternList,
         channel_key: Optional[str],
         tokens: Optional[List[str]] = None,
     ) -> None:
@@ -809,10 +879,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
     @staticmethod
     def _iter_tokenized_entries(
-        pattern: Any, tokens: Any
-    ) -> List[tuple[Any, Dict[str, Any], str]]:
+        pattern: FunctionPatternList | FunctionPatternByKey,
+        tokens: PatternTokens,
+    ) -> list[TokenizedFunctionEntry]:
         """Return flat (func, kwargs, token) entries from pattern + sidecar token map."""
-        entries: List[tuple[Any, Dict[str, Any], str]] = []
+        entries: list[TokenizedFunctionEntry] = []
         if isinstance(pattern, dict):
             token_map = tokens if isinstance(tokens, dict) else {}
             for channel_key, items in pattern.items():
@@ -827,7 +898,15 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                         if idx < len(channel_tokens) and channel_tokens[idx]
                         else ""
                     )
-                    entries.append((func, dict(kwargs or {}), token))
+                    entries.append(
+                        TokenizedFunctionEntry(
+                            func=func,
+                            kwargs=FunctionListEditorWidget._sanitize_pattern_kwargs(
+                                kwargs if isinstance(kwargs, dict) else None
+                            ),
+                            token=token,
+                        )
+                    )
             return entries
 
         item_list = pattern if isinstance(pattern, list) else [pattern]
@@ -837,7 +916,15 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             if func is None:
                 continue
             token = str(token_list[idx]) if idx < len(token_list) and token_list[idx] else ""
-            entries.append((func, dict(kwargs or {}), token))
+            entries.append(
+                TokenizedFunctionEntry(
+                    func=func,
+                    kwargs=FunctionListEditorWidget._sanitize_pattern_kwargs(
+                        kwargs if isinstance(kwargs, dict) else None
+                    ),
+                    token=token,
+                )
+            )
         return entries
 
     def _get_func_token_generator(self):
@@ -908,7 +995,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         # Ensure nav buttons are shown/hidden correctly for the initial pattern.
         self._update_navigation_buttons()
 
-        
         # Scrollable function list (mirrors Textual TUI)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -1131,7 +1217,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to apply initial enabled styling to function pane: {e}")
 
-
     def setup_connections(self):
         """Setup signal/slot connections."""
         pass
@@ -1152,27 +1237,23 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
     def _commit_pattern_mutation(
         self,
-        *,
-        mutation_label: Optional[str],
-        mutate: Callable[[], None],
-        refresh_ui: Optional[Callable[[], None]] = None,
-        persist_selected_key: bool = True,
+        mutation: PatternMutation,
     ) -> None:
         """Apply one pattern mutation through a single synchronization path."""
         ctx = (
-            ObjectStateRegistry.atomic(mutation_label)
-            if mutation_label is not None
+            ObjectStateRegistry.atomic(mutation.label)
+            if mutation.label is not None
             else nullcontext()
         )
         with ctx:
-            if persist_selected_key:
+            if mutation.persist_selected_key:
                 self._record_selected_pattern_key()
-            mutate()
+            mutation.mutate()
             self._update_pattern_data()
-            if refresh_ui is not None:
-                refresh_ui()
+            if mutation.refresh_ui is not None:
+                mutation.refresh_ui()
             self._emit_pattern_changed()
-    
+
     def add_function(self):
         """Add a new function (mirrors Textual TUI)."""
         # Show function selector dialog via provider
@@ -1187,14 +1268,14 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 )
 
             self._commit_pattern_mutation(
-                mutation_label="add function",
-                mutate=mutate,
-                refresh_ui=self._populate_function_list,
+                PatternMutation.refreshed(
+                    "add function",
+                    mutate,
+                    self._populate_function_list,
+                )
             )
             logger.debug(f"Added function: {selected_function.__name__}")
-    
 
-    
     def edit_function_code(self):
         """Edit function pattern as code (simple and direct)."""
         logger.debug("Edit function code clicked - opening code editor")
@@ -1339,7 +1420,12 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 elif callable(new_pattern):
                     new_functions = [(new_pattern, {})]
                     new_current_tokens = [self._get_func_token_generator().ensure()]
-                elif isinstance(new_pattern, tuple) and len(new_pattern) == 2 and callable(new_pattern[0]) and isinstance(new_pattern[1], dict):
+                elif (
+                    isinstance(new_pattern, tuple)
+                    and len(new_pattern) == 2
+                    and callable(new_pattern[0])
+                    and isinstance(new_pattern[1], dict)
+                ):
                     func, kwargs = new_pattern
                     new_functions = [(func, self._sanitize_pattern_kwargs(kwargs))]
                     new_current_tokens = [self._get_func_token_generator().ensure()]
@@ -1385,7 +1471,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             if self.service_adapter:
                 self.service_adapter.show_error_dialog(f"Failed to apply edited pattern: {str(e)}")
 
-    def _update_function_object_states(self, old_entries: List, new_entries: List) -> None:
+    def _update_function_object_states(
+        self,
+        old_entries: list[TokenizedFunctionEntry],
+        new_entries: list[TokenizedFunctionEntry],
+    ) -> None:
         """Update existing function ObjectStates with new kwargs from code mode edit.
 
         This is CRITICAL for dirty detection: instead of destroying and recreating
@@ -1393,7 +1483,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         saved baseline is preserved and changes are detected as dirty.
 
         Args:
-            old_entries: Previous entries [(func, kwargs, token), ...]
+            old_entries: Previous tokenized function entries.
             new_entries: New entries from code mode edit
         """
         if not self.scope_id:
@@ -1403,34 +1493,40 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         channel_key = self.selected_pattern_key if self.is_dict_mode else None
         parent_scope = self._get_function_state_parent_scope(channel_key) or str(self.scope_id)
 
-        old_by_token: dict[str, tuple[Any, Dict[str, Any]]] = {}
-        for func, kwargs, token in old_entries:
-            if not token:
+        old_by_token: dict[str, FunctionPatternValue] = {}
+        for entry in old_entries:
+            if not entry.token:
                 continue
-            old_by_token[token] = (func, dict(kwargs or {}))
+            old_by_token[entry.token] = FunctionPatternValue(
+                entry.func,
+                self._sanitize_pattern_kwargs(entry.kwargs),
+            )
 
-        new_by_token: dict[str, tuple[Any, Dict[str, Any]]] = {}
-        for func, kwargs, token in new_entries:
-            if not token:
+        new_by_token: dict[str, FunctionPatternValue] = {}
+        for entry in new_entries:
+            if not entry.token:
                 continue
-            new_by_token[token] = (func, dict(kwargs or {}))
+            new_by_token[entry.token] = FunctionPatternValue(
+                entry.func,
+                self._sanitize_pattern_kwargs(entry.kwargs),
+            )
 
         # Unregister states for removed tokens
         for token in set(old_by_token.keys()) - set(new_by_token.keys()):
-            old_func, old_kwargs = old_by_token[token]
+            old_value = old_by_token[token]
             self._unregister_function_states_for_functions(
-                [(old_func, old_kwargs)], channel_key, tokens=[token]
+                [(old_value.func, old_value.kwargs)], channel_key, tokens=[token]
             )
 
         # Update existing states for tokens still present
         for token in set(old_by_token.keys()) & set(new_by_token.keys()):
-            old_func, old_kwargs = old_by_token[token]
-            new_func, new_kwargs = new_by_token[token]
+            old_value = old_by_token[token]
+            new_value = new_by_token[token]
 
             # If the function changed but token stayed, treat as replace.
-            if old_func is not new_func:
+            if old_value.func is not new_value.func:
                 self._unregister_function_states_for_functions(
-                    [(old_func, old_kwargs)], channel_key, tokens=[token]
+                    [(old_value.func, old_value.kwargs)], channel_key, tokens=[token]
                 )
                 continue
 
@@ -1439,12 +1535,16 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             if state is None:
                 continue
 
-            for param_name, new_value in new_kwargs.items():
-                old_value = old_kwargs.get(param_name)
-                if old_value != new_value and param_name in state.parameters:
-                    state.update_parameter(param_name, new_value)
+            for param_name, next_param_value in new_value.kwargs.items():
+                previous_param_value = old_value.kwargs.get(param_name)
+                if (
+                    previous_param_value != next_param_value
+                    and param_name in state.parameters
+                ):
+                    state.update_parameter(param_name, next_param_value)
                     logger.debug(
-                        f"🔧 Code mode: Updated {func_scope_id}.{param_name}: {old_value} → {new_value}"
+                        f"🔧 Code mode: Updated {func_scope_id}.{param_name}: "
+                        f"{previous_param_value} → {next_param_value}"
                     )
 
             for param_name in old_kwargs:
@@ -1488,9 +1588,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             self._reorder_function_panes(index, new_index)
 
         self._commit_pattern_mutation(
-            mutation_label="reorder function",
-            mutate=mutate,
-            refresh_ui=refresh,
+            PatternMutation.refreshed("reorder function", mutate, refresh)
         )
 
     def _reorder_function_panes(self, old_index: int, new_index: int) -> None:
@@ -1535,9 +1633,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 )
 
             self._commit_pattern_mutation(
-                mutation_label="add function",
-                mutate=mutate,
-                refresh_ui=self._populate_function_list,
+                PatternMutation.refreshed(
+                    "add function",
+                    mutate,
+                    self._populate_function_list,
+                )
             )
             logger.debug(f"Added function at index {index}: {selected_function.__name__}")
     
@@ -1563,9 +1663,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 self._current_function_tokens.pop(index)
 
         self._commit_pattern_mutation(
-            mutation_label="remove function",
-            mutate=mutate,
-            refresh_ui=self._populate_function_list,
+            PatternMutation.refreshed(
+                "remove function",
+                mutate,
+                self._populate_function_list,
+            )
         )
     
     def _on_parameter_changed(self, index, param_name, value):
@@ -1587,16 +1689,8 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 new_kwargs = pane.kwargs.copy()  # kwargs is already reconstructed
                 self.functions[index] = (func, new_kwargs)
 
-            self._commit_pattern_mutation(
-                mutation_label=None,
-                mutate=mutate,
-                persist_selected_key=False,
-            )
-    
+            self._commit_pattern_mutation(PatternMutation.parameter_update(mutate))
 
-    
-
-    
     def get_current_functions(self):
         """Get current function list."""
         return self.functions.copy()
@@ -1606,9 +1700,12 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         """Get the current pattern data (for parent widgets to access)."""
         self._update_pattern_data()  # Ensure it's up to date
 
-        def _prune_kwargs(func: Callable, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        def _prune_kwargs(
+            func: FunctionAuthority,
+            kwargs: FunctionKwargs,
+        ) -> FunctionKwargs:
             param_info = SignatureAnalyzer.analyze(func) if func else {}
-            pruned = {}
+            pruned: FunctionKwargs = {}
             for key, value in kwargs.items():
                 if value is None:
                     continue
@@ -1782,7 +1879,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 logger.debug(f"🔔 FUNC_EDITOR: Unsubscribed from ObjectState on destruction")
         self.destroyed.connect(cleanup_subscription)
 
-    def set_effective_group_by(self, group_by: Optional[Any]) -> None:
+    def set_effective_group_by(self, group_by: Enum | None) -> None:
         """Accept authoritative GroupBy from parent (step.processing_config) and refresh UI.
 
         The parent (window) is responsible for providing the correct GroupBy instance
@@ -2062,8 +2159,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         # Navigation buttons only exist when the header is rendered.
         if self._render_header:
             self._update_navigation_buttons()
-
-
 
     def _update_navigation_buttons(self):
         """Update visibility of channel navigation buttons (mirrors Textual TUI)."""
