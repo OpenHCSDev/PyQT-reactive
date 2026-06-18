@@ -33,12 +33,16 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.ui_utils import format_enum_display
+from pyqt_reactive.widgets.shared.detachable_action_bar import (
+    DetachableActionBar,
+    DetachableActionBarHost,
+)
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
 
 
-class FunctionListEditorWidget(QWidget):
+class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     """
     Function list editor widget that mirrors Textual TUI functionality.
 
@@ -88,26 +92,23 @@ class FunctionListEditorWidget(QWidget):
         self.component_selections = {}
 
         # Create action buttons container (always, for external access)
-        self._action_buttons_container = QWidget()
-        self._action_buttons_container.setObjectName("func_action_buttons_container")
-        self._action_buttons_layout = QHBoxLayout(self._action_buttons_container)
-        self._action_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        self._action_buttons_layout.setSpacing(2)
-        self._action_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._action_buttons_container = DetachableActionBar(
+            object_name="func_action_buttons_container"
+        )
         
         add_btn = QPushButton("Add")
         add_btn.setMaximumWidth(60)
         add_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
         add_btn.setStyleSheet(self._get_button_style())
         add_btn.clicked.connect(self.add_function)
-        self._action_buttons_layout.addWidget(add_btn)
+        self._action_buttons_container.add_button(add_btn)
 
         code_btn = QPushButton("Code")
         code_btn.setMaximumWidth(60)
         code_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
         code_btn.setStyleSheet(self._get_button_style())
         code_btn.clicked.connect(self.edit_function_code)
-        self._action_buttons_layout.addWidget(code_btn)
+        self._action_buttons_container.add_button(code_btn)
 
         # Component selection button
         self.component_btn = QPushButton(self._get_component_button_text())
@@ -116,7 +117,7 @@ class FunctionListEditorWidget(QWidget):
         self.component_btn.setStyleSheet(self._get_button_style())
         self.component_btn.clicked.connect(self.show_component_selection_dialog)
         self.component_btn.setEnabled(not self._is_component_button_disabled())
-        self._action_buttons_layout.addWidget(self.component_btn)
+        self._action_buttons_container.add_button(self.component_btn)
 
         # Channel navigation buttons.
         #
@@ -129,14 +130,14 @@ class FunctionListEditorWidget(QWidget):
         self.prev_key_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
         self.prev_key_btn.setStyleSheet(self._get_button_style())
         self.prev_key_btn.clicked.connect(lambda: self._navigate_pattern_key(-1))
-        self._action_buttons_layout.addWidget(self.prev_key_btn)
+        self._action_buttons_container.add_button(self.prev_key_btn)
 
         self.next_key_btn = QPushButton(">")
         self.next_key_btn.setMaximumWidth(30)
         self.next_key_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
         self.next_key_btn.setStyleSheet(self._get_button_style())
         self.next_key_btn.clicked.connect(lambda: self._navigate_pattern_key(1))
-        self._action_buttons_layout.addWidget(self.next_key_btn)
+        self._action_buttons_container.add_button(self.next_key_btn)
 
         # Initialize services (reuse existing business logic)
         self.function_registry = get_function_registry()
@@ -2078,22 +2079,6 @@ class FunctionListEditorWidget(QWidget):
         self.prev_key_btn.setVisible(show_nav)
         self.next_key_btn.setVisible(show_nav)
     
-    def get_action_buttons(self) -> Optional[QWidget]:
-        """Get the action buttons container for external placement.
-        
-        This method allows parent windows (e.g., DualEditorWindow) to
-        extract and reposition action buttons without modifying this widget's
-        internal structure.
-        
-        Returns:
-            QWidget: Container widget with action buttons (Add, Code, Component).
-                      Returns None if header is rendered (buttons are in use).
-        """
-        if self._render_header:
-            return None
-        return self._action_buttons_container
-
-
     def _navigate_pattern_key(self, direction: int):
         """Navigate to next/previous pattern key (with looping)."""
         if not self.is_dict_mode or not isinstance(self.pattern_data, dict):

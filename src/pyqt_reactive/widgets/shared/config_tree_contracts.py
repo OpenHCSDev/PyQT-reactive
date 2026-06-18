@@ -54,3 +54,8 @@ class ConfigTreeFlashManager(TreeFlashColorProvider):
     ) -> None:
         """Synchronize groupbox dirty markers with tree dirty state."""
         ...
+
+    @abstractmethod
+    def register_repaint_callback(self, callback: Callable[[], None]) -> None:
+        """Register a repaint callback used during flash animation."""
+        ...

@@ -46,6 +46,11 @@ class ScopeWindowRoute:
     pattern: str
     handler: ScopeWindowCreationHandler
 
+    @property
+    def __name__(self) -> str:
+        """Expose the wrapped handler name for handler-like introspection."""
+        return self.handler.__name__
+
     def matches(self, scope_id: str) -> bool:
         return re.match(self.pattern, scope_id) is not None
 

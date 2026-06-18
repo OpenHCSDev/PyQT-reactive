@@ -10,14 +10,16 @@ widgets only need to provide their dataclass inputs and navigation callbacks.
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
-from typing import Dict, Type, Optional, Iterable
+from typing import Callable, ClassVar, Dict, Type, Optional, Iterable
 
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QBrush
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 
+from metaclass_registry import AutoRegisterMeta
 from objectstate import is_ui_hidden_config_type
 from pyqt_reactive.widgets.shared.config_tree_contracts import (
     ConfigTreeFlashManager,
@@ -30,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 # Custom data role for flash key (matches list_item_delegate pattern)
 TREE_FLASH_KEY_ROLE = Qt.ItemDataRole.UserRole + 20
+TreeItemDoubleClickHandler = Callable[[QTreeWidgetItem, int], None]
+ScrollToSection = Callable[[str], None]
+FieldForClass = Callable[[Type], str | None]
 
 
 class ConfigTreeItemKind(str, Enum):
@@ -58,6 +63,91 @@ class ConfigTreeItemPayload:
         if self.class_obj is None:
             return None
         return formatter(self.class_obj.__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigTreeNavigation:
+    """Navigation operations needed by config tree item activators."""
+
+    scroll_to_section: ScrollToSection
+    field_for_class: FieldForClass
+
+
+class ConfigTreeItemActivator(ABC, metaclass=AutoRegisterMeta):
+    """Behavior for one closed config tree item kind."""
+
+    __registry_key__ = "item_kind"
+    __skip_if_no_key__ = True
+
+    item_kind: ClassVar[ConfigTreeItemKind]
+
+    @classmethod
+    def for_item_kind(cls, item_kind: ConfigTreeItemKind) -> "ConfigTreeItemActivator":
+        """Return the registered activator for a tree item kind."""
+        return cls.__registry__[item_kind]()
+
+    @abstractmethod
+    def activate(
+        self,
+        payload: ConfigTreeItemPayload,
+        navigation: ConfigTreeNavigation,
+    ) -> None:
+        """Activate one tree item payload."""
+        ...
+
+
+class DataclassTreeItemActivator(ConfigTreeItemActivator):
+    """Navigate to the dataclass section represented by a tree item."""
+
+    item_kind = ConfigTreeItemKind.DATACLASS
+
+    def activate(
+        self,
+        payload: ConfigTreeItemPayload,
+        navigation: ConfigTreeNavigation,
+    ) -> None:
+        if payload.ui_hidden or payload.navigation_path is None:
+            return
+        navigation.scroll_to_section(payload.navigation_path)
+
+
+class InheritanceLinkTreeItemActivator(ConfigTreeItemActivator):
+    """Navigate to the editable field represented by an inheritance link."""
+
+    item_kind = ConfigTreeItemKind.INHERITANCE_LINK
+
+    def activate(
+        self,
+        payload: ConfigTreeItemPayload,
+        navigation: ConfigTreeNavigation,
+    ) -> None:
+        if payload.ui_hidden or payload.target_class is None:
+            return
+        field_name = navigation.field_for_class(payload.target_class)
+        if field_name is None:
+            logger.warning(
+                "Could not find field for inherited class %s",
+                payload.target_class.__name__,
+            )
+            return
+        navigation.scroll_to_section(field_name)
+
+
+def activate_config_tree_item(
+    payload: ConfigTreeItemPayload,
+    *,
+    scroll_to_section: ScrollToSection,
+    field_for_class: FieldForClass,
+) -> None:
+    """Apply the standard navigation behavior for a config tree payload."""
+    navigation = ConfigTreeNavigation(
+        scroll_to_section=scroll_to_section,
+        field_for_class=field_for_class,
+    )
+    ConfigTreeItemActivator.for_item_kind(payload.item_type).activate(
+        payload,
+        navigation,
+    )
 
 
 class TreeItemFlashDelegate(QStyledItemDelegate):
@@ -248,6 +338,64 @@ class ConfigHierarchyTreeHelper:
             )
 
         return tree
+
+    def create_tree_from_root_dataclass(
+        self,
+        *,
+        root_dataclass: Type,
+        form_manager: ConfigTreeFlashManager,
+        state: Optional['ObjectState'] = None,
+        strip_config_suffix: bool = True,
+        on_item_double_clicked: TreeItemDoubleClickHandler,
+    ) -> QTreeWidget:
+        """Create and populate a hierarchy tree from a root dataclass."""
+        tree = self.create_tree_widget(
+            flash_manager=form_manager,
+            state=state,
+            strip_config_suffix=strip_config_suffix,
+        )
+        self.populate_from_root_dataclass(tree, root_dataclass)
+        self._complete_populated_tree(
+            tree=tree,
+            form_manager=form_manager,
+            on_item_double_clicked=on_item_double_clicked,
+        )
+        return tree
+
+    def create_tree_from_mapping(
+        self,
+        *,
+        dataclass_params: Dict[str, Type],
+        form_manager: ConfigTreeFlashManager,
+        state: Optional['ObjectState'] = None,
+        strip_config_suffix: bool = True,
+        on_item_double_clicked: TreeItemDoubleClickHandler,
+    ) -> QTreeWidget:
+        """Create and populate a hierarchy tree from parameter-name mappings."""
+        tree = self.create_tree_widget(
+            flash_manager=form_manager,
+            state=state,
+            strip_config_suffix=strip_config_suffix,
+        )
+        self.populate_from_mapping(tree, dataclass_params)
+        self._complete_populated_tree(
+            tree=tree,
+            form_manager=form_manager,
+            on_item_double_clicked=on_item_double_clicked,
+        )
+        return tree
+
+    def _complete_populated_tree(
+        self,
+        *,
+        tree: QTreeWidget,
+        form_manager: ConfigTreeFlashManager,
+        on_item_double_clicked: TreeItemDoubleClickHandler,
+    ) -> None:
+        """Finish tree wiring after a caller-specific population strategy."""
+        self.initialize_dirty_styling()
+        form_manager.register_repaint_callback(lambda: tree.viewport().update())
+        tree.itemDoubleClicked.connect(on_item_double_clicked)
 
     def _subscribe_to_dirty_changes(self, tree: QTreeWidget) -> None:
         """Subscribe to ObjectState dirty changes for reactive styling.
@@ -581,7 +729,9 @@ class ConfigHierarchyTreeHelper:
         """Return True if a field should be hidden in the tree."""
         try:
             field_obj = next(f for f in fields(obj_type) if f.name == field_name)
-            if field_obj.metadata.get("ui_hidden", False):
+            if "ui_hidden" in field_obj.metadata and bool(
+                field_obj.metadata["ui_hidden"]
+            ):
                 return True
         except (StopIteration, TypeError):
             pass

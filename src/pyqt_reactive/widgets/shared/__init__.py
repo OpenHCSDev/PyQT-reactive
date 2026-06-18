@@ -59,9 +59,25 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.dirty_window_presenter",
         "DirtyWindowPresenter",
     ),
+    "DetachableActionBar": (
+        "pyqt_reactive.widgets.shared.detachable_action_bar",
+        "DetachableActionBar",
+    ),
+    "DetachableActionBarHost": (
+        "pyqt_reactive.widgets.shared.detachable_action_bar",
+        "DetachableActionBarHost",
+    ),
     "FormWindowActionHeader": (
         "pyqt_reactive.widgets.shared.form_window_action_header",
         "FormWindowActionHeader",
+    ),
+    "ScrollableFormBodyParts": (
+        "pyqt_reactive.widgets.shared.scrollable_form_body",
+        "ScrollableFormBodyParts",
+    ),
+    "create_scrollable_form_body": (
+        "pyqt_reactive.widgets.shared.scrollable_form_body",
+        "create_scrollable_form_body",
     ),
     "HeaderAction": (
         "pyqt_reactive.widgets.shared.form_window_action_header",
