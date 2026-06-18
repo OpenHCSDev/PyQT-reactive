@@ -7,9 +7,39 @@ semantic color scheme references.
 """
 
 import logging
+from enum import Enum
+
 from .color_scheme import ColorScheme
 
 logger = logging.getLogger(__name__)
+
+
+class StatusColorRole(Enum):
+    """Closed status color roles supported by the theme."""
+
+    SUCCESS = "success"
+    WARNING = "warning"
+    ERROR = "error"
+    INFO = "info"
+
+    @classmethod
+    def from_name(cls, status_type: str) -> "StatusColorRole":
+        try:
+            return cls(status_type)
+        except ValueError as exc:
+            available = ", ".join(role.value for role in cls)
+            raise KeyError(
+                f"Unknown status color role {status_type!r}; "
+                f"available roles: {available}."
+            ) from exc
+
+
+STATUS_COLOR_SELECTOR_BY_ROLE = {
+    StatusColorRole.SUCCESS: lambda color_scheme: color_scheme.status_success,
+    StatusColorRole.WARNING: lambda color_scheme: color_scheme.status_warning,
+    StatusColorRole.ERROR: lambda color_scheme: color_scheme.status_error,
+    StatusColorRole.INFO: lambda color_scheme: color_scheme.status_info,
+}
 
 
 class StyleSheetGenerator:
@@ -436,7 +466,7 @@ class StyleSheetGenerator:
             }}
         """
 
-    def generate_config_button_styles(self) -> dict:
+    def generate_config_button_styles(self) -> dict[str, str]:
         """
         Generate individual button styles for config window buttons.
 
@@ -516,6 +546,17 @@ class StyleSheetGenerator:
             """
         }
 
+    def require_config_button_style(self, style_name: str) -> str:
+        """Return a named config button style or fail on an undeclared style key."""
+        button_styles = self.generate_config_button_styles()
+        if style_name not in button_styles:
+            available_styles = ", ".join(sorted(button_styles))
+            raise KeyError(
+                f"Unknown config button style {style_name!r}; "
+                f"available styles: {available_styles}."
+            )
+        return button_styles[style_name]
+
     def generate_plate_manager_style(self) -> str:
         """
         Generate QStyleSheet for plate manager widget with all components.
@@ -589,13 +630,6 @@ class StyleSheetGenerator:
         Returns:
             str: Hex color string for the status type
         """
-        cs = self.color_scheme
-        status_colors = {
-            "success": cs.status_success,
-            "warning": cs.status_warning,
-            "error": cs.status_error,
-            "info": cs.status_info,
-        }
-
-        color = status_colors.get(status_type, cs.status_info)
-        return cs.to_hex(color)
+        role = StatusColorRole.from_name(status_type)
+        color = STATUS_COLOR_SELECTOR_BY_ROLE[role](self.color_scheme)
+        return self.color_scheme.to_hex(color)

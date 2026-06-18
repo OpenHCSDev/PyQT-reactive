@@ -32,8 +32,7 @@ from pyqt_reactive.services.function_navigation import parse_function_field_targ
 from python_introspect import SignatureAnalyzer
 from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
 from objectstate import ObjectStateRegistry
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme, ColorSchemeResolution, StyleSheetGenerator
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.ui_utils import format_enum_display
 from pyqt_reactive.widgets.shared.detachable_action_bar import (
@@ -126,7 +125,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         super().__init__(parent)
 
         # Initialize color scheme
-        self.color_scheme = color_scheme or ColorScheme()
+        self.color_scheme = ColorSchemeResolution(color_scheme).resolve()
         self._render_header = render_header
         self.header_label: Optional[QLabel] = None
         self._button_style = button_style  # Store centralized button style
@@ -1067,7 +1066,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
         if self._button_style:
-            return self.style_generator.generate_config_button_styles().get(self._button_style, "")
+            return self.style_generator.require_config_button_style(self._button_style)
 
         return f"""
             QPushButton {{

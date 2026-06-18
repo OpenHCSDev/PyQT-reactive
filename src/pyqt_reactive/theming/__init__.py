@@ -6,11 +6,13 @@ for consistent application-wide theming.
 """
 
 from .color_scheme import ColorScheme
+from .color_scheme_resolution import ColorSchemeResolution
 from .palette_manager import PaletteManager, ThemeManager
 from .style_generator import StyleSheetGenerator
 
 __all__ = [
     "ColorScheme",
+    "ColorSchemeResolution",
     "PaletteManager",
     "ThemeManager",
     "StyleSheetGenerator",
