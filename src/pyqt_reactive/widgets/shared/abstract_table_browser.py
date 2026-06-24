@@ -8,7 +8,8 @@ to customize column layout, row population, and event handling.
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Generic, TypeVar, Literal
+from enum import Enum
+from typing import Dict, List, Optional, Generic, TypeVar
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLineEdit, QTableWidget, QTableWidgetItem,
@@ -23,7 +24,17 @@ from pyqt_reactive.theming import StyleSheetGenerator
 
 T = TypeVar('T')
 
-SelectionMode = Literal['single', 'multi']
+class TableSelectionMode(Enum):
+    """Selection cardinality for table browser rows."""
+
+    SINGLE = "single"
+    MULTI = "multi"
+
+    @property
+    def qt_mode(self) -> QAbstractItemView.SelectionMode:
+        if self is TableSelectionMode.MULTI:
+            return QAbstractItemView.SelectionMode.ExtendedSelection
+        return QAbstractItemView.SelectionMode.SingleSelection
 
 
 @dataclass
@@ -60,7 +71,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
     def __init__(
         self,
         color_scheme: Optional[ColorScheme] = None,
-        selection_mode: SelectionMode = 'single',
+        selection_mode: TableSelectionMode = TableSelectionMode.SINGLE,
         parent=None
     ):
         super().__init__(parent)
@@ -111,19 +122,12 @@ class AbstractTableBrowser(QWidget, Generic[T]):
 
         # Configure selection mode
         self.table_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        qt_mode = (
-            QAbstractItemView.SelectionMode.ExtendedSelection
-            if self._selection_mode == 'multi'
-            else QAbstractItemView.SelectionMode.SingleSelection
-        )
-        self.table_widget.setSelectionMode(qt_mode)
+        self.table_widget.setSelectionMode(self._selection_mode.qt_mode)
         self.table_widget.setSortingEnabled(True)
 
         # Configure text display for proper truncation with ellipsis
         self.table_widget.setWordWrap(False)
         self.table_widget.setTextElideMode(Qt.TextElideMode.ElideRight)
-        if hasattr(self.table_widget, "setUniformRowHeights"):
-            self.table_widget.setUniformRowHeights(True)
 
     def _apply_column_config(self, columns: List[ColumnDef]):
         """Apply column configuration to table. Called by _configure_table and reconfigure_columns."""
@@ -153,10 +157,13 @@ class AbstractTableBrowser(QWidget, Generic[T]):
 
     def _on_search_changed(self, search_term: str):
         """Handle search input changes."""
-        # _search_service is set by set_items() which must be called before use
-        self.filtered_items = self._search_service.filter(search_term)
-        self.populate_table(self.filtered_items)
-        self._update_status()
+        self.set_filtered_items(self.search_items(search_term))
+
+    def search_items(self, search_term: str) -> Dict[str, T]:
+        """Return items matching the table browser's configured search semantics."""
+        if self._search_service is None:
+            raise RuntimeError("Table search requires set_items() before filtering.")
+        return self._search_service.filter(search_term)
 
     def _on_selection_changed(self):
         """Handle table selection changes."""
@@ -164,7 +171,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         if not selected_keys:
             return  # Valid: user clicked empty area
 
-        if self._selection_mode == 'multi':
+        if self._selection_mode is TableSelectionMode.MULTI:
             # Multi-select: emit list of keys
             self.items_selected.emit(selected_keys)
             self.on_items_selected(selected_keys)

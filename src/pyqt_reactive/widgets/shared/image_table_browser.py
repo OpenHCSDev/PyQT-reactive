@@ -5,15 +5,20 @@ Displays file metadata in a searchable table with dynamic columns.
 Used as the table portion of ImageBrowserWidget.
 """
 
-from typing import Any, Dict, List, Optional
+from collections.abc import Mapping
+from typing import List, Optional
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
-    AbstractTableBrowser, ColumnDef
+    AbstractTableBrowser, ColumnDef, TableSelectionMode
 )
 
 
-class ImageTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
+ImageTableValue = str | int | float | bool | None
+ImageTableRow = Mapping[str, ImageTableValue]
+
+
+class ImageTableBrowser(AbstractTableBrowser[ImageTableRow]):
     """
     Table browser for image/file metadata.
     
@@ -24,7 +29,11 @@ class ImageTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
     def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
         # Columns are dynamic - start with just Filename
         self._metadata_keys: List[str] = []
-        super().__init__(color_scheme=color_scheme, selection_mode='multi', parent=parent)
+        super().__init__(
+            color_scheme=color_scheme,
+            selection_mode=TableSelectionMode.MULTI,
+            parent=parent,
+        )
     
     def set_metadata_keys(self, metadata_keys: List[str]):
         """Set the metadata keys that define dynamic columns. Call before set_items()."""
@@ -51,33 +60,36 @@ class ImageTableBrowser(AbstractTableBrowser[Dict[str, Any]]):
 
         return columns
     
-    def extract_row_data(self, item: Dict[str, Any]) -> List[str]:
+    def extract_row_data(self, item: ImageTableRow) -> List[str]:
         """Extract display values from file metadata dict."""
         # First column is filename (stored as key, passed via item)
-        row = [item.get('filename', 'unknown')]
-        
+        row = [str(item["filename"])]
+
         # Remaining columns are metadata values
         for key in self._metadata_keys:
-            value = item.get(key, 'N/A')
+            value = item[key] if key in item else None
             row.append(self._format_value(key, value))
-        
+
         return row
-    
-    def _format_value(self, key: str, value: Any) -> str:
+
+    def _format_value(self, key: str, value: ImageTableValue) -> str:
         """Format a metadata value for display."""
         if value is None:
             return 'N/A'
         return str(value)
-    
-    def get_searchable_text(self, item: Dict[str, Any]) -> str:
+
+    def get_searchable_text(self, item: ImageTableRow) -> str:
         """Return searchable text for file metadata."""
-        parts = [item.get('filename', '')]
-        
+        parts = [str(item["filename"])]
+
         for key in self._metadata_keys:
-            value = item.get(key)
-            if value is not None:
-                parts.append(str(value))
-        
+            if key not in item:
+                continue
+            value = item[key]
+            if value is None:
+                continue
+            parts.append(str(value))
+
         return " ".join(parts)
     
     def get_search_placeholder(self) -> str:
