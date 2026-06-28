@@ -206,6 +206,23 @@ class ScopeTokenService:
         return cls.get_generator(parent_scope, prefix).transfer(source, target)
 
     @classmethod
+    def adopt_token(
+        cls,
+        parent_scope,
+        obj: ScopeTokenTarget,
+        token: str,
+    ) -> str:
+        """Assign a known scope token to an object through the token authority."""
+        parent_scope = cls._normalize_scope(parent_scope)
+        prefix = cls._get_prefix(obj)
+        generator = cls.get_generator(parent_scope, prefix)
+        generator.seed_from_tokens((token,))
+        if generator.attr_name is None:
+            return token
+        ScopeTokenObjectStore.write(obj, generator.attr_name, token)
+        return token
+
+    @classmethod
     def object_token(cls, obj: ScopeTokenTarget) -> str | None:
         """Return an object's existing scope token without creating one."""
         return ScopeTokenGenerator.existing_token(obj, "_scope_token")

@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional, Union
 
 from objectstate import ObjectStateRegistry
 from objectstate.lazy_factory import ALWAYS_VIEWABLE_FIELDS_REGISTRY
-from python_introspect import ENABLED_FIELD, is_enableable
+from python_introspect import Enableable, is_enableable
 
 from pyqt_reactive.widgets.shared.list_item_delegate import Segment, StyledText, StyledTextLayout
 
@@ -195,20 +195,29 @@ class _ManagerItemDisplayBuilder:
             self._field_formatter,
         )
 
-    def _discover_always_viewable_fields(self, state: Any) -> set[str]:
+    def _discover_always_viewable_fields(self, state: Any) -> tuple[str, ...]:
         if state is None:
-            return set()
+            return ()
 
-        always_viewable = set()
+        always_viewable = []
+        seen = set()
+
+        def add_field_path(field_path: str) -> None:
+            if field_path in seen:
+                return
+            seen.add(field_path)
+            always_viewable.append(field_path)
+
         for path, config_type in state._path_to_type.items():
             if not is_dataclass(config_type):
                 continue
 
             if is_enableable(config_type):
-                enabled_path = f"{path}.{ENABLED_FIELD}" if path else ENABLED_FIELD
+                enabled_field = Enableable.require_parameter_name()
+                enabled_path = f"{path}.{enabled_field}" if path else enabled_field
                 resolved_enabled = state.get_resolved_value(enabled_path)
                 if resolved_enabled is True:
-                    always_viewable.add(enabled_path)
+                    add_field_path(enabled_path)
                     logger.debug(
                         "PREVIEW: Added enabled field %s for %s",
                         enabled_path,
@@ -220,7 +229,8 @@ class _ManagerItemDisplayBuilder:
                 continue
 
             if is_enableable(config_type):
-                enabled_path = f"{path}.{ENABLED_FIELD}" if path else ENABLED_FIELD
+                enabled_field = Enableable.require_parameter_name()
+                enabled_path = f"{path}.{enabled_field}" if path else enabled_field
                 resolved_enabled = state.get_resolved_value(enabled_path)
                 if resolved_enabled is not True:
                     logger.debug(
@@ -232,14 +242,14 @@ class _ManagerItemDisplayBuilder:
 
             for field_name in registered_fields:
                 full_path = f"{path}.{field_name}" if path else field_name
-                always_viewable.add(full_path)
+                add_field_path(full_path)
                 logger.debug(
                     "PREVIEW: Added always_viewable field %s for %s",
                     full_path,
                     config_type.__name__,
                 )
 
-        return always_viewable
+        return tuple(always_viewable)
 
     @staticmethod
     def _registered_always_viewable_fields(config_type: type) -> Optional[tuple[str, ...]]:

@@ -178,16 +178,17 @@ __all__ = [
 ]
 
 
-def _load_exports() -> None:
-    for public_name, export_target in _EXPORTS.items():
-        module_name, attr_name = export_target
-        module = importlib.import_module(module_name)
-        module_attributes = vars(module)
-        if attr_name not in module_attributes:
-            raise AttributeError(
-                f"module {module_name!r} has no exported attribute {attr_name!r}"
-            )
-        globals()[public_name] = module_attributes[attr_name]
+def __getattr__(name: str):
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-
-_load_exports()
+    module_name, attr_name = _EXPORTS[name]
+    module = importlib.import_module(module_name)
+    module_attributes = vars(module)
+    if attr_name not in module_attributes:
+        raise AttributeError(
+            f"module {module_name!r} has no exported attribute {attr_name!r}"
+        )
+    value = module_attributes[attr_name]
+    globals()[name] = value
+    return value

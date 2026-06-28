@@ -26,7 +26,7 @@ class WindowCodeDocumentDriver(ABC):
     """Read/apply code-mode content for one WindowManager scope."""
 
     @abstractmethod
-    def read_document(self) -> WindowCodeDocument:
+    def read_document(self, clean: bool = True) -> WindowCodeDocument:
         """Return the current code document."""
         raise NotImplementedError
 
@@ -39,4 +39,3 @@ class WindowCodeDocumentDriver(ABC):
     def apply_source(self, source: str) -> None:
         """Apply source through the same state path as interactive code mode."""
         raise NotImplementedError
-

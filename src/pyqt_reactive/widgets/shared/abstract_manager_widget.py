@@ -86,6 +86,10 @@ from pyqt_reactive.widgets.shared.manager_reorder_controller import (
 from pyqt_reactive.widgets.shared.manager_status_controller import ManagerStatusController
 from pyqt_reactive.widgets.shared.manager_config_resolution import ManagerGuiConfigResolution
 from pyqt_reactive.services.service_registry import AutoRegisterServiceMixin
+from pyqt_reactive.services.window_code_document import (
+    WindowCodeDocument,
+    WindowCodeDocumentDriver,
+)
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
 
 logger = logging.getLogger(__name__)
@@ -96,6 +100,25 @@ ListUpdateContextT = TypeVar("ListUpdateContextT")
 
 class _CombinedMeta(ABCMeta, type(QWidget)):
     """Combined metaclass for ABC + PyQt6 QWidget."""
+
+
+class AbstractManagerWidgetCodeDocumentDriver(WindowCodeDocumentDriver):
+    """Expose manager-widget code mode through WindowManager code documents."""
+
+    def __init__(self, widget: "AbstractManagerWidget") -> None:
+        self._widget = widget
+
+    def read_document(self, clean: bool = True) -> WindowCodeDocument:
+        return WindowCodeDocument(
+            title=self._widget.code_document_title(),
+            source=self._widget.code_document_source(clean=clean),
+        )
+
+    def validate_source(self, source: str) -> None:
+        self._widget.validate_code_document_source(source)
+
+    def apply_source(self, source: str) -> None:
+        self._widget.apply_code_document_source(source)
 
 
 class ManagerUiLifecycleMixin:
@@ -236,6 +259,7 @@ class ManagerActionWorkflowMixin:
             pre_code_execution=self._pre_code_execution,
             patch_lazy_constructors=patch_lazy_constructors,
             migrate_code_namespace=self.handle_code_execution_error,
+            validate_code_namespace=self.validate_executed_code,
             apply_code_namespace=self.apply_executed_code,
             post_code_execution=ObjectStateRegistry.increment_token,
         )
@@ -263,6 +287,14 @@ class ManagerActionWorkflowMixin:
     def _handle_edited_code(self, code: str) -> None:
         """Execute edited code through the manager action controller."""
         self._action_controller.apply_edited_code(self._action_operations(), code)
+
+    def validate_code_document_source(self, code: str) -> None:
+        """Validate code-document source through the manager action controller."""
+        self._action_controller.validate_edited_code(self._action_operations(), code)
+
+    def apply_code_document_source(self, code: str) -> None:
+        """Apply code-document source through the interactive code path."""
+        self._handle_edited_code(code)
 
     def _pre_code_execution(self) -> None:
         """
@@ -297,6 +329,13 @@ class ManagerActionWorkflowMixin:
         if self.code_execution_workflow.apply_namespace(namespace):
             return True
         logger.warning(f"{type(self).__name__}.apply_executed_code not implemented")
+        return False
+
+    def validate_executed_code(self, namespace: dict) -> bool:
+        """Validate executed code namespace without changing widget state."""
+        if self.code_execution_workflow.validate_namespace(namespace):
+            return True
+        logger.warning(f"{type(self).__name__}.validate_executed_code not implemented")
         return False
 
 
@@ -507,6 +546,21 @@ class AbstractManagerWidget(
 
     # Common signals
     status_message = pyqtSignal(str)
+
+    def code_document_title(self) -> str:
+        """Return the current code-mode document title."""
+        return self.CODE_EDITOR_PAYLOAD.title
+
+    def code_document_source(self, clean: bool = True) -> str:
+        """Return the current code-mode source, or empty when unsupported."""
+        del clean
+        return self.CODE_EDITOR_PAYLOAD.content
+
+    def code_document_driver(self) -> WindowCodeDocumentDriver | None:
+        """Return the code-document driver for managers with code-mode source."""
+        if not self.code_document_source(clean=True):
+            return None
+        return AbstractManagerWidgetCodeDocumentDriver(self)
 
     def __init__(self, service_adapter, color_scheme=None, gui_config=None, parent=None):
         """

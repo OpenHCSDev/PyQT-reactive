@@ -7,6 +7,7 @@ from typing import TypeAlias
 
 
 DEFAULT_MAXIMUM_WIDGET_TEXT_LENGTH = 4096
+DEFAULT_MAXIMUM_ITEM_MODEL_NODES = 512
 DEFAULT_TEXT_TRUNCATION_SUFFIX = "...<truncated>"
 WidgetPath: TypeAlias = tuple[int, ...]
 
@@ -37,11 +38,16 @@ class WidgetTreeProjectionControls:
     """Projection controls that do not require importing Qt widget classes."""
 
     maximum_text_length: int = DEFAULT_MAXIMUM_WIDGET_TEXT_LENGTH
+    maximum_item_model_nodes: int | None = DEFAULT_MAXIMUM_ITEM_MODEL_NODES
     truncation_suffix: str = DEFAULT_TEXT_TRUNCATION_SUFFIX
 
     @classmethod
     def default_maximum_text_length(cls) -> int:
         return DEFAULT_MAXIMUM_WIDGET_TEXT_LENGTH
+
+    @classmethod
+    def default_maximum_item_model_nodes(cls) -> int:
+        return DEFAULT_MAXIMUM_ITEM_MODEL_NODES
 
     @classmethod
     def default_truncation_suffix(cls) -> str:
@@ -52,6 +58,11 @@ class WidgetTreeProjectionControls:
             raise ValueError(
                 "maximum_text_length must be at least the truncation suffix length"
             )
+        if (
+            self.maximum_item_model_nodes is not None
+            and self.maximum_item_model_nodes < 0
+        ):
+            raise ValueError("maximum_item_model_nodes must be non-negative or None")
 
     def project_text(self, text: str) -> WidgetTextProjection:
         if len(text) <= self.maximum_text_length:
@@ -66,6 +77,7 @@ class WidgetTreeProjectionControls:
     def as_projection_policy(self) -> "WidgetTreeProjectionPolicy":
         return WidgetTreeProjectionPolicy(
             maximum_text_length=self.maximum_text_length,
+            maximum_item_model_nodes=self.maximum_item_model_nodes,
             truncation_suffix=self.truncation_suffix,
         )
 

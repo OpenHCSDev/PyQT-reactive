@@ -4,6 +4,7 @@ Generic preview formatting helpers.
 These utilities are framework-agnostic and avoid OpenHCS-specific imports.
 """
 
+from types import FunctionType, MethodType
 from typing import Any, Optional, Callable
 
 
@@ -17,16 +18,17 @@ def check_enabled_field(config: Any, resolve_attr: Optional[Callable] = None) ->
     Returns:
         True if config is enabled (or has no enabled field), False if disabled
     """
-    from python_introspect import is_enableable, ENABLED_FIELD
+    from python_introspect import Enableable, is_enableable
 
     if not is_enableable(config):
         return True
 
     # Resolve enabled field - we know it exists
+    enabled_field = Enableable.require_parameter_name()
     if resolve_attr:
-        enabled = resolve_attr(None, config, ENABLED_FIELD, None)
+        enabled = resolve_attr(None, config, enabled_field, None)
     else:
-        enabled = object.__getattribute__(config, ENABLED_FIELD)
+        enabled = object.__getattribute__(config, enabled_field)
 
     return bool(enabled)
 
@@ -56,6 +58,8 @@ def format_preview_value(value: Any) -> Optional[str]:
             return ",".join(v.value for v in value)
         # Other lists: show count
         return f"[{len(value)}]"
+    if isinstance(value, (FunctionType, MethodType)):
+        return value.__name__
     if callable(value) and not isinstance(value, type):
-        return getattr(value, "__name__", str(value))
+        return type(value).__name__
     return str(value)

@@ -8,7 +8,6 @@ and enableable support.
 
 from abc import ABC, abstractmethod
 import logging
-import inspect
 from typing import Any, ClassVar, Dict, Callable, Optional, Tuple, List, Set
 
 from PyQt6.QtWidgets import (
@@ -18,7 +17,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 
-from python_introspect import SignatureAnalyzer, is_enableable, ENABLED_FIELD
+from python_introspect import Enableable, SignatureAnalyzer, is_enableable
 
 # Import PyQt6 help components (using same pattern as Textual TUI)
 from pyqt_reactive.theming import ColorScheme
@@ -28,6 +27,10 @@ from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
 from pyqt_reactive.animation import FlashMixin
+from pyqt_reactive.services.function_pattern_code_document import (
+    FunctionPatternCodeDocumentService,
+)
+from pyqt_reactive.services.function_navigation import FunctionPatternField
 from metaclass_registry import AutoRegisterMeta
 
 logger = logging.getLogger(__name__)
@@ -278,8 +281,9 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             # For enableable functions: move enabled widget to title after form is built
             # CRITICAL: Must use callback because form manager builds widgets asynchronously
             if is_enableable(self.func) and self.form_manager is not None:
+                enabled_field = Enableable.require_parameter_name()
                 # Check if form is already built (sync path) - move immediately
-                if len(self.form_manager.widgets) > 0 and ENABLED_FIELD in self.form_manager.widgets:
+                if len(self.form_manager.widgets) > 0 and enabled_field in self.form_manager.widgets:
                     # Form already built, move enabled widget now
                     self._move_enabled_widget_to_title()
                 else:
@@ -352,11 +356,11 @@ class FunctionPaneWidget(GroupBoxWithHelp):
     def _move_enabled_widget_to_title(self):
         """Move enabled widget using shared groupbox machinery."""
         from pyqt_reactive.forms.widget_creation_config import WidgetCreationHandlers
-        from python_introspect import ENABLED_FIELD
 
         if self._enabled_widget_moved or not self.form_manager:
             return
-        if ENABLED_FIELD not in self.form_manager.widgets:
+        enabled_field = Enableable.require_parameter_name()
+        if enabled_field not in self.form_manager.widgets:
             logger.debug(f"No enabled field found in form_manager.widgets for {self.func.__name__ if self.func else 'unknown'}")
             return
 
@@ -365,7 +369,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             self.form_manager,
             self,
             self.form_manager.field_id,
-            ENABLED_FIELD,
+            enabled_field,
         )
         logger.debug(f"Moved enabled widget to title for function {self.func.__name__}")
 
@@ -429,8 +433,11 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             )
         func_scope_id = f"{func_parent_scope}::{token}"
 
-        reserved_param = self._get_reserved_param_name()
-        exclude_params = [reserved_param] if reserved_param else None
+        exclude_params = (
+            FunctionPatternCodeDocumentService.reserved_parameter_names(self.func)
+            if self.func is not None
+            else None
+        )
 
         # Check if ObjectState already exists (e.g., from time travel restore)
         # If so, reuse it to preserve restored state; otherwise create new
@@ -466,8 +473,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             )
         )
 
-        # Forward function parameter changes to parent step state for list item flash
-        # Uses ObjectState.forward_to_parent_state('func') to notify parent its 'func' field changed
+        # Forward function parameter changes to parent step state for list item flash.
         # Note: Per-parameter flashing is handled automatically by the PFM
         if func_state._parent_state is not None:
             # IMPORTANT: Avoid capturing QWidget instances in ObjectState callbacks.
@@ -483,8 +489,9 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             def forward_to_step(_changed_paths) -> None:
                 if suppress["value"]:
                     return
-                # Notify parent state that its 'func' field conceptually changed
-                func_state.forward_to_parent_state("func")
+                func_state.forward_to_parent_state(
+                    FunctionPatternField.parameter_name()
+                )
 
             func_state.on_resolved_changed(forward_to_step)
 
@@ -508,23 +515,6 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         layout.addWidget(self.form_manager)
 
         return container
-
-    def _get_reserved_param_name(self) -> Optional[str]:
-        """Return the reserved first parameter name for functions, if any."""
-        if not self.func:
-            return None
-
-        try:
-            sig = inspect.signature(self.func)
-        except (TypeError, ValueError):
-            return None
-
-        for param_name, _param in sig.parameters.items():
-            if param_name in ("self", "cls"):
-                continue
-            return param_name
-
-        return None
 
     def cleanup_object_state(self) -> None:
         """Unregister ObjectState on widget destruction."""
@@ -676,26 +666,11 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         Returns:
             Dict of kwargs suitable for passing to function at runtime
         """
-        from dataclasses import is_dataclass
+        from pyqt_reactive.services.function_pattern_code_document import (
+            FunctionPatternCodeDocumentService,
+        )
 
-        # Get all top-level parameter names (no dots)
-        top_level_params = {k for k in state.parameters.keys() if '.' not in k}
-
-        kwargs = {}
-        for param_name in top_level_params:
-            value = state.parameters.get(param_name)
-
-            # Check if this is a nested dataclass that needs reconstruction
-            param_type = state._path_to_type.get(param_name)
-            if param_type and is_dataclass(param_type):
-                # Reconstruct nested dataclass from flat storage
-                reconstructed = state._reconstruct_from_prefix(param_name)
-                kwargs[param_name] = reconstructed
-            else:
-                # Primitive value - use directly
-                kwargs[param_name] = value
-
-        return kwargs
+        return FunctionPatternCodeDocumentService.reconstruct_kwargs_from_state(state)
 
     def sync_kwargs(self):
         """Sync internal kwargs to main kwargs (extracted from Textual version)."""

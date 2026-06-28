@@ -373,8 +373,9 @@ class WidgetCreationHandlers:
         manager.nested_managers[param_info.name] = nested_manager
         logger.debug(f"🔍 _create_nested_form: stored in manager.nested_managers['{param_info.name}']")
         # For enableable types: Move enabled widget to title after form is built
-        from python_introspect import ENABLED_FIELD, is_enableable
+        from python_introspect import Enableable, is_enableable
         if is_enableable(unwrapped_type):
+            enabled_field = Enableable.require_parameter_name()
             logger.debug(f"🔍 _create_nested_form: Registering callback to move enabled widget for {param_info.name}")
             logger.debug(f"🔍 _create_nested_form: nested_manager._on_build_complete_callbacks count BEFORE: {len(nested_manager._on_build_complete_callbacks)}")
 
@@ -384,7 +385,7 @@ class WidgetCreationHandlers:
                 log = logging.getLogger(__name__)
                 log.debug(f"[BUILD_COMPLETE] FIRED for {nested_manager.field_id}, widget_count={len(nested_manager.widgets)}, widgets={list(nested_manager.widgets.keys())}")
 
-                WidgetCreationHandlers._move_enabled_widget_to_title(nested_manager, manager, param_info.name, ENABLED_FIELD)
+                WidgetCreationHandlers._move_enabled_widget_to_title(nested_manager, manager, param_info.name, enabled_field)
 
                 log.debug(f"[BUILD_COMPLETE] After move_enabled_widget: enabled_widget exists={'enabled' in nested_manager.widgets}, widget_count={len(nested_manager.widgets)}")
 

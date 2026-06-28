@@ -14,8 +14,6 @@ from objectstate.object_state_metadata import (
     ObjectStateMetadataContract,
     ObjectStateMetadataContractRegistry,
 )
-from pyqt_reactive.pattern_metadata import SCOPE_TOKEN_KEY
-
 PatternKey = NewType("PatternKey", str)
 
 

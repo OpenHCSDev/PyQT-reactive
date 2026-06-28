@@ -1,14 +1,19 @@
 """Tests for generic QWidget tree projection."""
 
+from PyQt6.QtCore import QStringListModel
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QGroupBox,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QSpinBox,
     QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -18,6 +23,12 @@ from pyqt_reactive.services.widget_tree_projection import (
     WidgetDescriptor,
     WidgetTreeProjectionPolicy,
     WidgetTreeProjectionService,
+)
+from pyqt_reactive.widgets.shared.list_item_delegate import LAYOUT_ROLE
+from pyqt_reactive.widgets.shared.styled_text_layout import (
+    Segment,
+    StyledText,
+    StyledTextLayout,
 )
 
 
@@ -29,6 +40,16 @@ def _descriptors_by_name(descriptor: WidgetDescriptor) -> dict[str, WidgetDescri
     for child in descriptor.children:
         descriptors.update(_descriptors_by_name(child))
 
+    return descriptors
+
+
+def _descriptors_by_class(
+    descriptor: WidgetDescriptor,
+    class_name: str,
+) -> list[WidgetDescriptor]:
+    descriptors = [descriptor] if descriptor.class_name == class_name else []
+    for child in descriptor.children:
+        descriptors.extend(_descriptors_by_class(child, class_name))
     return descriptors
 
 
@@ -161,3 +182,74 @@ def test_widget_text_projection_policy_truncates_explicitly(qapp) -> None:
 
     assert projection.root.text == "abcdefg..."
     assert projection.root.text_truncated
+
+
+def test_widget_tree_projection_includes_item_view_model_rows(qapp) -> None:
+    tree = QTreeWidget()
+    tree.setObjectName("config_hierarchy")
+    tree.setHeaderLabels(("Configuration",))
+
+    root_item = QTreeWidgetItem(("RootConfig",))
+    well_filter_item = QTreeWidgetItem(("* Well Filter Config",))
+    well_filter_item.addChild(QTreeWidgetItem(("well_filter",)))
+    root_item.addChild(well_filter_item)
+    root_item.addChild(QTreeWidgetItem(("Napari Streaming Config",)))
+    tree.addTopLevelItem(root_item)
+    tree.expandAll()
+    tree.show()
+    qapp.processEvents()
+
+    projection = WidgetTreeProjectionService.project(tree)
+
+    assert projection.root.class_name == "QTreeWidget"
+    assert projection.root.item_count == 1
+    model_rows = _descriptors_by_class(projection.root, "QModelIndex")
+    root_row = next(row for row in model_rows if row.text == "RootConfig")
+    assert [child.text for child in root_row.children] == [
+        "* Well Filter Config",
+        "Napari Streaming Config",
+    ]
+    assert root_row.children[0].children[0].text == "well_filter"
+    assert root_row.action_kinds == (WidgetActionKind.ITEM_SELECT,)
+    assert root_row.clickable
+    assert root_row.actionable
+
+
+def test_widget_tree_projection_handles_list_models_without_public_column_count(qapp) -> None:
+    combo = QComboBox()
+    combo.setObjectName("function_selector")
+    combo.setModel(QStringListModel(["load_image", "segment_cells"]))
+
+    projection = WidgetTreeProjectionService.project(combo)
+
+    model_rows = _descriptors_by_class(projection.root, "QModelIndex")
+    assert [row.text for row in model_rows] == ["load_image", "segment_cells"]
+
+
+def test_widget_tree_projection_uses_structured_list_item_layout(qapp) -> None:
+    item_list = QListWidget()
+    item_list.setObjectName("pipeline_steps")
+    layout = StyledTextLayout(
+        name=Segment("Agent invert"),
+        detail_line="/tmp/plate",
+        preview_segments=[Segment("workers=1"), Segment("memory")],
+        config_segments=[Segment("NAP")],
+        multiline=True,
+    )
+    item = QListWidgetItem(StyledText(layout))
+    item.setData(LAYOUT_ROLE, layout)
+    item_list.addItem(item)
+    item_list.show()
+    qapp.processEvents()
+
+    projection = WidgetTreeProjectionService.project(item_list)
+
+    model_rows = _descriptors_by_class(projection.root, "QModelIndex")
+    assert [row.text for row in model_rows] == [
+        "Agent invert | /tmp/plate | workers=1 | memory | configs=[NAP]"
+    ]
+    assert model_rows[0].action_kinds == (WidgetActionKind.ITEM_SELECT,)
+    assert model_rows[0].current_index == 0
+    assert model_rows[0].current_text == (
+        "Agent invert | /tmp/plate | workers=1 | memory | configs=[NAP]"
+    )

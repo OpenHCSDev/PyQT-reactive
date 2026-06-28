@@ -51,6 +51,7 @@ class ManagerActionOperations:
     pre_code_execution: Callable[[], None]
     patch_lazy_constructors: Callable[[], AbstractContextManager[Any]]
     migrate_code_namespace: Callable[[str, Exception, dict], Optional[dict]]
+    validate_code_namespace: Callable[[dict], bool]
     apply_code_namespace: Callable[[dict], bool]
     post_code_execution: Callable[[], None]
 
@@ -112,22 +113,11 @@ class ManagerActionController:
         code_type = payload.code_type
         logger.debug("%s code edited, processing changes...", code_type)
         try:
-            if not isinstance(code, str):
-                logger.error("Expected string, got %s: %s", type(code), code)
-                raise ValueError("Invalid code format received from editor")
-
-            operations.pre_code_execution()
-
-            namespace = {}
-            try:
-                with operations.patch_lazy_constructors():
-                    exec(code, namespace)
-            except TypeError as error:
-                migrated_namespace = operations.migrate_code_namespace(code, error, namespace)
-                if migrated_namespace is not None:
-                    namespace = migrated_namespace
-                else:
-                    raise
+            namespace = self._execute_code_namespace(
+                operations,
+                code,
+                run_pre_code_execution=True,
+            )
 
             if not operations.apply_code_namespace(namespace):
                 raise ValueError(payload.missing_error_message)
@@ -145,6 +135,46 @@ class ManagerActionController:
                 full_traceback,
             )
             raise
+
+    def validate_edited_code(
+        self,
+        operations: ManagerActionOperations,
+        code: str,
+    ) -> None:
+        payload = operations.code_payload
+        namespace = self._execute_code_namespace(
+            operations,
+            code,
+            run_pre_code_execution=False,
+        )
+        if not operations.validate_code_namespace(namespace):
+            raise ValueError(payload.missing_error_message)
+
+    def _execute_code_namespace(
+        self,
+        operations: ManagerActionOperations,
+        code: str,
+        *,
+        run_pre_code_execution: bool,
+    ) -> dict:
+        if not isinstance(code, str):
+            logger.error("Expected string, got %s: %s", type(code), code)
+            raise ValueError("Invalid code format received from editor")
+
+        if run_pre_code_execution:
+            operations.pre_code_execution()
+
+        namespace = {}
+        try:
+            with operations.patch_lazy_constructors():
+                exec(code, namespace)
+        except TypeError as error:
+            migrated_namespace = operations.migrate_code_namespace(code, error, namespace)
+            if migrated_namespace is not None:
+                namespace = migrated_namespace
+            else:
+                raise
+        return namespace
 
     def _resolve_action(
         self,

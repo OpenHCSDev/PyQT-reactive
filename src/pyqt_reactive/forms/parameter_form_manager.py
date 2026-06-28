@@ -199,8 +199,9 @@ class ParameterFormManager(
         # Nested PFM: filter by prefix and strip prefix from keys
         # ALSO: For enableable types, include the 'enabled' field specially
         # because it's stored as '{field_id}.enabled' in shared state
-        from python_introspect import ENABLED_FIELD
+        from python_introspect import Enableable
 
+        enabled_field = Enableable.require_parameter_name()
         prefix_dot = f'{self.field_id}.'
         result = ParameterDefaultsByName()
         for path, value in self.state.parameters.items():
@@ -209,9 +210,9 @@ class ParameterFormManager(
                 # Only direct children (no nested dots in remainder)
                 if '.' not in remainder:
                     result[remainder] = value
-                # SPECIAL CASE: Include ENABLED_FIELD if it exists for this nested manager
-                elif remainder == ENABLED_FIELD:
-                    result[ENABLED_FIELD] = value
+                # Include the nominal enable field if it exists for this nested manager.
+                elif remainder == enabled_field:
+                    result[enabled_field] = value
         return result
 
     @property
@@ -391,7 +392,7 @@ class ParameterFormManager(
                         "ParameterFormManager requires a canonical dotted `field_id` in FormManagerConfig for nested forms;"
                         " do not rely on derived type names as a fallback"
                     )
-                from python_introspect import UnifiedParameterAnalyzer, ENABLED_FIELD
+                from python_introspect import UnifiedParameterAnalyzer
 
                 param_info_dict = UnifiedParameterAnalyzer.analyze(target_obj, exclude_params=config.exclude_params)
                 # self.parameters property already filters/strips keys for our prefix
@@ -1036,10 +1037,13 @@ class ParameterFormManager(
                    f"changed_paths={changed_paths}")
         logger.debug(f"[FLASH] _on_resolved_values_changed: {changed_paths}")
 
-        # TIME-TRAVEL: Refresh widget values for changed paths
-        # (during time-travel, user didn't type - widgets need to be updated from state)
+        # Refresh widget display from the same canonical ObjectState paths that
+        # drive flash/styling. Local form edits have already set the same value;
+        # external ObjectState mutations (MCP, restore, time travel) need this
+        # listener to pull the visible widget values from ObjectState.
+        self.chrome_sync.refresh_widgets_for_paths(changed_paths)
+
         if ObjectStateRegistry._in_time_travel:
-            self.chrome_sync.refresh_widgets_for_paths(changed_paths)
             # CRITICAL: Refresh enabled styling for all managers after time-travel
             # Widget updates bypass the FieldChangeDispatcher (signals blocked), so styling
             # isn't triggered automatically. We must manually sync styling to match restored state.
@@ -1058,10 +1062,6 @@ class ParameterFormManager(
                     continue
             self._queue_leaf_flash_for_path(path)
 
-        # Refresh placeholders for changed fields (show new resolved values)
-        for path in changed_paths:
-            leaf_field = path.split('.')[-1] if '.' in path else path
-            self.chrome_sync.refresh_field_in_tree(leaf_field)
         if changed_paths:
             sample_path = next(iter(changed_paths))
             sample_leaf = sample_path.split('.')[-1] if '.' in sample_path else sample_path
@@ -1085,8 +1085,9 @@ class ParameterFormManager(
 
         # SPECIAL CASE: For enable/disable toggles, flash the whole groupbox
         # so styling changes are visible (don't mask widgets).
-        from python_introspect import ENABLED_FIELD
+        from python_introspect import Enableable
 
+        enabled_field = Enableable.require_parameter_name()
         if prefix:
             # Nested dataclass case: find groupbox and nested manager
             groupbox = self.form_tree.groupbox_for_prefix(prefix)
@@ -1133,7 +1134,7 @@ class ParameterFormManager(
         pane = _find_function_pane_ancestor(groupbox) if groupbox is not None else None
 
         enabled_suffix = "_enabled"
-        if (leaf_field == ENABLED_FIELD or leaf_field.endswith(enabled_suffix)) and groupbox is not None:
+        if (leaf_field == enabled_field or leaf_field.endswith(enabled_suffix)) and groupbox is not None:
             if pane is not None:
                 groupbox = pane
             logger.debug(

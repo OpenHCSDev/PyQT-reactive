@@ -121,6 +121,7 @@ class ParameterFormChromeSync:
             nested_manager.chrome_sync.refresh_widgets_from_state()
 
     def refresh_widgets_for_paths(self, paths: Set[str]) -> None:
+        """Refresh value widgets and inherited placeholders for exact ObjectState paths."""
         from pyqt_reactive.protocols.widget_protocols import ValueSettable
 
         manager = self.manager
@@ -140,9 +141,19 @@ class ParameterFormChromeSync:
             if isinstance(widget, ValueSettable):
                 value = manager.state.parameters.get(path, missing)
                 if value is not missing:
+                    skip_context_behavior = value is None
                     manager._widget_service.update_widget_value(
-                        widget, value, leaf_field, False, manager
+                        widget,
+                        value,
+                        leaf_field,
+                        skip_context_behavior,
+                        manager,
                     )
+                    if value is None:
+                        manager._parameter_ops_service.refresh_single_placeholder(
+                            manager,
+                            leaf_field,
+                        )
 
         for nested_manager in manager.nested_managers.values():
             nested_manager.chrome_sync.refresh_widgets_for_paths(paths)

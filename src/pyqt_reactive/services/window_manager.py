@@ -640,6 +640,16 @@ class WindowManager:
         return cls._code_document_drivers[scope_id]
 
     @classmethod
+    def get_code_document_scopes(cls) -> list[str]:
+        """Return open window scopes with registered code-document drivers."""
+        open_scopes = set(cls.get_open_scopes())
+        return [
+            scope_id
+            for scope_id in cls._code_document_drivers
+            if scope_id in open_scopes
+        ]
+
+    @classmethod
     def is_open(cls, scope_id: str) -> bool:
         """Check if window is currently open and visible for scope_id.
 

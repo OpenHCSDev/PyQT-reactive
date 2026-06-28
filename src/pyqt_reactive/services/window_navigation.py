@@ -35,6 +35,7 @@ class WindowNavigationResult:
     window: QWidget | None
     focused: bool
     created: bool
+    window_scope_id: str | None = None
 
     @property
     def navigated(self) -> bool:

@@ -26,6 +26,10 @@ class ManagerCodeExecutionWorkflow(ABC, metaclass=AutoRegisterMeta):
     def apply_namespace(self, namespace: dict) -> bool:
         raise NotImplementedError
 
+    @abstractmethod
+    def validate_namespace(self, namespace: dict) -> bool:
+        raise NotImplementedError
+
 
 class NullManagerCodeExecutionWorkflow(ManagerCodeExecutionWorkflow):
     """Default code execution workflow for managers without code-edit support."""
@@ -41,6 +45,10 @@ class NullManagerCodeExecutionWorkflow(ManagerCodeExecutionWorkflow):
         return None
 
     def apply_namespace(self, namespace: dict) -> bool:
+        del namespace
+        return False
+
+    def validate_namespace(self, namespace: dict) -> bool:
         del namespace
         return False
 

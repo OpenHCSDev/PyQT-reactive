@@ -17,6 +17,13 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTextEdit, QPushButton, QHBox
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QAction, QKeySequence
 
+from pyqt_reactive.services.window_code_document import (
+    PYTHON_MIME_TYPE,
+    WindowCodeDocument,
+    WindowCodeDocumentDriver,
+)
+from pyqt_reactive.services.window_manager import WindowManager
+
 logger = logging.getLogger(__name__)
 
 # Try to import QScintilla, fall back to QTextEdit if not available
@@ -28,6 +35,43 @@ except ImportError as e:
     logger.warning(f"QScintilla not available: {e}")
     logger.info("Install with: pip install PyQt6-QScintilla")
     QSCINTILLA_AVAILABLE = False
+
+
+class SimpleCodeEditorWindowCodeDocumentDriver(WindowCodeDocumentDriver):
+    """WindowManager code-document driver for floating simple code editors."""
+
+    def __init__(
+        self,
+        *,
+        dialog: QDialog,
+        title: str,
+        callback: Optional[Callable[[str], None]],
+    ) -> None:
+        self._dialog = dialog
+        self._title = title
+        self._callback = callback
+
+    def read_document(self, clean: bool = True) -> WindowCodeDocument:
+        return WindowCodeDocument(
+            title=self._title,
+            source=self._content(),
+            mime_type=PYTHON_MIME_TYPE,
+        )
+
+    def validate_source(self, source: str) -> None:
+        compile(source, f"<{self._title}>", "exec")
+
+    def apply_source(self, source: str) -> None:
+        self.validate_source(source)
+        if self._callback is not None:
+            self._callback(source)
+        self._set_content(source)
+
+    def _content(self) -> str:
+        return self._dialog.get_content()
+
+    def _set_content(self, source: str) -> None:
+        self._dialog.set_content(source)
 
 
 class SimpleCodeEditorService:
@@ -88,6 +132,12 @@ class SimpleCodeEditorService:
 
             # Show dialog as non-blocking floating window (like other OpenHCS windows)
             # Use .show() instead of .exec() to allow interaction with other windows
+            self._register_code_document_window(
+                dialog,
+                title=title,
+                callback=callback,
+                code_type=code_type,
+            )
             dialog.show()
             dialog.raise_()
             dialog.activateWindow()
@@ -95,6 +145,33 @@ class SimpleCodeEditorService:
         except Exception as e:
             logger.error(f"Qt native editor failed: {e}")
             self._show_error(f"Editor failed: {str(e)}")
+
+    def _register_code_document_window(
+        self,
+        dialog: QDialog,
+        *,
+        title: str,
+        callback: Optional[Callable[[str], None]],
+        code_type: str = None,
+    ) -> None:
+        """Expose the floating editor through WindowManager code-document APIs."""
+        scope_type = code_type or "code"
+        scope_id = f"code_editor:{scope_type}:{id(dialog)}"
+        WindowManager.register(
+            scope_id,
+            dialog,
+            code_document_driver=SimpleCodeEditorWindowCodeDocumentDriver(
+                dialog=dialog,
+                title=title,
+                callback=callback,
+            ),
+        )
+
+        def unregister() -> None:
+            WindowManager.unregister(scope_id)
+
+        dialog.finished.connect(lambda _result: unregister())
+        dialog.destroyed.connect(lambda _obj=None: unregister())
     
     def _edit_with_external_program(self, initial_content: str,
                                   callback: Optional[Callable[[str], None]]) -> None:
@@ -925,6 +1002,10 @@ class QScintillaCodeEditorDialog(QDialog):
         """Get the edited content."""
         return self.editor.text()
 
+    def set_content(self, content: str) -> None:
+        """Replace the edited content."""
+        self.editor.setText(content)
+
     def _on_save_clicked(self) -> None:
         """Handle save button click with Shift+Click detection."""
         from PyQt6.QtWidgets import QApplication
@@ -1099,3 +1180,7 @@ class CodeEditorDialog(QDialog):
     def get_content(self) -> str:
         """Get the edited content."""
         return self.text_edit.toPlainText()
+
+    def set_content(self, content: str) -> None:
+        """Replace the edited content."""
+        self.text_edit.setPlainText(content)

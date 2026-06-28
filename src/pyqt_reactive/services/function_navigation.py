@@ -1,18 +1,38 @@
-"""
-Typed helpers for function-field navigation payloads.
-
-This module owns the ``func`` field-path conventions used for cross-window
-navigation so callers do not duplicate string parsing.
-"""
+"""Typed helpers for function-pattern field and navigation payloads."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import ClassVar, Mapping, Optional
 
-FUNCTION_FIELD_ROOT = "func"
-FUNCTION_TOKEN_FIELD_PREFIX = "func.token:"
-FUNCTION_TARGET_DELIMITER = "|"
+
+class FunctionPatternField:
+    """Nominal owner for function-pattern parent-field semantics."""
+
+    name: ClassVar[str] = "func"
+    token_field_prefix: ClassVar[str] = "func.token:"
+    target_delimiter: ClassVar[str] = "|"
+
+    @classmethod
+    def parameter_name(cls) -> str:
+        return cls.name
+
+    @classmethod
+    def parameter_in(cls, values: Mapping[str, object]) -> bool:
+        return cls.parameter_name() in values
+
+    @classmethod
+    def value_from(cls, values: Mapping[str, object]) -> object:
+        return values[cls.parameter_name()]
+
+    @classmethod
+    def scope_token_prefix(cls) -> str:
+        return cls.parameter_name()
+
+
+FUNCTION_FIELD_ROOT = FunctionPatternField.parameter_name()
+FUNCTION_TOKEN_FIELD_PREFIX = FunctionPatternField.token_field_prefix
+FUNCTION_TARGET_DELIMITER = FunctionPatternField.target_delimiter
 
 
 @dataclass(frozen=True)
@@ -26,7 +46,9 @@ class FunctionFieldTarget:
 
 def is_function_field_path(field_path: str | None) -> bool:
     """Return True when the field path targets function-pattern UI."""
-    return isinstance(field_path, str) and field_path.startswith(FUNCTION_FIELD_ROOT)
+    return isinstance(field_path, str) and field_path.startswith(
+        FunctionPatternField.parameter_name()
+    )
 
 
 def build_function_token_field_path(
@@ -37,10 +59,10 @@ def build_function_token_field_path(
     normalized_token = token.strip()
     if not normalized_token:
         raise ValueError("Function token must be non-empty.")
-    normalized_base = fallback_base_field_path.strip() or FUNCTION_FIELD_ROOT
+    normalized_base = fallback_base_field_path.strip() or FunctionPatternField.parameter_name()
     return (
-        f"{FUNCTION_TOKEN_FIELD_PREFIX}{normalized_token}"
-        f"{FUNCTION_TARGET_DELIMITER}{normalized_base}"
+        f"{FunctionPatternField.token_field_prefix}{normalized_token}"
+        f"{FunctionPatternField.target_delimiter}{normalized_base}"
     )
 
 
@@ -49,20 +71,23 @@ def parse_function_field_target(field_path: str) -> FunctionFieldTarget:
     normalized = field_path.strip()
     token: Optional[str] = None
 
-    if normalized.startswith(FUNCTION_TOKEN_FIELD_PREFIX):
-        payload = normalized[len(FUNCTION_TOKEN_FIELD_PREFIX) :]
-        if FUNCTION_TARGET_DELIMITER in payload:
-            token_part, remainder = payload.split(FUNCTION_TARGET_DELIMITER, 1)
+    if normalized.startswith(FunctionPatternField.token_field_prefix):
+        payload = normalized[len(FunctionPatternField.token_field_prefix) :]
+        if FunctionPatternField.target_delimiter in payload:
+            token_part, remainder = payload.split(
+                FunctionPatternField.target_delimiter,
+                1,
+            )
             token = token_part.strip() or None
-            normalized = remainder.strip() or FUNCTION_FIELD_ROOT
+            normalized = remainder.strip() or FunctionPatternField.parameter_name()
         else:
             token = payload.strip() or None
-            normalized = FUNCTION_FIELD_ROOT
+            normalized = FunctionPatternField.parameter_name()
 
     index: Optional[int] = None
     rest = normalized
-    if rest.startswith(FUNCTION_FIELD_ROOT):
-        rest = rest[len(FUNCTION_FIELD_ROOT) :]
+    if rest.startswith(FunctionPatternField.parameter_name()):
+        rest = rest[len(FunctionPatternField.parameter_name()) :]
 
     if rest.startswith("["):
         close = rest.find("]")

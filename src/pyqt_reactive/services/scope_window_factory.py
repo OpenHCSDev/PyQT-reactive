@@ -37,6 +37,33 @@ class ScopeWindowCreationRequest:
 
 
 ScopeWindowCreationHandler = Callable[[ScopeWindowCreationRequest], QWidget | None]
+ScopeWindowScopeResolver = Callable[[str], str]
+ScopeWindowFieldPathResolver = Callable[[str, str | None], str | None]
+ScopeWindowItemIdResolver = Callable[[str, str | None], str | None]
+
+
+def _identity_scope(scope_id: str) -> str:
+    return scope_id
+
+
+def _identity_field_path(scope_id: str, field_path: str | None) -> str | None:
+    del scope_id
+    return field_path
+
+
+def _identity_item_id(scope_id: str, item_id: str | None) -> str | None:
+    del scope_id
+    return item_id
+
+
+@dataclass(frozen=True, slots=True)
+class ScopeWindowNavigationTarget:
+    """Resolved WindowManager target for one requested ObjectState scope."""
+
+    requested_scope_id: str
+    window_scope_id: str
+    item_id: str | None
+    field_path: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,13 +71,32 @@ class ScopeWindowRoute:
     """One registered scope matcher and its window creation behavior."""
 
     pattern: str
-    handler: ScopeWindowCreationHandler
+    handler: ScopeWindowCreationHandler | None = None
+    window_scope_resolver: ScopeWindowScopeResolver = _identity_scope
+    field_path_resolver: ScopeWindowFieldPathResolver = _identity_field_path
+    item_id_resolver: ScopeWindowItemIdResolver = _identity_item_id
 
     def matches(self, scope_id: str) -> bool:
         return re.match(self.pattern, scope_id) is not None
 
     def create_window(self, request: ScopeWindowCreationRequest) -> QWidget | None:
+        if self.handler is None:
+            return None
         return self.handler(request)
+
+    def navigation_target(
+        self,
+        scope_id: str,
+        *,
+        item_id: str | None = None,
+        field_path: str | None = None,
+    ) -> ScopeWindowNavigationTarget:
+        return ScopeWindowNavigationTarget(
+            requested_scope_id=scope_id,
+            window_scope_id=self.window_scope_resolver(scope_id),
+            item_id=self.item_id_resolver(scope_id, item_id),
+            field_path=self.field_path_resolver(scope_id, field_path),
+        )
 
 
 class ScopeWindowRegistry:
@@ -65,7 +111,11 @@ class ScopeWindowRegistry:
     def register_handler(
         cls,
         pattern: str,
-        handler: ScopeWindowCreationHandler,
+        handler: ScopeWindowCreationHandler | None = None,
+        *,
+        window_scope_resolver: ScopeWindowScopeResolver = _identity_scope,
+        field_path_resolver: ScopeWindowFieldPathResolver = _identity_field_path,
+        item_id_resolver: ScopeWindowItemIdResolver = _identity_item_id,
     ) -> None:
         """Register a handler for scopes matching the given regex pattern.
         
@@ -73,7 +123,15 @@ class ScopeWindowRegistry:
             pattern: Regex pattern to match against scope_id
             handler: Callable(ScopeWindowCreationRequest) -> QWidget | None
         """
-        cls.register_route(ScopeWindowRoute(pattern=pattern, handler=handler))
+        cls.register_route(
+            ScopeWindowRoute(
+                pattern=pattern,
+                handler=handler,
+                window_scope_resolver=window_scope_resolver,
+                field_path_resolver=field_path_resolver,
+                item_id_resolver=item_id_resolver,
+            )
+        )
 
     @classmethod
     def register_route(cls, route: ScopeWindowRoute) -> None:

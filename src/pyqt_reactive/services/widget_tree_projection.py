@@ -8,12 +8,14 @@ from enum import Enum
 from typing import ClassVar, TypeAlias, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
-from PyQt6.QtCore import QPoint, QRect, Qt
+from PyQt6.QtCore import QAbstractItemModel, QModelIndex, QPoint, QRect, Qt
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QAbstractButton,
     QAbstractSpinBox,
     QComboBox,
     QGroupBox,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMenu,
@@ -30,6 +32,7 @@ from pyqt_reactive.services.widget_tree_projection_config import (
     WidgetTextProjection,
     WidgetTreeProjectionPolicy,
 )
+from pyqt_reactive.widgets.shared.styled_text_layout import StyledText, StyledTextLayout
 
 
 TextMethodWidget: TypeAlias = QLineEdit | QAbstractSpinBox
@@ -51,6 +54,7 @@ class WidgetActionKind(Enum):
     BUTTON = "button"
     CHECKABLE = "checkable"
     CHOICE = "choice"
+    ITEM_SELECT = "item_select"
     MENU = "menu"
     SPIN_INPUT = "spin_input"
     TAB_SELECTOR = "tab_selector"
@@ -142,6 +146,30 @@ class WidgetTreeProjection:
     root: WidgetDescriptor
     widget_count: int
     actionable_count: int
+
+
+@dataclass(slots=True)
+class _ItemModelProjectionState:
+    """Bound synthetic QModelIndex descriptors during QWidget tree projection."""
+
+    maximum_nodes: int | None
+    projected_nodes: int = 0
+    truncation_reported: bool = False
+
+    def consume_node(self) -> bool:
+        if self.maximum_nodes is None:
+            self.projected_nodes += 1
+            return True
+        if self.projected_nodes >= self.maximum_nodes:
+            return False
+        self.projected_nodes += 1
+        return True
+
+    def consume_truncation_report(self) -> bool:
+        if self.truncation_reported:
+            return False
+        self.truncation_reported = True
+        return True
 
 
 class WidgetDescriptorProjector(ABC, metaclass=AutoRegisterMeta):
@@ -371,6 +399,41 @@ class QComboBoxDescriptorProjector(WidgetDescriptorProjector):
             current_index=combo_box.currentIndex(),
             current_text=combo_box.currentText(),
             item_count=combo_box.count(),
+        )
+
+
+class QAbstractItemViewDescriptorProjector(WidgetDescriptorProjector):
+    """Project item-view selection and top-level model size."""
+
+    widget_type = QAbstractItemView
+
+    def project(
+        self,
+        widget: QWidget,
+        policy: WidgetTreeProjectionPolicy,
+    ) -> WidgetProjectionFields:
+        del policy
+        item_view = self._require_type(widget, QAbstractItemView)
+        model = item_view.model()
+        root_index = item_view.rootIndex()
+        item_count = None
+        if model is not None:
+            item_count = model.rowCount(root_index)
+
+        current_index = item_view.currentIndex()
+        current_row = current_index.row() if current_index.isValid() else None
+        current_text = None
+        if current_index.isValid():
+            current_text = WidgetTreeProjectionService._model_index_display_text(
+                current_index
+            )
+            if current_text == "":
+                current_text = None
+
+        return WidgetProjectionFields(
+            current_index=current_row,
+            current_text=current_text,
+            item_count=item_count,
         )
 
 
@@ -620,7 +683,284 @@ class WidgetTreeProjectionService:
                     policy=policy,
                 )
             )
+        item_descriptors = cls._project_item_view_children(
+            widget=widget,
+            path=path,
+            child_index_offset=len(child_widgets),
+            policy=policy,
+        )
+        descriptors.extend(item_descriptors)
         return tuple(descriptors)
+
+    @classmethod
+    def _project_item_view_children(
+        cls,
+        *,
+        widget: QWidget,
+        path: WidgetPath,
+        child_index_offset: int,
+        policy: WidgetTreeProjectionPolicy,
+    ) -> tuple[WidgetDescriptor, ...]:
+        if not isinstance(widget, QAbstractItemView):
+            return ()
+        if isinstance(widget, QHeaderView):
+            return ()
+        model = widget.model()
+        if model is None:
+            return ()
+
+        state = _ItemModelProjectionState(policy.maximum_item_model_nodes)
+        return tuple(
+            cls._project_model_rows(
+                view=widget,
+                model=model,
+                parent_index=widget.rootIndex(),
+                path=path,
+                child_index_offset=child_index_offset,
+                state=state,
+                policy=policy,
+            )
+        )
+
+    @classmethod
+    def _project_model_rows(
+        cls,
+        *,
+        view: QAbstractItemView,
+        model: QAbstractItemModel,
+        parent_index: QModelIndex,
+        path: WidgetPath,
+        child_index_offset: int = 0,
+        state: _ItemModelProjectionState,
+        policy: WidgetTreeProjectionPolicy,
+    ) -> tuple[WidgetDescriptor, ...]:
+        descriptors: list[WidgetDescriptor] = []
+        for row in range(model.rowCount(parent_index)):
+            synthetic_child_index = child_index_offset + row
+            child_path = (*path, synthetic_child_index)
+            if not state.consume_node():
+                if state.consume_truncation_report():
+                    descriptors.append(
+                        cls._model_truncation_descriptor(
+                            view=view,
+                            path=child_path,
+                            child_index=synthetic_child_index,
+                            state=state,
+                            policy=policy,
+                        )
+                    )
+                break
+
+            index = model.index(row, 0, parent_index)
+            if not index.isValid():
+                continue
+            descriptors.append(
+                cls._model_index_descriptor(
+                    view=view,
+                    model=model,
+                    index=index,
+                    path=child_path,
+                    child_index=synthetic_child_index,
+                    state=state,
+                    policy=policy,
+                )
+            )
+
+            if state.truncation_reported:
+                break
+        return tuple(descriptors)
+
+    @classmethod
+    def _model_index_descriptor(
+        cls,
+        *,
+        view: QAbstractItemView,
+        model: QAbstractItemModel,
+        index: QModelIndex,
+        path: WidgetPath,
+        child_index: int,
+        state: _ItemModelProjectionState,
+        policy: WidgetTreeProjectionPolicy,
+    ) -> WidgetDescriptor:
+        text_projection = policy.project_text(cls._model_index_text(model, index))
+        rect = cls._model_index_visual_rect(view, index)
+        index_enabled = view.isEnabled() and cls._model_index_enabled(model, index)
+        index_selectable = cls._model_index_selectable(model, index)
+        index_visible = cls._model_index_visible(view, index)
+        index_actionable = index_visible and index_enabled and index_selectable
+        child_descriptors = cls._project_model_rows(
+            view=view,
+            model=model,
+            parent_index=index,
+            path=path,
+            child_index_offset=0,
+            state=state,
+            policy=policy,
+        )
+        return WidgetDescriptor(
+            path=path,
+            path_id=cls._path_id(path),
+            child_index=child_index,
+            class_name=type(index).__name__,
+            object_name="",
+            accessible_name="",
+            accessible_description="",
+            visible=index_visible,
+            enabled=index_enabled,
+            geometry=WidgetRect.from_qrect(rect),
+            global_geometry=WidgetRect.from_qrect(
+                cls._model_index_global_rect(view, rect)
+            ),
+            tool_tip=cls._model_index_role_text(index, Qt.ItemDataRole.ToolTipRole),
+            status_tip=cls._model_index_role_text(index, Qt.ItemDataRole.StatusTipRole),
+            whats_this=cls._model_index_role_text(index, Qt.ItemDataRole.WhatsThisRole),
+            window_title="",
+            text=text_projection.value,
+            text_truncated=text_projection.truncated,
+            title=None,
+            action_kinds=(
+                (WidgetActionKind.ITEM_SELECT,) if index_selectable else ()
+            ),
+            clickable=index_actionable,
+            actionable=index_actionable,
+            checkable=None,
+            checked=None,
+            current_index=index.row(),
+            current_text=text_projection.value,
+            item_count=model.rowCount(index),
+            children=child_descriptors,
+        )
+
+    @classmethod
+    def _model_truncation_descriptor(
+        cls,
+        *,
+        view: QAbstractItemView,
+        path: WidgetPath,
+        child_index: int,
+        state: _ItemModelProjectionState,
+        policy: WidgetTreeProjectionPolicy,
+    ) -> WidgetDescriptor:
+        text_projection = policy.project_text(
+            f"item model truncated after {state.projected_nodes} rows"
+        )
+        return WidgetDescriptor(
+            path=path,
+            path_id=cls._path_id(path),
+            child_index=child_index,
+            class_name="QModelIndexLimit",
+            object_name="",
+            accessible_name="",
+            accessible_description="",
+            visible=view.isVisible(),
+            enabled=False,
+            geometry=WidgetRect.from_qrect(QRect()),
+            global_geometry=WidgetRect.from_qrect(QRect()),
+            tool_tip="",
+            status_tip="",
+            whats_this="",
+            window_title="",
+            text=text_projection.value,
+            text_truncated=text_projection.truncated,
+            title=None,
+            action_kinds=(),
+            clickable=False,
+            actionable=False,
+            checkable=None,
+            checked=None,
+            current_index=None,
+            current_text=None,
+            item_count=None,
+            children=(),
+        )
+
+    @staticmethod
+    def _model_index_text(model: QAbstractItemModel, index: QModelIndex) -> str:
+        parent = index.parent()
+        values: list[str] = []
+        for column in range(WidgetTreeProjectionService._model_column_count(model, parent)):
+            column_index = model.index(index.row(), column, parent)
+            text = WidgetTreeProjectionService._model_index_display_text(column_index)
+            if text != "":
+                values.append(text)
+        return " | ".join(values)
+
+    @staticmethod
+    def _model_index_display_text(index: QModelIndex) -> str:
+        value = index.data(Qt.ItemDataRole.DisplayRole)
+        if isinstance(value, StyledText) and value.layout is not None:
+            return value.layout.plain_text()
+        if value is not None:
+            text = str(value)
+            if text != "":
+                return text
+
+        layout = WidgetTreeProjectionService._model_index_styled_layout(index)
+        if layout is None:
+            return ""
+        return layout.plain_text()
+
+    @staticmethod
+    def _model_index_styled_layout(index: QModelIndex) -> StyledTextLayout | None:
+        try:
+            from pyqt_reactive.widgets.shared.list_item_delegate import LAYOUT_ROLE
+        except ImportError:
+            return None
+        layout = index.data(LAYOUT_ROLE)
+        if isinstance(layout, StyledTextLayout):
+            return layout
+        return None
+
+    @staticmethod
+    def _model_column_count(
+        model: QAbstractItemModel,
+        parent: QModelIndex,
+    ) -> int:
+        try:
+            column_count = model.columnCount(parent)
+        except (RuntimeError, TypeError):
+            return 1
+        if column_count < 1:
+            return 1
+        return column_count
+
+    @staticmethod
+    def _model_index_role_text(index: QModelIndex, role: Qt.ItemDataRole) -> str:
+        value = index.data(role)
+        if value is None:
+            return ""
+        return str(value)
+
+    @staticmethod
+    def _model_index_enabled(model: QAbstractItemModel, index: QModelIndex) -> bool:
+        return bool(model.flags(index) & Qt.ItemFlag.ItemIsEnabled)
+
+    @staticmethod
+    def _model_index_selectable(model: QAbstractItemModel, index: QModelIndex) -> bool:
+        return bool(model.flags(index) & Qt.ItemFlag.ItemIsSelectable)
+
+    @staticmethod
+    def _model_index_visible(view: QAbstractItemView, index: QModelIndex) -> bool:
+        return view.isVisible() and not view.isIndexHidden(index)
+
+    @staticmethod
+    def _model_index_visual_rect(
+        view: QAbstractItemView,
+        index: QModelIndex,
+    ) -> QRect:
+        try:
+            return view.visualRect(index)
+        except RuntimeError:
+            return QRect()
+
+    @staticmethod
+    def _model_index_global_rect(view: QAbstractItemView, rect: QRect) -> QRect:
+        viewport = view.viewport()
+        if viewport is None:
+            top_left = view.mapToGlobal(rect.topLeft())
+        else:
+            top_left = viewport.mapToGlobal(rect.topLeft())
+        return QRect(top_left, rect.size())
 
     @staticmethod
     def _path_id(path: WidgetPath) -> str:

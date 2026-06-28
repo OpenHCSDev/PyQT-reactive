@@ -49,6 +49,30 @@ class StyledTextLayout:
             *self.config_segments,
         ]
 
+    def plain_text(self) -> str:
+        """Return a compact plain-text representation for non-painted projections."""
+        values: List[str] = []
+        title = f"{self.status_prefix}{self.name.text}".strip()
+        if title:
+            values.append(title)
+
+        first_line = join_segments(self.first_line_segments, " | ")
+        if first_line:
+            values.append(f"({first_line})")
+
+        if self.detail_line:
+            values.append(self.detail_line)
+
+        preview = join_segments(self.preview_segments, " | ")
+        if preview:
+            values.append(preview)
+
+        config = join_segments(self.config_segments, ", ")
+        if config:
+            values.append(f"configs=[{config}]")
+
+        return " | ".join(values)
+
 
 class StyledText(str):
     """String subclass carrying layout for per-field styling."""
