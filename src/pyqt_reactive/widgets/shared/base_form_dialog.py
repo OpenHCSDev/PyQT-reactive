@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -155,6 +156,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         del has_changes
         self.apply_dirty_window_presentation()
 
+
     def show(self) -> None:
         """Override show to enforce singleton-per-scope behavior."""
         scope_key = self.scope_id
@@ -293,3 +295,56 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
 BaseFormDialog = BaseManagedWindow
 """Alias for backwards compatibility with OpenHCS code."""
+
+
+class ManagedWindowAction(str, Enum):
+    """Closed set of agent-visible managed-window actions."""
+
+    title: str
+    side_effects: tuple[str, ...]
+    confirmation_required: bool
+    is_supported: Callable[[ManagedWindowActionCapabilities], bool]
+    dispatch: Callable[[BaseManagedWindow], None]
+
+    def __new__(
+        cls,
+        value: str,
+        title: str,
+        side_effects: tuple[str, ...],
+        confirmation_required: bool,
+        is_supported: Callable[[ManagedWindowActionCapabilities], bool],
+        dispatch: Callable[[BaseManagedWindow], None],
+    ) -> "ManagedWindowAction":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.title = title
+        member.side_effects = side_effects
+        member.confirmation_required = confirmation_required
+        member.is_supported = is_supported
+        member.dispatch = dispatch
+        return member
+
+    SAVE_AND_CLOSE = (
+        "save_and_close",
+        "Save and close",
+        ("saves_window_state", "closes_window"),
+        True,
+        lambda capabilities: capabilities.save_and_close,
+        lambda window: window.agent_save_managed_window(close_window=True),
+    )
+    SAVE_WITHOUT_CLOSE = (
+        "save_without_close",
+        "Save without closing",
+        ("saves_window_state",),
+        True,
+        lambda capabilities: capabilities.save_without_close,
+        lambda window: window.agent_save_managed_window(close_window=False),
+    )
+    DISCARD_AND_CLOSE = (
+        "discard_and_close",
+        "Discard changes and close",
+        ("discards_unsaved_window_state", "closes_window"),
+        True,
+        lambda capabilities: capabilities.discard_and_close,
+        lambda window: window.agent_discard_and_close_managed_window(),
+    )

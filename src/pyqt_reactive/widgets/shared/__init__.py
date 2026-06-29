@@ -47,6 +47,10 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.base_form_dialog",
         "ManagedWindowActionCapabilities",
     ),
+    "ManagedWindowAction": (
+        "pyqt_reactive.widgets.shared.base_form_dialog",
+        "ManagedWindowAction",
+    ),
     "DirtyWindowPresentation": (
         "pyqt_reactive.widgets.shared.dirty_window_presenter",
         "DirtyWindowPresentation",
