@@ -12,6 +12,9 @@ from PyQt6.QtWidgets import QScrollArea, QWidget
 
 from pyqt_reactive.services.window_navigation import (
     FormFieldWindowNavigationDriver,
+    NavigationWaitReason,
+    RegisteredWindowNavigationReadiness,
+    RegisteredWindowNavigationRequest,
     WindowNavigationDriver,
 )
 
@@ -40,6 +43,61 @@ class ScrollViewport:
     viewport_top: int
     viewport_bottom: int
     vertical_scroll_bar: Any
+
+
+class ScrollableFormWindowNavigationDriver(FormFieldWindowNavigationDriver):
+    """Field navigation driver that waits for scrollable-form layout readiness."""
+
+    def __init__(self, owner: "ScrollableFormMixin") -> None:
+        super().__init__(
+            select_field=owner.select_and_scroll_to_field,
+            form_manager=lambda: owner.form_manager,
+        )
+        self._owner = owner
+
+    def readiness(
+        self,
+        request: RegisteredWindowNavigationRequest,
+    ) -> RegisteredWindowNavigationReadiness:
+        readiness = super().readiness(request)
+        if not readiness.window_alive or readiness.needs_wait:
+            return readiness
+        if request.field_path is None:
+            return readiness
+
+        if self._owner.scroll_area is None:
+            return RegisteredWindowNavigationReadiness(
+                wait_reason=NavigationWaitReason.LAYOUT,
+            )
+
+        target = self._owner._resolve_scroll_target(request.field_path)
+        if target is None:
+            return RegisteredWindowNavigationReadiness(
+                wait_reason=NavigationWaitReason.FIELD_TARGET,
+            )
+
+        viewport = self._owner._scroll_viewport()
+        if (
+            viewport.content_widget is None
+            or viewport.viewport_height <= 0
+            or viewport.vertical_scroll_bar.maximum() <= 0
+        ):
+            if self._owner._target_is_fully_visible(target, viewport):
+                return readiness
+            return RegisteredWindowNavigationReadiness(
+                wait_reason=NavigationWaitReason.LAYOUT,
+            )
+
+        if self._owner._target_is_fully_visible(target, viewport):
+            return readiness
+
+        target_scroll = self._owner._target_scroll_position(target, viewport)
+        if target_scroll > viewport.vertical_scroll_bar.maximum():
+            return RegisteredWindowNavigationReadiness(
+                wait_reason=NavigationWaitReason.LAYOUT,
+            )
+
+        return readiness
 
 
 class ScrollableFormMixin:
@@ -100,6 +158,15 @@ class ScrollableFormMixin:
 
         for i, part in enumerate(parts[:-1]):
             if part not in current_manager.nested_managers:
+                inline_target = self._resolve_inline_dataclass_child_target(
+                    field_name=field_name,
+                    current_manager=current_manager,
+                    section_parts=section_parts,
+                    inline_field_name=part,
+                    child_field_name=parts[i + 1],
+                )
+                if inline_target is not None:
+                    return inline_target
                 logger.warning(f"❌ Part '{part}' not in nested_managers at depth {i}")
                 return None
             current_manager = current_manager.nested_managers[part]
@@ -137,6 +204,42 @@ class ScrollableFormMixin:
             groupbox_widget=groupbox_widget,
             current_manager=current_manager,
             is_field=is_field,
+        )
+
+    def _resolve_inline_dataclass_child_target(
+        self,
+        *,
+        field_name: str,
+        current_manager: Any,
+        section_parts: list[str],
+        inline_field_name: str,
+        child_field_name: str,
+    ) -> Optional[ScrollTarget]:
+        """Resolve a child field rendered inside an inline dataclass widget."""
+        from pyqt_reactive.protocols import ChildFieldNavigationTargetProvider
+        from pyqt_reactive.widgets.shared.clickable_help_components import (
+            InlineDataclassGroupBox,
+        )
+
+        inline_widget = current_manager.widgets.get(inline_field_name)
+        if not isinstance(inline_widget, InlineDataclassGroupBox):
+            return None
+
+        target_widget: QWidget = inline_widget
+        if isinstance(inline_widget, ChildFieldNavigationTargetProvider):
+            child_widget = inline_widget.child_field_navigation_target(child_field_name)
+            if isinstance(child_widget, QWidget):
+                target_widget = child_widget
+
+        section_path = ".".join(section_parts + [inline_field_name])
+        return ScrollTarget(
+            field_name=field_name,
+            leaf_name=child_field_name,
+            section_path=section_path,
+            target_widget=target_widget,
+            groupbox_widget=None,
+            current_manager=current_manager,
+            is_field=False,
         )
 
     def _scroll_viewport(self) -> ScrollViewport:
@@ -326,7 +429,4 @@ class ScrollableFormMixin:
 
     def window_navigation_driver(self) -> WindowNavigationDriver:
         """Return explicit form-field navigation behavior for WindowManager."""
-        return FormFieldWindowNavigationDriver(
-            select_field=self.select_and_scroll_to_field,
-            form_manager=lambda: self.form_manager,
-        )
+        return ScrollableFormWindowNavigationDriver(self)

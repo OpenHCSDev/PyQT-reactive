@@ -6,7 +6,6 @@ from PyQt6.QtCore import QRect, QRectF, Qt
 from PyQt6.QtGui import QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
-from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 
@@ -46,10 +45,8 @@ class ScopeBorderRenderer:
         inset = 0
         for layer in scheme.step_border_layers:
             width, tint_index, pattern = (layer + ("solid",))[:3]
-            color = tint_color_perceptual(
-                scheme.base_color_rgb,
-                tint_index,
-            ).darker(120)
+            del tint_index
+            color = scheme.border_layer_qcolor(layer)
             pen = QPen(color, width)
             style, dash_pattern = cls.BORDER_PATTERNS.get(
                 pattern,

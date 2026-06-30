@@ -8,6 +8,10 @@ explicit, fail-loud inheritance-based architecture.
 from .widget_protocols import (
     ValueGettable,
     ValueSettable,
+    ResolvedValuePreviewSettable,
+    ChildFieldChromeRefreshable,
+    ChildFieldNavigationTargetProvider,
+    InlineDataclassGroupBoxChromeProvider,
     PlaceholderCapable,
     RangeConfigurable,
     EnumSelectable,
@@ -47,6 +51,10 @@ from .component_selection import (
 __all__ = [
     "ValueGettable",
     "ValueSettable",
+    "ResolvedValuePreviewSettable",
+    "ChildFieldChromeRefreshable",
+    "ChildFieldNavigationTargetProvider",
+    "InlineDataclassGroupBoxChromeProvider",
     "PlaceholderCapable",
     "RangeConfigurable",
     "EnumSelectable",

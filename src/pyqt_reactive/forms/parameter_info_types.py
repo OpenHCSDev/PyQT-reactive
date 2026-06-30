@@ -44,6 +44,7 @@ from dataclasses import dataclass, is_dataclass
 from abc import ABC, ABCMeta
 import logging
 
+from objectstate.lazy_factory import get_base_type_for_lazy
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 
 logger = logging.getLogger(__name__)
@@ -72,11 +73,35 @@ class _InlineDataclassWidgetCatalog:
 
     @classmethod
     def factory_for(cls, dataclass_type: Type) -> InlineDataclassWidgetFactory | None:
-        return cls._factories.get(dataclass_type)
+        for candidate_type in cls._candidate_types(dataclass_type):
+            factory = cls._factories.get(candidate_type)
+            if factory is not None:
+                return factory
+        return None
 
     @classmethod
     def has_factory_for(cls, dataclass_type: Type) -> bool:
-        return dataclass_type in cls._factories
+        return cls.factory_for(dataclass_type) is not None
+
+    @classmethod
+    def _candidate_types(cls, dataclass_type: Type) -> tuple[Type, ...]:
+        """Return exact, lazy-base, and inherited dataclass types for lookup."""
+
+        base_type = get_base_type_for_lazy(dataclass_type)
+        root_types = (
+            (dataclass_type,)
+            if base_type is None or base_type is dataclass_type
+            else (dataclass_type, base_type)
+        )
+        candidates: list[Type] = []
+        seen: set[Type] = set()
+        for root_type in root_types:
+            for candidate_type in root_type.__mro__:
+                if candidate_type is object or candidate_type in seen:
+                    continue
+                candidates.append(candidate_type)
+                seen.add(candidate_type)
+        return tuple(candidates)
 
 
 def register_inline_dataclass_widget(

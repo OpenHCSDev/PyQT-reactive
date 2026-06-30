@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import QWidget
 import logging
 
 from pyqt_reactive.widgets.shared.scope_color_utils import (
-    tint_color_perceptual,
     get_scope_color_scheme,
 )
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
@@ -35,7 +34,7 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
         list item's border based on actual position in pipeline.
         """
         scope_id = self.scope_id
-        if not scope_id:
+        if scope_id is None:
             return
 
         # Use explicit step_index if set (for windows matching list item position)
@@ -68,14 +67,7 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
         """
         if not self._scope_color_scheme:
             return None
-        # Use the same tint_idx from step_border_layers as border/flash rendering
-        base_rgb = self._scope_color_scheme.base_color_rgb
-        layers = self._scope_color_scheme.step_border_layers
-        if layers:
-            _, tint_idx, _ = (layers[0] + ("solid",))[:3]
-            return tint_color_perceptual(base_rgb, tint_idx).darker(120)
-        # Fallback for schemes without layers
-        return tint_color_perceptual(base_rgb, 1).darker(120)
+        return self._scope_color_scheme.accent_qcolor()
 
     def get_scope_accent_stylesheet(self, for_button: bool = True) -> str:
         """Generate stylesheet for scope-accented buttons.
@@ -97,13 +89,20 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
         # Darker version for pressed
         darker = color.darker(115)
         hex_darker = darker.name()
+        border = "none"
+        text_color = "white"
+        if color.red() >= 230 and color.green() >= 230 and color.blue() >= 230:
+            hex_color = "#555555"
+            hex_lighter = "#666666"
+            hex_darker = "#444444"
+            border = "1px solid #ffffff"
 
         if for_button:
             return f"""
                 QPushButton {{
                     background-color: {hex_color};
-                    color: white;
-                    border: none;
+                    color: {text_color};
+                    border: {border};
                     border-radius: 3px;
                     padding: 8px;
                 }}
@@ -144,13 +143,13 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
     def _subscribe_to_color_changes(self) -> None:
         service = ScopeColorService.instance()
         scope_id = self.scope_id
-        if scope_id:
+        if scope_id is not None:
             service.color_changed.connect(self._on_scope_color_changed)
             service.all_colors_reset.connect(self._on_all_colors_reset)
 
     def _on_scope_color_changed(self, changed_scope_id: str) -> None:
         scope_id = self.scope_id
-        if scope_id and (
+        if scope_id is not None and (
             scope_id == changed_scope_id or scope_id.startswith(f"{changed_scope_id}::")
         ):
             self._refresh_scope_border()

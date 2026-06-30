@@ -1370,21 +1370,16 @@ class WindowFlashOverlay(QWidget):
         # This ensures step editor flashes match the list item's visual position-based colors
         window_scheme = getattr(self._window, '_scope_color_scheme', None)
         if window_scheme:
-            try:
-                from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
-                base_rgb = getattr(window_scheme, 'base_color_rgb', None)
-                layers = getattr(window_scheme, 'step_border_layers', None)
-                if base_rgb and layers:
-                    # Compute flash color matching the window's border
-                    _, tint_idx, _ = (layers[0] + ("solid",))[:3]
-                    scheme_color = tint_color_perceptual(base_rgb, tint_idx).darker(120)
-                    # Override all flash colors, keeping animation alpha
-                    active_keys = {
-                        key: QColor(scheme_color.red(), scheme_color.green(), scheme_color.blue(), color.alpha())
-                        for key, color in active_keys.items()
-                    }
-            except ImportError as exc:
-                raise
+            scheme_color = window_scheme.accent_qcolor()
+            active_keys = {
+                key: QColor(
+                    scheme_color.red(),
+                    scheme_color.green(),
+                    scheme_color.blue(),
+                    color.alpha(),
+                )
+                for key, color in active_keys.items()
+            }
 
         # Filter to only keys whose elements are currently visible in this window
         visible_keys = self.get_visible_keys_for(set(active_keys.keys()))
@@ -1562,7 +1557,6 @@ class _GlobalFlashCoordinator:
             from pyqt_reactive.widgets.shared.scope_color_utils import (
                 extract_orchestrator_scope,
                 get_scope_color_scheme,
-                tint_color_perceptual,
             )
 
             # Determine if this is a step key or config field key
@@ -1584,18 +1578,7 @@ class _GlobalFlashCoordinator:
             if scheme.scope_id is None:
                 return self._get_neutral_flash_color()
 
-            # Always use tint_color_perceptual to match border painting exactly
-            base_rgb = getattr(scheme, "base_color_rgb", None)
-            layers = getattr(scheme, "step_border_layers", None)
-            if base_rgb and layers:
-                # Use first layer's tint index for consistency with border painting
-                _, tint_idx, _ = (layers[0] + ("solid",))[:3]
-                return tint_color_perceptual(base_rgb, tint_idx).darker(120)
-
-            # Fallback: no layers means simple border, use middle tint
-            if base_rgb:
-                return tint_color_perceptual(base_rgb, 1).darker(120)
-            return scheme.to_qcolor_orchestrator_border()
+            return scheme.accent_qcolor()
         except ImportError:
             # OpenHCS scope coloring not available - use palette-based coloring
             return get_flash_color_from_palette(key)

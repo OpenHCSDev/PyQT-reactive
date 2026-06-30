@@ -49,6 +49,7 @@ class ScopeColorScheme:
     step_border_width: int = 0
     step_border_layers: list = None
     base_color_rgb: tuple[int, int, int] = (128, 128, 128)
+    fixed_accent_rgb: Optional[tuple[int, int, int]] = None
 
     def __post_init__(self) -> None:
         if self.step_border_layers is None:
@@ -84,6 +85,48 @@ class ScopeColorScheme:
         r, g, b = self.step_item_bg_rgb
         return QColor(r, g, b, int(255 * config.STEP_ITEM_BG_OPACITY))
 
+    def border_layer_qcolor(self, layer):
+        """Return the rendered border/accent color for one border layer."""
+        from PyQt6.QtGui import QColor
+
+        if self.fixed_accent_rgb is not None:
+            return QColor(*self.fixed_accent_rgb)
+
+        from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
+
+        _, tint_index, _ = (layer + ("solid",))[:3]
+        return tint_color_perceptual(self.base_color_rgb, tint_index).darker(120)
+
+    def accent_qcolor(self):
+        """Return the canonical accent/flash color for this scope."""
+        from PyQt6.QtGui import QColor
+
+        if self.fixed_accent_rgb is not None:
+            return QColor(*self.fixed_accent_rgb)
+
+        if self.step_border_layers:
+            return self.border_layer_qcolor(self.step_border_layers[0])
+
+        return self.to_qcolor_orchestrator_border()
+
+    def background_tint_qcolor(self, layers, opacity: float):
+        """Return the canonical subtle background tint for this scope."""
+        from PyQt6.QtGui import QColor
+
+        if self.fixed_accent_rgb is not None:
+            r, g, b = self.fixed_accent_rgb
+            return QColor(r, g, b, int(255 * opacity))
+
+        from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
+
+        if layers:
+            _, tint_index, _ = (layers[0] + ("solid",))[:3]
+        else:
+            tint_index = 1
+        color = tint_color_perceptual(self.base_color_rgb, tint_index)
+        color.setAlphaF(opacity)
+        return color
+
     def to_stylesheet_step_window_border(self) -> str:
         """Reserve border space via stylesheet for step windows."""
         if not self.step_border_layers:
@@ -91,6 +134,32 @@ class ScopeColorScheme:
             return f"border: 4px solid rgb({r}, {g}, {b});"
         total_width = sum(layer[0] for layer in self.step_border_layers)
         return f"border: {total_width}px solid transparent;"
+
+
+class RootScopeColorScheme:
+    """Visual identity for the ObjectState root/global scope."""
+
+    scope_id = ""
+    accent_rgb = (255, 255, 255)
+
+    @classmethod
+    def matches(cls, scope_id: Optional[str]) -> bool:
+        return scope_id == cls.scope_id
+
+    @classmethod
+    def create(cls) -> ScopeColorScheme:
+        return ScopeColorScheme(
+            scope_id=cls.scope_id,
+            hue=0,
+            orchestrator_item_bg_rgb=cls.accent_rgb,
+            orchestrator_item_border_rgb=cls.accent_rgb,
+            step_window_border_rgb=cls.accent_rgb,
+            step_item_bg_rgb=cls.accent_rgb,
+            step_border_width=1,
+            step_border_layers=[(1, 1, "solid")],
+            base_color_rgb=cls.accent_rgb,
+            fixed_accent_rgb=cls.accent_rgb,
+        )
 
 
 class ListItemType(Enum):

@@ -77,10 +77,17 @@ class ScopeColorService(QObject):
             build_color_scheme_from_rgb,
             extract_orchestrator_scope,
         )
-        from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+        from pyqt_reactive.widgets.shared.scope_visual_config import (
+            RootScopeColorScheme,
+            ScopeColorScheme,
+        )
 
         if scope_id is None:
             return self._get_neutral_scheme()
+        if RootScopeColorScheme.matches(scope_id):
+            if scope_id not in self._scheme_cache:
+                self._scheme_cache[scope_id] = RootScopeColorScheme.create()
+            return self._scheme_cache[scope_id]
 
         # For orchestrator-level scopes (no "::"), ignore step_index in cache key
         # since orchestrator-level uses fixed tint regardless of step_index.
@@ -126,25 +133,9 @@ class ScopeColorService(QObject):
         Returns:
             PyQt6.QtGui.QColor or None
         """
-        try:
-            from PyQt6.QtGui import QColor
-            from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
-        except Exception:
-            return None
-
         # Always return a QColor. If no scheme exists, fall back to neutral scheme.
         scheme = self.get_color_scheme(scope_id, step_index=step_index)
-
-        base_rgb = scheme.base_color_rgb
-        layers = scheme.step_border_layers
-
-        if layers:
-            _, tint_idx, _ = (layers[0] + ("solid",))[:3]
-        else:
-            tint_idx = 1
-
-        color = tint_color_perceptual(base_rgb, tint_idx)
-        return color.darker(120)
+        return scheme.accent_qcolor()
 
     def set_manual_color(self, scope_id: str, rgb: Tuple[int, int, int]) -> None:
         self._manual_strategy().set_color(scope_id, rgb)
@@ -156,11 +147,22 @@ class ScopeColorService(QObject):
 
     def _invalidate(self, scope_id: str) -> None:
         keys_to_remove = [
-            k for k in self._scheme_cache if k == scope_id or k.startswith(f"{scope_id}::")
+            key
+            for key in self._scheme_cache
+            if self._cache_key_matches_scope(key, scope_id)
         ]
         for key in keys_to_remove:
             self._scheme_cache.pop(key, None)
         self.color_changed.emit(scope_id)
+
+    @staticmethod
+    def _cache_key_matches_scope(cache_key, scope_id: str) -> bool:
+        cached_scope = cache_key[0] if isinstance(cache_key, tuple) else cache_key
+        return cached_scope == scope_id or (
+            scope_id != ""
+            and isinstance(cached_scope, str)
+            and cached_scope.startswith(f"{scope_id}::")
+        )
 
     def _invalidate_all(self) -> None:
         self._scheme_cache.clear()

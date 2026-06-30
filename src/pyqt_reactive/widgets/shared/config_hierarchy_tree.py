@@ -251,13 +251,9 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
     @staticmethod
     def _scheme_flash_color(scheme: ScopeColorScheme) -> Optional[QColor]:
         """Return the scheme-tinted flash color for tree rows."""
-        if not scheme.base_color_rgb or not scheme.step_border_layers:
+        if not scheme.step_border_layers:
             return None
-
-        from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
-
-        _, tint_idx, _ = (scheme.step_border_layers[0] + ("solid",))[:3]
-        return tint_color_perceptual(scheme.base_color_rgb, tint_idx).darker(120)
+        return scheme.accent_qcolor()
 
 
 class ConfigHierarchyTreeHelper:
@@ -443,25 +439,17 @@ class ConfigHierarchyTreeHelper:
             tree: The QTreeWidget to style
             scheme: ScopeColorScheme with base_color_rgb and step_border_layers
         """
-        from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
         from pyqt_reactive.widgets.shared.scope_visual_config import ScopeVisualConfig
 
-        base_rgb = scheme.base_color_rgb
-        if not base_rgb:
-            return
-
         layers = scheme.step_border_layers
-        if layers:
-            _, tint_idx, _ = (layers[0] + ("solid",))[:3]
-        else:
-            tint_idx = 1
-
-        color = tint_color_perceptual(base_rgb, tint_idx)
-        opacity = ScopeVisualConfig.TREE_BG_OPACITY
+        color = scheme.background_tint_qcolor(
+            layers,
+            ScopeVisualConfig.TREE_BG_OPACITY,
+        )
 
         # Apply via stylesheet (most robust for QTreeWidget)
         r, g, b = color.red(), color.green(), color.blue()
-        alpha = int(255 * opacity)
+        alpha = color.alpha()
         tree.setStyleSheet(f"""
             QTreeWidget {{
                 background-color: rgba({r}, {g}, {b}, {alpha});

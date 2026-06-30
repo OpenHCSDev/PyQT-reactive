@@ -15,7 +15,6 @@ from pyqt_reactive.widgets.shared.clickable_help_components import (
     HelpButton,
     HelpIndicator,
 )
-from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 
@@ -25,9 +24,7 @@ def apply_scope_color_scheme_to_widget_tree(root: QWidget, scheme: ScopeColorSch
     if not scheme.step_border_layers:
         raise ValueError("ScopeColorScheme.step_border_layers must be non-empty")
 
-    # step_border_layers items are (width_px, tint_index, pattern)
-    _, tint_idx, _ = scheme.step_border_layers[0]
-    accent_color = tint_color_perceptual(scheme.base_color_rgb, tint_idx).darker(120)
+    accent_color = scheme.accent_qcolor()
 
     for btn in root.findChildren(HelpButton):
         btn.set_scope_accent_color(accent_color)

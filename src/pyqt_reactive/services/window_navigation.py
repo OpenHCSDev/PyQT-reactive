@@ -46,6 +46,8 @@ class NavigationWaitReason(Enum):
     FORM_MANAGER = "form manager"
     ROOT_WIDGETS = "root widgets"
     NESTED_MANAGER = "nested manager"
+    FIELD_TARGET = "field target"
+    LAYOUT = "layout"
     LIST_ITEMS = "list items"
 
 
@@ -190,10 +192,27 @@ class FormFieldWindowNavigationDriver(FieldWindowNavigationDriver):
 
         for part in path_parts[:-1]:
             if part not in current_manager.nested_managers:
-                return False
+                return FormFieldWindowNavigationDriver._is_inline_dataclass_field(
+                    current_manager,
+                    part,
+                )
             current_manager = current_manager.nested_managers[part]
 
         return True
+
+    @staticmethod
+    def _is_inline_dataclass_field(
+        form_manager: FormNavigationManager,
+        field_name: str,
+    ) -> bool:
+        from pyqt_reactive.widgets.shared.clickable_help_components import (
+            InlineDataclassGroupBox,
+        )
+
+        return isinstance(
+            form_manager.widgets.get(field_name),
+            InlineDataclassGroupBox,
+        )
 
 
 class ListItemWindowNavigationDriver(WindowNavigationDriver):

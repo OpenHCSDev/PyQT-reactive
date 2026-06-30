@@ -56,6 +56,84 @@ class ValueSettable(ABC):
         pass
 
 
+class ResolvedValuePreviewSettable(ABC):
+    """
+    ABC for widgets that render inherited/resolved values separately from raw edits.
+
+    Lazy dataclass container widgets may keep raw ``None`` child fields while
+    previewing the resolved inherited dataclass. This contract lets form chrome
+    refresh that preview without replacing the raw editable value.
+    """
+
+    @abstractmethod
+    def set_resolved_value_preview(self, value: Any) -> None:
+        """
+        Set the resolved value used for display/preview only.
+
+        Args:
+            value: Resolved value for the same logical field.
+        """
+        pass
+
+
+class ChildFieldChromeRefreshable(ABC):
+    """
+    ABC for compound widgets that render chrome for their own child fields.
+
+    Inline dataclass widgets can own section labels/reset controls internally
+    while still being edited as one form value. This contract lets the form
+    manager refresh those child markers after ObjectState dirty/signature state
+    changes without knowing widget-specific field names.
+    """
+
+    @abstractmethod
+    def refresh_child_field_chrome(self) -> None:
+        """Refresh dirty/signature/reset chrome for child fields."""
+        pass
+
+
+class ChildFieldNavigationTargetProvider(ABC):
+    """
+    ABC for compound widgets that expose concrete widgets for child fields.
+
+    Inline dataclass widgets may render their own child sections internally
+    instead of creating nested ParameterFormManager instances. This contract
+    lets generic form navigation scroll to the concrete child section while
+    keeping the widget-specific layout private to the inline editor.
+    """
+
+    @abstractmethod
+    def child_field_navigation_target(self, field_name: str) -> Any | None:
+        """
+        Return the widget that visually represents a child field, if present.
+
+        Args:
+            field_name: Direct child field name inside the compound widget.
+        """
+        pass
+
+
+class InlineDataclassGroupBoxChromeProvider(ABC):
+    """
+    ABC for inline dataclass value widgets that contribute container title chrome.
+
+    Regular nested dataclasses can move child widgets such as enableable checkboxes
+    into the groupbox title row. Inline dataclass widgets do not have a nested
+    ParameterFormManager, so they expose the same chrome through this contract
+    while the container remains generic.
+    """
+
+    @abstractmethod
+    def configure_inline_dataclass_groupbox(self, groupbox: Any) -> None:
+        """
+        Attach any inline title chrome to the owning groupbox.
+
+        Args:
+            groupbox: The InlineDataclassGroupBox hosting this value widget.
+        """
+        pass
+
+
 class PlaceholderCapable(ABC):
     """
     ABC for widgets that can display placeholder text.
@@ -152,4 +230,3 @@ class ChangeSignalEmitter(ABC):
             callback: The callback function to disconnect
         """
         pass
-

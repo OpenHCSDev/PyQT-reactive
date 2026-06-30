@@ -15,8 +15,12 @@ from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRender
 from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 from pyqt_reactive.protocols import (
+    ChildFieldChromeRefreshable,
+    ChildFieldNavigationTargetProvider,
+    InlineDataclassGroupBoxChromeProvider,
     ChangeSignalEmitter,
     PyQtWidgetMeta,
+    ResolvedValuePreviewSettable,
     ValueGettable,
     ValueSettable,
 )
@@ -58,6 +62,57 @@ class ScopeAccentColorResolution:
         if scope_accent_color is None:
             return default_color
         return scope_accent_color
+
+
+@dataclass(frozen=True, slots=True)
+class HelpChromeColors:
+    """Resolved stylesheet colors for one help control state set."""
+
+    background: str
+    hover: str
+    pressed: str
+    border: str
+    text: str = "#ffffff"
+
+
+class HelpChromeColorPolicy:
+    """Contrast-aware visual policy for help buttons and indicators."""
+
+    light_accent_luminance = 230
+    neutral_background = "#555555"
+    neutral_hover = "#666666"
+    neutral_pressed = "#444444"
+    neutral_border = "1px solid #ffffff"
+    accent_border = "none"
+
+    @classmethod
+    def resolve(cls, color, color_scheme: ColorScheme) -> HelpChromeColors:
+        qcolor = cls._qcolor(color, color_scheme)
+        if cls._is_light_accent(qcolor):
+            return HelpChromeColors(
+                background=cls.neutral_background,
+                hover=cls.neutral_hover,
+                pressed=cls.neutral_pressed,
+                border=cls.neutral_border,
+            )
+        return HelpChromeColors(
+            background=qcolor.name(),
+            hover=qcolor.lighter(115).name(),
+            pressed=qcolor.darker(115).name(),
+            border=cls.accent_border,
+        )
+
+    @staticmethod
+    def _qcolor(color, color_scheme: ColorScheme) -> QColor:
+        if isinstance(color, QColor):
+            return QColor(color)
+        return QColor(color_scheme.to_hex(color))
+
+    @classmethod
+    def _is_light_accent(cls, color: QColor) -> bool:
+        return color.red() >= cls.light_accent_luminance and (
+            color.green() >= cls.light_accent_luminance
+        ) and color.blue() >= cls.light_accent_luminance
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,19 +305,7 @@ class HelpIndicator(QLabel):
         else:
             logger.debug(f"[HELP_INDICATOR] param_name={help_context.param_name}, using default color")
             # Only set default stylesheet if no scope_accent_color provided
-            self.setStyleSheet(f"""
-                QLabel {{
-                    color: white;
-                    font-size: 10px;
-                    border: none;
-                    border-radius: 3px;
-                    padding: 2px 4px;
-                    background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
-                }}
-                QLabel:hover {{
-                    background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
-                }}
-            """)
+            self._apply_color(self.color_scheme.selection_bg)
         
         # Set fixed size for consistent appearance (square)
         self.setFixedSize(16, 16)
@@ -285,24 +328,26 @@ class HelpIndicator(QLabel):
         
     def set_scope_accent_color(self, color) -> None:
         """Set scope accent color (QColor). Called by parent window for scope styling."""
-        from PyQt6.QtGui import QColor
-
         if not isinstance(color, QColor):
             raise TypeError("HelpIndicator.set_scope_accent_color expects a QColor")
 
-        hex_color = color.name()
+        self._apply_color(color)
+
+    def _apply_color(self, color) -> None:
+        """Apply contrast-aware help indicator styling."""
+        colors = HelpChromeColorPolicy.resolve(color, self.color_scheme)
 
         self.setStyleSheet(f"""
             QLabel {{
-                color: white;
+                color: {colors.text};
                 font-size: 10px;
-                border: none;
+                border: {colors.border};
                 border-radius: 3px;
-                padding: 2px 4px;
-                background-color: {hex_color};
+                padding: 1px 3px;
+                background-color: {colors.background};
             }}
             QLabel:hover {{
-                background-color: {hex_color};
+                background-color: {colors.hover};
             }}
         """)
 
@@ -426,31 +471,23 @@ class HelpButton(QPushButton):
 
     def _apply_color(self, color) -> None:
         """Apply a color to this button (for scope accent styling)."""
-        if isinstance(color, QColor):
-            hex_color = color.name()
-            hex_lighter = color.lighter(115).name()
-            hex_darker = color.darker(115).name()
-        else:
-            # Tuple or color scheme color
-            hex_color = self.color_scheme.to_hex(color)
-            hex_lighter = hex_color  # Can't lighten without QColor
-            hex_darker = hex_color
+        colors = HelpChromeColorPolicy.resolve(color, self.color_scheme)
 
         padding = "0" if self._square_icon else "4px 8px"
         self.setStyleSheet(f"""
             QPushButton {{
-                background-color: {hex_color};
-                color: white;
-                border: none;
+                background-color: {colors.background};
+                color: {colors.text};
+                border: {colors.border};
                 padding: {padding};
                 border-radius: 3px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
-                background-color: {hex_lighter};
+                background-color: {colors.hover};
             }}
             QPushButton:pressed {{
-                background-color: {hex_darker};
+                background-color: {colors.pressed};
             }}
         """)
 
@@ -676,13 +713,28 @@ class ProvenanceLabel(QLabel, ProvenanceNavigationMixin):
         super().__init__(text, parent)
         self._state = state  # ObjectState instance
         self._dotted_path = dotted_path  # Full dotted path for provenance lookup
+        self._base_bold = False
+        self._base_point_size = self.font().pointSizeF()
+        if self._base_point_size <= 0:
+            self._base_point_size = float(self.font().pointSize())
+        if self._base_point_size <= 0:
+            self._base_point_size = 9.0
         self.setMouseTracking(True)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+    def set_base_bold(self, bold: bool) -> None:
+        """Set the label's non-hover font weight."""
+        self._base_bold = bold
+        font = self.font()
+        font.setBold(bold)
+        self.setFont(font)
 
     def enterEvent(self, event) -> None:
         """On hover: show bold + pointer cursor if field has provenance."""
         if self._has_provenance():
             font = self.font()
             font.setBold(True)
+            font.setPointSizeF(self._base_point_size + 1.0)
             self.setFont(font)
             self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         super().enterEvent(event)
@@ -690,7 +742,8 @@ class ProvenanceLabel(QLabel, ProvenanceNavigationMixin):
     def leaveEvent(self, event) -> None:
         """On leave: restore normal font weight."""
         font = self.font()
-        font.setBold(False)
+        font.setBold(self._base_bold)
+        font.setPointSizeF(self._base_point_size)
         self.setFont(font)
         self.unsetCursor()
         super().leaveEvent(event)
@@ -807,6 +860,10 @@ class LabelWithHelp(QWidget):
         font = self._label.font()
         font.setUnderline(underline)
         self._label.setFont(font)
+
+    def set_bold(self, bold: bool) -> None:
+        """Set persistent label font weight."""
+        self._label.set_base_bold(bold)
 
     def set_dirty_indicator(self, is_dirty: bool) -> None:
         """Set dirty indicator (asterisk prefix) for unsaved changes.
@@ -1072,20 +1129,8 @@ class GroupBoxWithHelp(FlashableGroupBox):
 
     def _paint_scope_background(self, layers) -> None:
         """Paint subtle scope-colored background (matching list item style)."""
-        from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
         from pyqt_reactive.widgets.shared.scope_visual_config import ScopeVisualConfig
         from pyqt_reactive.animation import get_widget_corner_radius, DEFAULT_CORNER_RADIUS
-
-        base_rgb = self._scope_color_scheme.base_color_rgb
-
-        # Get tint index from first layer (or default)
-        if layers:
-            _, tint_idx, _ = (layers[0] + ("solid",))[:3]
-        else:
-            tint_idx = 1
-
-        color = tint_color_perceptual(base_rgb, tint_idx)
-        color.setAlphaF(ScopeVisualConfig.GROUPBOX_BG_OPACITY)
 
         # Get border rect (accounts for margin-top offset)
         rect = self._get_border_rect()
@@ -1102,7 +1147,12 @@ class GroupBoxWithHelp(FlashableGroupBox):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
+        painter.setBrush(
+            self._scope_color_scheme.background_tint_qcolor(
+                layers,
+                ScopeVisualConfig.GROUPBOX_BG_OPACITY,
+            )
+        )
         painter.drawRoundedRect(QRectF(content_rect), radius - border_inset, radius - border_inset)
         painter.end()
 
@@ -1261,6 +1311,9 @@ class InlineDataclassGroupBox(
     GroupBoxWithHelp,
     ValueGettable,
     ValueSettable,
+    ResolvedValuePreviewSettable,
+    ChildFieldChromeRefreshable,
+    ChildFieldNavigationTargetProvider,
     ChangeSignalEmitter,
     metaclass=PyQtWidgetMeta,
 ):
@@ -1277,6 +1330,8 @@ class InlineDataclassGroupBox(
             ScopeColorSchemeReceiver,
         ):
             widget.set_scope_color_scheme(self._scope_color_scheme)
+        if isinstance(widget, InlineDataclassGroupBoxChromeProvider):
+            widget.configure_inline_dataclass_groupbox(self)
 
     def set_scope_color_scheme(self, scheme) -> None:
         super().set_scope_color_scheme(scheme)
@@ -1301,6 +1356,30 @@ class InlineDataclassGroupBox(
                 f"got {type(self._inline_value_widget).__name__}."
             )
         self._inline_value_widget.set_value(value)
+
+    def set_resolved_value_preview(self, value) -> None:
+        if not isinstance(self._inline_value_widget, ResolvedValuePreviewSettable):
+            raise TypeError(
+                "Inline dataclass value widget must implement ResolvedValuePreviewSettable, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        self._inline_value_widget.set_resolved_value_preview(value)
+
+    def refresh_child_field_chrome(self) -> None:
+        if not isinstance(self._inline_value_widget, ChildFieldChromeRefreshable):
+            raise TypeError(
+                "Inline dataclass value widget must implement ChildFieldChromeRefreshable, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        self._inline_value_widget.refresh_child_field_chrome()
+
+    def child_field_navigation_target(self, field_name: str):
+        if not isinstance(
+            self._inline_value_widget,
+            ChildFieldNavigationTargetProvider,
+        ):
+            return None
+        return self._inline_value_widget.child_field_navigation_target(field_name)
 
     def connect_change_signal(self, callback) -> None:
         if not isinstance(self._inline_value_widget, ChangeSignalEmitter):

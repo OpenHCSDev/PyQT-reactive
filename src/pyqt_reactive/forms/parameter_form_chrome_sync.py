@@ -62,8 +62,14 @@ class ParameterFormChromeSync:
 
         manager = self.manager
         dotted_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-        should_underline = dotted_path in manager.state.signature_diff_fields
-        is_dirty = dotted_path in manager.state.dirty_fields
+        should_underline = self._path_or_descendant_in(
+            dotted_path,
+            manager.state.signature_diff_fields,
+        )
+        is_dirty = self._path_or_descendant_in(
+            dotted_path,
+            manager.state.dirty_fields,
+        )
 
         if param_name in manager.labels:
             label = manager.labels[param_name]
@@ -73,6 +79,16 @@ class ParameterFormChromeSync:
         widget = manager.widgets.get(param_name)
         if isinstance(widget, GroupBoxWithHelp):
             widget.set_dirty_marker(is_dirty, should_underline)
+        from pyqt_reactive.protocols.widget_protocols import ChildFieldChromeRefreshable
+        if isinstance(widget, ChildFieldChromeRefreshable):
+            widget.refresh_child_field_chrome()
+
+    @staticmethod
+    def _path_or_descendant_in(path: str, paths: set[str]) -> bool:
+        if path in paths:
+            return True
+        prefix = f"{path}."
+        return any(candidate.startswith(prefix) for candidate in paths)
 
     def state_changed(self) -> None:
         for param_name in set(self.manager.labels) | set(self.manager.widgets):
@@ -122,10 +138,14 @@ class ParameterFormChromeSync:
 
     def refresh_widgets_for_paths(self, paths: Set[str]) -> None:
         """Refresh value widgets and inherited placeholders for exact ObjectState paths."""
-        from pyqt_reactive.protocols.widget_protocols import ValueSettable
+        from pyqt_reactive.protocols.widget_protocols import (
+            ResolvedValuePreviewSettable,
+            ValueSettable,
+        )
 
         manager = self.manager
         missing = object()
+        refreshed_container_paths: set[str] = set()
 
         for path in paths:
             if "." in path:
@@ -134,29 +154,69 @@ class ParameterFormChromeSync:
                 path_prefix = ""
                 leaf_field = path
 
-            if path_prefix != manager.field_id:
-                continue
-
-            widget = manager.widgets.get(leaf_field)
-            if isinstance(widget, ValueSettable):
-                value = manager.state.parameters.get(path, missing)
-                if value is not missing:
-                    skip_context_behavior = value is None
-                    manager._widget_service.update_widget_value(
-                        widget,
-                        value,
-                        leaf_field,
-                        skip_context_behavior,
-                        manager,
-                    )
-                    if value is None:
-                        manager._parameter_ops_service.refresh_single_placeholder(
-                            manager,
-                            leaf_field,
+            owner_field = self._direct_child_field_for_path(path)
+            if owner_field is not None:
+                owner_path = (
+                    f"{manager.field_id}.{owner_field}"
+                    if manager.field_id
+                    else owner_field
+                )
+                if owner_path not in refreshed_container_paths:
+                    owner_widget = manager.widgets.get(owner_field)
+                    if isinstance(owner_widget, ValueSettable):
+                        raw_value = manager.state.parameters.get(owner_path, missing)
+                        if raw_value is not missing:
+                            manager._widget_service.update_widget_value(
+                                owner_widget,
+                                raw_value,
+                                owner_field,
+                                True,
+                                manager,
+                            )
+                    if isinstance(owner_widget, ResolvedValuePreviewSettable):
+                        owner_widget.set_resolved_value_preview(
+                            manager.state.get_resolved_value(owner_path)
                         )
+                    if owner_widget is not None:
+                        self.update_label_styling(owner_field)
+                        refreshed_container_paths.add(owner_path)
+
+            if path_prefix == manager.field_id:
+                widget = manager.widgets.get(leaf_field)
+                if isinstance(widget, ValueSettable):
+                    value = manager.state.parameters.get(path, missing)
+                    if value is not missing:
+                        skip_context_behavior = value is None
+                        manager._widget_service.update_widget_value(
+                            widget,
+                            value,
+                            leaf_field,
+                            skip_context_behavior,
+                            manager,
+                        )
+                        if value is None:
+                            manager._parameter_ops_service.refresh_single_placeholder(
+                                manager,
+                                leaf_field,
+                            )
 
         for nested_manager in manager.nested_managers.values():
             nested_manager.chrome_sync.refresh_widgets_for_paths(paths)
+
+    def _direct_child_field_for_path(self, path: str) -> str | None:
+        manager = self.manager
+        if manager.field_id:
+            prefix = f"{manager.field_id}."
+            if not path.startswith(prefix):
+                return None
+            remainder = path[len(prefix):]
+        else:
+            remainder = path
+
+        if "." not in remainder:
+            return None
+
+        return remainder.split(".", 1)[0]
 
     def dispatch_reset(self, param_name: str) -> None:
         dotted_path = f"{self.manager.field_id}.{param_name}" if self.manager.field_id else param_name

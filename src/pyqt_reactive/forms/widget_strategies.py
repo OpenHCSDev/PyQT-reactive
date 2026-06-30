@@ -22,7 +22,13 @@ from pyqt_reactive.forms.parameter_value_contracts import (
 from pyqt_reactive.widgets import (
     NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox, NoneAwareCheckBox
 )
-from pyqt_reactive.protocols import PyQtWidgetMeta, ValueGettable, ValueSettable, ChangeSignalEmitter
+from pyqt_reactive.protocols import (
+    ChangeSignalEmitter,
+    PyQtWidgetMeta,
+    ResolvedValuePreviewSettable,
+    ValueGettable,
+    ValueSettable,
+)
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
@@ -1063,6 +1069,14 @@ class PyQt6WidgetEnhancer:
         # PERFORMANCE OPTIMIZATION: Skip if placeholder text is unchanged
         if not isinstance(widget, QWidget):
             raise TypeError(f"Placeholder support requires QWidget, got {type(widget).__name__}")
+
+        if (
+            resolved_value is not None
+            and isinstance(widget, ResolvedValuePreviewSettable)
+        ):
+            widget.set_resolved_value_preview(resolved_value)
+            _set_cached_placeholder_text(widget, placeholder_text)
+            return
 
         cached_placeholder = _get_cached_placeholder_text(widget)
         if cached_placeholder == placeholder_text:

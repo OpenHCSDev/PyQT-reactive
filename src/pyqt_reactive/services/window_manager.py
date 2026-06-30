@@ -128,9 +128,13 @@ class NavigationRetryScheduler:
         def retry_after_build() -> None:
             QTimer.singleShot(cls.RETRY_DELAY_MS, check_and_navigate)
 
+        registered = False
         for callbacks in callback_lists:
+            if len(callbacks) == 0:
+                continue
             callbacks.append(retry_after_build)
-        return True
+            registered = True
+        return registered
 
 
 class WindowManager:

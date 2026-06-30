@@ -247,19 +247,28 @@ class EnabledTitleWidgetMoveAuthority:
         if context.checkbox_widget is None:
             return
 
+        context.title_widget = self.wrap_checkbox_widget_for_title(
+            context.checkbox_widget,
+            context.request.parent_manager.color_scheme,
+        )
+
+    @staticmethod
+    def wrap_checkbox_widget_for_title(
+        checkbox_widget: NoneAwareCheckBox,
+        color_scheme,
+    ) -> QWidget:
+        """Return the standard compact title-row container for an enableable checkbox."""
+
         from PyQt6.QtCore import Qt
         from PyQt6.QtWidgets import QHBoxLayout, QStyle, QWidget
 
-        parent_manager = context.request.parent_manager
-        bg_color = parent_manager.color_scheme.to_hex(
-            parent_manager.color_scheme.button_normal_bg
-        )
+        bg_color = color_scheme.to_hex(color_scheme.button_normal_bg)
         checkbox_container = QWidget()
         checkbox_container.setStyleSheet(f"background-color: {bg_color};")
-        indicator_w = context.checkbox_widget.style().pixelMetric(
+        indicator_w = checkbox_widget.style().pixelMetric(
             QStyle.PixelMetric.PM_IndicatorWidth
         )
-        indicator_h = context.checkbox_widget.style().pixelMetric(
+        indicator_h = checkbox_widget.style().pixelMetric(
             QStyle.PixelMetric.PM_IndicatorHeight
         )
         checkbox_container.setFixedSize(indicator_w, indicator_h)
@@ -267,22 +276,31 @@ class EnabledTitleWidgetMoveAuthority:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        context.checkbox_widget.setStyleSheet("padding: 0px; margin: 0px;")
-        context.checkbox_widget.setFixedSize(indicator_w, indicator_h)
-        context.checkbox_widget.setParent(checkbox_container)
-        layout.addWidget(context.checkbox_widget)
-        context.title_widget = checkbox_container
+        checkbox_widget.setStyleSheet("padding: 0px; margin: 0px;")
+        checkbox_widget.setFixedSize(indicator_w, indicator_h)
+        checkbox_widget.setParent(checkbox_container)
+        layout.addWidget(checkbox_widget)
+        return checkbox_container
 
     def bind_title_toggle(self, context: EnabledTitleWidgetMoveContext) -> None:
         if context.checkbox_widget is None:
             return
 
+        self.bind_title_label_to_checkbox(context.container, context.checkbox_widget)
+
+    @staticmethod
+    def bind_title_label_to_checkbox(
+        container: GroupBoxWithHelp,
+        checkbox_widget: NoneAwareCheckBox,
+    ) -> None:
+        """Make an enableable group title click toggle the owning checkbox."""
+
         from PyQt6.QtCore import Qt
 
-        title_label = context.container._title_label
+        title_label = container._title_label
 
         def on_title_click(event):
-            context.checkbox_widget.toggle()
+            checkbox_widget.toggle()
 
         title_label.mousePressEvent = on_title_click
         title_label.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -293,10 +311,10 @@ class EnabledTitleWidgetMoveAuthority:
 
         from pyqt_reactive.utils.styling_utils import update_reset_button_styling
 
-        parent_manager = context.request.parent_manager
-        ResetButtonStyler.apply(context.enabled_reset_button, parent_manager.color_scheme)
-        context.enabled_reset_button.setMaximumWidth(60)
-        context.enabled_reset_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+        self.prepare_title_reset_button(
+            context.enabled_reset_button,
+            context.request.parent_manager.color_scheme,
+        )
         update_reset_button_styling(
             context.enabled_reset_button,
             context.request.nested_manager.state,
@@ -304,33 +322,53 @@ class EnabledTitleWidgetMoveAuthority:
             context.request.enabled_field,
         )
 
+    @staticmethod
+    def prepare_title_reset_button(reset_button: QWidget, color_scheme) -> None:
+        """Apply the standard enableable title reset-button styling."""
+
+        ResetButtonStyler.apply(reset_button, color_scheme)
+        reset_button.setMaximumWidth(60)
+        reset_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+
     def create_provenance_button(
         self,
         context: EnabledTitleWidgetMoveContext,
     ) -> ProvenanceButton:
-        from pyqt_reactive.widgets.shared.clickable_help_components import (
-            ProvenanceButton,
-        )
-
         dotted_path = (
             f"{context.request.nested_manager.field_id}.{context.request.enabled_field}"
             if context.request.nested_manager.field_id
             else context.request.enabled_field
         )
+        return self.create_title_provenance_button(
+            state=context.request.nested_manager.state,
+            dotted_path=dotted_path,
+            color_scheme=context.request.parent_manager.color_scheme,
+        )
+
+    @staticmethod
+    def create_title_provenance_button(
+        *,
+        state,
+        dotted_path: str,
+        color_scheme,
+    ) -> ProvenanceButton:
+        """Create the standard provenance button for an enableable title field."""
+
+        from pyqt_reactive.widgets.shared.clickable_help_components import (
+            ProvenanceButton,
+        )
+
         provenance_button = ProvenanceButton(
             text="^",
-            color_scheme=context.request.parent_manager.color_scheme,
+            color_scheme=color_scheme,
         )
         provenance_button.setMaximumWidth(25)
         provenance_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         ResetButtonStyler.apply(
             provenance_button,
-            context.request.parent_manager.color_scheme,
+            color_scheme,
         )
-        provenance_button.set_provenance_info(
-            context.request.nested_manager.state,
-            dotted_path,
-        )
+        provenance_button.set_provenance_info(state, dotted_path)
         provenance_button.setVisible(provenance_button._has_provenance())
         return provenance_button
 

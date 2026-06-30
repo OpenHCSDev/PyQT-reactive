@@ -277,7 +277,7 @@ class ParameterFormManager(
         # If no explicit scope_accent_color provided, derive it from the state's scope_id
         # using the centralized ScopeColorService. This avoids widget-tree traversal and
         # ensures every widget created by this manager receives the proper accent color.
-        if config.scope_accent_color is None and state.scope_id:
+        if config.scope_accent_color is None and state.scope_id is not None:
             try:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
                 svc = ScopeColorService.instance()
@@ -352,7 +352,7 @@ class ParameterFormManager(
 
             # Store full scope color scheme for nested GroupBox borders/backgrounds
             self._scope_color_scheme = None
-            if self.scope_id:
+            if self.scope_id is not None:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
                 self._scope_color_scheme = ScopeColorService.instance().get_color_scheme(
                     self.scope_id,
@@ -1098,6 +1098,9 @@ class ParameterFormManager(
             if not nested_manager:
                 logger.debug(f"[FLASH] No nested manager found for prefix={prefix}")
                 return
+            nested_remainder = path[len(prefix) + 1:] if path.startswith(prefix + ".") else ""
+            if self._queue_inline_dataclass_flash_for_path(nested_manager, nested_remainder):
+                return
             leaf_widget = nested_manager.widgets.get(leaf_field)
             label_widget = nested_manager.labels.get(leaf_field)
             logger.debug(
@@ -1119,6 +1122,8 @@ class ParameterFormManager(
             from pyqt_reactive.widgets.shared.clickable_help_components import FlashableGroupBox
             if isinstance(leaf_widget, FlashableGroupBox):
                 self.queue_flash_local(leaf_widget._flash_key)
+                return
+            if self._queue_inline_dataclass_flash_for_path(self, path):
                 return
 
         def _find_function_pane_ancestor(widget: QWidget | None) -> QWidget | None:
@@ -1198,6 +1203,29 @@ class ParameterFormManager(
             self.queue_flash_local(tree_key)
             
         logger.debug(f"[FLASH] Queued leaf flash: key={leaf_flash_key}, leaf={leaf_field}")
+
+    def _queue_inline_dataclass_flash_for_path(
+        self,
+        manager: 'ParameterFormManager',
+        path: str,
+    ) -> bool:
+        """Flash an inline dataclass value widget for one of its child paths."""
+        if "." not in path:
+            return False
+
+        container_field = path.split(".", 1)[0]
+        container_widget = manager.widgets.get(container_field)
+        from pyqt_reactive.widgets.shared.clickable_help_components import FlashableGroupBox
+        if not isinstance(container_widget, FlashableGroupBox):
+            return False
+
+        self.queue_flash_local(container_widget._flash_key)
+        logger.debug(
+            "[FLASH] Queued inline dataclass flash: key=%s child_path=%s",
+            container_widget._flash_key,
+            path,
+        )
+        return True
 
     # PAINT-TIME API: get_flash_color_for_key() inherited from VisualUpdateMixin
     # Groupboxes and tree items call this during paint to get current flash color
