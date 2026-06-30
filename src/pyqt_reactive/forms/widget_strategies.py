@@ -6,8 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import ClassVar, Dict, Type, Callable, get_origin
 
-from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QGroupBox, QVBoxLayout, QSpinBox, QDoubleSpinBox, QWidget
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QVBoxLayout, QSpinBox, QDoubleSpinBox, QWidget
 from PyQt6.QtGui import QIntValidator, QValidator
 from magicgui.widgets import Widget as MagicGuiWidget, create_widget
 from magicgui.type_map import register_type
@@ -520,10 +519,23 @@ def create_enum_widget_unified(enum_type: Type, current_value: ParameterValue | 
         widget.addItem(display_text, enum_value)
 
     # Set current selection
-    if current_value and isinstance(current_value, enum_type):
-        _select_combobox_data(widget, current_value)
+    enum_value = coerce_enum_widget_value(enum_type, current_value)
+    if enum_value is not None:
+        _select_combobox_data(widget, enum_value)
 
     return widget
+
+
+def coerce_enum_widget_value(enum_type: Type, value: ParameterValue | None) -> Enum | None:
+    """Coerce enum-compatible UI values through the enum declaration itself."""
+    if isinstance(value, enum_type):
+        return value
+    if not isinstance(value, str):
+        return None
+    for enum_value in enum_type:
+        if value in (enum_value.value, enum_value.name, str(enum_value)):
+            return enum_value
+    return None
 
 
 def _select_combobox_data(widget: QComboBox, value: ParameterValue) -> None:

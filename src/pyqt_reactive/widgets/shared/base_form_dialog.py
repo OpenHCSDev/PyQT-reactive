@@ -104,6 +104,15 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         """Return the optional code-document driver for this window."""
         return None
 
+    def window_manager_scope_id(self) -> str | None:
+        """Return the scope key used for WindowManager registration.
+
+        The ObjectState scope is usually the same value, but some applications
+        expose a stable UI/window id for a scope whose ObjectState id is not
+        user-facing.
+        """
+        return self.scope_id
+
     @property
     def dirty_state(self) -> DirtyWindowStateTracker:
         """Return shared dirty/signature tracking for this window."""
@@ -159,7 +168,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
     def show(self) -> None:
         """Override show to enforce singleton-per-scope behavior."""
-        scope_key = self.scope_id
+        scope_key = self.window_manager_scope_id()
         if scope_key is None:
             super().show()
             return
@@ -231,7 +240,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
     def _unregister_managed_window(self) -> None:
         """Remove this managed window from WindowManager singleton tracking."""
-        scope_key = self.scope_id
+        scope_key = self.window_manager_scope_id()
         if scope_key:
             WindowManager.unregister(scope_key)
 

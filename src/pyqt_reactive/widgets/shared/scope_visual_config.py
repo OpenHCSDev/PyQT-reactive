@@ -155,8 +155,8 @@ class RootScopeColorScheme:
             orchestrator_item_border_rgb=cls.accent_rgb,
             step_window_border_rgb=cls.accent_rgb,
             step_item_bg_rgb=cls.accent_rgb,
-            step_border_width=1,
-            step_border_layers=[(1, 1, "solid")],
+            step_border_width=3,
+            step_border_layers=[(3, 1, "solid")],
             base_color_rgb=cls.accent_rgb,
             fixed_accent_rgb=cls.accent_rgb,
         )

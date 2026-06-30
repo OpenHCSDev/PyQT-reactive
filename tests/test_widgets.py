@@ -1,7 +1,8 @@
 """Tests for extended widgets."""
 
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
-import pytest
 
 
 def test_no_scroll_spinbox(qapp):
@@ -56,6 +57,73 @@ def test_enum_union_uses_enum_widget(qapp):
     assert isinstance(widget, QComboBox)
     assert widget.count() == 2
     assert widget.itemData(0) is Mode.A
+
+
+def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
+    """Function forms derive widgets from signatures and ObjectState path types."""
+    from PyQt6.QtCore import QEventLoop, QTimer
+    from PyQt6.QtWidgets import QComboBox
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    class Mode(Enum):
+        A = "a"
+        B = "b"
+
+    @dataclass
+    class BaseConfig:
+        output_dir: str = "/tmp"
+
+    class ConfigContract(ABC):
+        @property
+        @abstractmethod
+        def choice(self) -> Mode:
+            """Selected mode."""
+
+    @dataclass(frozen=True, slots=True)
+    class ConcreteConfig(ConfigContract):
+        choice: Mode = Mode.A
+
+    def process(image, mode: Mode | str = Mode.A, config: ConfigContract = ConcreteConfig()):
+        return image
+
+    set_base_config_type(BaseConfig)
+    ObjectStateRegistry.clear()
+    state = ObjectState(
+        process,
+        scope_id="test::process",
+        initial_values={"mode": "b"},
+    )
+    manager = ParameterFormManager(
+        state=state,
+        config=FormManagerConfig(
+            color_scheme=ColorScheme(),
+            function_target=process,
+            use_scroll_area=False,
+        ),
+    )
+
+    try:
+        loop = QEventLoop()
+        QTimer.singleShot(200, loop.quit)
+        loop.exec()
+
+        mode_widget = manager.widgets["mode"]
+        assert isinstance(mode_widget, QComboBox)
+        assert mode_widget.currentData() is Mode.B
+
+        assert "config" in manager.nested_managers
+        nested = manager.nested_managers["config"]
+        choice_widget = nested.widgets["choice"]
+        assert isinstance(choice_widget, QComboBox)
+        assert choice_widget.currentData() is Mode.A
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
 
 
 def test_action_tabbed_window_body_switches_active_actions(qapp):

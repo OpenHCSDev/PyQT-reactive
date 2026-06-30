@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, is_dataclass
 import logging
-from typing import Any, Dict, Type, Optional, List, Set, Callable
+from typing import Any, Dict, Type, Optional, List, Set, Callable, TYPE_CHECKING
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor
@@ -15,6 +15,9 @@ from objectstate import (
     register_hierarchy_relationship,
     unregister_hierarchy_relationship,
 )
+
+if TYPE_CHECKING:
+    from objectstate import ObjectState
 
 from .widget_creation_types import ParameterFormManager as ParameterFormManagerABC, _CombinedMeta
 # timer decorator made optional
@@ -107,6 +110,47 @@ class FormTargetPathAccess:
         return storage[field_name]
 
 
+class ParameterFormTypeResolver:
+    """Resolve visible form field types from ObjectState and signature authorities."""
+
+    @staticmethod
+    def field_type(manager: "ParameterFormManager", field_name: str, signature_type: Type) -> Type:
+        dotted_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
+        if not ParameterFormTypeResolver.path_has_children(manager.state.parameters, dotted_path):
+            return signature_type
+
+        state_type = manager.state.type_for_path(dotted_path)
+        if isinstance(state_type, type) and is_dataclass(state_type):
+            return state_type
+        return signature_type
+
+    @staticmethod
+    def path_has_children(parameters: Dict[str, Any], dotted_path: str) -> bool:
+        prefix = f"{dotted_path}."
+        return any(
+            path.startswith(prefix)
+            for path in parameters
+            if path != dotted_path
+        )
+
+    @staticmethod
+    def scoped_parameters(state, field_id: str) -> ParameterDefaultsByName:
+        """Project ObjectState's flat parameters into one form manager scope."""
+        if not field_id:
+            return ParameterDefaultsByName(
+                (key, value) for key, value in state.parameters.items() if "." not in key
+            )
+
+        prefix_dot = f"{field_id}."
+        result = ParameterDefaultsByName()
+        for path, value in state.parameters.items():
+            if path.startswith(prefix_dot):
+                remainder = path[len(prefix_dot):]
+                if "." not in remainder:
+                    result[remainder] = value
+        return result
+
+
 class ParameterFormManager(
     QWidget,
     ParameterFormManagerABC,
@@ -190,30 +234,7 @@ class ParameterFormManager(
                     PFM with field_id='well_filter_config' returns:
                     {'well_filter': 2, 'enabled': True}
         """
-        if not self.field_id:
-            # Root PFM: return only top-level parameters (no dots)
-            return ParameterDefaultsByName(
-                (k, v) for k, v in self.state.parameters.items() if '.' not in k
-            )
-
-        # Nested PFM: filter by prefix and strip prefix from keys
-        # ALSO: For enableable types, include the 'enabled' field specially
-        # because it's stored as '{field_id}.enabled' in shared state
-        from python_introspect import Enableable
-
-        enabled_field = Enableable.require_parameter_name()
-        prefix_dot = f'{self.field_id}.'
-        result = ParameterDefaultsByName()
-        for path, value in self.state.parameters.items():
-            if path.startswith(prefix_dot):
-                remainder = path[len(prefix_dot):]
-                # Only direct children (no nested dots in remainder)
-                if '.' not in remainder:
-                    result[remainder] = value
-                # Include the nominal enable field if it exists for this nested manager.
-                elif remainder == enabled_field:
-                    result[enabled_field] = value
-        return result
+        return ParameterFormTypeResolver.scoped_parameters(self.state, self.field_id)
 
     @property
     def parameter_types(self) -> ParameterTypesByName:
@@ -265,9 +286,6 @@ class ParameterFormManager(
                    Created by lifecycle owner or looked up from ObjectStateRegistry.
             config: Optional configuration object for UI settings
         """
-        # Import here to avoid circular dependency
-        from objectstate import ObjectState
-
         # Unpack config or use defaults
         config = config or FormManagerConfig()
         global _PFM_SEQ
@@ -299,7 +317,13 @@ class ParameterFormManager(
         # _extraction_target is editable config object (e.g., PipelineConfig)
         target_obj = state.saved_object
         if self.field_id:
-            target_obj = FormTargetPathAccess.raw_path(target_obj, self.field_id)
+            resolved_target = state.get_resolved_value(self.field_id)
+            if resolved_target is not None:
+                target_obj = resolved_target
+            elif config.function_target is not None:
+                target_obj = config.function_target
+            else:
+                target_obj = FormTargetPathAccess.raw_path(target_obj, self.field_id)
 
         # Auto-set render_enabled_in_header for nested enableable objects
         # If target_obj is enableable and this is a nested form, render enabled in header
@@ -395,11 +419,15 @@ class ParameterFormManager(
                 from python_introspect import UnifiedParameterAnalyzer
 
                 param_info_dict = UnifiedParameterAnalyzer.analyze(target_obj, exclude_params=config.exclude_params)
-                # self.parameters property already filters/strips keys for our prefix
-                derived_param_types = {name: info.param_type for name, info in param_info_dict.items() if name in self.parameters}
+                scoped_parameters = ParameterFormTypeResolver.scoped_parameters(state, self.field_id)
+                derived_param_types = {
+                    name: ParameterFormTypeResolver.field_type(self, name, info.param_type)
+                    for name, info in param_info_dict.items()
+                    if name in scoped_parameters
+                }
 
                 # Include enabled field in normal processing (will be moved to title later)
-                default_value = self.parameters
+                default_value = scoped_parameters
                 param_type = derived_param_types
 
                 # Access state data directly - ObjectState is single source of truth
