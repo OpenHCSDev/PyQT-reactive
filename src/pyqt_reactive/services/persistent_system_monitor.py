@@ -8,47 +8,21 @@ and provides smooth, responsive performance monitoring.
 
 import time
 import logging
-import subprocess
-import platform
 from typing import Dict, Any
 from collections import deque
 
-from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
+from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker, Qt
 
-import psutil
-
-try:
-    import GPUtil
-    GPU_AVAILABLE = True
-except ImportError:
-    GPU_AVAILABLE = False
+from pyqt_reactive.services.system_metrics_sampler import (
+    GPU_AVAILABLE,
+    SystemMetricsSampler,
+    SystemMetrics,
+    SystemMetricsSamplerConfig,
+    get_cpu_freq_mhz,
+    is_wsl,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def is_wsl() -> bool:
-    """Check if running in Windows Subsystem for Linux."""
-    return 'microsoft' in platform.uname().release.lower()
-
-
-def get_cpu_freq_mhz() -> int:
-    """Get CPU frequency in MHz, with WSL compatibility."""
-    if is_wsl():
-        try:
-            output = subprocess.check_output(
-                ['powershell.exe', '-Command',
-                 'Get-CimInstance -ClassName Win32_Processor | Select-Object -ExpandProperty CurrentClockSpeed'],
-                stderr=subprocess.DEVNULL,
-                timeout=2  # Add timeout to prevent hanging
-            )
-            return int(output.strip())
-        except Exception:
-            return 0
-    try:
-        freq = psutil.cpu_freq()
-        return int(freq.current) if freq else 0
-    except Exception:
-        return 0
 
 
 class PersistentSystemMonitorThread(QThread):
@@ -64,7 +38,13 @@ class PersistentSystemMonitorThread(QThread):
     metrics_updated = pyqtSignal(dict)  # Emitted when new metrics are available
     error_occurred = pyqtSignal(str)    # Emitted when an error occurs
     
-    def __init__(self, update_interval: float = 1.0, history_length: int = 60):
+    def __init__(
+        self,
+        update_interval: float = 1.0,
+        history_length: int = 60,
+        *,
+        sampler_config: SystemMetricsSamplerConfig | None = None,
+    ):
         """
         Initialize the persistent monitor thread.
         
@@ -77,6 +57,8 @@ class PersistentSystemMonitorThread(QThread):
         self.update_interval = update_interval
         self.history_length = history_length
         self._stop_requested = False
+        self.sampler_config = sampler_config or SystemMetricsSamplerConfig()
+        self._sampler = SystemMetricsSampler(self.sampler_config)
         
         # Thread-safe data storage
         self._mutex = QMutex()
@@ -105,20 +87,21 @@ class PersistentSystemMonitorThread(QThread):
             try:
                 # Collect all metrics
                 metrics = self._collect_metrics()
+                metrics_payload = metrics.as_dict()
 
                 # Update history with thread safety
                 with QMutexLocker(self._mutex):
-                    self.cpu_history.append(metrics.get('cpu_percent', 0))
-                    self.ram_history.append(metrics.get('ram_percent', 0))
-                    self.gpu_history.append(metrics.get('gpu_percent', 0))
-                    self.vram_history.append(metrics.get('vram_percent', 0))
+                    self.cpu_history.append(metrics.cpu_percent)
+                    self.ram_history.append(metrics.ram_percent)
+                    self.gpu_history.append(metrics.gpu_percent)
+                    self.vram_history.append(metrics.vram_percent)
                     self.time_stamps.append(time.time())
 
                     # Cache current metrics
-                    self._current_metrics = metrics.copy()
+                    self._current_metrics = metrics_payload
 
                 # Emit signal with new metrics
-                self.metrics_updated.emit(metrics)
+                self.metrics_updated.emit(metrics_payload)
 
                 # Sleep for the update interval with frequent stop checks
                 sleep_ms = int(self.update_interval * 1000)
@@ -140,100 +123,20 @@ class PersistentSystemMonitorThread(QThread):
                     self.msleep(100)
 
         logger.debug("Persistent system monitor thread stopped")
+        self._sampler.close()
     
-    def _collect_metrics(self) -> Dict[str, Any]:
+    def _collect_metrics(self) -> SystemMetrics:
         """Collect all system metrics in one go."""
-        metrics = {}
-        
         try:
-            # CPU usage
-            cpu_percent = psutil.cpu_percent(interval=None)
-            metrics['cpu_percent'] = cpu_percent
-            
-            # RAM usage
-            ram = psutil.virtual_memory()
-            metrics['ram_percent'] = ram.percent
-            metrics['ram_used_gb'] = ram.used / (1024**3)
-            metrics['ram_total_gb'] = ram.total / (1024**3)
-            metrics['ram_available_gb'] = ram.available / (1024**3)
-            
-            # CPU info
-            metrics['cpu_cores'] = psutil.cpu_count()
-            metrics['cpu_freq_mhz'] = get_cpu_freq_mhz()
-            
-            # GPU usage
-            if GPU_AVAILABLE:
-                try:
-                    gpus = GPUtil.getGPUs()
-                    if gpus:
-                        gpu = gpus[0]  # Use first GPU
-                        gpu_load = gpu.load * 100
-                        vram_util = gpu.memoryUtil * 100
-
-                        metrics.update({
-                            'gpu_percent': gpu_load,
-                            'vram_percent': vram_util,
-                            'gpu_name': gpu.name,
-                            'gpu_temp': gpu.temperature,
-                            'vram_used_mb': gpu.memoryUsed,
-                            'vram_total_mb': gpu.memoryTotal
-                        })
-                    else:
-                        # No GPUs found
-                        metrics.update({
-                            'gpu_percent': 0.0,
-                            'vram_percent': 0.0,
-                            'gpu_name': 'No GPU Found',
-                            'gpu_temp': 0,
-                            'vram_used_mb': 0,
-                            'vram_total_mb': 0
-                        })
-                except Exception as e:
-                    # GPU monitoring failed
-                    logger.debug(f"GPU monitoring failed: {e}")
-                    metrics.update({
-                        'gpu_percent': 0.0,
-                        'vram_percent': 0.0,
-                        'gpu_name': 'GPU Error',
-                        'gpu_temp': 0,
-                        'vram_used_mb': 0,
-                        'vram_total_mb': 0
-                    })
-            else:
-                # GPUtil not available
-                metrics.update({
-                    'gpu_percent': 0.0,
-                    'vram_percent': 0.0,
-                    'gpu_name': 'GPUtil Not Available',
-                    'gpu_temp': 0,
-                    'vram_used_mb': 0,
-                    'vram_total_mb': 0
-                })
-            
+            return self._sampler.collect_metrics()
         except Exception as e:
             logger.warning(f"Error in metrics collection: {e}")
-            # Return defaults on error
-            metrics = {
-                'cpu_percent': 0.0,
-                'ram_percent': 0.0,
-                'ram_used_gb': 0.0,
-                'ram_total_gb': 0.0,
-                'ram_available_gb': 0.0,
-                'cpu_cores': 0,
-                'cpu_freq_mhz': 0,
-                'gpu_percent': 0.0,
-                'vram_percent': 0.0,
-                'gpu_name': 'Error',
-                'gpu_temp': 0,
-                'vram_used_mb': 0,
-                'vram_total_mb': 0
-            }
-        
-        return metrics
+            return SystemMetrics.error()
     
     def stop_monitoring(self):
         """Request the thread to stop monitoring."""
         self._stop_requested = True
+        self._sampler.close()
     
     def get_current_metrics(self) -> Dict[str, Any]:
         """Get the current cached metrics (thread-safe)."""
@@ -264,7 +167,13 @@ class PersistentSystemMonitor:
     ensuring the UI never blocks during metrics collection.
     """
     
-    def __init__(self, update_interval: float = 1.0, history_length: int = 60):
+    def __init__(
+        self,
+        update_interval: float = 1.0,
+        history_length: int = 60,
+        *,
+        sampler_config: SystemMetricsSamplerConfig | None = None,
+    ):
         """
         Initialize the persistent system monitor.
 
@@ -272,7 +181,11 @@ class PersistentSystemMonitor:
             update_interval: Time between updates in seconds
             history_length: Number of historical data points to keep
         """
-        self.thread = PersistentSystemMonitorThread(update_interval, history_length)
+        self.thread = PersistentSystemMonitorThread(
+            update_interval,
+            history_length,
+            sampler_config=sampler_config,
+        )
         self._is_running = False
 
     def __del__(self):
@@ -315,9 +228,9 @@ class PersistentSystemMonitor:
     def connect_signals(self, metrics_callback=None, error_callback=None):
         """Connect to thread signals."""
         if metrics_callback:
-            self.thread.metrics_updated.connect(metrics_callback)
+            self.thread.metrics_updated.connect(metrics_callback, Qt.ConnectionType.QueuedConnection)
         if error_callback:
-            self.thread.error_occurred.connect(error_callback)
+            self.thread.error_occurred.connect(error_callback, Qt.ConnectionType.QueuedConnection)
     
     def set_update_interval(self, interval: float):
         """Set the update interval."""

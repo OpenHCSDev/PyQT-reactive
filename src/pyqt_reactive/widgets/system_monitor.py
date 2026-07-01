@@ -28,6 +28,7 @@ from pyqt_reactive.theming import ColorScheme
 
 from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.services.persistent_system_monitor import PersistentSystemMonitor
+from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
 from pyqt_reactive.protocols import get_form_config
 
 logger = logging.getLogger(__name__)
@@ -88,11 +89,16 @@ class SystemMonitorWidget(QWidget):
         history_length = self.monitor_config.calculated_max_data_points
 
         # Core monitoring - use persistent thread for non-blocking metrics collection
-        self.monitor = SystemMonitorCore(history_length=history_length)  # Match the dynamic history length
+        sampler_config = self._monitor_sampler_config()
+        self.monitor = SystemMonitorCore(
+            history_length=history_length,
+            sampler_config=sampler_config,
+        )  # Match the dynamic history length
 
         self.persistent_monitor = PersistentSystemMonitor(
             update_interval=update_interval,
-            history_length=history_length
+            history_length=history_length,
+            sampler_config=sampler_config,
         )
         # No timer needed - the persistent thread handles timing
 
@@ -103,13 +109,23 @@ class SystemMonitorWidget(QWidget):
         # Delay monitoring start until widget is shown (fixes WSL2 hanging)
         self._monitoring_started = False
 
-        # Render-timer interpolation state
+        # Plot update state. Curves use a fixed relative x-axis and update only
+        # when new metric samples arrive.
         self._render_timer = QTimer(self)
-        self._render_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._render_timer.setTimerType(Qt.TimerType.CoarseTimer)
         self._render_timer.timeout.connect(self._render_frame)
-        self._last_metrics_time = None
-        self._last_metrics = None
-        self._next_metrics = None
+        self._last_plot_history = None
+        self._history_update_interval = None
+        self._plot_point_budget = 2000
+        self._history_length = 0
+        self._history_x = None
+        self._history_cpu = None
+        self._history_ram = None
+        self._history_gpu = None
+        self._history_vram = None
+        self._gpu_series_visible = False
+        self._vram_series_visible = False
+        self._plot_opengl_enabled = False
 
         # Setup UI
         self.setup_ui()
@@ -134,8 +150,8 @@ class SystemMonitorWidget(QWidget):
         }
         monitor = getattr(config, "performance_monitor", None)
         if monitor is None:
-            update_fps = 5.0
-            render_fps = 60.0
+            update_fps = 10.0
+            render_fps = 30.0
             history_duration_seconds = 60.0
             update_interval_seconds = 1.0 / update_fps
             calculated_max_data_points = int(history_duration_seconds / update_interval_seconds)
@@ -146,13 +162,19 @@ class SystemMonitorWidget(QWidget):
                 update_interval_seconds=update_interval_seconds,
                 calculated_max_data_points=calculated_max_data_points,
                 antialiasing=True,
+                use_opengl=True,
                 show_grid=True,
                 line_width=2.0,
                 chart_colors=default_colors,
+                enable_gpu_monitoring=True,
+                gpu_temperature_monitoring=True,
+                cpu_frequency_monitoring=True,
+                gpu_refresh_seconds=1.0,
+                cpu_frequency_refresh_seconds=5.0,
             )
 
         update_fps = getattr(monitor, "update_fps", 5.0)
-        render_fps = getattr(monitor, "render_fps", 60.0)
+        render_fps = getattr(monitor, "render_fps", 30.0)
         history_duration_seconds = getattr(monitor, "history_duration_seconds", 60.0)
         update_interval_seconds = getattr(
             monitor,
@@ -171,9 +193,26 @@ class SystemMonitorWidget(QWidget):
             update_interval_seconds=update_interval_seconds,
             calculated_max_data_points=calculated_max_data_points,
             antialiasing=getattr(monitor, "antialiasing", True),
+            use_opengl=getattr(monitor, "use_opengl", True),
             show_grid=getattr(monitor, "show_grid", True),
             line_width=getattr(monitor, "line_width", 2.0),
             chart_colors=getattr(monitor, "chart_colors", default_colors),
+            enable_gpu_monitoring=getattr(monitor, "enable_gpu_monitoring", True),
+            gpu_temperature_monitoring=getattr(monitor, "gpu_temperature_monitoring", True),
+            cpu_frequency_monitoring=getattr(monitor, "cpu_frequency_monitoring", True),
+            gpu_refresh_seconds=getattr(monitor, "gpu_refresh_seconds", 1.0),
+            cpu_frequency_refresh_seconds=getattr(monitor, "cpu_frequency_refresh_seconds", 5.0),
+        )
+
+    def _monitor_sampler_config(self, monitor_config=None) -> SystemMetricsSamplerConfig:
+        """Return the typed nonblocking sampler policy for monitor backends."""
+        monitor_config = monitor_config or self.monitor_config
+        return SystemMetricsSamplerConfig(
+            enable_gpu_monitoring=monitor_config.enable_gpu_monitoring,
+            gpu_temperature_monitoring=monitor_config.gpu_temperature_monitoring,
+            cpu_frequency_monitoring=monitor_config.cpu_frequency_monitoring,
+            gpu_refresh_seconds=monitor_config.gpu_refresh_seconds,
+            cpu_frequency_refresh_seconds=monitor_config.cpu_frequency_refresh_seconds,
         )
 
     def create_loading_placeholder(self) -> QWidget:
@@ -276,7 +315,6 @@ class SystemMonitorWidget(QWidget):
             # Start monitoring only when widget is actually shown
             # This prevents WSL2 hanging issues during initialization
             self.start_monitoring()
-            self._start_render_timer()
             self._monitoring_started = True
             logger.debug("System monitoring started on widget show")
 
@@ -555,11 +593,12 @@ class SystemMonitorWidget(QWidget):
         # Configure PyQtGraph based on config settings
         pg.setConfigOption('background', self.color_scheme.to_hex(self.color_scheme.window_bg))
         pg.setConfigOption('foreground', 'white')
-        pg.setConfigOption('antialias', self.monitor_config.antialiasing)
 
         # Create consolidated PyQtGraph plots with minimal size constraints
         self.cpu_gpu_plot = pg.PlotWidget(title="CPU/GPU Usage")
         self.ram_vram_plot = pg.PlotWidget(title="RAM/VRAM Usage")
+        self._plot_opengl_enabled = self._configure_plot_acceleration()
+        pg.setConfigOption('antialias', self._effective_plot_antialiasing())
         
         # Allow plots to shrink to very small size
         self.cpu_gpu_plot.setMinimumSize(1, 1)
@@ -582,12 +621,18 @@ class SystemMonitorWidget(QWidget):
         # RAM/VRAM plot curves
         self.ram_curve = self.ram_vram_plot.plot(pen=pg.mkPen(colors['ram'], width=line_width), name='RAM')
         self.vram_curve = self.ram_vram_plot.plot(pen=pg.mkPen(colors['vram'], width=line_width), name='VRAM')
+        for curve in (
+            self.cpu_curve,
+            self.gpu_curve,
+            self.ram_curve,
+            self.vram_curve,
+        ):
+            self._configure_plot_curve(curve)
 
         # Style CPU/GPU plot - minimal padding
+        history = float(self.monitor_config.history_duration_seconds)
         self.cpu_gpu_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
         self.cpu_gpu_plot.setYRange(0, 100)
-        # X axis shows "seconds ago", so range is (-history, 0) with 0 = now (right edge)
-        self.cpu_gpu_plot.setXRange(-self.monitor_config.history_duration_seconds, 0)
         self.cpu_gpu_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
         # Disable auto-ranging so manual panning works reliably
         _cpu_vb = self.cpu_gpu_plot.getPlotItem().getViewBox()
@@ -610,8 +655,6 @@ class SystemMonitorWidget(QWidget):
         # Style RAM/VRAM plot - minimal padding
         self.ram_vram_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
         self.ram_vram_plot.setYRange(0, 100)
-        # X axis shows "seconds ago", so range is (-history, 0) with 0 = now (right edge)
-        self.ram_vram_plot.setXRange(-self.monitor_config.history_duration_seconds, 0)
         self.ram_vram_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
         # Disable auto-ranging so manual panning works reliably
         _ram_vb = self.ram_vram_plot.getPlotItem().getViewBox()
@@ -630,6 +673,7 @@ class SystemMonitorWidget(QWidget):
         # Minimize all margins and padding
         self.ram_vram_plot.getPlotItem().setContentsMargins(0, 0, 0, 0)
         self.ram_vram_plot.getViewBox().setDefaultPadding(0)
+        self._apply_fixed_plot_ranges(history)
 
         # Add plots to grid layout (side-by-side by default)
         self._update_graph_layout()
@@ -638,6 +682,56 @@ class SystemMonitorWidget(QWidget):
         main_layout.addWidget(self.graph_container, 0)
 
         return widget
+
+    def _configure_plot_acceleration(self) -> bool:
+        """Enable pyqtgraph's OpenGL curve path for monitor plots when available."""
+        if not self.monitor_config.use_opengl:
+            pg.setConfigOption('enableExperimental', False)
+            self._set_plot_opengl(False)
+            return False
+
+        try:
+            pg.setConfigOption('enableExperimental', True)
+            self._set_plot_opengl(True)
+        except Exception as e:
+            logger.debug("OpenGL plot acceleration unavailable, falling back to raster plots: %s", e)
+            pg.setConfigOption('enableExperimental', False)
+            self._set_plot_opengl(False)
+            return False
+        return True
+
+    def _set_plot_opengl(self, enabled: bool):
+        """Switch both monitor plot viewports to the requested rendering backend."""
+        self.cpu_gpu_plot.useOpenGL(enabled)
+        self.ram_vram_plot.useOpenGL(enabled)
+
+    def _effective_plot_antialiasing(self) -> bool:
+        """Use antialiasing on OpenGL plots; avoid expensive raster antialias fallback."""
+        if self._plot_opengl_enabled:
+            return bool(self.monitor_config.antialiasing)
+        return bool(self.monitor_config.antialiasing and not self.monitor_config.use_opengl)
+
+    def _configure_plot_curve(self, curve):
+        """Enable cheap pyqtgraph rendering options when the installed version supports them."""
+        try:
+            curve.setData(antialias=self._effective_plot_antialiasing())
+        except Exception:
+            pass
+
+        try:
+            curve.setClipToView(True)
+        except Exception:
+            pass
+
+        try:
+            curve.setDownsampling(auto=True, method='peak')
+        except TypeError:
+            try:
+                curve.setDownsampling(auto=True, mode='peak')
+            except Exception:
+                pass
+        except Exception:
+            pass
     
     def create_layout_toggle_button(self) -> QPushButton:
         """
@@ -792,9 +886,7 @@ class SystemMonitorWidget(QWidget):
                 # Update cached metrics
                 self.monitor._current_metrics = metrics.copy()
 
-            # Use QTimer.singleShot to ensure UI update happens on main thread
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self.metrics_updated.emit(metrics))
+            self.metrics_updated.emit(metrics)
 
         except Exception as e:
             logger.warning(f"Failed to process metrics update: {e}")
@@ -815,21 +907,20 @@ class SystemMonitorWidget(QWidget):
             # Update system info
             self.update_system_info(metrics)
 
-            # Queue metrics for render interpolation
-            self._queue_metrics(metrics)
-
-            # Update fallback display immediately if graphs are unavailable
-            if PYQTGRAPH_AVAILABLE is False:
+            if PYQTGRAPH_AVAILABLE is True:
+                self.update_pyqtgraph_plots(metrics)
+            elif PYQTGRAPH_AVAILABLE is False:
                 self.update_fallback_display(metrics)
-            # else: render timer handles plot updates for smooth interpolation
 
         except Exception as e:
             logger.warning(f"Failed to update display: {e}")
 
     def _start_render_timer(self):
-        """Start high-FPS render timer for smooth graph updates."""
-        render_fps = max(1.0, float(getattr(self.monitor_config, "render_fps", 60.0)))
-        interval_ms = max(1, int(1000.0 / render_fps))
+        """Start the plot render timer, capped at metric update cadence."""
+        render_fps = max(1.0, float(self.monitor_config.render_fps))
+        update_fps = max(1.0, float(self.monitor_config.update_fps))
+        effective_fps = min(render_fps, update_fps)
+        interval_ms = max(1, int(1000.0 / effective_fps))
         if not self._render_timer.isActive():
             self._render_timer.start(interval_ms)
 
@@ -838,187 +929,141 @@ class SystemMonitorWidget(QWidget):
         if self._render_timer.isActive():
             self._render_timer.stop()
 
-    def _queue_metrics(self, metrics: dict):
-        """Queue metrics for interpolation between data updates."""
-        now = time.time()
-        if self._next_metrics is None:
-            self._last_metrics = metrics
-            self._next_metrics = metrics
-            self._last_metrics_time = now
-            return
-
-        self._last_metrics = self._next_metrics
-        self._next_metrics = metrics
-        self._last_metrics_time = now
+    def _reset_plot_buffers(self):
+        """Drop cached plot arrays/ranges after monitor history configuration changes."""
+        self._history_length = 0
+        self._history_x = None
+        self._history_cpu = None
+        self._history_ram = None
+        self._history_gpu = None
+        self._history_vram = None
+        self._history_update_interval = None
+        self._last_plot_history = None
+        self._gpu_series_visible = False
+        self._vram_series_visible = False
+        try:
+            for curve in (self.cpu_curve, self.gpu_curve, self.ram_curve, self.vram_curve):
+                self._clear_curve(curve)
+        except AttributeError:
+            pass
 
     def _render_frame(self):
-        """Render a frame using interpolated metrics and plot data."""
-        if PYQTGRAPH_AVAILABLE is not True:
-            return
+        """No-op retained for compatibility with older render-timer wiring."""
+        return
 
-        data_length = len(self.monitor.cpu_history)
-        if data_length == 0:
-            return
-
-        render_metrics = self._get_interpolated_metrics()
-        if render_metrics is None:
-            return
-
-        self.update_pyqtgraph_plots(render_metrics)
-
-    def _get_interpolated_metrics(self) -> Optional[dict]:
-        """Interpolate between last and next metrics for smooth rendering."""
-        if self._last_metrics is None or self._next_metrics is None:
-            return None
-
-        update_interval = self.monitor_config.update_interval_seconds
-        if update_interval <= 0:
-            return self._next_metrics
-
-        now = time.time()
-        elapsed = max(0.0, now - (self._last_metrics_time or now))
-        t = min(1.0, elapsed / update_interval)
-
-        interpolated = dict(self._next_metrics)
-        for key in (
-            "cpu_percent",
-            "ram_percent",
-            "gpu_percent",
-            "vram_percent",
-        ):
-            if key in self._last_metrics and key in self._next_metrics:
-                try:
-                    start = float(self._last_metrics[key])
-                    end = float(self._next_metrics[key])
-                    interpolated[key] = start + (end - start) * t
-                except (TypeError, ValueError):
-                    interpolated[key] = self._next_metrics.get(key)
-
-        return interpolated
-    
     def update_pyqtgraph_plots(self, metrics: Optional[dict] = None):
-        """Update consolidated PyQtGraph plots with current data - non-blocking and fast."""
+        """Update consolidated PyQtGraph plot data at metrics cadence."""
         try:
             data_length = len(self.monitor.cpu_history)
             if data_length == 0:
                 return
 
-            import numpy as _np
-
             update_interval = float(self.monitor_config.update_interval_seconds)
             history = float(self.monitor_config.history_duration_seconds)
-            now = time.time()
+            self._ensure_plot_buffers(data_length, update_interval)
 
-            # Snapshot histories
-            cpu_hist = _np.asarray(self.monitor.cpu_history, dtype=_np.float32)
-            ram_hist = _np.asarray(self.monitor.ram_history, dtype=_np.float32)
-            gpu_hist = _np.asarray(self.monitor.gpu_history, dtype=_np.float32)
-            vram_hist = _np.asarray(self.monitor.vram_history, dtype=_np.float32)
-            ts = _np.asarray(self.monitor.time_stamps, dtype=_np.float64)
+            self._copy_history(self.monitor.cpu_history, self._history_cpu)
+            self._copy_history(self.monitor.ram_history, self._history_ram)
+            self._copy_history(self.monitor.gpu_history, self._history_gpu)
+            self._copy_history(self.monitor.vram_history, self._history_vram)
+            self._history_length = data_length
 
-            if update_interval <= 0:
-                update_interval = 0.2
+            if self._last_plot_history != history:
+                self._apply_fixed_plot_ranges(history)
 
-            # The timestamp deque is prefilled with zeros. Fill those zeros with
-            # synthetic timestamps spaced by update_interval so the plot is
-            # visible immediately.
-            nz = _np.nonzero(ts > 0)[0]
-            if nz.size:
-                last_i = int(nz[-1])
-                # Fill backwards
-                for i in range(last_i - 1, -1, -1):
-                    if ts[i] <= 0:
-                        ts[i] = ts[i + 1] - update_interval
-                # Fill forwards (rare, but keep monotonic)
-                for i in range(last_i + 1, data_length):
-                    if ts[i] <= 0:
-                        ts[i] = ts[i - 1] + update_interval
-            else:
-                idx = _np.arange(data_length, dtype=_np.float64)
-                ts = now - (data_length - 1 - idx) * update_interval
+            x_view, cpu_view = self._plot_view(self._history_cpu)
+            self._set_curve_data(self.cpu_curve, x_view, cpu_view)
 
-            # Convert to relative x in seconds (negative = older; 0 = now)
-            base_x = ts - now
+            gpu_series_visible = self._series_has_signal(self._history_gpu)
+            if gpu_series_visible:
+                x_view, gpu_view = self._plot_view(self._history_gpu)
+                self._set_curve_data(self.gpu_curve, x_view, gpu_view)
+            elif self._gpu_series_visible:
+                self._clear_curve(self.gpu_curve)
+            self._gpu_series_visible = gpu_series_visible
 
-            # Densify tail from newest sample -> now so x scrolls continuously
-            try:
-                rf = float(getattr(self.monitor_config, "render_fps", 60.0))
-                uf = float(getattr(self.monitor_config, "update_fps", 5.0))
-                subdivisions = max(4, int(min(64, round(rf / max(1.0, uf)))))
-            except Exception:
-                subdivisions = 8
+            x_view, ram_view = self._plot_view(self._history_ram)
+            self._set_curve_data(self.ram_curve, x_view, ram_view)
 
-            def _series(hist: _np.ndarray, key: str) -> tuple[_np.ndarray, _np.ndarray]:
-                if data_length == 1:
-                    x0 = float(base_x[-1])
-                    y0 = float(hist[-1])
-                    y1 = float(metrics.get(key, y0)) if metrics is not None else y0
-                    x_tail = _np.linspace(x0, 0.0, subdivisions, dtype=_np.float64)
-                    y_tail = _np.linspace(y0, y1, subdivisions, dtype=_np.float32)
-                    return x_tail, y_tail
-
-                x0 = float(base_x[-1])
-                y0 = float(hist[-1])
-                y1 = float(metrics.get(key, y0)) if metrics is not None else y0
-                x_tail = _np.linspace(x0, 0.0, subdivisions, dtype=_np.float64)
-                y_tail = _np.linspace(y0, y1, subdivisions, dtype=_np.float32)
-                x_full = _np.concatenate((base_x[:-1], x_tail))
-                y_full = _np.concatenate((hist[:-1], y_tail))
-                return x_full, y_full
-
-            x_cpu, y_cpu = _series(cpu_hist, "cpu_percent")
-            _, y_gpu = _series(gpu_hist, "gpu_percent")
-            _, y_ram = _series(ram_hist, "ram_percent")
-            _, y_vram = _series(vram_hist, "vram_percent")
-
-            # Keep x range fixed to the last `history` seconds.
-            try:
-                self.cpu_gpu_plot.setXRange(-history, 0.0, padding=0)
-                self.ram_vram_plot.setXRange(-history, 0.0, padding=0)
-            except Exception:
-                pass
-
-            self.cpu_curve.setData(x_cpu, y_cpu)
-            if _np.any(y_gpu):
-                self.gpu_curve.setData(x_cpu, y_gpu)
-            else:
-                self.gpu_curve.setData([], [])
-
-            # Update CPU/GPU plot title with current values
-            if metrics is not None:
-                cpu_status = f"{float(metrics.get('cpu_percent', 0.0)):.1f}%"
-                if _np.any(y_gpu):
-                    gpu_status = f"{float(metrics.get('gpu_percent', 0.0)):.1f}%"
-                else:
-                    gpu_status = "Not Available"
-            else:
-                cpu_status = f"{float(y_cpu[-1]) if y_cpu.size else 0.0:.1f}%" if y_cpu.size else "N/A"
-                gpu_status = f"{float(y_gpu[-1]) if y_gpu.size else 0.0:.1f}%" if _np.any(y_gpu) else "Not Available"
-            self.cpu_gpu_plot.setTitle(f"CPU: {cpu_status}, GPU: {gpu_status}")
-
-            # Update RAM/VRAM consolidated plot using densified arrays
-            self.ram_curve.setData(x_cpu, y_ram)
-
-            # Handle VRAM data (may not be available)
-            if _np.any(y_vram):
-                self.vram_curve.setData(x_cpu, y_vram)
-            else:
-                self.vram_curve.setData([], [])  # Clear data
-
-            # Update RAM/VRAM plot title with current values
-            if metrics is not None:
-                ram_status = f"{float(metrics.get('ram_percent', 0.0)):.1f}%"
-                if _np.any(y_vram):
-                    vram_status = f"{float(metrics.get('vram_percent', 0.0)):.1f}%"
-                else:
-                    vram_status = "Not Available"
-            else:
-                ram_status = f"{float(y_ram[-1]) if y_ram.size else 0.0:.1f}%" if y_ram.size else "N/A"
-                vram_status = f"{float(y_vram[-1]) if y_vram.size else 0.0:.1f}%" if _np.any(y_vram) else "Not Available"
-            self.ram_vram_plot.setTitle(f"RAM: {ram_status}, VRAM: {vram_status}")
+            vram_series_visible = self._series_has_signal(self._history_vram)
+            if vram_series_visible:
+                x_view, vram_view = self._plot_view(self._history_vram)
+                self._set_curve_data(self.vram_curve, x_view, vram_view)
+            elif self._vram_series_visible:
+                self._clear_curve(self.vram_curve)
+            self._vram_series_visible = vram_series_visible
 
         except Exception as e:
             logger.warning(f"Failed to update PyQtGraph plots: {e}")
+
+    def _ensure_plot_buffers(self, data_length: int, update_interval: float):
+        """Create or resize persistent NumPy buffers used by plot updates."""
+        import numpy as _np
+
+        if self._history_x is None or self._history_x.shape[0] != data_length:
+            self._history_x = _np.zeros(data_length, dtype=_np.float64)
+            self._history_cpu = _np.zeros(data_length, dtype=_np.float32)
+            self._history_ram = _np.zeros(data_length, dtype=_np.float32)
+            self._history_gpu = _np.zeros(data_length, dtype=_np.float32)
+            self._history_vram = _np.zeros(data_length, dtype=_np.float32)
+            self._history_update_interval = None
+
+        if self._history_update_interval != update_interval:
+            self._history_x[:] = (_np.arange(data_length, dtype=_np.float64) - (data_length - 1)) * update_interval
+            self._history_update_interval = update_interval
+
+    def _copy_history(self, source, target):
+        """Copy a metric deque into an existing NumPy array."""
+        for index, value in enumerate(source):
+            try:
+                target[index] = float(value)
+            except (TypeError, ValueError):
+                target[index] = 0.0
+
+    def _series_has_signal(self, series) -> bool:
+        """Return True when an optional metric has non-zero data."""
+        try:
+            return bool(series.any())
+        except Exception:
+            return False
+
+    def _apply_fixed_plot_ranges(self, history: Optional[float] = None):
+        """Set the fixed relative x-axis window for both plots."""
+        history = float(history if history is not None else self.monitor_config.history_duration_seconds)
+        try:
+            self.cpu_gpu_plot.setXRange(-history, 0.0, padding=0)
+            self.ram_vram_plot.setXRange(-history, 0.0, padding=0)
+            self._last_plot_history = history
+        except Exception:
+            pass
+
+    def _plot_sample_stride(self, data_length: int) -> int:
+        """Return a stride that bounds pathological histories without degrading normal plots."""
+        point_budget = max(2, int(self._plot_point_budget))
+        if data_length <= point_budget:
+            return 1
+        return max(1, (data_length + point_budget - 1) // point_budget)
+
+    def _plot_view(self, series):
+        """Return x/y views trimmed to the point budget while preserving the newest sample."""
+        stride = self._plot_sample_stride(self._history_length)
+        if stride <= 1:
+            return self._history_x, series
+
+        start = (self._history_length - 1) % stride
+        return self._history_x[start::stride], series[start::stride]
+
+    def _set_curve_data(self, curve, x, y):
+        try:
+            curve.setData(x, y, skipFiniteCheck=True)
+        except TypeError:
+            curve.setData(x, y)
+
+    def _clear_curve(self, curve):
+        try:
+            curve.setData([], [], skipFiniteCheck=True)
+        except TypeError:
+            curve.setData([], [])
     
     def update_fallback_display(self, metrics: dict):
         """
@@ -1137,12 +1182,22 @@ class SystemMonitorWidget(QWidget):
         """
         old_config = self.config
         old_monitor_config = self._build_monitor_config(old_config)
+        old_sampler_config = self._monitor_sampler_config(old_monitor_config)
         self.config = new_config
         self.monitor_config = self._build_monitor_config(new_config)
+        new_sampler_config = self._monitor_sampler_config()
 
         # Check if we need to restart monitoring with new parameters
-        if (old_monitor_config.update_fps != self.monitor_config.update_fps or
-            old_monitor_config.history_duration_seconds != self.monitor_config.history_duration_seconds):
+        restart_fields = (
+            "update_fps",
+            "history_duration_seconds",
+        )
+        needs_monitor_restart = any(
+            getattr(old_monitor_config, field) != getattr(self.monitor_config, field)
+            for field in restart_fields
+        ) or old_sampler_config != new_sampler_config
+
+        if needs_monitor_restart:
 
             logger.info(
                 "Updating performance monitor: %.2f FPS, %.2fs history",
@@ -1158,11 +1213,17 @@ class SystemMonitorWidget(QWidget):
             history_length = self.monitor_config.calculated_max_data_points
 
             # Create new monitors with updated config
-            self.monitor = SystemMonitor(history_length=history_length)
+            self.monitor = SystemMonitorCore(
+                history_length=history_length,
+                sampler_config=new_sampler_config,
+            )
             self.persistent_monitor = PersistentSystemMonitor(
                 update_interval=update_interval,
-                history_length=history_length
+                history_length=history_length,
+                sampler_config=new_sampler_config,
             )
+            self._reset_plot_buffers()
+            self._apply_fixed_plot_ranges()
 
             # Reconnect signals
             self.persistent_monitor.connect_signals(
