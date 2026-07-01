@@ -199,7 +199,7 @@ class ManagerUiLifecycleMixin:
 
     def clear_list_visual_state(self) -> None:
         """Clear list flash subscriptions and navigation geometry."""
-        self._list_visual_state.cleanup()
+        self._list_visual_state.reset_context()
 
     def _visual_repaint(self) -> None:
         """Trigger single repaint after all items updated (VisualUpdateMixin)."""
@@ -221,6 +221,7 @@ class ManagerUiLifecycleMixin:
     def closeEvent(self, event):
         """Ensure time travel callbacks are unregistered."""
         self._time_travel_binding.disconnect()
+        self._list_visual_state.dispose()
         super().closeEvent(event)
 
 

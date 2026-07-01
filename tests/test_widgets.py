@@ -204,7 +204,6 @@ def test_manager_list_in_place_refresh_skips_unchanged_tooltip(qapp):
     tooltip_calls = []
     styled_items = []
     colored_items = []
-
     operations = ManagerListUpdateOperations(
         item_list=item_list,
         backing_items=[item_obj],
@@ -237,6 +236,308 @@ def test_manager_list_in_place_refresh_skips_unchanged_tooltip(qapp):
     assert refreshed_item.data(Qt.ItemDataRole.UserRole + 1) == "extra-data"
     assert styled_items == [refreshed_item]
     assert colored_items == [refreshed_item]
+
+
+def test_manager_list_in_place_refresh_does_not_infer_flash_from_text(qapp):
+    """Rendered text changes are not semantic flash events by themselves."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+    from pyqt_reactive.widgets.shared.manager_list_updater import (
+        ManagerListUpdateOperations,
+        ManagerListUpdater,
+    )
+
+    item_obj = {"id": "step-1", "scope": "scope-1"}
+    item_list = QListWidget()
+    list_item = QListWidgetItem("01: Old preview")
+    list_item.setData(Qt.ItemDataRole.UserRole, item_obj)
+    item_list.addItem(list_item)
+    flash_calls = []
+
+    operations = ManagerListUpdateOperations(
+        item_list=item_list,
+        backing_items=[item_obj],
+        item_id=lambda item: item["id"],
+        should_preserve_selection=lambda: False,
+        placeholder=lambda: None,
+        prepare_update=lambda: object(),
+        clear_scope_cache=lambda: None,
+        subscribed_scope_ids=lambda: {"scope-1"},
+        scope_for_item=lambda item: item["scope"],
+        cleanup_flash_subscriptions=lambda: None,
+        clear_scope_to_list_item=lambda: None,
+        format_item=lambda item, index, context: "01: New preview",
+        list_item_data_for=lambda item, index: item,
+        tooltip_for=lambda item: "new tooltip",
+        extra_data_for=lambda item, index: {},
+        set_styling_roles=lambda list_item, display_text, item: None,
+        apply_scope_color=lambda list_item, item, index: None,
+        subscribe_flash=lambda item, list_item, scope_id: None,
+        post_update=lambda: None,
+        update_button_states=lambda: None,
+    )
+
+    ManagerListUpdater().update(operations)
+
+    assert item_list.item(0).text() == "01: New preview"
+    assert flash_calls == []
+
+
+def test_manager_list_rebuild_does_not_infer_flash_from_new_scope(qapp):
+    """Row materialization is view state, not an ObjectState value change."""
+    from PyQt6.QtWidgets import QListWidget
+    from pyqt_reactive.widgets.shared.manager_list_updater import (
+        ManagerListUpdateOperations,
+        ManagerListUpdater,
+    )
+
+    item_obj = {"id": "step-1", "scope": "scope-1"}
+    item_list = QListWidget()
+    subscribed = set()
+    subscribed_order = []
+    flash_calls = []
+
+    operations = ManagerListUpdateOperations(
+        item_list=item_list,
+        backing_items=[item_obj],
+        item_id=lambda item: item["id"],
+        should_preserve_selection=lambda: False,
+        placeholder=lambda: None,
+        prepare_update=lambda: object(),
+        clear_scope_cache=lambda: None,
+        subscribed_scope_ids=lambda: set(subscribed),
+        scope_for_item=lambda item: item["scope"],
+        cleanup_flash_subscriptions=lambda: subscribed.clear(),
+        clear_scope_to_list_item=lambda: None,
+        format_item=lambda item, index, context: "01: New row",
+        list_item_data_for=lambda item, index: item,
+        tooltip_for=lambda item: "new tooltip",
+        extra_data_for=lambda item, index: {},
+        set_styling_roles=lambda list_item, display_text, item: None,
+        apply_scope_color=lambda list_item, item, index: None,
+        subscribe_flash=lambda item, list_item, scope_id: (
+            subscribed.add(scope_id),
+            subscribed_order.append(scope_id),
+        ),
+        post_update=lambda: None,
+        update_button_states=lambda: None,
+    )
+
+    ManagerListUpdater().update(operations)
+
+    assert item_list.item(0).text() == "01: New row"
+    assert subscribed_order == ["scope-1"]
+    assert flash_calls == []
+
+
+def test_manager_list_rebuild_does_not_flash_existing_scope(qapp):
+    """Rebuilds caused by deletion do not flash scopes that already existed."""
+    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+    from pyqt_reactive.widgets.shared.manager_list_updater import (
+        ManagerListUpdateOperations,
+        ManagerListUpdater,
+    )
+
+    item_obj = {"id": "step-1", "scope": "scope-1"}
+    item_list = QListWidget()
+    item_list.addItem(QListWidgetItem("old surviving row"))
+    item_list.addItem(QListWidgetItem("removed row"))
+    subscribed = {"scope-1", "scope-2"}
+
+    operations = ManagerListUpdateOperations(
+        item_list=item_list,
+        backing_items=[item_obj],
+        item_id=lambda item: item["id"],
+        should_preserve_selection=lambda: False,
+        placeholder=lambda: None,
+        prepare_update=lambda: object(),
+        clear_scope_cache=lambda: None,
+        subscribed_scope_ids=lambda: set(subscribed),
+        scope_for_item=lambda item: item["scope"],
+        cleanup_flash_subscriptions=lambda: subscribed.clear(),
+        clear_scope_to_list_item=lambda: None,
+        format_item=lambda item, index, context: "01: Surviving row",
+        list_item_data_for=lambda item, index: item,
+        tooltip_for=lambda item: "new tooltip",
+        extra_data_for=lambda item, index: {},
+        set_styling_roles=lambda list_item, display_text, item: None,
+        apply_scope_color=lambda list_item, item, index: None,
+        subscribe_flash=lambda item, list_item, scope_id: subscribed.add(scope_id),
+        post_update=lambda: None,
+        update_button_states=lambda: None,
+    )
+
+    ManagerListUpdater().update(operations)
+
+    assert item_list.count() == 1
+    assert item_list.item(0).text() == "01: Surviving row"
+
+
+def test_manager_list_visual_state_flashes_visible_objectstate_change(qapp):
+    """Visible list rows flash from ObjectState resolved-change authority."""
+    from dataclasses import dataclass
+    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from pyqt_reactive.widgets.shared.manager_list_visual_state import (
+        ManagerListVisualState,
+    )
+
+    @dataclass
+    class RowState:
+        value: int = 1
+
+    @dataclass
+    class BaseConfig:
+        value: int = 0
+
+    class ItemAccess:
+        def scope_for_item(self, item):
+            return item["scope"]
+
+    class Manager(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.item_list = QListWidget(self)
+            self.queued_flashes = []
+            self.visual_updates = 0
+
+        def queue_flash(self, scope_id):
+            self.queued_flashes.append(scope_id)
+
+        def queue_visual_update(self):
+            self.visual_updates += 1
+
+    set_base_config_type(BaseConfig)
+    ObjectStateRegistry.clear()
+    state = ObjectState(RowState(), scope_id="scope-1")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = Manager()
+    visual_state = ManagerListVisualState(manager, 99, ItemAccess())
+    list_item = QListWidgetItem("row")
+    manager.item_list.addItem(list_item)
+
+    try:
+        visual_state.subscribe_flash({"scope": "scope-1"}, list_item, "scope-1")
+
+        state.update_object_instance(RowState(value=2))
+
+        assert "scope-1" in manager.queued_flashes
+        assert manager.visual_updates >= 1
+    finally:
+        visual_state.dispose()
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_manager_list_visual_state_buffers_objectstate_change_until_row_visible(qapp):
+    """Resolved changes that precede row materialization flash once on subscribe."""
+    from dataclasses import dataclass
+    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from pyqt_reactive.widgets.shared.manager_list_visual_state import (
+        ManagerListVisualState,
+    )
+
+    @dataclass
+    class RowState:
+        value: int = 1
+
+    @dataclass
+    class BaseConfig:
+        value: int = 0
+
+    class ItemAccess:
+        def scope_for_item(self, item):
+            return item["scope"]
+
+    class Manager(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.item_list = QListWidget(self)
+            self.queued_flashes = []
+
+        def queue_flash(self, scope_id):
+            self.queued_flashes.append(scope_id)
+
+        def queue_visual_update(self):
+            pass
+
+    set_base_config_type(BaseConfig)
+    ObjectStateRegistry.clear()
+    state = ObjectState(RowState(), scope_id="scope-1")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = Manager()
+    visual_state = ManagerListVisualState(manager, 99, ItemAccess())
+
+    try:
+        state.update_object_instance(RowState(value=2))
+
+        assert manager.queued_flashes == []
+
+        list_item = QListWidgetItem("row")
+        manager.item_list.addItem(list_item)
+        visual_state.subscribe_flash({"scope": "scope-1"}, list_item, "scope-1")
+
+        assert manager.queued_flashes == ["scope-1"]
+    finally:
+        visual_state.dispose()
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_manager_list_visual_state_reset_context_discards_pending_flash(qapp):
+    """Explicit list-context resets do not replay stale ObjectState flashes."""
+    from dataclasses import dataclass
+    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from pyqt_reactive.widgets.shared.manager_list_visual_state import (
+        ManagerListVisualState,
+    )
+
+    @dataclass
+    class RowState:
+        value: int = 1
+
+    @dataclass
+    class BaseConfig:
+        value: int = 0
+
+    class ItemAccess:
+        def scope_for_item(self, item):
+            return item["scope"]
+
+    class Manager(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.item_list = QListWidget(self)
+            self.queued_flashes = []
+
+        def queue_flash(self, scope_id):
+            self.queued_flashes.append(scope_id)
+
+        def queue_visual_update(self):
+            pass
+
+    set_base_config_type(BaseConfig)
+    ObjectStateRegistry.clear()
+    state = ObjectState(RowState(), scope_id="scope-1")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = Manager()
+    visual_state = ManagerListVisualState(manager, 99, ItemAccess())
+
+    try:
+        state.update_object_instance(RowState(value=2))
+        visual_state.reset_context()
+
+        list_item = QListWidgetItem("row")
+        manager.item_list.addItem(list_item)
+        visual_state.subscribe_flash({"scope": "scope-1"}, list_item, "scope-1")
+
+        assert manager.queued_flashes == []
+    finally:
+        visual_state.dispose()
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
 
 
 def test_manager_list_role_update_skips_equal_values(qapp) -> None:

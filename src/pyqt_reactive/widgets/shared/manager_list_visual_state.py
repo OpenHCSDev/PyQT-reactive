@@ -30,16 +30,19 @@ class ManagerListVisualState:
         self._manager = manager
         self._scope_border_role = scope_border_role
         self._item_access = item_access
-        self._flash_subscriptions: dict[str, tuple[Any, Any]] = {}
         self._dirty_subscriptions: dict[str, tuple[Any, Any]] = {}
         self._scope_to_list_item: dict[str, QListWidgetItem] = {}
+        self._pending_flash_scopes: set[str] = set()
+        ObjectStateRegistry.add_resolved_changed_callback(
+            self._on_registry_resolved_changed
+        )
 
     @property
     def has_navigation_items(self) -> bool:
         return bool(self._scope_to_list_item)
 
     def subscribed_scope_ids(self) -> set[str]:
-        return set(self._flash_subscriptions.keys())
+        return set(self._scope_to_list_item.keys())
 
     def clear_scope_to_list_item(self) -> None:
         self._scope_to_list_item.clear()
@@ -62,10 +65,6 @@ class ManagerListVisualState:
             return
 
         self._scope_to_list_item[scope_id] = list_item
-        if scope_id in self._flash_subscriptions:
-            logger.debug("FLASH_DEBUG: Already subscribed to %s, skipping", scope_id)
-            return
-
         element = FlashElement(
             key=scope_id,
             get_rect_in_window=lambda window: self._list_item_rect(scope_id, window),
@@ -100,23 +99,6 @@ class ManagerListVisualState:
             logger.debug("FLASH_DEBUG: No ObjectState for scope %s, returning", scope_id)
             return
 
-        def on_change(changed_paths):
-            logger.debug(
-                "FLASH_DEBUG on_change CALLBACK FIRED: scope=%s, paths=%s",
-                scope_id,
-                changed_paths,
-            )
-            self._manager.queue_flash(scope_id)
-            self._manager.queue_visual_update()
-
-        state.on_resolved_changed(on_change)
-        self._flash_subscriptions[scope_id] = (state, on_change)
-        logger.debug(
-            "FLASH_DEBUG: Subscribed to %s, total subscriptions=%s",
-            scope_id,
-            len(self._flash_subscriptions),
-        )
-
         if scope_id not in self._dirty_subscriptions:
             def on_state_changed():
                 logger.debug("DIRTY_DEBUG on_state_changed: scope=%s", scope_id)
@@ -126,21 +108,19 @@ class ManagerListVisualState:
             self._dirty_subscriptions[scope_id] = (state, on_state_changed)
             logger.debug("DIRTY_DEBUG: Subscribed to dirty changes for %s", scope_id)
 
+        if scope_id in self._pending_flash_scopes:
+            self._pending_flash_scopes.remove(scope_id)
+            self._manager.queue_flash(scope_id)
+
     def cleanup(self) -> None:
         logger.debug(
-            "FLASH_DEBUG cleanup: manager=%s, clearing %s flash + %s dirty subscriptions",
+            "FLASH_DEBUG cleanup: manager=%s, clearing %s list items + %s dirty subscriptions",
             type(self._manager).__name__,
-            len(self._flash_subscriptions),
+            len(self._scope_to_list_item),
             len(self._dirty_subscriptions),
         )
 
-        for scope_id, (state, on_change_callback) in list(self._flash_subscriptions.items()):
-            logger.debug("FLASH_DEBUG: Unsubscribing from %s", scope_id)
-            try:
-                state.off_resolved_changed(on_change_callback)
-            except Exception as error:
-                logger.debug("FLASH_DEBUG: Error unsubscribing from %s: %s", scope_id, error)
-
+        for scope_id in list(self._scope_to_list_item):
             overlay = WindowFlashOverlay.get_for_window(self._manager)
             if overlay:
                 logger.debug("FLASH_DEBUG: Unregistering FlashElement for %s", scope_id)
@@ -152,10 +132,38 @@ class ManagerListVisualState:
             except Exception as error:
                 logger.debug("DIRTY_DEBUG: Error unsubscribing dirty from %s: %s", scope_id, error)
 
-        self._flash_subscriptions.clear()
         self._dirty_subscriptions.clear()
         self._scope_to_list_item.clear()
         logger.debug("FLASH_DEBUG: Subscriptions cleared")
+
+    def reset_context(self) -> None:
+        """Clear row state and pending flashes for an explicit list-context switch."""
+        self.cleanup()
+        self._pending_flash_scopes.clear()
+
+    def dispose(self) -> None:
+        """Release registry callbacks and row subscriptions for widget teardown."""
+        ObjectStateRegistry.remove_resolved_changed_callback(
+            self._on_registry_resolved_changed
+        )
+        self.reset_context()
+
+    def _on_registry_resolved_changed(
+        self,
+        scope_id: str,
+        changed_paths: set[str],
+    ) -> None:
+        del changed_paths
+        self._mark_scope_changed(scope_id)
+
+    def _mark_scope_changed(self, scope_id: str) -> None:
+        if not scope_id:
+            return
+        if scope_id in self._scope_to_list_item:
+            self._manager.queue_flash(scope_id)
+            self._manager.queue_visual_update()
+            return
+        self._pending_flash_scopes.add(scope_id)
 
     def dirty_fields(self, item: Any) -> set:
         try:
