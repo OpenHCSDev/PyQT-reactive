@@ -19,6 +19,7 @@ from pyqt_reactive.protocols import (
     ChildFieldNavigationTargetProvider,
     InlineDataclassGroupBoxChromeProvider,
     ChangeSignalEmitter,
+    PlaceholderStateMixin,
     PyQtWidgetMeta,
     ResolvedValuePreviewSettable,
     ValueGettable,
@@ -1308,6 +1309,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
 
 
 class InlineDataclassGroupBox(
+    PlaceholderStateMixin,
     GroupBoxWithHelp,
     ValueGettable,
     ValueSettable,

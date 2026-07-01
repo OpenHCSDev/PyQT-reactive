@@ -48,3 +48,31 @@ def test_managed_window_registers_declared_window_scope(qapp):
         qapp.processEvents()
         WindowManager.unregister("window_scope")
         WindowManager.unregister("object_scope")
+
+
+def test_managed_window_cleanup_unregisters_form_managers_once(qapp):
+    """Managed window teardown disconnects form ObjectState listeners."""
+    from pyqt_reactive.widgets.shared.base_form_dialog import BaseManagedWindow
+
+    class FormManager:
+        def __init__(self) -> None:
+            self.unregister_count = 0
+
+        def unregister_from_cross_window_updates(self) -> None:
+            self.unregister_count += 1
+
+    class ManagedWindow(BaseManagedWindow):
+        def __init__(self, form_manager: FormManager) -> None:
+            self._form_manager = form_manager
+            super().__init__()
+
+        def form_managers(self):
+            return (self._form_manager,)
+
+    form_manager = FormManager()
+    window = ManagedWindow(form_manager)
+
+    window._cleanup_managed_listeners()
+    window._cleanup_managed_listeners()
+
+    assert form_manager.unregister_count == 1

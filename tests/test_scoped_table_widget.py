@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QImage, QPaintEvent
+from PyQt6.QtWidgets import QWidget
+from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+from pyqt_reactive.protocols import (
+    ChangeSignalEmitter,
+    PyQtWidgetMeta,
+    ValueGettable,
+    ValueSettable,
+)
 from pyqt_reactive.widgets.shared.clickable_help_components import (
     GroupBoxWithHelp,
     InlineDataclassGroupBox,
@@ -66,6 +74,55 @@ def test_inline_dataclass_groupbox_propagates_scope_to_inline_widget(qapp) -> No
     groupbox.set_value_widget(inline_widget)
 
     assert inline_widget.scope_scheme is scheme
+
+
+def test_inline_dataclass_groupbox_clears_placeholder_on_inline_change(qapp) -> None:
+    class InlineValueWidget(
+        QWidget,
+        ValueGettable,
+        ValueSettable,
+        ChangeSignalEmitter,
+        metaclass=PyQtWidgetMeta,
+    ):
+        def __init__(self) -> None:
+            super().__init__()
+            self.value = None
+            self.callbacks = []
+
+        def get_value(self):
+            return self.value
+
+        def set_value(self, value) -> None:
+            self.value = value
+
+        def connect_change_signal(self, callback) -> None:
+            self.callbacks.append(callback)
+
+        def disconnect_change_signal(self, callback) -> None:
+            self.callbacks.remove(callback)
+
+        def emit_value(self, value) -> None:
+            self.value = value
+            for callback in tuple(self.callbacks):
+                callback(value)
+
+    groupbox = InlineDataclassGroupBox(title="Inline")
+    inline_widget = InlineValueWidget()
+    emitted = []
+
+    groupbox.set_value_widget(inline_widget)
+    groupbox.mark_placeholder_state()
+    groupbox.set_cached_placeholder_text("Pipeline default: inherited")
+
+    PyQt6WidgetEnhancer.connect_change_signal(
+        groupbox,
+        "source_bindings",
+        lambda name, value: emitted.append((name, value)),
+    )
+    inline_widget.emit_value("explicit")
+
+    assert emitted == [("source_bindings", "explicit")]
+    assert not groupbox.has_placeholder_state()
 
 
 def test_groupbox_with_help_paints_extracted_scope_border(qapp) -> None:
