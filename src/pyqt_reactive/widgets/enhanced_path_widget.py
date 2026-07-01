@@ -17,6 +17,7 @@ from PyQt6.QtCore import pyqtSignal
 
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
+    PlaceholderStateMixin,
     PyQtWidgetMeta,
     ValueGettable,
     ValueSettable,
@@ -269,6 +270,7 @@ PATH_NAME_ROLE_CLASSIFIER = PathNameRoleClassifier()
 
 
 class EnhancedPathWidget(
+    PlaceholderStateMixin,
     QWidget,
     ValueGettable,
     ValueSettable,

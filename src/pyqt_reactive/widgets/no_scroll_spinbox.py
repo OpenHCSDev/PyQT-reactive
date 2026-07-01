@@ -16,6 +16,7 @@ from pyqt_reactive.protocols import (
     ComboBoxAdapter,
     ChangeSignalEmitter,
     DoubleSpinBoxAdapter,
+    PlaceholderStateMixin,
     PyQtWidgetMeta,
     SpinBoxAdapter,
     ValueGettable,
@@ -167,6 +168,7 @@ class CheckboxValueState(Enum):
 
 
 class NoneAwareCheckBox(
+    PlaceholderStateMixin,
     QCheckBox,
     ValueGettable,
     ValueSettable,
@@ -183,7 +185,6 @@ class NoneAwareCheckBox(
     def __init__(self, parent=None):
         super().__init__(parent)
         self._value_state = CheckboxValueState.CONCRETE
-        self._cached_placeholder_text = None
         # Prevent horizontal stretching - checkbox should only be as wide as its content
         from PyQt6.QtWidgets import QSizePolicy
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -226,7 +227,7 @@ class NoneAwareCheckBox(
         """Display an inherited checkbox value without making it concrete."""
         self.setChecked(checked)
         self._value_state = CheckboxValueState.PLACEHOLDER
-        self.setProperty("is_placeholder_state", True)
+        self.mark_placeholder_state()
         self._apply_placeholder_palette()
 
     def convert_placeholder_to_concrete(self) -> None:
@@ -234,17 +235,13 @@ class NoneAwareCheckBox(
         if not self.is_placeholder():
             return
         self._value_state = CheckboxValueState.CONCRETE
-        self.setProperty("is_placeholder_state", False)
+        self.clear_placeholder_state()
         self._apply_concrete_palette()
 
     def toggle(self) -> None:
         """Toggle as a user action, committing placeholder state first."""
         self.convert_placeholder_to_concrete()
         super().toggle()
-
-    def clear_placeholder_cache(self) -> None:
-        """Clear cached placeholder text set by the placeholder enhancer."""
-        self._cached_placeholder_text = None
 
     def _apply_placeholder_palette(self):
         """Apply grey palette to make checkmark dim like placeholder text."""

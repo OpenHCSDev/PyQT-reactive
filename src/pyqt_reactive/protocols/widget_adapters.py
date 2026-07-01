@@ -38,13 +38,43 @@ except ImportError:
 
 from .widget_protocols import (
     ValueGettable, ValueSettable, PlaceholderCapable,
-    RangeConfigurable, ChangeSignalEmitter
+    PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter,
+    WidgetCapability, widget_supports_capability
 )
 
 
 if PYQT6_AVAILABLE:
 
-    class LineEditAdapter(QLineEdit, ValueGettable, ValueSettable, PlaceholderCapable,
+    class PlaceholderStateMixin(PlaceholderStateTrackable):
+        """Nominal placeholder-state storage for Qt widget adapters."""
+
+        widget_capabilities = frozenset({WidgetCapability.PLACEHOLDER_STATE})
+
+        def __init__(self, *args, **kwargs):
+            self._placeholder_state_active = False
+            self._cached_placeholder_text: str | None = None
+            super().__init__(*args, **kwargs)
+
+        def has_placeholder_state(self) -> bool:
+            return self._placeholder_state_active or self._cached_placeholder_text is not None
+
+        def mark_placeholder_state(self) -> None:
+            self._placeholder_state_active = True
+
+        def clear_placeholder_state(self) -> None:
+            self._placeholder_state_active = False
+
+        def cached_placeholder_text(self) -> str | None:
+            return self._cached_placeholder_text
+
+        def set_cached_placeholder_text(self, placeholder_text: str) -> None:
+            self._cached_placeholder_text = placeholder_text
+
+        def clear_placeholder_cache(self) -> None:
+            self._cached_placeholder_text = None
+
+
+    class LineEditAdapter(PlaceholderStateMixin, QLineEdit, ValueGettable, ValueSettable, PlaceholderCapable,
                           ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
         Adapter for QLineEdit implementing OpenHCS ABCs.
@@ -84,7 +114,7 @@ if PYQT6_AVAILABLE:
                 pass
     
     
-    class SpinBoxAdapter(QSpinBox, ValueGettable, ValueSettable, PlaceholderCapable,
+    class SpinBoxAdapter(PlaceholderStateMixin, QSpinBox, ValueGettable, ValueSettable, PlaceholderCapable,
                          RangeConfigurable, ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
         Adapter for QSpinBox implementing OpenHCS ABCs.
@@ -135,7 +165,7 @@ if PYQT6_AVAILABLE:
                 pass
     
     
-    class DoubleSpinBoxAdapter(QDoubleSpinBox, ValueGettable, ValueSettable,
+    class DoubleSpinBoxAdapter(PlaceholderStateMixin, QDoubleSpinBox, ValueGettable, ValueSettable,
                                PlaceholderCapable, RangeConfigurable,
                                ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
@@ -186,7 +216,7 @@ if PYQT6_AVAILABLE:
                 pass
     
     
-    class ComboBoxAdapter(QComboBox, ValueGettable, ValueSettable, PlaceholderCapable,
+    class ComboBoxAdapter(PlaceholderStateMixin, QComboBox, ValueGettable, ValueSettable, PlaceholderCapable,
                          ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
         Adapter for QComboBox implementing OpenHCS ABCs.
@@ -244,7 +274,7 @@ if PYQT6_AVAILABLE:
                 pass
     
     
-    class CheckBoxAdapter(QCheckBox, ValueGettable, ValueSettable,
+    class CheckBoxAdapter(PlaceholderStateMixin, QCheckBox, ValueGettable, ValueSettable,
                          ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
         Adapter for QCheckBox implementing OpenHCS ABCs.
@@ -274,7 +304,7 @@ if PYQT6_AVAILABLE:
                 pass
 
 
-    class CheckboxGroupAdapter(QGroupBox, ValueGettable, ValueSettable,
+    class CheckboxGroupAdapter(PlaceholderStateMixin, QGroupBox, ValueGettable, ValueSettable,
                                ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
         Adapter for checkbox group (List[Enum]) implementing OpenHCS ABCs.
@@ -363,10 +393,18 @@ if PYQT6_AVAILABLE:
             def handler(_state: Any) -> None:
                 for checkbox in self.checkbox_widgets():
                     checkbox.convert_placeholder_to_concrete()
-                self.setProperty("is_placeholder_state", False)
+                self.clear_placeholder_state()
                 callback(self.get_value())
 
             return handler
+
+        def has_placeholder_state(self) -> bool:
+            return super().has_placeholder_state() or any(
+                widget_supports_capability(checkbox, WidgetCapability.PLACEHOLDER_STATE)
+                and isinstance(checkbox, PlaceholderStateTrackable)
+                and checkbox.has_placeholder_state()
+                for checkbox in self.checkbox_widgets()
+            )
 
         def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
             """Implement ChangeSignalEmitter ABC."""
@@ -382,7 +420,7 @@ if PYQT6_AVAILABLE:
 if PYQT6_AVAILABLE:
     from .widget_protocols import (
         ValueGettable, ValueSettable, PlaceholderCapable,
-        RangeConfigurable, ChangeSignalEmitter
+        PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter
     )
 
     # Register all adapter classes
@@ -402,7 +440,7 @@ if PYQT6_AVAILABLE:
         capabilities = set()
         abc_types = {
             ValueGettable, ValueSettable, PlaceholderCapable,
-            RangeConfigurable, ChangeSignalEmitter
+            PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter
         }
 
         for abc_type in abc_types:

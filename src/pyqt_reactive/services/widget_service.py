@@ -259,14 +259,19 @@ class WidgetService:
         manager
     ) -> None:
         """Apply placeholder behavior based on value."""
-        logger.info(f"        🎨 _apply_context_behavior: {manager.field_id}.{param_name}, value={repr(value)[:30]}")
+        logger.debug(
+            "Applying context behavior for %s.%s, value=%r",
+            manager.field_id,
+            param_name,
+            value,
+        )
 
         if not param_name or not manager.object_instance:
-            logger.warning(f"        ⏭️  No param_name or object_instance, skipping")
+            logger.debug("Skipping context behavior without param_name or object_instance")
             return
 
         if value is None:
-            logger.info(f"        ✅ Value is None, computing placeholder...")
+            logger.debug("Computing placeholder for None value")
             from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
             from objectstate import ObjectStateRegistry, build_context_stack
 
@@ -281,7 +286,7 @@ class WidgetService:
 
             with stack:
                 placeholder_text = manager.service.get_placeholder_text(param_name, type(manager.object_instance))
-                logger.info(f"        📝 Placeholder text: {repr(placeholder_text)[:50]}")
+                logger.debug("Resolved placeholder text: %r", placeholder_text)
                 if placeholder_text:
                     # Get the resolved value directly for type-safe placeholder application
                     try:
@@ -289,12 +294,12 @@ class WidgetService:
                     except AttributeError:
                         resolved_value = None
                     self.widget_enhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
-                    logger.info(f"        ✅ Applied placeholder")
                 else:
-                    logger.warning(f"        ⚠️  No placeholder text returned")
+                    logger.debug("No placeholder text returned")
         elif value is not None:
-            logger.info(f"        🧹 Value not None, clearing placeholder state")
-            self.widget_enhancer._clear_placeholder_state(widget)
+            if self.widget_enhancer.has_placeholder_state(widget):
+                logger.debug("Clearing placeholder state for concrete value")
+                self.widget_enhancer._clear_placeholder_state(widget)
 
     def clear_widget_to_default_state(self, widget: QWidget) -> None:
         """Clear widget to its default/empty state for reset operations."""
@@ -326,10 +331,19 @@ class WidgetService:
 
     def get_widget_value(self, widget: QWidget) -> Any:
         """Get widget value using ABC-based polymorphism."""
-        if widget.property("is_placeholder_state"):
+        from pyqt_reactive.protocols.widget_protocols import (
+            PlaceholderStateTrackable,
+            ValueGettable,
+            WidgetCapability,
+            widget_supports_capability,
+        )
+        if (
+            widget_supports_capability(widget, WidgetCapability.PLACEHOLDER_STATE)
+            and isinstance(widget, PlaceholderStateTrackable)
+            and widget.has_placeholder_state()
+        ):
             return None
 
-        from pyqt_reactive.protocols.widget_protocols import ValueGettable
         if isinstance(widget, ValueGettable):
             return widget.get_value()
 

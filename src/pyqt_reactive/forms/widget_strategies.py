@@ -23,10 +23,14 @@ from pyqt_reactive.widgets import (
 )
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
+    PlaceholderStateMixin,
+    PlaceholderStateTrackable,
     PyQtWidgetMeta,
     ResolvedValuePreviewSettable,
     ValueGettable,
     ValueSettable,
+    WidgetCapability,
+    widget_supports_capability,
 )
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
@@ -53,12 +57,37 @@ ParameterSignalCallback = Callable[[ParameterValue | None], None]
 WidgetSignalCallback = Callable[[WidgetValue | None], None]
 WidgetBoundaryTarget = QWidget | MagicGuiWidget
 TypeResolvedBoundaryEntry = Callable
+TEXT_CHANGE_COMMIT_DEBOUNCE_MS = 120
 
 
 # ==================== None-Aware Widget Classes ====================
 # Defined at top so they can be used throughout this file.
 
-class NoneAwareTextValueMixin:
+class DebouncedTextSignalMixin:
+    """Nominal mixin for line edits that coalesce rapid text changes."""
+
+    def __init__(self, *args, **kwargs):
+        self._text_change_emitters = {}
+        super().__init__(*args, **kwargs)
+
+    def connect_debounced_text_signal(
+        self,
+        callback: ParameterSignalCallback,
+        value_getter: Callable[[], ParameterValue | None],
+    ) -> None:
+        self._text_change_emitters[callback] = DebouncedTextChangeEmitter(
+            self,
+            callback,
+            value_getter,
+        )
+
+    def disconnect_debounced_text_signal(self, callback: ParameterSignalCallback) -> None:
+        emitter = self._text_change_emitters.pop(callback, None)
+        if emitter is not None:
+            emitter.disconnect()
+
+
+class NoneAwareTextValueMixin(DebouncedTextSignalMixin):
     """Shared text assignment for widgets that encode None as empty text."""
 
     def set_value(self, value: ParameterValue | None) -> None:
@@ -70,18 +99,16 @@ class NoneAwareTextValueMixin:
 
     def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
         """Implement ChangeSignalEmitter ABC."""
-        self.textChanged.connect(lambda: callback(self.get_value()))
+        self.connect_debounced_text_signal(callback, self.get_value)
 
     def disconnect_change_signal(self, callback: ParameterSignalCallback) -> None:
         """Implement ChangeSignalEmitter ABC."""
-        try:
-            self.textChanged.disconnect(callback)
-        except TypeError:
-            pass
+        self.disconnect_debounced_text_signal(callback)
 
 
 class NoneAwareLineEdit(
     NoneAwareTextValueMixin,
+    PlaceholderStateMixin,
     QLineEdit,
     ValueGettable,
     ValueSettable,
@@ -100,6 +127,7 @@ class NoneAwareLineEdit(
 
 class NoneAwareIntEdit(
     NoneAwareTextValueMixin,
+    PlaceholderStateMixin,
     QLineEdit,
     ValueGettable,
     ValueSettable,
@@ -576,22 +604,43 @@ class PlaceholderConfig:
     }
 
 
+def _placeholder_state(widget: QWidget) -> PlaceholderStateTrackable:
+    """Return the nominal placeholder-state contract for a widget."""
+    has_capability = widget_supports_capability(widget, WidgetCapability.PLACEHOLDER_STATE)
+    if not isinstance(widget, PlaceholderStateTrackable):
+        raise TypeError(
+            f"Widget {type(widget).__name__} must implement PlaceholderStateTrackable "
+            "to participate in placeholder rendering"
+        )
+    if not has_capability:
+        raise TypeError(
+            f"Widget {type(widget).__name__} implements PlaceholderStateTrackable "
+            "but does not declare the placeholder-state capability tag"
+        )
+    return widget
+
+
+def _supports_placeholder_state(widget: QWidget) -> bool:
+    """Return whether the widget nominally exposes placeholder-state operations."""
+    return (
+        widget_supports_capability(widget, WidgetCapability.PLACEHOLDER_STATE)
+        and isinstance(widget, PlaceholderStateTrackable)
+    )
+
+
 def _get_cached_placeholder_text(widget: QWidget) -> str | None:
-    """Return cached placeholder text stored on the Qt object."""
-    cached = widget.property("cached_placeholder_text")
-    if isinstance(cached, str):
-        return cached
-    return None
+    """Return cached placeholder text from the widget's nominal state contract."""
+    return _placeholder_state(widget).cached_placeholder_text()
 
 
 def _set_cached_placeholder_text(widget: QWidget, placeholder_text: str) -> None:
-    """Store cached placeholder text on the Qt object."""
-    widget.setProperty("cached_placeholder_text", placeholder_text)
+    """Store cached placeholder text on the widget's nominal state contract."""
+    _placeholder_state(widget).set_cached_placeholder_text(placeholder_text)
 
 
 def _clear_cached_placeholder_text(widget: QWidget) -> None:
-    """Clear cached placeholder text stored on the Qt object."""
-    widget.setProperty("cached_placeholder_text", None)
+    """Clear cached placeholder text on the widget's nominal state contract."""
+    _placeholder_state(widget).clear_placeholder_cache()
 
 
 class PlaceholderRenderer:
@@ -641,7 +690,7 @@ class PlaceholderRenderer:
 
         widget.setStyleSheet(style)
         widget.setToolTip(f"{placeholder_text} ({interaction_hint})")
-        widget.setProperty("is_placeholder_state", True)
+        _placeholder_state(widget).mark_placeholder_state()
 
     def apply_lineedit(self, widget: QLineEdit, text: str) -> None:
         """Apply placeholder to line edit with proper state tracking."""
@@ -651,7 +700,7 @@ class PlaceholderRenderer:
             widget.setPlaceholderText(text)
         finally:
             widget.blockSignals(was_blocked)
-        widget.setProperty("is_placeholder_state", True)
+        _placeholder_state(widget).mark_placeholder_state()
         widget.setToolTip(text)
 
     def apply_spinbox(self, widget: QSpinBox | QDoubleSpinBox, text: str) -> None:
@@ -679,7 +728,7 @@ class PlaceholderRenderer:
                 widget.blockSignals(was_blocked)
 
             widget.setToolTip(f"{placeholder_text} ({PlaceholderConfig.INTERACTION_HINTS['checkbox']})")
-            widget.setProperty("is_placeholder_state", True)
+            _placeholder_state(widget).mark_placeholder_state()
             widget.update()
         except Exception:
             widget.setToolTip(placeholder_text)
@@ -703,7 +752,7 @@ class PlaceholderRenderer:
                 individual_placeholder = f"Pipeline default: {enum_value in inherited_enums}"
                 self.apply_checkbox(checkbox, individual_placeholder)
 
-            widget.setProperty("is_placeholder_state", True)
+            _placeholder_state(widget).mark_placeholder_state()
             widget.setToolTip(f"{placeholder_text} (click any checkbox to set your own value)")
         except Exception:
             logger.exception("Failed to apply checkbox group placeholder")
@@ -717,7 +766,7 @@ class PlaceholderRenderer:
             widget.path_input.setPlaceholderText(placeholder_text)
         finally:
             widget.path_input.blockSignals(was_blocked)
-        widget.path_input.setProperty("is_placeholder_state", True)
+        _placeholder_state(widget).mark_placeholder_state()
         widget.path_input.setToolTip(placeholder_text)
 
     def apply_combobox(self, widget: QComboBox, placeholder_text: str) -> None:
@@ -748,7 +797,7 @@ class PlaceholderRenderer:
                 widget.blockSignals(was_blocked)
 
             widget.setToolTip(f"{placeholder_text} ({PlaceholderConfig.INTERACTION_HINTS['combobox']})")
-            widget.setProperty("is_placeholder_state", True)
+            _placeholder_state(widget).mark_placeholder_state()
         except Exception:
             widget.setToolTip(placeholder_text)
 
@@ -875,6 +924,57 @@ class MagicguiWrapperFamilyAuthority:
 
 
 MAGICGUI_WRAPPER_FAMILY = MagicguiWrapperFamilyAuthority()
+
+
+class DebouncedTextChangeEmitter:
+    """Coalesce rapid textChanged signals into one semantic value commit."""
+
+    def __init__(
+        self,
+        widget: QLineEdit,
+        callback: WidgetSignalCallback,
+        value_getter: Callable[[], WidgetValue | None],
+        delay_ms: int = TEXT_CHANGE_COMMIT_DEBOUNCE_MS,
+    ) -> None:
+        from PyQt6.QtCore import QTimer
+
+        self._widget = widget
+        self._callback = callback
+        self._value_getter = value_getter
+        self._timer = QTimer(widget)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(delay_ms)
+        self._timer.timeout.connect(self.emit)
+
+        widget.textChanged.connect(self.schedule)
+        widget.editingFinished.connect(self.flush)
+
+    def schedule(self, *_args) -> None:
+        self._timer.start()
+
+    def flush(self) -> None:
+        if not self._timer.isActive():
+            return
+        self._timer.stop()
+        self.emit()
+
+    def emit(self) -> None:
+        self._callback(self._value_getter())
+
+    def disconnect(self) -> None:
+        self._timer.stop()
+        try:
+            self._widget.textChanged.disconnect(self.schedule)
+        except TypeError:
+            pass
+        try:
+            self._widget.editingFinished.disconnect(self.flush)
+        except TypeError:
+            pass
+        try:
+            self._timer.timeout.disconnect(self.emit)
+        except TypeError:
+            pass
 
 
 def _connect_raw_checkbox(widget: QCheckBox, callback: WidgetSignalCallback) -> None:
@@ -1041,6 +1141,11 @@ class PyQt6WidgetEnhancer:
     """Widget enhancement using functional dispatch patterns."""
 
     @staticmethod
+    def has_placeholder_state(widget: QWidget) -> bool:
+        """Return whether the widget has placeholder chrome or cached placeholder data."""
+        return _supports_placeholder_state(widget) and widget.has_placeholder_state()
+
+    @staticmethod
     def apply_placeholder_text(widget: QWidget, placeholder_text: str) -> None:
         """Apply placeholder using declarative widget-strategy mapping."""
         # PERFORMANCE OPTIMIZATION: Skip if placeholder text is unchanged
@@ -1150,32 +1255,34 @@ class PyQt6WidgetEnhancer:
                 # CRITICAL FIX: Always clear cached placeholder text first, even if
                 # the checkbox is not in placeholder state. This ensures resetting to
                 # None will properly reapply the placeholder (not skip due to cache hit).
-                checkbox.clear_placeholder_cache()
-                if checkbox.property("is_placeholder_state"):
+                checkbox_state = _placeholder_state(checkbox)
+                checkbox_state.clear_placeholder_cache()
+                if checkbox_state.has_placeholder_state():
                     checkbox.setStyleSheet("")
-                    checkbox.setProperty("is_placeholder_state", False)
+                    checkbox_state.clear_placeholder_state()
                     checkbox.convert_placeholder_to_concrete()
                     # Clean checkbox tooltip
                     current_tooltip = checkbox.toolTip()
                     cleaned_tooltip = _tooltip_without_interaction_hints(current_tooltip)
                     checkbox.setToolTip(cleaned_tooltip)
             # Clear group widget's placeholder state and cache
-            widget.setProperty("is_placeholder_state", False)
+            widget.clear_placeholder_state()
             widget.setToolTip("")
-            _clear_cached_placeholder_text(widget)
+            widget.clear_placeholder_cache()
             return
 
         # CRITICAL FIX: Always clear cached placeholder text when exiting placeholder state.
         # This ensures that resetting to None will properly reapply the placeholder
         # (not skip due to cache hit). The cache must be cleared even if the widget
         # is already in non-placeholder state (e.g., user clicked checkbox).
-        _clear_cached_placeholder_text(widget)
+        placeholder_state = _placeholder_state(widget)
+        placeholder_state.clear_placeholder_cache()
 
-        if not widget.property("is_placeholder_state"):
+        if not placeholder_state.has_placeholder_state():
             return
 
         widget.setStyleSheet("")
-        widget.setProperty("is_placeholder_state", False)
+        placeholder_state.clear_placeholder_state()
 
         # Clean tooltip using functional pattern
         current_tooltip = widget.toolTip()

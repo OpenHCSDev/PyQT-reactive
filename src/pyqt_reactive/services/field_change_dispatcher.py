@@ -120,10 +120,19 @@ class SourceStateUpdateStage:
     def run(self, context: FieldDispatchContext) -> None:
         # ObjectState.update_parameter() enforces the invariant:
         # state mutation -> global cache invalidation.
-        context.source.state.update_parameter(
-            context.source_path,
-            context.event.value,
-        )
+        from objectstate import ObjectStateRegistry
+
+        if context.event.is_reset:
+            context.source.state.update_parameter(
+                context.source_path,
+                context.event.value,
+            )
+        else:
+            with ObjectStateRegistry.defer_live_invalidations():
+                context.source.state.update_parameter(
+                    context.source_path,
+                    context.event.value,
+                )
         context.source.sync_after_model_field_change(
             context.event.field_name,
             context.source_path,
@@ -234,11 +243,41 @@ class SiblingPlaceholderRefreshStage:
 class LiveContextNotificationStage:
     """Broadcasts ObjectState live-context changes to form/list listeners."""
 
-    def run(self) -> None:
+    DEBOUNCE_MS = 180
+
+    def __init__(self) -> None:
+        self._timer = None
+
+    def run(self, context: FieldDispatchContext) -> None:
         # Do not block the source root here: live placeholder/list refreshes are
         # read-only, and the source window also needs to repaint inherited values
         # affected by this edit.
+        if context.event.is_reset:
+            self.flush()
+            return
+
+        if not self._schedule_debounced_flush():
+            self.flush()
+
+    def _schedule_debounced_flush(self) -> bool:
+        try:
+            from PyQt6.QtCore import QCoreApplication, QTimer
+        except Exception:
+            return False
+
+        if QCoreApplication.instance() is None:
+            return False
+
+        if self._timer is None:
+            self._timer = QTimer()
+            self._timer.setSingleShot(True)
+            self._timer.timeout.connect(self.flush)
+        self._timer.start(self.DEBOUNCE_MS)
+        return True
+
+    def flush(self) -> None:
         from objectstate import ObjectStateRegistry
+        ObjectStateRegistry.flush_deferred_invalidations()
         ObjectStateRegistry._notify_change()
         if DEBUG_DISPATCHER:
             logger.info(
@@ -337,9 +376,23 @@ class FieldChangeDispatcher:
             context = self._context_factory.build(event)
             self._source_state_update.run(context)
             self._sibling_placeholder_refresh.run(context)
-            self._live_context_notification.run()
+            self._live_context_notification.run(context)
             self._enabled_field_style.run(context)
             self._root_signals.run(context)
 
+        except Exception:
+            self._flush_pending_invalidations_after_failure()
+            raise
         finally:
             self._guard.exit(source)
+
+    def _flush_pending_invalidations_after_failure(self) -> None:
+        """Do not let a failed dispatch leak deferred cache invalidations."""
+        try:
+            from objectstate import ObjectStateRegistry
+            if not ObjectStateRegistry.has_deferred_invalidations():
+                return
+            ObjectStateRegistry.flush_deferred_invalidations()
+            ObjectStateRegistry._notify_change()
+        except Exception:
+            logger.exception("Failed to flush deferred invalidations after dispatch failure")

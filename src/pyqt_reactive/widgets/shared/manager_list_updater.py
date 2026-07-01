@@ -277,13 +277,29 @@ class ManagerListUpdater:
         *,
         update_tooltip: bool = True,
     ) -> None:
-        list_item.setData(
+        self._set_item_data_if_changed(
+            list_item,
             Qt.ItemDataRole.UserRole,
             operations.list_item_data_for(item_obj, index),
         )
         if update_tooltip:
-            list_item.setToolTip(operations.tooltip_for(item_obj))
+            tooltip = operations.tooltip_for(item_obj)
+            if list_item.toolTip() != tooltip:
+                list_item.setToolTip(tooltip)
         for role_offset, value in operations.extra_data_for(item_obj, index).items():
-            list_item.setData(Qt.ItemDataRole.UserRole + role_offset, value)
+            self._set_item_data_if_changed(
+                list_item,
+                Qt.ItemDataRole.UserRole + role_offset,
+                value,
+            )
         operations.set_styling_roles(list_item, display_text, item_obj)
         operations.apply_scope_color(list_item, item_obj, index)
+
+    @staticmethod
+    def _set_item_data_if_changed(
+        list_item: QListWidgetItem,
+        role: int,
+        value: RoleValueT,
+    ) -> None:
+        if list_item.data(role) != value:
+            list_item.setData(role, value)

@@ -239,6 +239,237 @@ def test_manager_list_in_place_refresh_skips_unchanged_tooltip(qapp):
     assert colored_items == [refreshed_item]
 
 
+def test_manager_list_role_update_skips_equal_values(qapp) -> None:
+    """Equal role values do not emit QListWidget data updates."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QListWidgetItem
+    from pyqt_reactive.widgets.shared.manager_list_updater import ManagerListUpdater
+
+    class CountingItem(QListWidgetItem):
+        def __init__(self, text: str):
+            super().__init__(text)
+            self.set_data_calls = 0
+
+        def setData(self, role, value):
+            self.set_data_calls += 1
+            return super().setData(role, value)
+
+    item = CountingItem("row")
+    item.setData(Qt.ItemDataRole.UserRole, "same")
+    item.setData(Qt.ItemDataRole.UserRole + 1, "old")
+    item.set_data_calls = 0
+
+    ManagerListUpdater._set_item_data_if_changed(
+        item,
+        Qt.ItemDataRole.UserRole,
+        "same",
+    )
+    ManagerListUpdater._set_item_data_if_changed(
+        item,
+        Qt.ItemDataRole.UserRole + 1,
+        "new",
+    )
+
+    assert item.data(Qt.ItemDataRole.UserRole) == "same"
+    assert item.data(Qt.ItemDataRole.UserRole + 1) == "new"
+    assert item.set_data_calls == 1
+
+
+def test_styled_text_size_calculator_caches_layout_metrics(qapp) -> None:
+    """Repeated size hints reuse the layout/font metric cache."""
+    from PyQt6.QtWidgets import QListWidget
+    from pyqt_reactive.widgets.shared.list_item_text_rendering import (
+        StyledTextSizeCalculator,
+        TextMetricCache,
+    )
+    from pyqt_reactive.widgets.shared.styled_text_layout import Segment, StyledTextLayout
+
+    metric_cache = TextMetricCache()
+    calculator = StyledTextSizeCalculator(metric_cache)
+    font = QListWidget().font()
+    layout = StyledTextLayout(
+        name=Segment("Threshold"),
+        preview_segments=[Segment("sigma=1.0"), Segment("mode=otsu")],
+        config_segments=[Segment("well_filter=A01")],
+        multiline=True,
+    )
+
+    first = calculator.from_layout(layout, font)
+    size_cache_entries = len(metric_cache._sizes)
+    second = calculator.from_layout(layout, font)
+
+    assert second == first
+    assert len(metric_cache._sizes) == size_cache_entries
+
+
+def test_flash_delegate_update_targets_only_item_rect() -> None:
+    """Delegate-painted flashes repaint the visible row rect, not the whole viewport."""
+    from PyQt6.QtCore import QRect
+    from pyqt_reactive.animation.flash_mixin import FlashElement, _GlobalFlashCoordinator
+
+    class Index:
+        def isValid(self):
+            return True
+
+    class Viewport:
+        def __init__(self):
+            self.updates = []
+
+        def rect(self):
+            return QRect(0, 0, 100, 100)
+
+        def update(self, rect):
+            self.updates.append(rect)
+
+    class ListLike:
+        def __init__(self):
+            self._viewport = Viewport()
+
+        def viewport(self):
+            return self._viewport
+
+        def visualRect(self, index):
+            return QRect(10, 20, 30, 40)
+
+    widget = ListLike()
+    element = FlashElement(
+        key="row",
+        get_rect_in_window=lambda window: None,
+        skip_overlay_paint=True,
+        delegate_widget=widget,
+        get_model_index=Index,
+    )
+
+    _GlobalFlashCoordinator()._update_delegate_element(element)
+
+    assert widget._viewport.updates == [QRect(10, 20, 30, 40)]
+
+
+def test_widget_service_skips_placeholder_clear_for_concrete_state(qapp):
+    """Concrete value updates only clear placeholder chrome when there is state to clear."""
+    from types import SimpleNamespace
+
+    from pyqt_reactive.forms.widget_strategies import NoneAwareLineEdit
+    from pyqt_reactive.protocols import (
+        PlaceholderStateTrackable,
+        WidgetCapability,
+        widget_supports_capability,
+    )
+    from pyqt_reactive.services.widget_service import WidgetService
+
+    widget = NoneAwareLineEdit()
+    service = WidgetService()
+    calls = []
+
+    class FakeEnhancer:
+        @staticmethod
+        def has_placeholder_state(target):
+            assert isinstance(target, PlaceholderStateTrackable)
+            assert widget_supports_capability(target, WidgetCapability.PLACEHOLDER_STATE)
+            return target.has_placeholder_state()
+
+        def _clear_placeholder_state(self, target):
+            calls.append(target)
+
+    service.widget_enhancer = FakeEnhancer()
+    manager = SimpleNamespace(field_id="config", object_instance=object())
+
+    service._apply_context_behavior(widget, "abc", "field", manager)
+
+    assert calls == []
+
+    widget.set_cached_placeholder_text("Pipeline default: abc")
+    service._apply_context_behavior(widget, "abcd", "field", manager)
+
+    assert calls == [widget]
+
+
+def test_placeholder_state_methods_declare_generic_capability_tag(qapp):
+    """Placeholder-state implementers expose a nominal tag for generic queries."""
+    from pyqt_reactive.forms.widget_strategies import NoneAwareLineEdit
+    from pyqt_reactive.protocols import (
+        PlaceholderStateMixin,
+        PlaceholderStateTrackable,
+        WidgetCapability,
+        widget_capability_tags,
+        widget_supports_capability,
+    )
+
+    class MethodOnly:
+        def has_placeholder_state(self):
+            return True
+
+    widget = NoneAwareLineEdit()
+
+    assert WidgetCapability.PLACEHOLDER_STATE in PlaceholderStateTrackable.widget_capabilities
+    assert WidgetCapability.PLACEHOLDER_STATE in PlaceholderStateMixin.widget_capabilities
+    assert WidgetCapability.PLACEHOLDER_STATE in widget_capability_tags(widget)
+    assert widget_supports_capability(widget, WidgetCapability.PLACEHOLDER_STATE)
+    assert not widget_supports_capability(MethodOnly(), WidgetCapability.PLACEHOLDER_STATE)
+
+
+def test_none_aware_line_edit_debounces_text_commits(qapp):
+    """Rapid typing commits one semantic value after the user pauses."""
+    from PyQt6.QtCore import QEventLoop, QTimer
+    from pyqt_reactive.forms.widget_strategies import NoneAwareLineEdit
+
+    widget = NoneAwareLineEdit()
+    values = []
+    widget.connect_change_signal(values.append)
+
+    widget.setText("a")
+    widget.setText("ab")
+    widget.setText("abc")
+
+    loop = QEventLoop()
+    QTimer.singleShot(180, loop.quit)
+    loop.exec()
+
+    assert values == ["abc"]
+
+
+def test_multiline_delegate_plain_text_fallback_is_quiet(qapp, caplog):
+    """List placeholder rows without structured layouts are normal rows."""
+    import logging
+
+    from PyQt6.QtCore import QRect, Qt
+    from PyQt6.QtGui import QColor, QPainter, QPixmap
+    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QStyle, QStyleOptionViewItem
+    from pyqt_reactive.widgets.shared.list_item_delegate import MultilinePreviewItemDelegate
+
+    item_list = QListWidget()
+    item = QListWidgetItem("No plate selected - select a plate to view pipeline")
+    item_list.addItem(item)
+    delegate = MultilinePreviewItemDelegate(
+        QColor("black"),
+        QColor("gray"),
+        QColor("white"),
+        parent=item_list,
+    )
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 320, 40)
+    option.font = item_list.font()
+    option.state = QStyle.StateFlag.State_Enabled
+    option.widget = item_list
+    index = item_list.model().index(0, 0)
+
+    caplog.set_level(logging.WARNING)
+
+    size = delegate.sizeHint(option, index)
+    pixmap = QPixmap(340, 60)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    try:
+        delegate.paint(painter, option, index)
+        assert painter.isActive()
+    finally:
+        painter.end()
+
+    assert size.height() > 0
+    assert "sizeHint from text fallback" not in caplog.text
+    assert "Expected StyledTextLayout" not in caplog.text
+
+
 def test_restore_selection_by_id_preserves_without_selection_signal(qapp):
     """Programmatic refresh selection does not emit semantic selection changes."""
     from PyQt6.QtCore import Qt

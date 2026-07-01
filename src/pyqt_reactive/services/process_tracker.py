@@ -8,7 +8,7 @@ Used by log viewer to distinguish logs from running vs terminated processes.
 import logging
 import re
 from pathlib import Path
-from typing import Set, Optional
+from typing import Iterable, Set, Optional
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -44,38 +44,66 @@ class ProcessTracker:
         except ImportError:
             logger.warning("psutil not available - process tracking disabled")
     
-    def update(self):
-        """Update list of alive PIDs and their info."""
+    def update(self, target_pids: Iterable[int] | None = None) -> bool:
+        """Update tracked process state.
+
+        Args:
+            target_pids: Optional PID set to check directly. When provided,
+                avoids scanning every process on the machine.
+
+        Returns:
+            True when tracked alive/dead state changed.
+        """
         if not self._psutil_available:
-            return
+            return False
         
         try:
             import psutil
+
+            old_alive_pids = self.alive_pids
+            target_pid_set = set(target_pids) if target_pids is not None else None
             
-            # Get all current PIDs
             new_alive_pids = set()
             new_process_info = {}
-            
-            for proc in psutil.process_iter(['pid', 'name', 'status', 'create_time']):
-                try:
-                    pid = proc.info['pid']
-                    new_alive_pids.add(pid)
-                    new_process_info[pid] = ProcessInfo(
-                        pid=pid,
-                        name=proc.info.get('name', 'unknown'),
-                        status=proc.info.get('status', 'unknown'),
-                        create_time=proc.info.get('create_time', 0)
-                    )
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+
+            if target_pid_set is None:
+                process_iter = psutil.process_iter(['pid', 'name', 'status', 'create_time'])
+                for proc in process_iter:
+                    try:
+                        pid = proc.info['pid']
+                        new_alive_pids.add(pid)
+                        new_process_info[pid] = ProcessInfo(
+                            pid=pid,
+                            name=proc.info.get('name', 'unknown'),
+                            status=proc.info.get('status', 'unknown'),
+                            create_time=proc.info.get('create_time', 0),
+                        )
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+            else:
+                for pid in target_pid_set:
+                    try:
+                        proc = psutil.Process(pid)
+                        new_alive_pids.add(pid)
+                        new_process_info[pid] = ProcessInfo(
+                            pid=pid,
+                            name=proc.name(),
+                            status=proc.status(),
+                            create_time=proc.create_time(),
+                        )
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        pass
             
             self.alive_pids = new_alive_pids
             self.process_info = new_process_info
+            changed = old_alive_pids != new_alive_pids
             
             logger.debug(f"Updated process tracker: {len(self.alive_pids)} alive processes")
-            
+            return changed
+
         except Exception as e:
             logger.warning(f"Failed to update process tracker: {e}")
+            return False
     
     def is_alive(self, pid: Optional[int]) -> bool:
         """

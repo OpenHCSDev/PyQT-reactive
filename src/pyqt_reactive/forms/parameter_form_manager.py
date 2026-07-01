@@ -851,9 +851,6 @@ class ParameterFormManager(
             if isinstance(widget, ValueSettable):
                 self._widget_service.update_widget_value(widget, converted_value, param_name, False, self)
 
-        # Build full dotted path for state update
-        dotted_path = f'{self.field_id}.{param_name}' if self.field_id else param_name
-
         # ATOMIC: If this state has a parent (e.g., function in a step), wrap in atomic
         # This coalesces function parameter changes with parent step updates into one undo
         has_parent = self.state._parent_state is not None
@@ -862,14 +859,12 @@ class ParameterFormManager(
             from objectstate import ObjectStateRegistry
             logger.debug(f"[ATOMIC_CHECK] Entering atomic block for {param_name}")
             with ObjectStateRegistry.atomic("edit func parameter"):
-                self.state.update_parameter(dotted_path, converted_value)
                 # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
                 # This is INSIDE the atomic block so parent step updates are also coalesced
                 event = FieldChangeEvent(param_name, converted_value, self)
                 FieldChangeDispatcher.instance().dispatch(event)
             logger.debug(f"[ATOMIC_CHECK] Exited atomic block for {param_name}")
         else:
-            self.state.update_parameter(dotted_path, converted_value)
             # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
             event = FieldChangeEvent(param_name, converted_value, self)
             FieldChangeDispatcher.instance().dispatch(event)

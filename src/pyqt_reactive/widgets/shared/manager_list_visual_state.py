@@ -186,9 +186,9 @@ class ManagerListVisualState:
             layout = display_text
 
         if layout is not None:
-            list_item.setData(LAYOUT_ROLE, layout)
-            list_item.setData(DIRTY_FIELDS_ROLE, self.dirty_fields(item_obj))
-            list_item.setData(SIG_DIFF_FIELDS_ROLE, self.signature_diff_fields(item_obj))
+            self._set_item_data_if_changed(list_item, LAYOUT_ROLE, layout)
+            self._set_item_data_if_changed(list_item, DIRTY_FIELDS_ROLE, self.dirty_fields(item_obj))
+            self._set_item_data_if_changed(list_item, SIG_DIFF_FIELDS_ROLE, self.signature_diff_fields(item_obj))
         else:
             logger.error(
                 "Cannot set LAYOUT_ROLE: display_text=%s, is_StyledText=%s",
@@ -204,11 +204,16 @@ class ManagerListVisualState:
         scope_id, item_type = scope_info
         scheme = get_scope_color_scheme(scope_id, step_index=index)
         bg_color = item_type.get_background_color(scheme)
-        if bg_color:
+        if bg_color and list_item.background().color() != bg_color:
             list_item.setBackground(bg_color)
 
-        list_item.setData(self._scope_border_role, scheme)
-        list_item.setData(FLASH_KEY_ROLE, scope_id)
+        self._set_item_data_if_changed(list_item, self._scope_border_role, scheme)
+        self._set_item_data_if_changed(list_item, FLASH_KEY_ROLE, scope_id)
+
+    @staticmethod
+    def _set_item_data_if_changed(list_item: QListWidgetItem, role: int, value: Any) -> None:
+        if list_item.data(role) != value:
+            list_item.setData(role, value)
 
     def _list_item_scope(self, item: Any, index: int) -> Optional[tuple[str, Any]]:
         return self._item_access.list_item_scope(item, index)

@@ -17,7 +17,34 @@ Inspired by OpenHCS patterns:
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from enum import Enum
+from typing import Any, Callable, ClassVar
+
+
+class WidgetCapability(str, Enum):
+    """Nominal widget capability tags for generic service-level queries."""
+
+    PLACEHOLDER_STATE = "placeholder_state"
+
+
+class WidgetCapabilityTagged(ABC):
+    """Base for widget contracts that advertise generic capability tags."""
+
+    widget_capabilities: ClassVar[frozenset[WidgetCapability]] = frozenset()
+
+
+def widget_capability_tags(widget_or_type: Any) -> frozenset[WidgetCapability]:
+    """Return all capability tags declared by a widget class and its bases."""
+    widget_type = widget_or_type if isinstance(widget_or_type, type) else type(widget_or_type)
+    capabilities: set[WidgetCapability] = set()
+    for cls in reversed(widget_type.__mro__):
+        capabilities.update(getattr(cls, "widget_capabilities", ()))
+    return frozenset(capabilities)
+
+
+def widget_supports_capability(widget_or_type: Any, capability: WidgetCapability) -> bool:
+    """Return whether a widget class declares a nominal capability tag."""
+    return capability in widget_capability_tags(widget_or_type)
 
 
 class ValueGettable(ABC):
@@ -149,6 +176,44 @@ class PlaceholderCapable(ABC):
         Args:
             text: Placeholder text to display (e.g., "Pipeline default: 42")
         """
+        pass
+
+
+class PlaceholderStateTrackable(WidgetCapabilityTagged):
+    """ABC for widgets that own placeholder chrome/cache state."""
+
+    widget_capabilities: ClassVar[frozenset[WidgetCapability]] = frozenset(
+        {WidgetCapability.PLACEHOLDER_STATE}
+    )
+
+    @abstractmethod
+    def has_placeholder_state(self) -> bool:
+        """Return whether placeholder chrome or cached placeholder data is present."""
+        pass
+
+    @abstractmethod
+    def mark_placeholder_state(self) -> None:
+        """Mark the widget as currently displaying placeholder chrome."""
+        pass
+
+    @abstractmethod
+    def clear_placeholder_state(self) -> None:
+        """Mark the widget as no longer displaying placeholder chrome."""
+        pass
+
+    @abstractmethod
+    def cached_placeholder_text(self) -> str | None:
+        """Return cached placeholder text, if any."""
+        pass
+
+    @abstractmethod
+    def set_cached_placeholder_text(self, placeholder_text: str) -> None:
+        """Cache placeholder text after a successful render."""
+        pass
+
+    @abstractmethod
+    def clear_placeholder_cache(self) -> None:
+        """Clear cached placeholder text."""
         pass
 
 

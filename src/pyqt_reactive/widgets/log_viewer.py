@@ -2365,6 +2365,7 @@ class LogViewerWindow(QMainWindow):
         Args:
             log_files: List of LogFileInfo objects to add to dropdown
         """
+        self._update_tracked_processes(log_files)
         self.log_selector.clear()
 
         # Sort logs: TUI first, main subprocess, then workers by timestamp
@@ -2923,19 +2924,33 @@ class LogViewerWindow(QMainWindow):
     def start_process_tracking(self) -> None:
         """Start periodic process status updates."""
         # Initial update
-        self.process_tracker.update()
+        self._update_tracked_processes()
 
-        # Setup timer for periodic updates (every 2 seconds)
+        # Process status badges are informational; avoid rescanning constantly.
         self.process_update_timer = QTimer()
         self.process_update_timer.timeout.connect(self.update_process_status)
-        self.process_update_timer.start(2000)  # 2 second interval
+        self.process_update_timer.start(10000)
 
         logger.debug("Started process tracking")
 
+    def _tracked_log_pids(self, log_files: Optional[List[LogFileInfo]] = None) -> set[int]:
+        """Return PIDs represented by the current discovered log list."""
+        pids = set()
+        for log_info in (log_files if log_files is not None else self._all_discovered_logs):
+            pid = extract_pid_from_log_filename(log_info.path)
+            if pid is not None:
+                pids.add(pid)
+        return pids
+
+    def _update_tracked_processes(self, log_files: Optional[List[LogFileInfo]] = None) -> bool:
+        """Refresh process status for only the PIDs represented in the UI."""
+        return self.process_tracker.update(self._tracked_log_pids(log_files))
+
     def update_process_status(self) -> None:
         """Update process status and refresh dropdown if needed."""
-        # Update process tracker
-        self.process_tracker.update()
+        status_changed = self._update_tracked_processes()
+        if not status_changed and not self.show_alive_only:
+            return
 
         # Refresh dropdown to update status indicators
         # Only if we have logs loaded

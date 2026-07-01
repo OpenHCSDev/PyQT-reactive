@@ -5,6 +5,8 @@ Single source of truth for list item rendering across PipelineEditor, PlateManag
 and other widgets that display items with preview labels.
 """
 
+import logging
+
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen
 from PyQt6.QtCore import Qt, QRect
@@ -14,6 +16,7 @@ from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 from pyqt_reactive.widgets.shared.list_item_text_rendering import (
     StyledTextRenderer,
     StyledTextSizeCalculator,
+    TextMetricCache,
     TextPaintContext,
 )
 from pyqt_reactive.widgets.shared.styled_text_layout import (
@@ -42,6 +45,8 @@ BORDER_PATTERNS = {
     "dotted": (Qt.PenStyle.DotLine, [2, 6]),
     "dashdot": (Qt.PenStyle.DashDotLine, [8, 4, 2, 4]),
 }
+
+logger = logging.getLogger(__name__)
 
 
 class MultilinePreviewItemDelegate(QStyledItemDelegate):
@@ -74,8 +79,9 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         self.preview_color = preview_color
         self.selected_text_color = selected_text_color
         self._manager = manager
-        self._text_renderer = StyledTextRenderer()
-        self._size_calculator = StyledTextSizeCalculator()
+        self._text_metric_cache = TextMetricCache()
+        self._text_renderer = StyledTextRenderer(self._text_metric_cache)
+        self._size_calculator = StyledTextSizeCalculator(self._text_metric_cache)
         # NOTE: Flash rendering moved to WindowFlashOverlay for O(1) performance
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
@@ -147,33 +153,45 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         x_start = text_rect.left() + 5
         y_offset = text_rect.top() + fm.ascent() + 3
 
-        if isinstance(layout, StyledTextLayout):
-            name_color = self.selected_text_color if is_selected else self.name_color
-            preview_color = self.selected_text_color if is_selected else self.preview_color
-            self._text_renderer.paint_layout(
-                painter,
-                layout,
-                TextPaintContext(
-                    dirty_fields=dirty_fields,
-                    sig_diff_fields=sig_diff_fields,
-                    base_font=base_font,
-                    name_color=name_color,
-                    preview_color=preview_color,
-                ),
-                x_start,
-                y_offset,
-                line_height,
-            )
-        else:
-            # No fallback - this should never happen
-            import logging
-            logging.error(f"Expected StyledTextLayout but got: {type(layout)}, text: {text[:100]}")
-            return
-
-        painter.restore()
+        try:
+            if isinstance(layout, StyledTextLayout):
+                name_color = self.selected_text_color if is_selected else self.name_color
+                preview_color = self.selected_text_color if is_selected else self.preview_color
+                self._text_renderer.paint_layout(
+                    painter,
+                    layout,
+                    TextPaintContext(
+                        dirty_fields=dirty_fields,
+                        sig_diff_fields=sig_diff_fields,
+                        base_font=base_font,
+                        name_color=name_color,
+                        preview_color=preview_color,
+                    ),
+                    x_start,
+                    y_offset,
+                    line_height,
+                )
+            else:
+                self._paint_plain_text_fallback(painter, text, base_font, x_start, y_offset, is_selected)
+        finally:
+            painter.restore()
 
         if scheme is not None:
             self._paint_border_layers(painter, option.rect, scheme)
+
+    def _paint_plain_text_fallback(
+        self,
+        painter: QPainter,
+        text: str,
+        base_font: QFont,
+        x_start: int,
+        y_offset: int,
+        is_selected: bool,
+    ) -> None:
+        """Paint rows that intentionally do not carry a structured text layout."""
+        painter.setFont(base_font)
+        painter.setPen(self.selected_text_color if is_selected else self.name_color)
+        painter.drawText(x_start, y_offset, text)
 
     def _paint_scope_background(self, painter: QPainter, content_rect: QRect, scheme, layers) -> None:
         """Paint background matching border colors.
@@ -296,19 +314,11 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> 'QSize':
         """Calculate size hint based on layout structure."""
-        import logging
-        logger = logging.getLogger(__name__)
-
         # Get structured layout data
         layout = index.data(LAYOUT_ROLE)
         if layout is not None:
-            # Use structured layout for accurate sizing
-            size = self._size_calculator.from_layout(layout, option.font)
-            logger.debug(f"📏 sizeHint from layout: {size}")
-            return size
+            return self._size_calculator.from_layout(layout, option.font)
         else:
             # Fallback to text-based sizing
             text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-            size = self._size_calculator.from_text(text, option.font)
-            logger.warning(f"⚠️  sizeHint from text fallback (no layout): {size}, text: {text[:50] if text else 'empty'}")
-            return size
+            return self._size_calculator.from_text(text, option.font)

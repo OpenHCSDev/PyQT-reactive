@@ -1702,6 +1702,42 @@ class _GlobalFlashCoordinator:
         """Get pre-computed color for key. O(1) dict lookup."""
         return self._computed_colors.get(key)
 
+    def _update_delegate_element(self, element: FlashElement) -> None:
+        """Repaint only the delegate-owned item rect for a flashing list/tree row."""
+        widget = element.delegate_widget
+        if widget is None or element.get_model_index is None:
+            return
+
+        try:
+            index = element.get_model_index()
+            if index is None or not index.isValid():
+                return
+
+            viewport = widget.viewport()
+            if viewport is None:
+                return
+
+            visual_rect = widget.visualRect(index)
+            if not visual_rect.isValid():
+                return
+
+            update_rect = visual_rect.intersected(viewport.rect())
+            if not update_rect.isEmpty():
+                viewport.update(update_rect)
+        except (RuntimeError, AttributeError):
+            pass
+
+    def _update_overlay_for_keys(self, overlay: 'WindowFlashOverlay', keys: Set[str]) -> bool:
+        """Update delegate rows directly and report whether overlay paint is needed."""
+        needs_overlay_paint = False
+        for key in keys:
+            for element in overlay._elements.get(key, []):
+                if element.skip_overlay_paint:
+                    self._update_delegate_element(element)
+                else:
+                    needs_overlay_paint = True
+        return needs_overlay_paint
+
     def _on_global_tick(self) -> None:
         """Global tick - BATCH compute ALL colors, then trigger ONE repaint per window.
 
@@ -1744,7 +1780,7 @@ class _GlobalFlashCoordinator:
         computed_keys = set(self._computed_colors.keys())
 
         # Find windows that had keys expire this frame (need final clear repaint)
-        windows_needing_clear = set()
+        expired_keys_by_window: Dict[int, Set[str]] = {}
         if expired_keys:
             expired_keys_set = set(expired_keys)
             for window_id, overlay in WindowFlashOverlay._overlays.items():
@@ -1755,8 +1791,9 @@ class _GlobalFlashCoordinator:
                 except RuntimeError:
                     continue  # Window deleted
 
-                if expired_keys_set & overlay._elements.keys():
-                    windows_needing_clear.add(window_id)
+                expired_window_keys = expired_keys_set & overlay._elements.keys()
+                if expired_window_keys:
+                    expired_keys_by_window[window_id] = expired_window_keys
 
         for window_id, overlay in WindowFlashOverlay._overlays.items():
             # PERFORMANCE FIX: Skip hidden windows (don't waste CPU painting invisible windows)
@@ -1772,30 +1809,7 @@ class _GlobalFlashCoordinator:
 
             if window_keys:
                 active_windows_this_frame.add(window_id)
-
-                # PERF: Separate overlay-painted vs delegate-painted elements
-                # Only call overlay.update() if there are elements that need overlay painting
-                needs_overlay_paint = False
-
-                for key in window_keys:
-                    for element in overlay._elements.get(key, []):
-                        if element.skip_overlay_paint and element.delegate_widget is not None:
-                            # Delegate-painted: targeted item update
-                            try:
-                                if element.get_model_index is not None:
-                                    index = element.get_model_index()
-                                    if index is not None and index.isValid():
-                                        element.delegate_widget.update(index)
-                                        continue
-                                # Fallback: full viewport update
-                                viewport = element.delegate_widget.viewport()
-                                if viewport:
-                                    viewport.update()
-                            except (RuntimeError, AttributeError):
-                                pass
-                        else:
-                            # Overlay-painted: need overlay.update()
-                            needs_overlay_paint = True
+                needs_overlay_paint = self._update_overlay_for_keys(overlay, window_keys)
 
                 # Only update overlay if there are elements that need it
                 if needs_overlay_paint:
@@ -1808,19 +1822,20 @@ class _GlobalFlashCoordinator:
 
         # CRITICAL: Final clear repaint for windows where keys expired
         # Ensures flash is fully cleared even if no other animations active
-        for window_id in windows_needing_clear:
-            if window_id not in active_windows_this_frame:
-                overlay = WindowFlashOverlay._overlays.get(window_id)
-                if overlay:
-                    # PERFORMANCE FIX: Skip hidden windows
-                    try:
-                        if not overlay._window.isVisible():
-                            continue
-                    except RuntimeError:
-                        continue  # Window deleted
+        for window_id, expired_window_keys in expired_keys_by_window.items():
+            overlay = WindowFlashOverlay._overlays.get(window_id)
+            if overlay:
+                # PERFORMANCE FIX: Skip hidden windows
+                try:
+                    if not overlay._window.isVisible():
+                        continue
+                except RuntimeError:
+                    continue  # Window deleted
 
+                needs_overlay_paint = self._update_overlay_for_keys(overlay, expired_window_keys)
+                if needs_overlay_paint:
                     try:
-                        overlay.update()  # One final repaint to clear
+                        overlay.update()  # One final repaint to clear overlay-painted flashes
                     except RuntimeError:
                         raise
 

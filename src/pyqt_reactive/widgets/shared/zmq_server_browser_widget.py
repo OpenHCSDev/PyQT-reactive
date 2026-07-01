@@ -167,6 +167,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         self.servers: List[Dict[str, Any]] = []
         self._last_known_servers: Dict[int, Dict[str, Any]] = {}
+        self._scan_in_flight = False
         self._lifecycle_state = BrowserLifecycleState()
         self._tree_state_adapter = TreeStateAdapter.default()
         self._tree_rebuild_coordinator = TreeRebuildCoordinator(self._tree_state_adapter)
@@ -186,7 +187,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         self._cleanup_timer = QTimer()
         self._cleanup_timer.timeout.connect(self._periodic_cleanup)
-        self._cleanup_timer.start(1000)
+        self._cleanup_timer.start(10000)
 
         self.setup_ui()
 
@@ -211,7 +212,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             return
         self.refresh_servers()
         if self.refresh_timer is not None:
-            self.refresh_timer.start(1000)
+            self.refresh_timer.start(5000)
         self.on_browser_shown()
 
     def hideEvent(self, event) -> None:
@@ -281,12 +282,16 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         action()
 
     def refresh_servers(self) -> None:
-        if self._lifecycle_state.is_cleaning_up():
+        if self._lifecycle_state.is_cleaning_up() or self._scan_in_flight:
             return
+        self._scan_in_flight = True
 
         def _scan_and_emit() -> None:
-            servers = self._scan_service.scan_ports(self.ports_to_scan)
-            self._scan_complete.emit(servers)
+            try:
+                servers = self._scan_service.scan_ports(self.ports_to_scan)
+                self._scan_complete.emit(servers)
+            finally:
+                self._scan_in_flight = False
 
         spawn_thread_with_context(_scan_and_emit, name="scan_servers")
 
