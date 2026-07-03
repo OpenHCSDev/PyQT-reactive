@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field, is_dataclass
 from typing import Any, Callable, Optional, Union
 
-from objectstate import ObjectStateRegistry
+from objectstate import DottedFieldPath, ObjectStateRegistry
 from objectstate.lazy_factory import ALWAYS_VIEWABLE_FIELDS_REGISTRY
 from python_introspect import Enableable, is_enableable
 
@@ -25,6 +25,7 @@ class ListItemFormat:
     preview_line: tuple[str, ...] = ()
     detail_line_field: Optional[str] = None
     formatters: dict[str, FieldFormatter] = field(default_factory=dict)
+    append_signature_diff_fields: bool = True
 
 
 class _ManagerItemDisplayBuilder:
@@ -92,7 +93,7 @@ class _ManagerItemDisplayBuilder:
         if not detail_line and item_format.detail_line_field and state:
             detail_line = state.get_resolved_value(item_format.detail_line_field) or ""
 
-        return self.build_multiline(
+        styled = self.build_multiline(
             item_name=item_name,
             segments=preview_segments,
             status_prefix=status_prefix,
@@ -100,8 +101,9 @@ class _ManagerItemDisplayBuilder:
             config_segments=None,
             first_line_segments=first_line_segments,
             item=item,
-            state=state,
+            state=state if item_format.append_signature_diff_fields else None,
         )
+        return styled
 
     def build_multiline(
         self,
@@ -164,7 +166,7 @@ class _ManagerItemDisplayBuilder:
             for field_path in sig_diff_fields
             if field_path != "name"
             and not any(
-                field_path == path or field_path.startswith(path + ".")
+                DottedFieldPath(path).contains_path(field_path)
                 for path in existing_paths
             )
         ]

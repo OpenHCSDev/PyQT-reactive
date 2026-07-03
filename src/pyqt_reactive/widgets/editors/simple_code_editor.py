@@ -5,6 +5,7 @@ Provides modular text editing with QScintilla (default) or external program laun
 No threading complications - keeps it simple and direct.
 """
 
+import hashlib
 import logging
 import tempfile
 import os
@@ -57,6 +58,12 @@ class SimpleCodeEditorWindowCodeDocumentDriver(WindowCodeDocumentDriver):
             source=self._content(),
             mime_type=PYTHON_MIME_TYPE,
         )
+
+    def current_revision_token(self) -> str:
+        return hashlib.sha256(self._content().encode("utf-8")).hexdigest()
+
+    def records_object_state_snapshot_on_apply(self) -> bool:
+        return False
 
     def validate_source(self, source: str) -> None:
         compile(source, f"<{self._title}>", "exec")

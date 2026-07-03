@@ -29,7 +29,7 @@ from pyqt_reactive.widgets.shared.manager_workflows import (
 from PyQt6.QtWidgets import (
     QWidget, QPushButton, QListWidgetItem, QLabel
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 
 from pyqt_reactive.core import ReorderableListWidget
 from pyqt_reactive.widgets.shared.list_item_delegate import (
@@ -38,7 +38,7 @@ from pyqt_reactive.widgets.shared.list_item_delegate import (
 )
 # Backwards compat alias
 SEGMENTS_ROLE = LAYOUT_ROLE
-from objectstate import ObjectStateRegistry, patch_lazy_constructors
+from objectstate import DottedFieldPath, ObjectStateRegistry, patch_lazy_constructors
 from pyqt_reactive.widgets.mixins import (
     CrossWindowPreviewMixin,
 )
@@ -426,6 +426,38 @@ class ManagerListUpdateWorkflowMixin:
         """
         self._list_updater.update(self._list_update_operations())
 
+    def queue_list_scope_visual_update(
+        self,
+        scope_id: str,
+        changed_paths: set[str] | None = None,
+    ) -> None:
+        """Queue a row-only visual refresh for one ObjectState-backed list item."""
+        if not scope_id:
+            return
+        self._pending_list_visual_scope_ids.setdefault(scope_id, set()).update(
+            changed_paths or set()
+        )
+        if not self._list_scope_visual_update_timer.isActive():
+            self._list_scope_visual_update_timer.start(0)
+
+    def _flush_list_scope_visual_updates(self) -> None:
+        """Apply pending row-only manager-list refreshes in one Qt tick."""
+        if not self._pending_list_visual_scope_ids:
+            return
+        changed_paths_by_scope = {
+            scope_id: set(changed_paths)
+            for scope_id, changed_paths in self._pending_list_visual_scope_ids.items()
+        }
+        scope_ids = set(changed_paths_by_scope)
+        self._pending_list_visual_scope_ids.clear()
+        refreshed = self._list_updater.refresh_scopes(
+            self._list_update_operations(),
+            scope_ids,
+            changed_paths_by_scope,
+        )
+        if refreshed:
+            self._visual_repaint()
+
     def _list_update_operations(
         self,
     ) -> ManagerListUpdateOperations[
@@ -450,14 +482,42 @@ class ManagerListUpdateWorkflowMixin:
             cleanup_flash_subscriptions=self._list_visual_state.cleanup,
             clear_scope_to_list_item=self._list_visual_state.clear_scope_to_list_item,
             format_item=self._format_item_content,
+            should_refresh_text_for_scope_change=self._should_refresh_list_item_text_for_scope_change,
             list_item_data_for=self._item_access.item_hooks.list_item_data_for,
             tooltip_for=self._get_list_item_tooltip,
             extra_data_for=self._get_list_item_extra_data,
             set_styling_roles=self._list_visual_state.set_item_styling_roles,
+            refresh_styling_roles=self._list_visual_state.refresh_item_styling_roles,
             apply_scope_color=self._list_visual_state.apply_scope_color,
             subscribe_flash=self._list_visual_state.subscribe_flash,
             post_update=self._post_update_list,
             update_button_states=self.update_button_states,
+        )
+
+    def _should_refresh_list_item_text_for_scope_change(
+        self,
+        item: ManagerItemT,
+        changed_paths: set[str],
+    ) -> bool:
+        """Return whether changed ObjectState paths affect declared row text."""
+        del item
+        item_format = self.LIST_ITEM_FORMAT
+        if item_format is None:
+            return True
+        if item_format.append_signature_diff_fields:
+            return True
+
+        display_paths = set(item_format.first_line)
+        display_paths.update(item_format.preview_line)
+        if item_format.detail_line_field:
+            display_paths.add(item_format.detail_line_field)
+        if not display_paths:
+            return False
+
+        return any(
+            DottedFieldPath(display_path).intersects_path(changed_path)
+            for changed_path in changed_paths
+            for display_path in display_paths
         )
 
     def build_item_display_from_format(
@@ -625,6 +685,12 @@ class AbstractManagerWidget(
 
         # Per-update-cycle scope cache: item_id -> scope_id (cleared at start of each update)
         self._item_scope_cache: Dict[int, str] = {}
+        self._pending_list_visual_scope_ids: dict[str, set[str]] = {}
+        self._list_scope_visual_update_timer = QTimer(self)
+        self._list_scope_visual_update_timer.setSingleShot(True)
+        self._list_scope_visual_update_timer.timeout.connect(
+            self._flush_list_scope_visual_updates
+        )
         self._item_access = ManagerItemAccess.from_manager(self, self._item_scope_cache)
         self._list_visual_state = ManagerListVisualState(
             self,

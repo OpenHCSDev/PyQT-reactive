@@ -2,7 +2,10 @@
 
 from typing import Any
 from weakref import WeakKeyDictionary
+from PyQt6 import sip
 from PyQt6.QtWidgets import QCheckBox, QLabel, QGraphicsOpacityEffect
+from pyqt_reactive.protocols.widget_protocols import PlaceholderStateTrackable
+from objectstate.time_travel_profile import TimeTravelProfiler
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,6 +24,9 @@ class EnabledFieldStylingService:
         self.widget_ops = WidgetOperations
         self._last_enabled_values: WeakKeyDictionary[Any, bool] = WeakKeyDictionary()
         self._direct_widgets_by_manager: WeakKeyDictionary[Any, list] = WeakKeyDictionary()
+        self._value_widgets_by_container: WeakKeyDictionary[Any, list] = WeakKeyDictionary()
+        self._dimmed_property_name = "enabled_field_dimmed"
+        self._dimmed_opacity = 0.4
     
     def apply_initial_enabled_styling(self, manager) -> None:
         """
@@ -48,6 +54,9 @@ class EnabledFieldStylingService:
         enabled_widget = manager.widgets.get('enabled')
         if not enabled_widget:
             logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, no enabled widget found")
+            return
+        if sip.isdeleted(enabled_widget):
+            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, enabled widget was deleted")
             return
 
         # Get resolved value from checkbox
@@ -84,6 +93,9 @@ class EnabledFieldStylingService:
         if 'enabled' in manager.parameters:
             # Get the enabled widget to read the CURRENT resolved value
             enabled_widget = manager.widgets.get('enabled')
+            if enabled_widget and sip.isdeleted(enabled_widget):
+                logger.debug(f"[REFRESH ENABLED STYLING] field_id={manager.field_id}, enabled widget was deleted")
+                return
             if enabled_widget and isinstance(enabled_widget, QCheckBox):
                 # Use the checkbox's current state (which reflects resolved placeholder)
                 resolved_value = enabled_widget.isChecked()
@@ -202,6 +214,8 @@ class EnabledFieldStylingService:
         logger.debug(f"[GET_DIRECT_WIDGETS] field_id={manager.field_id}, total widgets found: {len(all_widgets)}, nested_managers: {list(manager.nested_managers.keys())}")
 
         for widget in all_widgets:
+            if sip.isdeleted(widget):
+                continue
             widget_name = f"{widget.__class__.__name__}({widget.objectName() or 'no-name'})"
             object_name = widget.objectName()
 
@@ -240,6 +254,8 @@ class EnabledFieldStylingService:
         while current is not None:
             if 'enabled' in current.parameters:
                 enabled_widget = current.widgets.get('enabled')
+                if enabled_widget and sip.isdeleted(enabled_widget):
+                    return False
                 if enabled_widget and isinstance(enabled_widget, QCheckBox):
                     if not enabled_widget.isChecked():
                         return True
@@ -254,14 +270,10 @@ class EnabledFieldStylingService:
             manager: ParameterFormManager instance
             resolved_value: Resolved enabled value (True/False)
         """
-        # Find the GroupBox container
-        group_box = None
-        for param_name, nested_manager in manager._parent_manager.nested_managers.items():
-            if nested_manager == manager:
-                group_box = manager._parent_manager.widgets.get(param_name)
-                break
-
+        group_box = manager.form_tree.owning_groupbox(manager)
         if not group_box:
+            return
+        if sip.isdeleted(group_box):
             return
 
         logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, applying to GroupBox container")
@@ -270,31 +282,18 @@ class EnabledFieldStylingService:
         ancestor_is_disabled = self._is_any_ancestor_disabled(manager)
         logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, ancestor_is_disabled={ancestor_is_disabled}")
 
-        if resolved_value and not ancestor_is_disabled:
-            # Enabled=True AND no ancestor is disabled: Remove dimming from GroupBox
-            logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, removing dimming from GroupBox")
-            for widget in self.widget_ops.get_all_value_widgets(group_box):
-                widget.setGraphicsEffect(None)
-        elif ancestor_is_disabled:
-            # Ancestor is disabled - keep dimming regardless of child's enabled value
-            logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, keeping dimming (ancestor disabled)")
-            for widget in self.widget_ops.get_all_value_widgets(group_box):
-                effect = QGraphicsOpacityEffect()
-                effect.setOpacity(0.4)
-                widget.setGraphicsEffect(effect)
-        else:
-            # Enabled=False: Apply dimming to GroupBox widgets
-            logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, applying dimming to GroupBox")
-            for widget in self.widget_ops.get_all_value_widgets(group_box):
-                effect = QGraphicsOpacityEffect()
-                effect.setOpacity(0.4)
-                widget.setGraphicsEffect(effect)
-        # CRITICAL: Trigger a visual update so opacity effects are rendered
-        # Qt doesn't automatically render QGraphicsOpacityEffect changes
-        # Use repaint() for immediate synchronous update, not update() which is async
-        group_box.repaint()
-        for widget in self.widget_ops.get_all_value_widgets(group_box):
-            widget.repaint()
+        should_dim = ancestor_is_disabled or not resolved_value
+        widgets = self._get_value_widgets(group_box)
+        with TimeTravelProfiler.phase(
+            "pyqt.enabled.apply_nested",
+            manager_field_id=manager.field_id,
+            widgets=len(widgets),
+            dimmed=should_dim,
+        ):
+            changed = self._set_widgets_dimmed(widgets, should_dim)
+
+        if changed:
+            group_box.update()
 
     def _apply_top_level_styling(self, manager, resolved_value: bool, direct_widgets: list) -> None:
         """
@@ -308,9 +307,7 @@ class EnabledFieldStylingService:
         if resolved_value:
             # Enabled=True: Remove dimming from direct widgets
             logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, removing dimming (enabled=True)")
-            for widget in direct_widgets:
-                widget.setGraphicsEffect(None)
-                widget.repaint()
+            self._set_widgets_dimmed(direct_widgets, False)
 
             # Trigger refresh of all nested configs' enabled styling
             logger.debug(f"[ENABLED HANDLER] Refreshing nested configs' enabled styling")
@@ -319,14 +316,11 @@ class EnabledFieldStylingService:
         else:
             # Enabled=False: Apply dimming to direct widgets + ALL nested configs
             logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, applying dimming (enabled=False)")
-            for widget in direct_widgets:
-                # Skip QLabel widgets when dimming (only dim inputs)
-                if isinstance(widget, QLabel):
-                    continue
-                effect = QGraphicsOpacityEffect()
-                effect.setOpacity(0.4)
-                widget.setGraphicsEffect(effect)
-                widget.repaint()
+            self._set_widgets_dimmed(
+                direct_widgets,
+                True,
+                skip_labels=True,
+            )
 
             # Also dim all nested configs
             logger.debug(f"[ENABLED HANDLER] Dimming nested configs, found {len(manager.nested_managers)} nested managers")
@@ -341,14 +335,64 @@ class EnabledFieldStylingService:
                     if not group_box:
                         logger.debug(f"[ENABLED HANDLER] ⚠️ Still no group_box found, skipping")
                         continue
+                if sip.isdeleted(group_box):
+                    continue
 
-                widgets_to_dim = self.widget_ops.get_all_value_widgets(group_box)
+                widgets_to_dim = self._get_value_widgets(group_box)
                 logger.debug(f"[ENABLED HANDLER] Applying dimming to nested config {param_name}, found {len(widgets_to_dim)} widgets")
-                for widget in widgets_to_dim:
-                    effect = QGraphicsOpacityEffect()
-                    effect.setOpacity(0.4)
-                    widget.setGraphicsEffect(effect)
-                    widget.repaint()
+                changed = self._set_widgets_dimmed(widgets_to_dim, True)
 
-                # Update the group box itself
-                group_box.repaint()
+                if changed:
+                    group_box.update()
+
+    def _get_value_widgets(self, container) -> list:
+        """Return cached nominal value widgets for a stable form container."""
+        if container in self._value_widgets_by_container:
+            return self._value_widgets_by_container[container]
+        widgets = self.widget_ops.get_all_value_widgets(container)
+        self._value_widgets_by_container[container] = widgets
+        return widgets
+
+    def _set_widget_dimmed(self, widget, dimmed: bool) -> bool:
+        """Apply this service's dimming effect only when the widget state changes."""
+        if sip.isdeleted(widget):
+            return False
+
+        effective_dimmed = dimmed
+        if (
+            effective_dimmed
+            and isinstance(widget, PlaceholderStateTrackable)
+            and widget.has_placeholder_state()
+        ):
+            effective_dimmed = False
+
+        current = widget.property(self._dimmed_property_name) is True
+        if current == effective_dimmed:
+            return False
+
+        widget.setProperty(self._dimmed_property_name, effective_dimmed)
+        if effective_dimmed:
+            effect = QGraphicsOpacityEffect()
+            effect.setOpacity(self._dimmed_opacity)
+            widget.setGraphicsEffect(effect)
+        else:
+            widget.setGraphicsEffect(None)
+        widget.update()
+        return True
+
+    def _set_widgets_dimmed(
+        self,
+        widgets: list,
+        dimmed: bool,
+        *,
+        skip_labels: bool = False,
+    ) -> bool:
+        """Apply dimming to a widget batch with coalesced repaint scheduling."""
+        changed = False
+        for widget in widgets:
+            if sip.isdeleted(widget):
+                continue
+            if skip_labels and isinstance(widget, QLabel):
+                continue
+            changed = self._set_widget_dimmed(widget, dimmed) or changed
+        return changed

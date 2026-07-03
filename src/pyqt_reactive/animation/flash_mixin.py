@@ -31,10 +31,22 @@ FIX 3: Unified geometry cache
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Callable, Any, Tuple, TYPE_CHECKING
+from typing import Dict, Iterable, List, Optional, Set, Callable, Any, Tuple, TYPE_CHECKING
 from weakref import WeakValueDictionary
 import re
-from PyQt6.QtCore import QTimer, Qt, QRect, QRectF, QSize
+from objectstate import DottedFieldPath
+from PyQt6.QtCore import (
+    QCoreApplication,
+    QObject,
+    QThread,
+    QTimer,
+    Qt,
+    QRect,
+    QRectF,
+    QSize,
+    pyqtSignal,
+    pyqtSlot,
+)
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -59,10 +71,10 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QPainter, QRegion, QPainterPath
 from PyQt6 import sip
 
+from objectstate.time_travel_profile import TimeTravelProfiler
 from pyqt_reactive.animation.flash_config import FlashConfig, get_flash_config
-
-# Default corner radius fallback if not extractable from stylesheet
-DEFAULT_CORNER_RADIUS = 6
+from pyqt_reactive.animation.flash_trace import flash_trace
+from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
 
 # Cache for extracted widget corner radii (widget_id -> radius)
 _corner_radius_cache: Dict[int, float] = {}
@@ -107,8 +119,24 @@ def invalidate_corner_radius_cache(widget: Optional[QWidget] = None) -> None:
     else:
         _corner_radius_cache.pop(id(widget), None)
 
+
+def queue_visual_frame_callback(owner: QObject, callback: Callable[[], None]) -> None:
+    """Run a coalesced owner callback on the shared visual frame coordinator."""
+
+    _GlobalFlashCoordinator.get().queue_visual_frame_callback(owner, callback)
+
+
+def active_visual_frame_work_count() -> int:
+    """Return pending or active visual-frame work known to the shared coordinator."""
+
+    coordinator = _GlobalFlashCoordinator._instance
+    if coordinator is None:
+        return 0
+    return coordinator.active_visual_frame_work_count()
+
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QGroupBox, QTreeWidget, QListWidget
+    from pyqt_reactive.widgets.structural_table import StructuralTableCellTarget
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +336,8 @@ def compute_flash_color_at_time(
 # ==================== FLASH ELEMENT REGISTRATION ====================
 # Unified element representation for groupboxes, tree items, list items
 
+FlashGeometry = Tuple[Optional[QRect], float]
+
 @dataclass
 class OverlayGeometryCache:
     """Unified cache for all overlay geometry calculations.
@@ -316,16 +346,35 @@ class OverlayGeometryCache:
     Replaces separate scroll_area + element caches.
     """
     valid: bool = False
+    clip_rects_valid: bool = False
     scroll_clip_rects: List[QRect] = field(default_factory=list)
-    element_rects: Dict[str, List[Optional[Tuple[QRect, float]]]] = field(default_factory=dict)
+    element_rects: Dict[str, List[Optional[FlashGeometry]]] = field(default_factory=dict)
     element_regions: Dict[str, List[Optional[QPainterPath]]] = field(default_factory=dict)
+    flash_regions: Dict[frozenset[str], tuple[QRegion, int, int]] = field(default_factory=dict)
 
     def invalidate(self):
         """Invalidate entire cache - called on scroll/resize."""
+        self.invalidate_elements()
+        self.invalidate_clip_rects()
+
+    def invalidate_elements(self) -> None:
+        """Invalidate element geometry while preserving scroll-area discovery."""
         self.valid = False
-        self.scroll_clip_rects.clear()
         self.element_rects.clear()
         self.element_regions.clear()
+        self.flash_regions.clear()
+
+    def invalidate_clip_rects(self) -> None:
+        """Invalidate scroll-area clip rectangles."""
+        self.clip_rects_valid = False
+        self.scroll_clip_rects.clear()
+
+    def invalidate_key(self, key: str) -> None:
+        """Invalidate cached geometry for one flash key."""
+        self.valid = False
+        self.element_rects.pop(key, None)
+        self.element_regions.pop(key, None)
+        self.flash_regions.clear()
 
 
 @dataclass
@@ -335,16 +384,30 @@ class FlashElement:
     Provides a geometry callback that returns the element's rect in window coords.
     Works for ANY element type: groupboxes, tree items, list items, etc.
     """
-    key: str
+    key: str  # Scoped ObjectState path that owns this visual element.
     get_rect_in_window: Callable[[QWidget], Optional[QRect]]
     get_child_rects: Optional[Callable[[QWidget], List[Tuple[QRect, bool]]]] = None  # For masking child widgets
     needs_scroll_clipping: bool = True  # Groupboxes need clipping, list/tree items don't (they handle it themselves)
     source_id: Optional[str] = None  # Unique identifier for deduplication (e.g., "groupbox:123", "list_item:scope_id")
     corner_radius: float = 0.0  # Rounded corners (0 = sharp, >0 = rounded)
     skip_overlay_paint: bool = False  # If True, overlay skips painting (element handles its own paint, e.g., list item delegate)
+    hierarchical_key_prefix: bool = False  # If True, descendant ObjectState keys also repaint this delegate element.
     # Widget whose viewport needs updating when skip_overlay_paint=True.
     delegate_widget: Optional[QWidget] = None
     get_model_index: Optional[Callable[[], Any]] = None  # Returns QModelIndex for targeted item updates (avoids full viewport repaint)
+    layout_watch_widgets: Tuple[QWidget, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class OverlayFlashPaintRecord:
+    """One deduplicated overlay paint operation for a visual flash source."""
+
+    source_token: str
+    key: str
+    rect: QRect
+    radius: float
+    path: Optional[QPainterPath]
+    color: Optional[QColor] = None
 
 
 # Mask strategy identifiers
@@ -474,16 +537,38 @@ def resolve_mask_widgets(widget: Optional[QWidget], preferred_types: tuple) -> L
     """
     if widget is None:
         return []
+    if sip.isdeleted(widget):
+        return []
     if isinstance(widget, preferred_types):
         return [widget]
-    matches = [child for child in widget.findChildren(QWidget)
-               if child.isVisible() and isinstance(child, preferred_types)]
+    matches = [
+        child
+        for child in widget.findChildren(QWidget)
+        if not sip.isdeleted(child)
+        and child.isVisible()
+        and isinstance(child, preferred_types)
+    ]
     if matches:
         return matches
     return [widget]
 
 
-def _needs_square_checkbox_mask(widget: QWidget) -> bool:
+def _unique_live_widgets(widgets: Iterable[Optional[QWidget]]) -> Tuple[QWidget, ...]:
+    """Return live widgets in first-seen order."""
+    unique_widgets: list[QWidget] = []
+    seen_widget_ids: set[int] = set()
+    for widget in widgets:
+        if widget is None or sip.isdeleted(widget):
+            continue
+        widget_id = id(widget)
+        if widget_id in seen_widget_ids:
+            continue
+        seen_widget_ids.add(widget_id)
+        unique_widgets.append(widget)
+    return tuple(unique_widgets)
+
+
+def needs_square_checkbox_mask(widget: QWidget) -> bool:
     """Return True when a checkbox should use square cutout.
 
     Textless checkboxes (no label) use square cutouts to avoid rounding the box.
@@ -492,29 +577,171 @@ def _needs_square_checkbox_mask(widget: QWidget) -> bool:
     return isinstance(widget, QCheckBox) and not widget.text()
 
 
+def _unmasked_groupbox_widgets(groupbox: QWidget) -> set[QWidget]:
+    """Return widgets explicitly left readable during standard groupbox flashes."""
+    if isinstance(groupbox, VisualUpdateMixin):
+        return set(groupbox.flash_unmasked_widgets())
+    return set()
+
+
+def container_descendant_mask_watch_widgets(container: QWidget) -> Tuple[QWidget, ...]:
+    """Return visible descendant widgets whose geometry defines standard masks."""
+    unmasked_widgets = _unmasked_groupbox_widgets(container)
+    mask_widgets: list[QWidget] = []
+    if (
+        isinstance(container, VisualUpdateMixin)
+        and container.flash_masks_descendant_leaf_widgets()
+    ):
+        mask_widgets.extend(
+            child
+            for child in container.findChildren(QWidget)
+            if child.isVisibleTo(container)
+            and isinstance(child, LEAF_WIDGET_TYPES)
+            and child not in unmasked_widgets
+        )
+        mask_widgets.extend(_get_function_pane_title_widgets(container))
+    else:
+        mask_widgets.extend(
+            child
+            for child in container.children()
+            if isinstance(child, QWidget)
+            and child.isVisibleTo(container)
+            and child not in unmasked_widgets
+        )
+    return _unique_live_widgets(mask_widgets)
+
+
+def container_descendant_mask_rects(container: QWidget, window: QWidget) -> List[Tuple[QRect, bool]]:
+    """Return standard child/control masks for a container flash."""
+    child_rects: List[Tuple[QRect, bool]] = []
+    for child in container_descendant_mask_watch_widgets(container):
+        if sip.isdeleted(child) or not child.isVisibleTo(container):
+            continue
+        child_rect = get_child_mask_rect(child, window)
+        child_rects.append((child_rect, needs_square_checkbox_mask(child)))
+    child_rects.extend(_get_groupbox_title_mask_rects(container, window))
+    return child_rects
+
+
+def _groupbox_mask_watch_widgets(
+    groupbox: QWidget,
+    leaf_widget: Optional[QWidget],
+    label_widget: Optional[QWidget],
+    *,
+    inverse_masking: bool,
+    use_full_rect: bool = False,
+) -> Tuple[QWidget, ...]:
+    """Return widgets whose geometry contributes to a groupbox flash path."""
+    watch_widgets: list[QWidget | None] = [groupbox]
+
+    if use_full_rect:
+        return _unique_live_widgets(watch_widgets)
+
+    if leaf_widget is not None or inverse_masking:
+        watch_widgets.extend(resolve_mask_widgets(leaf_widget, LEAF_WIDGET_TYPES))
+        watch_widgets.extend(resolve_mask_widgets(label_widget, (QLabel,)))
+        watch_widgets.extend(_get_function_pane_title_widgets(groupbox))
+        return _unique_live_widgets(watch_widgets)
+
+    watch_widgets.extend(container_descendant_mask_watch_widgets(groupbox))
+
+    return _unique_live_widgets(watch_widgets)
+
+
+def groupbox_flash_source_id(
+    key: str,
+    groupbox: QWidget,
+    *,
+    leaf_widget: Optional[QWidget] = None,
+    label_widget: Optional[QWidget] = None,
+    inverse_masking: bool = False,
+    use_full_rect: bool = False,
+) -> str:
+    """Return the visual identity for a groupbox flash element."""
+    if use_full_rect:
+        return f"groupbox_full:{id(groupbox)}"
+    if leaf_widget is not None:
+        return (
+            f"leaf_flash:{id(groupbox)}:{id(leaf_widget)}:"
+            f"{id(label_widget) if label_widget is not None else 'none'}"
+        )
+    if inverse_masking:
+        return f"masked_container:{id(groupbox)}:{key}"
+    return f"groupbox:{id(groupbox)}"
+
+
+def widget_rect_flash_source_id(widget: QWidget) -> str:
+    """Return the visual identity for a direct widget-rect flash element."""
+    return f"widget_rect:{id(widget)}"
+
+
+def table_cell_flash_source_id(target: "StructuralTableCellTarget") -> str:
+    """Return the visual identity for an item-backed table cell flash."""
+    return (
+        f"table_cell:{id(target.table)}:"
+        f"{target.row_index}:{target.column_index}"
+    )
+
+
+def _container_rect_in_window(
+    container: QWidget,
+    window: QWidget,
+    *,
+    use_full_rect: bool = False,
+) -> Optional[QRect]:
+    """Return a groupbox/container flash rect in window coordinates."""
+    try:
+        if not container.isVisible() or not container.isVisibleTo(window):
+            return None
+
+        from PyQt6.QtCore import QPoint
+
+        if use_full_rect:
+            global_pos = container.mapToGlobal(QPoint(0, 0))
+            window_pos = window.mapFromGlobal(global_pos)
+            size = container.size()
+            return QRect(window_pos.x(), window_pos.y(), size.width(), size.height())
+
+        margin_top = 0
+        stylesheet = container.styleSheet()
+        if stylesheet:
+            match = re.search(r'margin-top\s*:\s*(\d+)', stylesheet)
+            if match:
+                margin_top = int(match.group(1))
+        else:
+            parent = container.parentWidget()
+            while parent:
+                stylesheet = parent.styleSheet()
+                if stylesheet and 'QGroupBox' in stylesheet:
+                    match = re.search(r'margin-top\s*:\s*(\d+)', stylesheet)
+                    if match:
+                        margin_top = int(match.group(1))
+                    break
+                parent = parent.parentWidget()
+
+        global_pos = container.mapToGlobal(QPoint(0, margin_top))
+        window_pos = window.mapFromGlobal(global_pos)
+        size = container.size()
+        adjusted_height = size.height() - margin_top
+        return QRect(window_pos.x(), window_pos.y(), size.width(), adjusted_height)
+    except RuntimeError:
+        return None
+
+
 def _get_function_pane_title_widgets(groupbox: QWidget) -> List[QWidget]:
-    """Collect title-row widgets for a function pane ancestor.
+    """Collect title-row widgets declared by a flash-aware ancestor.
 
     Returns visible widgets that should be masked tightly (buttons, labels, checkboxes).
     """
-    pane = groupbox
-    while pane is not None:
-        if hasattr(pane, "_flash_title_container") or hasattr(pane, "_module_path_label"):
-            break
-        pane = pane.parentWidget()
-    if pane is None:
+    widget: QWidget | None = groupbox
+    while widget is not None:
+        if isinstance(widget, VisualUpdateMixin):
+            widgets = list(widget.flash_title_mask_widgets())
+            if widgets:
+                break
+        widget = widget.parentWidget()
+    else:
         return []
-
-    widgets: List[QWidget] = []
-    module_label = getattr(pane, "_module_path_label", None)
-    if isinstance(module_label, QWidget) and module_label.isVisible():
-        widgets.append(module_label)
-
-    title_container = getattr(pane, "_flash_title_container", None)
-    if isinstance(title_container, QWidget) and title_container.isVisible():
-        for child in title_container.findChildren(QWidget):
-            if child.isVisible() and isinstance(child, LEAF_WIDGET_TYPES):
-                widgets.append(child)
 
     # Deduplicate while preserving order
     seen = set()
@@ -570,6 +797,9 @@ def create_groupbox_element(
     leaf_widget: Optional[QWidget] = None,
     label_widget: Optional[QWidget] = None,
     use_full_rect: bool = False,
+    inverse_masking: bool = False,
+    extra_mask_rects: Optional[Callable[[QWidget], Iterable[Tuple[QRect, bool]]]] = None,
+    extra_layout_watch_widgets: Iterable[QWidget] = (),
 ) -> FlashElement:
     """Create a FlashElement for a QGroupBox with configurable masking.
 
@@ -577,14 +807,17 @@ def create_groupbox_element(
     This accounts for scroll position so rects are in visible window space.
 
     Masking modes (determined by leaf_widget parameter):
-    - leaf_widget=None: STANDARD mode - mask ALL children, flash only frame/background
-    - leaf_widget=widget: INVERSE mode - mask ONLY title + leaf_widget + label_widget, flash frame + all siblings
+    - leaf_widget=None and inverse_masking=False: STANDARD mode - mask ALL children, flash only frame/background
+    - leaf_widget=widget or inverse_masking=True: INVERSE mode - mask ONLY title + leaf_widget/extra masks + label_widget, flash frame + all siblings
 
     Args:
         key: Flash key
         groupbox: The QGroupBox to flash
         leaf_widget: If provided, use inverse masking (flash siblings, mask this widget)
         label_widget: Optional label widget to mask (used with leaf_widget in INVERSE mode)
+        inverse_masking: Use inverse masking even when the changed target is not a widget.
+        extra_mask_rects: Window-relative mask rectangles for structural targets such as table cells.
+        extra_layout_watch_widgets: Additional widgets whose geometry affects structural masks.
     """
     # Track groupbox size to detect resize and invalidate child cache
     _last_groupbox_size: Optional[tuple] = None
@@ -592,50 +825,11 @@ def create_groupbox_element(
     _cached_child_widgets: Optional[List[QWidget]] = None
 
     def get_rect(window: QWidget) -> Optional[QRect]:
-        try:
-            # Skip if groupbox isn't visible in the current window (e.g., hidden tab page)
-            if not groupbox.isVisible() or not groupbox.isVisibleTo(window):
-                return None
-
-            from PyQt6.QtCore import QPoint
-            if use_full_rect:
-                global_pos = groupbox.mapToGlobal(QPoint(0, 0))
-                window_pos = window.mapFromGlobal(global_pos)
-                size = groupbox.size()
-                return QRect(window_pos.x(), window_pos.y(), size.width(), size.height())
-            # QGroupBox stylesheet has margin-top which is OUTSIDE the painted area
-            # but still part of the widget's geometry. We need to offset by this.
-            # Extract margin-top from stylesheet unless groupbox overrides it to 0
-            margin_top = 0
-            stylesheet = groupbox.styleSheet()
-            if stylesheet:
-                import re
-                match = re.search(r'margin-top\s*:\s*(\d+)', stylesheet)
-                if match:
-                    margin_top = int(match.group(1))
-            else:
-                # Check parent stylesheets
-                parent = groupbox.parentWidget()
-                while parent:
-                    stylesheet = parent.styleSheet()
-                    if stylesheet and 'QGroupBox' in stylesheet:
-                        import re
-                        match = re.search(r'margin-top\s*:\s*(\d+)', stylesheet)
-                        if match:
-                            margin_top = int(match.group(1))
-                        break
-                    parent = parent.parentWidget()
-
-            # Map the top-left of the PAINTED area (offset by margin-top)
-            global_pos = groupbox.mapToGlobal(QPoint(0, margin_top))
-            window_pos = window.mapFromGlobal(global_pos)
-
-            # Reduce height by margin-top since we're starting lower
-            size = groupbox.size()
-            adjusted_height = size.height() - margin_top
-            return QRect(window_pos.x(), window_pos.y(), size.width(), adjusted_height)
-        except RuntimeError:
-            return None
+        return _container_rect_in_window(
+            groupbox,
+            window,
+            use_full_rect=use_full_rect,
+        )
 
     def get_child_rects(window: QWidget) -> List[Tuple[QRect, bool]]:
         """Get widgets to exclude from flash (mask out).
@@ -660,11 +854,11 @@ def create_groupbox_element(
 
         # INVERSE MODE: Mask title row + leaf_widget + label_widget only
         # All other widgets get flashed
-        if leaf_widget is not None:
+        if leaf_widget is not None or inverse_masking:
             logger.debug(f"[FLASH] INVERSE MODE: Masking title + leaf_widget + label_widget only")
             exclusions: List[Tuple[QRect, bool]] = []
             try:
-                if not leaf_widget.isVisible():
+                if leaf_widget is not None and not leaf_widget.isVisible():
                     return []
 
                 # Get groupbox top for title row detection
@@ -681,7 +875,7 @@ def create_groupbox_element(
                     try:
                         leaf_rect = get_child_mask_rect(mask_leaf_widget, window)
                         logger.debug(f"[FLASH INVERSE] Added leaf_widget exclusion: {leaf_rect}")
-                        exclusions.append((leaf_rect, _needs_square_checkbox_mask(mask_leaf_widget)))
+                        exclusions.append((leaf_rect, needs_square_checkbox_mask(mask_leaf_widget)))
                     except Exception as e:
                         logger.warning(f"[FLASH INVERSE] Failed to mask leaf_widget: {e}")
 
@@ -695,6 +889,11 @@ def create_groupbox_element(
                         exclusions.append((label_rect, False))
                     except Exception as e:
                         logger.warning(f"[FLASH INVERSE] Failed to mask label_widget: {e}")
+
+                if extra_mask_rects is not None:
+                    for extra_rect, needs_square_cutout in extra_mask_rects(window):
+                        if extra_rect.isValid() and not extra_rect.isNull():
+                            exclusions.append((extra_rect, needs_square_cutout))
 
                 # Mask title row widgets only for real groupboxes (avoid masking first row in plain containers)
                 from PyQt6.QtWidgets import QGroupBox
@@ -715,7 +914,7 @@ def create_groupbox_element(
                             if child_y < title_y_max:
                                 child_rect = get_child_mask_rect(child, window)
                                 logger.debug(f"[FLASH INVERSE] Added title row exclusion: {child_rect}")
-                                exclusions.append((child_rect, _needs_square_checkbox_mask(child)))
+                                exclusions.append((child_rect, needs_square_checkbox_mask(child)))
                         except Exception as e:
                             logger.warning(f"[FLASH INVERSE] Failed to mask title child {type(child).__name__}: {e}")
                             pass
@@ -724,7 +923,7 @@ def create_groupbox_element(
                 for title_widget in _get_function_pane_title_widgets(groupbox):
                     try:
                         title_rect = get_child_mask_rect(title_widget, window)
-                        exclusions.append((title_rect, _needs_square_checkbox_mask(title_widget)))
+                        exclusions.append((title_rect, needs_square_checkbox_mask(title_widget)))
                     except Exception as e:
                         logger.warning(f"[FLASH INVERSE] Failed to mask function pane title widget: {e}")
 
@@ -751,39 +950,16 @@ def create_groupbox_element(
 
         # Cache child widgets list (expensive findChildren) on first call or after invalidation
         if _cached_child_widgets is None:
-            _cached_child_widgets = []
-
-            unmasked_widgets = set()
-            if getattr(groupbox, "_flash_include_title", False):
-                try:
-                    unmasked_widgets = set(getattr(groupbox, "_flash_unmasked_widgets", set()))
-                except TypeError:
-                    unmasked_widgets = set()
-
-            # Check if this is a GroupBoxWithHelp with content_layout
-            if hasattr(groupbox, 'content_layout'):
-                for child in groupbox.findChildren(QWidget):
-                    if child.isVisible() and isinstance(child, LEAF_WIDGET_TYPES):
-                        if unmasked_widgets and child in unmasked_widgets:
-                            continue
-                        _cached_child_widgets.append(child)
-                # Function panes: also mask title/module rows in standard mode
-                for title_widget in _get_function_pane_title_widgets(groupbox):
-                    _cached_child_widgets.append(title_widget)
-            else:
-                # Regular QGroupBox - exclude all direct child widgets
-                for child in groupbox.children():
-                    if isinstance(child, QWidget) and child.isVisible():
-                        if unmasked_widgets and child in unmasked_widgets:
-                            continue
-                        _cached_child_widgets.append(child)
+            _cached_child_widgets = list(
+                container_descendant_mask_watch_widgets(groupbox)
+            )
 
         # Compute fresh window-relative rects using standard groupbox child geometry
         for child in _cached_child_widgets:
-            if sip.isdeleted(child) or not child.isVisible():
+            if sip.isdeleted(child) or not child.isVisibleTo(groupbox):
                 continue
             child_rect = get_child_mask_rect(child, window)
-            child_rects.append((child_rect, _needs_square_checkbox_mask(child)))
+            child_rects.append((child_rect, needs_square_checkbox_mask(child)))
 
         child_rects.extend(_get_groupbox_title_mask_rects(groupbox, window))
 
@@ -797,20 +973,139 @@ def create_groupbox_element(
     # Extract corner radius from groupbox stylesheet (cached)
     radius = get_widget_corner_radius(groupbox)
     if radius == 0:
-        radius = DEFAULT_CORNER_RADIUS  # Fallback for groupboxes without explicit border-radius
+        radius = default_container_corner_radius_px()
 
-    # Source ID differentiates standard vs inverse mode
-    if leaf_widget is not None:
-        source_id = f"leaf_flash:{id(groupbox)}:{id(leaf_widget)}"
-    else:
-        source_id = f"groupbox:{id(groupbox)}"
+    return FlashElement(
+        key=key,
+        get_rect_in_window=get_rect,
+        get_child_rects=None if use_full_rect else get_child_rects,
+        source_id=groupbox_flash_source_id(
+            key,
+            groupbox,
+            leaf_widget=leaf_widget,
+            label_widget=label_widget,
+            inverse_masking=inverse_masking,
+            use_full_rect=use_full_rect,
+        ),
+        corner_radius=radius,
+        layout_watch_widgets=_unique_live_widgets(
+            (
+                *_groupbox_mask_watch_widgets(
+                    groupbox,
+                    leaf_widget,
+                    label_widget,
+                    inverse_masking=inverse_masking,
+                    use_full_rect=use_full_rect,
+                ),
+                *extra_layout_watch_widgets,
+            )
+        ),
+    )
+
+
+def create_structural_masked_container_element(
+    key: str,
+    container: QWidget,
+    mask_rects: Callable[[QWidget], Iterable[Tuple[QRect, bool]]],
+    *,
+    layout_watch_widgets: Iterable[QWidget] = (),
+) -> FlashElement:
+    """Create a FlashElement whose masks are fully supplied by a structural target."""
+
+    def get_rect(window: QWidget) -> Optional[QRect]:
+        return _container_rect_in_window(container, window)
+
+    def get_child_rects(window: QWidget) -> List[Tuple[QRect, bool]]:
+        if not container.isVisible() or not container.isVisibleTo(window):
+            return []
+        return [
+            (mask_rect, needs_square_cutout)
+            for mask_rect, needs_square_cutout in mask_rects(window)
+            if mask_rect.isValid() and not mask_rect.isNull()
+        ]
+
+    radius = get_widget_corner_radius(container)
+    if radius == 0:
+        radius = default_container_corner_radius_px()
 
     return FlashElement(
         key=key,
         get_rect_in_window=get_rect,
         get_child_rects=get_child_rects,
-        source_id=source_id,
-        corner_radius=radius
+        source_id=groupbox_flash_source_id(
+            key,
+            container,
+            inverse_masking=True,
+        ),
+        corner_radius=radius,
+        layout_watch_widgets=_unique_live_widgets((container, *layout_watch_widgets)),
+    )
+
+
+def create_widget_rect_element(key: str, widget: QWidget) -> FlashElement:
+    """Create a FlashElement that paints a widget's full visible rectangle.
+
+    This is for inline child widgets whose own contents are the thing being
+    highlighted. Unlike groupbox flashes, it does not subtract child widgets from
+    the paint region.
+    """
+
+    def get_rect(window: QWidget) -> Optional[QRect]:
+        try:
+            if not widget.isVisible() or not widget.isVisibleTo(window):
+                return None
+
+            from PyQt6.QtCore import QPoint
+
+            global_pos = widget.mapToGlobal(QPoint(0, 0))
+            window_pos = window.mapFromGlobal(global_pos)
+            size = widget.size()
+            return QRect(window_pos.x(), window_pos.y(), size.width(), size.height())
+        except RuntimeError:
+            return None
+
+    radius = get_widget_corner_radius(widget)
+    return FlashElement(
+        key=key,
+        get_rect_in_window=get_rect,
+        get_child_rects=None,
+        source_id=widget_rect_flash_source_id(widget),
+        corner_radius=radius,
+        layout_watch_widgets=(widget,),
+    )
+
+
+def create_table_cell_element(key: str, target: "StructuralTableCellTarget") -> FlashElement:
+    """Create a FlashElement for an item-backed table cell."""
+
+    def get_rect(window: QWidget) -> Optional[QRect]:
+        try:
+            table = target.table
+            if not table.isVisible() or not table.isVisibleTo(window):
+                return None
+            model_index = table.model().index(target.row_index, target.column_index)
+            if not model_index.isValid():
+                return None
+            cell_rect = table.visualRect(model_index)
+            if cell_rect.isNull():
+                return None
+            global_pos = table.viewport().mapToGlobal(cell_rect.topLeft())
+            window_pos = window.mapFromGlobal(global_pos)
+            return QRect(
+                window_pos.x(),
+                window_pos.y(),
+                cell_rect.width(),
+                cell_rect.height(),
+            )
+        except RuntimeError:
+            return None
+
+    return FlashElement(
+        key=key,
+        get_rect_in_window=get_rect,
+        get_child_rects=None,
+        source_id=table_cell_flash_source_id(target),
+        layout_watch_widgets=(target.table, target.table.viewport()),
     )
 
 
@@ -852,8 +1147,10 @@ def create_tree_item_element(key: str, tree: 'QTreeWidget', get_index: Callable[
         needs_scroll_clipping=False,
         source_id=f"tree:{id(tree)}:{key}",  # Include key to distinguish different items in same tree
         skip_overlay_paint=True,  # Delegate handles painting flash behind text
+        hierarchical_key_prefix=True,
         delegate_widget=tree,  # Tree viewport needs updating during animation
-        get_model_index=get_index  # For targeted item updates (avoids full viewport repaint)
+        get_model_index=get_index,  # For targeted item updates (avoids full viewport repaint)
+        layout_watch_widgets=(tree,),
     )
 
 
@@ -925,8 +1222,10 @@ def create_list_item_element(key: str, list_widget: 'QListWidget', get_row: Call
         needs_scroll_clipping=False,
         source_id=f"list:{id(list_widget)}:{key}",  # Include key to distinguish different items in same list
         skip_overlay_paint=True,  # Delegate handles painting flash behind text
+        hierarchical_key_prefix=True,
         delegate_widget=list_widget,  # List viewport needs updating during animation
-        get_model_index=get_model_index  # For targeted item updates (avoids full viewport repaint)
+        get_model_index=get_model_index,  # For targeted item updates (avoids full viewport repaint)
+        layout_watch_widgets=(list_widget,),
     )
 
 
@@ -969,6 +1268,17 @@ class WindowFlashOverlay(QWidget):
                 return None
 
             window_id = id(top_window)
+            overlay = cls._overlays.get(window_id)
+            if overlay is not None:
+                if cls._overlay_belongs_to_window(overlay, top_window):
+                    return overlay
+                cls._overlays.pop(window_id)
+                flash_trace(
+                    "overlay.replace_stale",
+                    window=window_id,
+                    overlay=id(overlay),
+                )
+                cls._discard_overlay(overlay)
 
             if window_id not in cls._overlays:
                 # Factory: Choose OpenGL or QPainter overlay
@@ -981,6 +1291,11 @@ class WindowFlashOverlay(QWidget):
                         if can_use_opengl():
                             overlay = WindowFlashOverlayGL(top_window)
                             cls._overlays[window_id] = overlay
+                            flash_trace(
+                                "overlay.create_gl",
+                                window=window_id,
+                                overlay=id(overlay),
+                            )
                             logger.info(f"[FLASH] Created OpenGL overlay for window {window_id} (GPU-accelerated)")
                             return cls._overlays[window_id]
                         else:
@@ -991,6 +1306,12 @@ class WindowFlashOverlay(QWidget):
                 # Fallback to QPainter
                 overlay = cls(top_window)
                 cls._overlays[window_id] = overlay
+                flash_trace(
+                    "overlay.create_qpainter",
+                    window=window_id,
+                    overlay=id(overlay),
+                    total=len(cls._overlays),
+                )
                 logger.debug(f"🧹 FLASH_LEAK_DEBUG: Created QPainter overlay for window {window_id}, "
                            f"total overlays: {len(cls._overlays)}")
 
@@ -999,10 +1320,40 @@ class WindowFlashOverlay(QWidget):
             # Widget was deleted - return None gracefully
             return None
 
+    @staticmethod
+    def _overlay_belongs_to_window(
+        overlay: 'WindowFlashOverlay',
+        window: QWidget,
+    ) -> bool:
+        """Return whether a cached overlay is still attached to this Qt window."""
+        try:
+            return (
+                not sip.isdeleted(overlay)
+                and not sip.isdeleted(overlay._window)
+                and overlay._window is window
+            )
+        except RuntimeError:
+            return False
+
+    @staticmethod
+    def _discard_overlay(overlay: 'WindowFlashOverlay') -> None:
+        """Clear and delete a stale overlay without consulting global registries."""
+        try:
+            if sip.isdeleted(overlay):
+                return
+            overlay._elements.clear()
+            overlay._hierarchical_delegate_keys.clear()
+            overlay.deleteLater()
+        except RuntimeError:
+            return
+
     @classmethod
     def cleanup_window(cls, window: QWidget) -> None:
         """Remove overlay for a window (call when window closes)."""
-        window_id = id(window.window())
+        try:
+            window_id = id(window.window())
+        except RuntimeError:
+            return
         overlays_before = len(cls._overlays)
         overlay = cls._overlays.pop(window_id, None)
         overlays_after = len(cls._overlays)
@@ -1010,21 +1361,35 @@ class WindowFlashOverlay(QWidget):
             # CRITICAL: Clear all registered elements BEFORE deleteLater()
             # Otherwise overlay might paint dead elements during async deletion
             elements_count = sum(len(v) for v in overlay._elements.values())
-            overlay._elements.clear()
-            overlay.deleteLater()
+            flash_trace(
+                "overlay.cleanup",
+                window=window_id,
+                overlay=id(overlay),
+                elements=elements_count,
+                before=overlays_before,
+                after=overlays_after,
+            )
+            cls._discard_overlay(overlay)
             logger.debug(f"🧹 FLASH_LEAK_DEBUG: Cleaned up WindowFlashOverlay for window {window_id}, "
                        f"cleared {elements_count} elements, total overlays: {overlays_before} -> {overlays_after}")
-        else:
-            logger.warning(f"🧹 FLASH_LEAK_DEBUG: No overlay found for window {window_id}, "
-                          f"total overlays: {overlays_before}")
 
     def __init__(self, window: QWidget):
         super().__init__(window)
         self._window = window
-        self._elements: Dict[str, List[FlashElement]] = {}  # key -> list of elements
+        self._elements: Dict[str, List[FlashElement]] = {}  # scoped ObjectState path -> elements
+        self._hierarchical_delegate_keys: Set[str] = set()
+        self._element_widgets: Set[int] = set()
+        self._element_widget_keys: Dict[int, Set[str]] = {}
+        self._element_widget_signatures: Dict[int, Tuple[int, int, int, int, bool]] = {}
+        self._scroll_areas: List[Any] = []
+        self._scroll_area_viewport_ids: Set[int] = set()
+        self._scroll_areas_dirty = True
+        self._needs_raise = True
 
         # FIX 3: Unified geometry cache with single invalidation point
         self._cache = OverlayGeometryCache()
+        self._last_flash_update_region = QRegion()
+        self._last_flash_mask_region = QRegion()
 
         # Make overlay transparent and pass mouse events through
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -1040,8 +1405,12 @@ class WindowFlashOverlay(QWidget):
 
         # Cover entire window
         self.setGeometry(window.rect())
-        self.raise_()
-        self.show()
+        # Registered overlays are render surfaces, not permanent visible chrome.
+        # Showing every transparent overlay as soon as a field registers makes
+        # ordinary window repaint/compositing scale with the number of open
+        # editors. The coordinator arms the overlay only while it has visible
+        # flash work.
+        self.hide()
 
         # Install event filter on scroll areas to catch scroll events
         self._install_scroll_event_filters()
@@ -1059,91 +1428,214 @@ class WindowFlashOverlay(QWidget):
         if element.source_id is not None:
             for i, existing in enumerate(self._elements[element.key]):
                 if existing.source_id == element.source_id:
+                    if (
+                        existing.skip_overlay_paint == element.skip_overlay_paint
+                        and existing.hierarchical_key_prefix == element.hierarchical_key_prefix
+                        and existing.delegate_widget is element.delegate_widget
+                        and existing.get_model_index is element.get_model_index
+                    ):
+                        return
                     # Replace existing element with same source
                     self._elements[element.key][i] = element
+                    self._invalidate_geometry_cache_for_key(element.key)
+                    self._sync_hierarchical_delegate_key(element.key)
+                    self._install_widget_event_filter(element)
+                    flash_trace(
+                        "overlay.register_replace",
+                        window=id(self._window),
+                        overlay=id(self),
+                        key=element.key,
+                        source=element.source_id,
+                        keys=len(self._elements),
+                    )
                     logger.debug(f"[FLASH] Replaced element: {element.key}, source_id={element.source_id}")
                     return
 
         # New element - append
         self._elements[element.key].append(element)
+        self._needs_raise = True
+        self._invalidate_geometry_cache_for_key(element.key)
+        self._sync_hierarchical_delegate_key(element.key)
         total = sum(len(v) for v in self._elements.values())
+        flash_trace(
+            "overlay.register",
+            window=id(self._window),
+            overlay=id(self),
+            key=element.key,
+            source=element.source_id,
+            keys=len(self._elements),
+            elements=total,
+        )
         logger.debug(f"[FLASH] Registered element: {element.key}, source_id={element.source_id}, total={total}")
 
         # Install event filter on the element's widget to catch resize/move events
         self._install_widget_event_filter(element)
 
+    def has_element_source(self, key: str, source_id: str | None) -> bool:
+        """Return whether this overlay already has a visual source for a key."""
+        if source_id is None:
+            return False
+        return any(
+            element.source_id == source_id
+            for element in self._elements.get(key, ())
+        )
+
     def unregister_element(self, key: str) -> None:
         """Unregister all elements for a key."""
         self._elements.pop(key, None)
+        self._hierarchical_delegate_keys.discard(key)
+        self._invalidate_geometry_cache_for_key(key)
+
+    def unregister_element_source(self, key: str, source_id: str | None) -> None:
+        """Unregister one element source for a key."""
+        if source_id is None:
+            self.unregister_element(key)
+            return
+        elements = self._elements.get(key)
+        if not elements:
+            return
+        remaining = [
+            element
+            for element in elements
+            if element.source_id != source_id
+        ]
+        if remaining:
+            self._elements[key] = remaining
+            self._sync_hierarchical_delegate_key(key)
+        else:
+            self._elements.pop(key, None)
+            self._hierarchical_delegate_keys.discard(key)
+        self._invalidate_geometry_cache_for_key(key)
+
+    def _sync_hierarchical_delegate_key(self, key: str) -> None:
+        """Track keys whose delegate elements subscribe to descendant flashes."""
+        elements = self._elements.get(key, ())
+        if any(
+            element.skip_overlay_paint and element.hierarchical_key_prefix
+            for element in elements
+        ):
+            self._hierarchical_delegate_keys.add(key)
+        else:
+            self._hierarchical_delegate_keys.discard(key)
 
     def _install_scroll_event_filters(self):
         """Install event filters on ALL scroll areas (QScrollArea, QTreeWidget, QListWidget, etc.)."""
-        from PyQt6.QtWidgets import QAbstractScrollArea
-
         # Install filter on the window itself to catch layout changes
         self._window.installEventFilter(self)
+        self._refresh_scroll_area_event_filters()
 
-        # QAbstractScrollArea is the base class for QScrollArea, QTreeWidget, QListWidget, etc.
-        scroll_areas = self._window.findChildren(QAbstractScrollArea)
+    def _refresh_scroll_area_event_filters(self) -> None:
+        """Refresh cached scroll areas and install viewport event filters."""
+        from PyQt6.QtWidgets import QAbstractScrollArea
+
+        scroll_areas = [
+            scroll_area
+            for scroll_area in self._window.findChildren(QAbstractScrollArea)
+            if not sip.isdeleted(scroll_area)
+        ]
+        self._scroll_areas = scroll_areas
+        self._scroll_areas_dirty = False
+        self._cache.invalidate_clip_rects()
+
         for scroll_area in scroll_areas:
-            # Install filter on the viewport (where scroll events happen)
-            if scroll_area.viewport():
-                scroll_area.viewport().installEventFilter(self)
+            viewport = scroll_area.viewport()
+            if viewport is None or sip.isdeleted(viewport):
+                continue
+            viewport_id = id(viewport)
+            if viewport_id in self._scroll_area_viewport_ids:
+                continue
+            self._scroll_area_viewport_ids.add(viewport_id)
+            viewport.installEventFilter(self)
 
     def _install_widget_event_filter(self, element: FlashElement) -> None:
         """Install event filter on a flash element's widget to catch layout changes.
 
-        This ensures cache invalidation when element widgets change dimensions due to
-        text changes or other layout events.
+        This ensures cache invalidation when element widgets change actual
+        geometry. Text, placeholder, and style churn should not rebuild flash
+        geometry unless Qt also moves, resizes, hides, or shows the widget.
         """
-        # For groupbox elements, try to get the actual widget and install filter on it
-        source_id = element.source_id or ""
-        if source_id.startswith("groupbox:") or source_id.startswith("leaf_flash:"):
-            if not hasattr(self, '_element_widgets'):
-                self._element_widgets: Set[int] = set()
-            try:
-                # Parse widget id from source_id
-                widget_id = int(source_id.split(":")[1])
-                self._element_widgets.add(widget_id)
-                # Find the actual widget by scanning window children
-                # (the id was captured at element creation time)
-                from PyQt6.QtWidgets import QGroupBox
-                for groupbox in self._window.findChildren(QGroupBox):
-                    if id(groupbox) == widget_id:
-                        groupbox.installEventFilter(self)
-                        logger.debug(f"[FLASH] Installed event filter on groupbox {widget_id}")
-                        break
-            except (ValueError, IndexError):
-                pass
+        for widget in element.layout_watch_widgets:
+            if widget is None or sip.isdeleted(widget):
+                continue
+            widget_id = id(widget)
+            self._element_widget_keys.setdefault(widget_id, set()).add(element.key)
+            if widget_id in self._element_widgets:
+                continue
+            self._element_widgets.add(widget_id)
+            self._element_widget_signatures[widget_id] = self._geometry_signature(widget)
+            widget.installEventFilter(self)
+            logger.debug("[FLASH] Installed event filter on widget %s", widget_id)
+
+    def _invalidate_geometry_cache_for_widget(self, widget: QWidget) -> None:
+        """Invalidate cached geometry for keys owned by a watched widget."""
+        for key in self._element_widget_keys.get(id(widget), ()):
+            self._invalidate_geometry_cache_for_key(key)
+
+    def _invalidate_geometry_cache_if_widget_signature_changed(self, widget: QWidget) -> None:
+        """Invalidate watched keys only when a widget's geometry contribution changed."""
+        widget_id = id(widget)
+        if widget_id not in self._element_widget_keys:
+            return
+        current_signature = self._geometry_signature(widget)
+        if self._element_widget_signatures.get(widget_id) == current_signature:
+            return
+        self._element_widget_signatures[widget_id] = current_signature
+        self._invalidate_geometry_cache_for_widget(widget)
+
+    @staticmethod
+    def _geometry_signature(widget: QWidget) -> Tuple[int, int, int, int, bool]:
+        """Return the geometry facts used by flash mask/rect calculation."""
+        geometry = widget.geometry()
+        return (
+            geometry.x(),
+            geometry.y(),
+            geometry.width(),
+            geometry.height(),
+            widget.isVisible(),
+        )
 
     def eventFilter(self, obj, event):
         """Catch scroll/resize/layout events to invalidate geometry cache."""
         from PyQt6.QtCore import QEvent
         event_type = event.type()
 
-        # Always invalidate on Resize and Wheel
-        if event_type in (QEvent.Type.Resize, QEvent.Type.Wheel):
+        if event_type in (QEvent.Type.Resize, QEvent.Type.Move):
+            logger.debug(f"[FLASH] Event filter caught {event_type} on {obj.__class__.__name__}, invalidating cache")
+            if obj is self._window:
+                self._invalidate_geometry_cache(include_scroll_areas=True)
+                if event_type == QEvent.Type.Resize:
+                    self.setGeometry(self._window.rect())
+            elif isinstance(obj, QWidget):
+                self._invalidate_geometry_cache_if_widget_signature_changed(obj)
+        elif event_type in (
+            QEvent.Type.LayoutRequest,
+            QEvent.Type.Show,
+            QEvent.Type.Hide,
+            QEvent.Type.FontChange,
+            QEvent.Type.StyleChange,
+            QEvent.Type.ContentsRectChange,
+        ):
+            if isinstance(obj, QWidget):
+                self._invalidate_geometry_cache_if_widget_signature_changed(obj)
+        elif event_type == QEvent.Type.Wheel:
             logger.debug(f"[FLASH] Event filter caught {event_type} on {obj.__class__.__name__}, invalidating cache")
             self._invalidate_geometry_cache()
-            # CRITICAL: When window resizes, also resize the overlay to match
-            if obj is self._window and event_type == QEvent.Type.Resize:
-                self.setGeometry(self._window.rect())
-
-        # LayoutRequest: only invalidate if it's from a tracked element widget (groupbox)
-        # This avoids constant invalidation from spurious layout events while
-        # still catching text changes in groupbox titles
-        elif event_type == QEvent.Type.LayoutRequest:
-            widget_id = id(obj)
-            element_widgets = getattr(self, '_element_widgets', set())
-            if widget_id in element_widgets:
-                logger.debug(f"[FLASH] LayoutRequest from element widget {obj.__class__.__name__}, invalidating cache")
-                self._invalidate_geometry_cache()
+        elif event_type in (QEvent.Type.ChildAdded, QEvent.Type.ChildRemoved):
+            self._scroll_areas_dirty = True
+            self._needs_raise = True
+            self._cache.invalidate_clip_rects()
 
         return super().eventFilter(obj, event)
 
-    def _invalidate_geometry_cache(self):
+    def _invalidate_geometry_cache(self, *, include_scroll_areas: bool = False):
         """Invalidate ALL cached geometry - called on scroll/resize."""
-        self._cache.invalidate()
+        self._cache.invalidate_elements()
+        if include_scroll_areas:
+            self._cache.invalidate_clip_rects()
+
+    def _invalidate_geometry_cache_for_key(self, key: str) -> None:
+        """Invalidate cached geometry for one flash key."""
+        self._cache.invalidate_key(key)
 
     def invalidate_cache(self):
         """Public method to invalidate geometry cache.
@@ -1162,16 +1654,30 @@ class WindowFlashOverlay(QWidget):
         if overlay:
             overlay.invalidate_cache()
 
-    def _rebuild_geometry_cache(self, clip_rects: List[QRect]):
+    def _rebuild_geometry_cache(
+        self,
+        clip_rects: List[QRect],
+        keys: Set[str] | None = None,
+    ) -> None:
         """Rebuild ALL cached geometry and QRegion objects.
 
         CARMACK: This is expensive, but only called on scroll/resize or new element registration.
         During smooth animation, we just use the cached data.
         """
-        self._cache.element_rects.clear()
-        self._cache.element_regions.clear()
+        rebuild_keys = set(keys) if keys is not None else set(self._elements)
+        debug_enabled = logger.isEnabledFor(logging.DEBUG)
+        source_geometry: dict[
+            str,
+            tuple[
+                Optional[FlashGeometry],
+                Optional[QPainterPath],
+            ],
+        ] = {}
+        for key in rebuild_keys:
+            self._cache.invalidate_key(key)
 
-        for key, elements in self._elements.items():
+        for key in rebuild_keys:
+            elements = self._elements.get(key, ())
             rects = []
             regions = []
 
@@ -1182,12 +1688,21 @@ class WindowFlashOverlay(QWidget):
                     regions.append(None)
                     continue
 
+                source_token = self._paint_source_token(key, len(rects), element)
+                cached_source_geometry = source_geometry.get(source_token)
+                if cached_source_geometry is not None:
+                    rect_tuple, path = cached_source_geometry
+                    rects.append(rect_tuple)
+                    regions.append(path)
+                    continue
+
                 # Compute element rect in window coords
                 rect = element.get_rect_in_window(self._window)
 
                 if rect is None or not rect.isValid():
                     rects.append(None)
                     regions.append(None)
+                    source_geometry[source_token] = (None, None)
                     continue
 
                 # Apply scroll area clipping if needed
@@ -1200,58 +1715,285 @@ class WindowFlashOverlay(QWidget):
                         # Element not visible in scroll area - append None tuple placeholder
                         rects.append((None, 0.0))
                         regions.append(None)
+                        source_geometry[source_token] = ((None, 0.0), None)
                         continue
 
                 # Get corner radius from element (0 for tree/list items, >0 for groupboxes)
                 radius = element.corner_radius
 
-                # Compute QPainterPath with rounded corners and child masking if needed
-                # CARMACK: Call get_child_rects() ONCE here, cache the result
                 if element.get_child_rects:
-                    # Create rounded rect path for outer groupbox
+                    child_rects = tuple(element.get_child_rects(self._window))
                     path = QPainterPath()
                     path.addRoundedRect(QRectF(rect_to_draw), radius, radius)
-
-                    child_rects = element.get_child_rects(self._window)
                     subtracted_count = 0
-                    # Debug: log first 3 child rects to verify coordinates
-                    first_children = []
+                    first_children = [] if debug_enabled else None
                     for i, (child_rect, child_is_checkbox) in enumerate(child_rects):
                         if child_rect.intersects(rect_to_draw):
+                            subtracted_count += 1
                             child_path = QPainterPath()
                             if child_is_checkbox:
-                                # Subtract RECT (no rounding) for checkboxes only
                                 child_path.addRect(QRectF(child_rect))
                             else:
-                                # Subtract rounded rect for all other widgets
                                 child_path.addRoundedRect(QRectF(child_rect), radius, radius)
                             path = path.subtracted(child_path)
-                            subtracted_count += 1
-                        if i < 3:
+                        if debug_enabled and first_children is not None and i < 3:
                             first_children.append(f"({child_rect.x()},{child_rect.y()} {child_rect.width()}x{child_rect.height()})")
-                    short_key = key.split('::')[-1] if '::' in key else key[-30:]
-                    logger.debug(f"[FLASH] CACHE_BUILD key={short_key} groupbox_rect=({rect_to_draw.x()},{rect_to_draw.y()}) first_child_rects={first_children} subtracted={subtracted_count}/{len(child_rects)}")
-                    rects.append((rect_to_draw, radius))  # Cache rect + radius tuple
-                    regions.append(path)  # QPainterPath for elements with child masking
+                    if debug_enabled:
+                        short_key = key.split('::')[-1] if '::' in key else key[-30:]
+                        logger.debug(
+                            "[FLASH] CACHE_BUILD key=%s groupbox_rect=(%d,%d) first_child_rects=%s subtracted=%d/%d",
+                            short_key,
+                            rect_to_draw.x(),
+                            rect_to_draw.y(),
+                            first_children,
+                            subtracted_count,
+                            len(child_rects),
+                    )
+                    rect_tuple = (rect_to_draw, radius)
+                    rects.append(rect_tuple)  # Cache rect + radius tuple
+                    regions.append(path)
+                    source_geometry[source_token] = (rect_tuple, path)
                 else:
                     # No child masking - just cache rect + radius
-                    logger.debug(f"[FLASH] _rebuild_geometry_cache: key={key} source={element.source_id} rect={rect_to_draw.x()},{rect_to_draw.y()} {rect_to_draw.width()}x{rect_to_draw.height()} NO child masking radius={radius}")
-                    rects.append((rect_to_draw, radius))  # Cache rect + radius tuple
+                    if debug_enabled:
+                        logger.debug(
+                            "[FLASH] _rebuild_geometry_cache: key=%s source=%s rect=%d,%d %dx%d NO child masking radius=%s",
+                            key,
+                            element.source_id,
+                            rect_to_draw.x(),
+                            rect_to_draw.y(),
+                            rect_to_draw.width(),
+                            rect_to_draw.height(),
+                            radius,
+                        )
+                    rect_tuple = (rect_to_draw, radius)
+                    rects.append(rect_tuple)  # Cache rect + radius tuple
                     regions.append(None)
+                    source_geometry[source_token] = (rect_tuple, None)
 
             self._cache.element_rects[key] = rects
             self._cache.element_regions[key] = regions
 
         self._cache.valid = True
-        logger.debug(f"[FLASH] Rebuilt geometry cache for window {id(self._window)}: {len(self._cache.element_rects)} keys")
+        logger.debug(
+            "[FLASH] Rebuilt geometry cache for window %s: rebuilt=%d cached=%d",
+            id(self._window),
+            len(rebuild_keys),
+            len(self._cache.element_rects),
+        )
+
+    def _ensure_geometry_cache_for_keys(self, keys: Set[str]) -> None:
+        """Ensure cached geometry exists for the requested overlay-painted keys."""
+        missing_cache_keys = {
+            key
+            for key in keys
+            if key not in self._cache.element_rects
+        }
+        if not missing_cache_keys:
+            return
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[FLASH] CACHE MISS - Rebuilding %d active keys for window %s",
+                len(missing_cache_keys),
+                id(self._window),
+            )
+        self._rebuild_geometry_cache(
+            self._get_scroll_area_clip_rects(),
+            missing_cache_keys,
+        )
+
+    @staticmethod
+    def _paint_source_token(key: str, index: int, element: FlashElement) -> str:
+        """Return the visual-source token used to deduplicate overlay painting."""
+        if element.source_id is not None:
+            return f"source:{element.source_id}"
+        return f"key:{key}:{index}"
+
+    def _visible_paint_records(
+        self,
+        keys: Set[str],
+        *,
+        colors: Optional[Dict[str, QColor]] = None,
+    ) -> tuple[tuple[OverlayFlashPaintRecord, ...], int]:
+        """Return deduplicated visible paint records for active overlay keys."""
+        visible_keys = self.get_visible_keys_for(keys)
+        if not visible_keys:
+            return (), 0
+
+        records_by_source: dict[str, OverlayFlashPaintRecord] = {}
+        for key in visible_keys:
+            elements = self._elements.get(key, ())
+            cached_rects = self._cache.element_rects.get(key, ())
+            cached_regions = self._cache.element_regions.get(key, ())
+            color = colors.get(key) if colors is not None else None
+            for index, element in enumerate(elements):
+                if element.skip_overlay_paint:
+                    continue
+                if index >= len(cached_rects):
+                    continue
+                rect_tuple = cached_rects[index]
+                if rect_tuple is None:
+                    continue
+                rect, radius = rect_tuple
+                if rect is None or not rect.isValid():
+                    continue
+
+                path = cached_regions[index] if index < len(cached_regions) else None
+                source_token = self._paint_source_token(key, index, element)
+                record = OverlayFlashPaintRecord(
+                    source_token=source_token,
+                    key=key,
+                    rect=rect,
+                    radius=radius,
+                    path=path,
+                    color=color,
+                )
+                existing = records_by_source.get(source_token)
+                if existing is None:
+                    records_by_source[source_token] = record
+                    continue
+                if color is None:
+                    continue
+                existing_alpha = existing.color.alpha() if existing.color is not None else -1
+                if color.alpha() > existing_alpha:
+                    records_by_source[source_token] = record
+        return tuple(records_by_source.values()), len(visible_keys)
+
+    def _flash_region_for_keys(
+        self,
+        keys: Set[str],
+    ) -> tuple[QRegion, int, int, int, float, float, float]:
+        """Return the currently visible flash paint region for overlay-painted keys."""
+        overlay_keys = keys & self._elements.keys()
+        if not overlay_keys:
+            return QRegion(), 0, 0, 0, 0.0, 0.0, 0.0
+
+        missing_count = sum(
+            1
+            for key in overlay_keys
+            if key not in self._cache.element_rects
+        )
+        started = time.perf_counter()
+        self._ensure_geometry_cache_for_keys(overlay_keys)
+        ensure_ms = (time.perf_counter() - started) * 1000.0
+
+        region_cache_key = frozenset(overlay_keys)
+        cached_region = self._cache.flash_regions.get(region_cache_key)
+        if cached_region is not None:
+            region, visible_key_count, rect_count = cached_region
+            return (
+                QRegion(region),
+                visible_key_count,
+                rect_count,
+                missing_count,
+                ensure_ms,
+                0.0,
+                0.0,
+            )
+
+        started = time.perf_counter()
+        paint_records, visible_key_count = self._visible_paint_records(overlay_keys)
+        visible_ms = (time.perf_counter() - started) * 1000.0
+        if not paint_records:
+            empty_region = QRegion()
+            self._cache.flash_regions[region_cache_key] = (empty_region, 0, 0)
+            return empty_region, 0, 0, missing_count, ensure_ms, visible_ms, 0.0
+
+        started = time.perf_counter()
+        region = QRegion()
+        rect_count = 0
+        overlay_rect = self.rect()
+        for record in paint_records:
+            paint_rect = record.rect.adjusted(-2, -2, 2, 2).intersected(overlay_rect)
+            if paint_rect.isEmpty():
+                continue
+            region = region.united(QRegion(paint_rect))
+            rect_count += 1
+        region_ms = (time.perf_counter() - started) * 1000.0
+        self._cache.flash_regions[region_cache_key] = (
+            QRegion(region),
+            visible_key_count,
+            rect_count,
+        )
+        return (
+            region,
+            visible_key_count,
+            rect_count,
+            missing_count,
+            ensure_ms,
+            visible_ms,
+            region_ms,
+        )
+
+    def request_flash_update_for_keys(
+        self,
+        keys: Set[str],
+        *,
+        clear_after: bool = False,
+    ) -> tuple[int, int]:
+        """Queue a minimal repaint region for active flash keys.
+
+        The overlay is window-sized for z-order simplicity, but repainting the
+        whole overlay every frame makes inherited config flashes scale with
+        window area. Flash elements already own cached geometry, so use that as
+        the repaint authority.
+        """
+        started = time.perf_counter()
+        (
+            current_region,
+            visible_key_count,
+            rect_count,
+            missing_count,
+            ensure_ms,
+            visible_ms,
+            region_ms,
+        ) = self._flash_region_for_keys(keys)
+        region_total_ms = (time.perf_counter() - started) * 1000.0
+        started = time.perf_counter()
+        update_region = current_region.united(self._last_flash_update_region)
+        self._last_flash_update_region = QRegion() if clear_after else current_region
+        union_ms = (time.perf_counter() - started) * 1000.0
+        if update_region.isEmpty():
+            return visible_key_count, rect_count
+        if update_region != self._last_flash_mask_region:
+            self.setMask(update_region)
+            self._last_flash_mask_region = QRegion(update_region)
+        if not self.isVisible():
+            self.show()
+            self._needs_raise = True
+        if self._needs_raise:
+            self.raise_()
+            self._needs_raise = False
+        started = time.perf_counter()
+        self.update(update_region)
+        update_ms = (time.perf_counter() - started) * 1000.0
+        elapsed_ms = region_total_ms + union_ms + update_ms
+        if TimeTravelProfiler.enabled() and elapsed_ms >= 5.0:
+            logging.getLogger(TimeTravelProfiler.logger_name).info(
+                "TT_PHASE name=%s elapsed_ms=%.3f window=%r keys=%r visible_keys=%r rects=%r missing=%r ensure_ms=%.3f visible_ms=%.3f region_ms=%.3f union_ms=%.3f update_ms=%.3f",
+                "pyqt.flash.request_update",
+                elapsed_ms,
+                id(self._window),
+                len(keys),
+                visible_key_count,
+                rect_count,
+                missing_count,
+                ensure_ms,
+                visible_ms,
+                region_ms,
+                union_ms,
+                update_ms,
+            )
+        return visible_key_count, rect_count
 
     def resizeEvent(self, event) -> None:
         """Resize to cover entire window."""
         super().resizeEvent(event)
         if self._window:
             self.setGeometry(self._window.rect())
+            self._needs_raise = True
             # Invalidate ALL geometry caches on resize
-            self._invalidate_geometry_cache()
+            self._invalidate_geometry_cache(include_scroll_areas=True)
 
     def is_element_in_viewport(self, key: str) -> bool:
         """Check if any element for this key is visible (for viewport culling)."""
@@ -1313,24 +2055,28 @@ class WindowFlashOverlay(QWidget):
         PERFORMANCE: Cached - findChildren() is expensive (tree traversal).
         Cache invalidated on resize.
         """
-        if self._cache.valid and self._cache.scroll_clip_rects:
+        if self._cache.clip_rects_valid:
             return self._cache.scroll_clip_rects
 
-        from PyQt6.QtWidgets import QScrollArea
+        if self._scroll_areas_dirty:
+            self._refresh_scroll_area_event_filters()
 
         clip_rects = []
-        # Find all QScrollArea widgets in the window
-        scroll_areas = self._window.findChildren(QScrollArea)
-        for scroll_area in scroll_areas:
+        for scroll_area in self._scroll_areas:
+            if sip.isdeleted(scroll_area):
+                self._scroll_areas_dirty = True
+                continue
             viewport = scroll_area.viewport()
-            if viewport and viewport.isVisible():
-                # Get viewport rect in window coordinates
-                viewport_rect = viewport.rect()
-                global_pos = viewport.mapToGlobal(viewport_rect.topLeft())
-                window_pos = self._window.mapFromGlobal(global_pos)
-                clip_rects.append(QRect(window_pos, viewport_rect.size()))
+            if viewport is None or sip.isdeleted(viewport) or not viewport.isVisible():
+                continue
+            # Get viewport rect in window coordinates
+            viewport_rect = viewport.rect()
+            global_pos = viewport.mapToGlobal(viewport_rect.topLeft())
+            window_pos = self._window.mapFromGlobal(global_pos)
+            clip_rects.append(QRect(window_pos, viewport_rect.size()))
 
         self._cache.scroll_clip_rects = clip_rects
+        self._cache.clip_rects_valid = True
         return clip_rects
 
     def _clip_to_scroll_areas(self, rect: QRect, clip_rects: List[QRect]) -> Optional[QRect]:
@@ -1381,90 +2127,101 @@ class WindowFlashOverlay(QWidget):
                 for key, color in active_keys.items()
             }
 
-        # Filter to only keys whose elements are currently visible in this window
-        visible_keys = self.get_visible_keys_for(set(active_keys.keys()))
-        if not visible_keys:
-            # Nothing visible to draw; still repaint once to clear any stale pixels
-            painter = QPainter(self)
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-            painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
-            painter.end()
+        active_key_set = set(active_keys)
+        self._ensure_geometry_cache_for_keys(active_key_set)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("[FLASH] CACHE HIT - Using cached geometry for window %s", id(self._window))
+
+        # Filter to only visual sources whose elements are currently visible in this
+        # window, then collapse multiple active ObjectState keys that resolve to the
+        # same source. A fanout update can legitimately activate several paths for
+        # one groupbox/container; the overlay should paint that source once.
+        paint_records, _visible_key_count = self._visible_paint_records(
+            active_key_set,
+            colors=active_keys,
+        )
+        if not paint_records:
+            # No active target intersects the dirty region. The coordinator
+            # includes the previous flash region in clear updates, so there is
+            # no useful full-window transparent paint here.
             return
 
         painter = QPainter(self)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
-        # Find scroll areas to clip flash rectangles (don't flash over headers/buttons)
-        clip_rects = self._get_scroll_area_clip_rects()
-
-        # CARMACK: Rebuild geometry cache if invalidated
-        if not self._cache.valid:
-            logger.debug(f"[FLASH] CACHE MISS - Rebuilding geometry cache for window {id(self._window)}")
-            self._rebuild_geometry_cache(clip_rects)
-        else:
-            logger.debug(f"[FLASH] CACHE HIT - Using cached geometry for window {id(self._window)}")
-
         drawn_count = 0
 
-        # Get keys to draw (only keys that are registered in this overlay AND visible)
-        all_keys_to_draw = {key: color for key, color in active_keys.items() if key in visible_keys}
+        debug_enabled = logger.isEnabledFor(logging.DEBUG)
+        if debug_enabled:
+            logger.debug("[FLASH] paintEvent START: %d sources to draw", len(paint_records))
 
-        # DEBUG: Log what we're about to draw
-        logger.debug(f"[FLASH] paintEvent START: {len(all_keys_to_draw)} keys to draw")
-        for key in all_keys_to_draw:
-            short_key = key.split('::')[-1] if '::' in key else key[-30:]
-            rects = self._cache.element_rects.get(key, [])
-            paths = self._cache.element_regions.get(key, [])
-            path_info = [f"idx{i}:{'Path' if p else 'None'}" for i, p in enumerate(paths)]
-            logger.debug(f"[FLASH]   key={short_key} cached_rects={len(rects)} cached_paths={len(paths)} paths={path_info}")
+        dirty_rect = event.region().boundingRect()
+        for record in paint_records:
+            rect = record.rect
+            color = record.color
+            if color is None:
+                continue
+            if not rect.isValid() or not rect.intersects(dirty_rect):
+                if debug_enabled:
+                    short_key = record.key.split('::')[-1] if '::' in record.key else record.key[-30:]
+                    logger.debug(
+                        "[FLASH] SKIPPED key=%s source=%s rect=%s (invalid or off-screen)",
+                        short_key,
+                        record.source_token,
+                        rect,
+                    )
+                continue
 
-        # PERFORMANCE: Only loop through ANIMATING keys, not ALL registered elements
-        for key, color in all_keys_to_draw.items():
-            cached_rects = self._cache.element_rects.get(key, [])
-            cached_regions = self._cache.element_regions.get(key, [])
-            short_key = key.split('::')[-1] if '::' in key else key[-30:]
+            painter.save()
+            painter.setBrush(color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            if record.path is not None:
+                if debug_enabled:
+                    short_key = record.key.split('::')[-1] if '::' in record.key else record.key[-30:]
+                    br = record.path.boundingRect()
+                    logger.debug(
+                        "[FLASH] DRAWING WITH PATH key=%s source=%s fillRect=%d,%d %dx%d path.boundingRect=%.0f,%.0f %.0fx%.0f",
+                        short_key,
+                        record.source_token,
+                        rect.x(),
+                        rect.y(),
+                        rect.width(),
+                        rect.height(),
+                        br.x(),
+                        br.y(),
+                        br.width(),
+                        br.height(),
+                    )
+                painter.drawPath(record.path)
+            elif record.radius > 0:
+                painter.drawRoundedRect(QRectF(rect), record.radius, record.radius)
+            else:
+                painter.fillRect(rect, color)
+            painter.restore()
 
-            # Draw all elements for this key using CACHED geometry
-            # cached_rects contains (QRect, corner_radius) tuples or None
-            for idx, (rect_tuple, path) in enumerate(zip(cached_rects, cached_regions)):
-                # Skip None entries (elements not visible)
-                if rect_tuple is None:
-                    continue
-                # Unpack rect and radius from cached tuple
-                rect, radius = rect_tuple
-                if rect is None:
-                    continue
-                if not rect.isValid() or not rect.intersects(self.rect()):
-                    logger.debug(f"[FLASH] SKIPPED key={short_key} idx={idx} rect={rect} (invalid or off-screen)")
-                    continue
+            if debug_enabled:
+                short_key = record.key.split('::')[-1] if '::' in record.key else record.key[-30:]
+                logger.debug(
+                    "[FLASH] DREW RECT key=%s source=%s rect=%d,%d %dx%d radius=%s path=%s",
+                    short_key,
+                    record.source_token,
+                    rect.x(),
+                    rect.y(),
+                    rect.width(),
+                    rect.height(),
+                    record.radius,
+                    record.path is not None,
+                )
 
-                if path is not None:
-                    # Use cached QPainterPath (groupbox with rounded corners and child masking)
-                    br = path.boundingRect()
-                    logger.debug(f"[FLASH] DRAWING WITH PATH key={short_key} idx={idx} fillRect={rect.x()},{rect.y()} {rect.width()}x{rect.height()} path.boundingRect={br.x():.0f},{br.y():.0f} {br.width():.0f}x{br.height():.0f}")
+            drawn_count += 1
 
-                    # Fill the rounded path directly (more efficient than clipping)
-                    painter.save()
-                    painter.setBrush(color)
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    painter.drawPath(path)
-                    painter.restore()
-                else:
-                    # No child masking - use element-specific corner radius
-                    painter.save()
-                    painter.setBrush(color)
-                    painter.setPen(Qt.PenStyle.NoPen)
-                    if radius > 0:
-                        painter.drawRoundedRect(QRectF(rect), radius, radius)
-                    else:
-                        painter.fillRect(rect, color)  # Sharp corners for tree/list items
-                    painter.restore()
-                    logger.debug(f"[FLASH] DREW RECT key={short_key} idx={idx} rect={rect.x()},{rect.y()} {rect.width()}x{rect.height()} radius={radius}")
-
-                drawn_count += 1
-
-        if drawn_count > 0:
-            logger.debug(f"[FLASH] paintEvent END: drew {drawn_count} rects, overlay={self.rect().width()}x{self.rect().height()}")
+        if drawn_count > 0 and debug_enabled:
+            logger.debug(
+                "[FLASH] paintEvent END: drew %d sources, overlay=%dx%d",
+                drawn_count,
+                self.rect().width(),
+                self.rect().height(),
+            )
 
         painter.end()
 
@@ -1472,7 +2229,7 @@ class WindowFlashOverlay(QWidget):
 # ==================== GLOBAL ANIMATION COORDINATOR ====================
 # Single timer shared across ALL windows - batch computes colors, triggers repaints
 
-class _GlobalFlashCoordinator:
+class _GlobalFlashCoordinator(QObject):
     """Singleton coordinator for all flash animations across all windows.
 
     TRUE O(1) ARCHITECTURE:
@@ -1481,15 +2238,22 @@ class _GlobalFlashCoordinator:
     - Triggers ONE repaint per window (WindowFlashOverlay)
     - Total: O(k) per tick where k = flashing elements, O(1) per window for repaint
     """
+    start_timer_requested = pyqtSignal()
+    flush_pending_flashes_requested = pyqtSignal()
+    flush_visual_frame_callbacks_requested = pyqtSignal()
+
     _instance: Optional['_GlobalFlashCoordinator'] = None
 
     @classmethod
     def get(cls) -> '_GlobalFlashCoordinator':
         if cls._instance is None:
             cls._instance = cls()
+        else:
+            cls._instance._bind_to_application_thread()
         return cls._instance
 
     def __init__(self):
+        super().__init__()
         self._timer: Optional[QTimer] = None
         self._config = get_flash_config()
         # FIX 1: Single unified flash timing (all keys are scoped, no global/local split)
@@ -1501,21 +2265,113 @@ class _GlobalFlashCoordinator:
         # Window overlays that need repaint
         self._active_windows: Set[int] = set()  # window_id
         self._tick_count = 0
+        self._pending_flash_keys: dict[str, None] = {}
+        self._pending_flash_flush_scheduled = False
+        self._pending_visual_frame_callbacks: Dict[int, Callable[[], None]] = {}
+        self._visual_frame_callback_flush_scheduled = False
         # Pending registrations (widgets not in window hierarchy at registration time)
-        self._pending_registrations: List[Tuple[str, Callable[[], Optional['FlashElement']], QWidget]] = []
+        self._pending_registrations: List[Tuple[str, Callable[[], Optional['FlashElement']], QWidget, str | None]] = []
+        self._trace_next_tick = False
+        self.start_timer_requested.connect(
+            self._start_timer_in_owner_thread,
+            type=Qt.ConnectionType.QueuedConnection,
+        )
+        self.flush_pending_flashes_requested.connect(
+            self._flush_pending_flash_keys,
+            type=Qt.ConnectionType.QueuedConnection,
+        )
+        self.flush_visual_frame_callbacks_requested.connect(
+            self._flush_visual_frame_callbacks,
+            type=Qt.ConnectionType.QueuedConnection,
+        )
+        self._bind_to_application_thread()
 
-    def _ensure_timer(self) -> QTimer:
+    def _bind_to_application_thread(self) -> None:
+        """Keep the coordinator Qt-affine to the active application thread."""
+        app = QCoreApplication.instance()
+        if app is None:
+            flash_trace("coordinator.no_application")
+            return
+
+        app_thread = app.thread()
+        try:
+            if self.thread() != app_thread:
+                self.moveToThread(app_thread)
+                flash_trace(
+                    "coordinator.move_to_app_thread",
+                    coordinator=id(self),
+                    app_thread=id(app_thread),
+                )
+        except RuntimeError:
+            flash_trace("coordinator.thread_bind_failed", coordinator=id(self))
+
+    def _ensure_timer(self) -> Optional[QTimer]:
         """Lazy-create timer on first use (after QApplication exists)."""
+        self._bind_to_application_thread()
+        owner_thread = self.thread()
+        current_thread = QThread.currentThread()
+        if current_thread != owner_thread:
+            flash_trace(
+                "coordinator.timer_wrong_thread",
+                current=id(current_thread),
+                owner=id(owner_thread),
+            )
+            return None
+
+        if self._timer is not None and self._timer.thread() != owner_thread:
+            flash_trace(
+                "coordinator.timer_recreate_wrong_thread",
+                timer=id(self._timer),
+                timer_thread=id(self._timer.thread()),
+                owner=id(owner_thread),
+            )
+            self._timer.stop()
+            self._timer.deleteLater()
+            self._timer = None
+
         if self._timer is None:
-            self._timer = QTimer()
+            self._timer = QTimer(self)
+            self._timer.setTimerType(Qt.TimerType.PreciseTimer)
             self._timer.timeout.connect(self._on_global_tick)
+            flash_trace(
+                "coordinator.timer_create",
+                timer=id(self._timer),
+                owner=id(owner_thread),
+            )
         return self._timer
 
     def _start_timer(self) -> None:
         """Start the timer if not running."""
+        self._bind_to_application_thread()
+        current_thread = QThread.currentThread()
+        owner_thread = self.thread()
+        if current_thread != owner_thread:
+            flash_trace(
+                "coordinator.timer_request_queued",
+                current=id(current_thread),
+                owner=id(owner_thread),
+                active_keys=len(self._flash_start_times),
+            )
+            self.start_timer_requested.emit()
+            return
+
+        self._start_timer_in_owner_thread()
+
+    @pyqtSlot()
+    def _start_timer_in_owner_thread(self) -> None:
+        """Start the timer from the coordinator's Qt owner thread."""
         timer = self._ensure_timer()
+        if timer is None:
+            return
         if not timer.isActive():
             timer.start(self._config.frame_ms)
+            flash_trace(
+                "coordinator.timer_start",
+                frame_ms=self._config.frame_ms,
+                active_keys=len(self._flash_start_times),
+                timer=id(timer),
+                active=timer.isActive(),
+            )
 
     def _extract_scope_from_key(self, key: str) -> Optional[str]:
         """Extract orchestrator/parent scope from flash key using canonical parser."""
@@ -1590,9 +2446,22 @@ class _GlobalFlashCoordinator:
         """Neutral grey flash color for non-scope keys or errors."""
         return QColor(180, 180, 180)
 
-    def add_pending_registration(self, key: str, element_factory: Callable[[], Optional['FlashElement']], widget: QWidget) -> None:
+    def add_pending_registration(
+        self,
+        key: str,
+        element_factory: Callable[[], Optional['FlashElement']],
+        widget: QWidget,
+        source_id: str | None = None,
+    ) -> None:
         """Add a pending registration (widget not in window hierarchy yet)."""
-        self._pending_registrations.append((key, element_factory, widget))
+        self._pending_registrations.append((key, element_factory, widget, source_id))
+        flash_trace(
+            "register.pending_add",
+            key=key,
+            widget=type(widget).__qualname__,
+            source=source_id,
+            pending=len(self._pending_registrations),
+        )
 
     def _process_pending_registrations(self) -> None:
         """Process all deferred element registrations (widgets now in window hierarchy).
@@ -1605,24 +2474,46 @@ class _GlobalFlashCoordinator:
 
         logger.debug(f"[FLASH] _process_pending_registrations: processing {len(self._pending_registrations)} pending")
         still_pending = []
-        for key, element_factory, widget in self._pending_registrations:
+        for key, element_factory, widget, source_id in self._pending_registrations:
             try:
                 # Check if widget is still valid (not deleted)
                 # Accessing any Qt property will raise RuntimeError if deleted
                 _ = widget.isVisible()
                 overlay = WindowFlashOverlay.get_for_window(widget)
                 if overlay is not None:
+                    if overlay.has_element_source(key, source_id):
+                        flash_trace(
+                            "register.pending_existing_source",
+                            key=key,
+                            overlay=id(overlay),
+                            window=id(overlay._window),
+                            source=source_id,
+                        )
+                        continue
                     element = element_factory()
                     if element is not None:
                         overlay.register_element(element)
+                        flash_trace(
+                            "register.pending_attached",
+                            key=key,
+                            overlay=id(overlay),
+                            window=id(overlay._window),
+                            source=element.source_id,
+                        )
                         logger.debug(f"[FLASH] Completed deferred registration: key={key}")
                     else:
                         logger.debug(f"[FLASH] element_factory returned None for key={key}")
                 else:
                     logger.debug(f"[FLASH] No overlay for widget, keeping pending: key={key}")
-                    still_pending.append((key, element_factory, widget))
+                    flash_trace(
+                        "register.pending_wait_overlay",
+                        key=key,
+                        widget=type(widget).__qualname__,
+                    )
+                    still_pending.append((key, element_factory, widget, source_id))
             except RuntimeError:
                 # Widget was deleted - discard this registration silently
+                flash_trace("register.pending_drop_deleted", key=key)
                 logger.debug(f"[FLASH] Discarding registration for deleted widget: key={key}")
                 continue
 
@@ -1637,30 +2528,125 @@ class _GlobalFlashCoordinator:
         """
         self._process_pending_registrations()
 
-    def queue_flash_batch(self, keys: List[str]) -> None:
-        """Queue multiple flashes with shared timestamp - perfect sync.
+    def active_visual_frame_work_count(self) -> int:
+        """Return active visual work owned by the shared frame coordinator."""
 
-        BATCH OPTIMIZED: O(1) pending registration processing, O(overlays) once.
-        """
-        if not keys:
+        return (
+            len(self._flash_start_times)
+            + len(self._pending_flash_keys)
+            + len(self._pending_visual_frame_callbacks)
+        )
+
+    def queue_visual_frame_callback(
+        self,
+        owner: QObject,
+        callback: Callable[[], None],
+    ) -> None:
+        """Coalesce owner work into the next shared visual frame."""
+
+        self._pending_visual_frame_callbacks[id(owner)] = callback
+        flash_trace(
+            "visual_frame.callback_queued",
+            owner=type(owner).__qualname__,
+            pending=len(self._pending_visual_frame_callbacks),
+            active_flashes=len(self._flash_start_times),
+        )
+
+        if self._flash_start_times or self._pending_flash_keys or self._active_windows:
+            self._start_timer()
             return
 
-        # Process pending registrations ONCE for the batch
+        if self._visual_frame_callback_flush_scheduled:
+            return
+        self._visual_frame_callback_flush_scheduled = True
+        self._bind_to_application_thread()
+        if QThread.currentThread() != self.thread():
+            self.flush_visual_frame_callbacks_requested.emit()
+            return
+        QTimer.singleShot(0, self._flush_visual_frame_callbacks)
+
+    @pyqtSlot()
+    def _flush_visual_frame_callbacks(self) -> None:
+        callbacks = tuple(self._pending_visual_frame_callbacks.values())
+        self._pending_visual_frame_callbacks.clear()
+        self._visual_frame_callback_flush_scheduled = False
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.exception("Visual frame callback failed")
+
+    def _schedule_pending_flash_flush(self) -> None:
+        if self._pending_flash_flush_scheduled:
+            return
+        self._pending_flash_flush_scheduled = True
+        self._bind_to_application_thread()
+        if QThread.currentThread() != self.thread():
+            self.flush_pending_flashes_requested.emit()
+            return
+        QTimer.singleShot(0, self._flush_pending_flash_keys)
+
+    def _enqueue_flash_keys(self, keys: Iterable[str]) -> None:
+        added = 0
+        for key in keys:
+            if not key:
+                continue
+            if key not in self._pending_flash_keys:
+                added += 1
+            self._pending_flash_keys[key] = None
+        if added:
+            flash_trace(
+                "queue.pending",
+                added=added,
+                pending=len(self._pending_flash_keys),
+            )
+        if self._pending_flash_keys:
+            self._schedule_pending_flash_flush()
+
+    def _commit_flash_keys(self, keys: Iterable[str], *, timestamp: float) -> None:
+        unique_keys = tuple(dict.fromkeys(key for key in keys if key))
+        if not unique_keys:
+            return
+
         self._process_pending_registrations()
 
-        # Capture ONE timestamp for ALL keys
-        now = time.perf_counter()
-        for key in keys:
-            self._flash_start_times[key] = now
+        for key in unique_keys:
+            self._flash_start_times[key] = timestamp
 
-        # Find active windows ONCE - check all keys at once
-        keys_set = set(keys)
+        keys_set = set(unique_keys)
         for window_id, overlay in WindowFlashOverlay._overlays.items():
-            if keys_set & overlay._elements.keys():  # Set intersection
+            if self._overlay_flash_keys(overlay, keys_set):
                 self._active_windows.add(window_id)
 
+        self._trace_next_tick = True
         self._start_timer()
-        logger.debug(f"[FLASH] queue_flash_batch: {len(keys)} keys, active_windows={len(self._active_windows)}")
+        logger.debug(
+            "[FLASH] committed flash batch: keys=%s active_windows=%s",
+            len(unique_keys),
+            len(self._active_windows),
+        )
+
+    @pyqtSlot()
+    def _flush_pending_flash_keys(self) -> None:
+        keys = tuple(self._pending_flash_keys)
+        self._pending_flash_keys.clear()
+        self._pending_flash_flush_scheduled = False
+        if not keys:
+            return
+        self._commit_flash_keys(keys, timestamp=time.perf_counter())
+        flash_trace(
+            "queue.flush",
+            keys=len(keys),
+            active=len(self._flash_start_times),
+        )
+
+    def queue_flash_batch(self, keys: Iterable[str]) -> None:
+        """Queue multiple flashes with shared timestamp - perfect sync.
+
+        Commits at the next event-loop turn so independent owners participating
+        in one UI mutation share one timestamp and one timer start.
+        """
+        self._enqueue_flash_keys(keys)
 
     def queue_flash(self, key: str, window: Optional[QWidget] = None, timestamp: Optional[float] = None) -> None:
         """Start or retrigger flash for key (global API).
@@ -1670,26 +2656,17 @@ class _GlobalFlashCoordinator:
             window: Optional window widget (for window-level overlay registration)
             timestamp: Optional shared timestamp for batch sync (all keys in batch use same time)
         """
-        # Use provided timestamp or capture now - enables batch sync
-        now = timestamp if timestamp is not None else time.perf_counter()
-        is_new_flash = key not in self._flash_start_times
-        self._flash_start_times[key] = now
-
-        # Invalidate geometry cache for overlays containing this key when NEW flash starts.
-        # This ensures fresh geometry after text/layout changes, but avoids constant
-        # rebuilds during animation (retriggering same key doesn't invalidate).
-        if is_new_flash:
-            for overlay in WindowFlashOverlay._overlays.values():
-                if key in overlay._elements:
-                    overlay._invalidate_geometry_cache()
-
-        # Only process pending registrations if no timestamp (not part of a batch)
         if timestamp is None:
-            self._process_pending_registrations()
-
-        # Start timer - active windows will be determined in tick based on computed colors
-        self._start_timer()
-        logger.debug(f"[FLASH] queue_flash: key={key} new={is_new_flash}")
+            self._enqueue_flash_keys((key,))
+        else:
+            self._commit_flash_keys((key,), timestamp=timestamp)
+        flash_trace(
+            "queue.global",
+            key=key,
+            pending=len(self._pending_flash_keys),
+            active=len(self._flash_start_times),
+        )
+        logger.debug("[FLASH] queue_flash: key=%s pending=%s", key, timestamp is None)
 
     def _maybe_stop_timer(self) -> None:
         """Stop timer if no active animations."""
@@ -1697,10 +2674,112 @@ class _GlobalFlashCoordinator:
             not self._flash_start_times and
             self._timer and self._timer.isActive()):
             self._timer.stop()
+            for overlay in WindowFlashOverlay._overlays.values():
+                overlay._last_flash_update_region = QRegion()
+                overlay._last_flash_mask_region = QRegion()
+                overlay.clearMask()
+                if overlay.isVisible():
+                    overlay.hide()
 
     def get_computed_color(self, key: str) -> Optional[QColor]:
         """Get pre-computed color for key. O(1) dict lookup."""
         return self._computed_colors.get(key)
+
+    @staticmethod
+    def _key_matches_hierarchical_prefix(key: str, prefix: str) -> bool:
+        """Return whether an ObjectState flash key is at or below a prefix."""
+        if key == prefix or key.startswith(f"{prefix}::"):
+            return True
+        key_scope, key_path = _GlobalFlashCoordinator._split_scoped_object_state_key(key)
+        prefix_scope, prefix_path = _GlobalFlashCoordinator._split_scoped_object_state_key(prefix)
+        if prefix_scope is not None and key_scope != prefix_scope:
+            return False
+        if not key_path or not prefix_path:
+            return False
+        return DottedFieldPath(prefix_path).contains_path(key_path)
+
+    @staticmethod
+    def _split_scoped_object_state_key(key: str) -> tuple[str | None, str]:
+        """Split an optional scope prefix from an ObjectState flash path."""
+
+        scope, separator, path = key.rpartition("::")
+        if not separator:
+            return None, key
+        return scope, path
+
+    @staticmethod
+    def _hierarchical_prefix_candidates(key: str) -> tuple[str, ...]:
+        """Return possible ObjectState ancestor keys for one scoped flash key."""
+        scope, separator, path = key.rpartition("::")
+        scoped = bool(separator)
+        if not scoped:
+            path = key
+        if not path:
+            return (key,)
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+        if scoped:
+            candidates.append(scope)
+            seen.add(scope)
+
+        for index, char in enumerate(path):
+            if char not in ".[" or index == 0:
+                continue
+            candidate_path = path[:index]
+            candidate = f"{scope}::{candidate_path}" if scoped else candidate_path
+            if candidate not in seen:
+                candidates.append(candidate)
+                seen.add(candidate)
+
+        if key not in seen:
+            candidates.append(key)
+        return tuple(candidates)
+
+    def get_computed_color_for_object_state_path(self, object_state_path: str) -> Optional[QColor]:
+        """Return the strongest active color for one ObjectState path."""
+        exact = self._computed_colors.get(object_state_path)
+        if exact is not None:
+            return exact
+        matches = [
+            color
+            for key, color in self._computed_colors.items()
+            if self._key_matches_hierarchical_prefix(key, object_state_path)
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda color: color.alpha())
+
+    def _overlay_has_hierarchical_flash_target(
+        self,
+        overlay: 'WindowFlashOverlay',
+        key: str,
+    ) -> bool:
+        """Return whether an overlay has a delegate element for this key prefix."""
+        hierarchical_keys = overlay._hierarchical_delegate_keys
+        return any(
+            candidate != key and candidate in hierarchical_keys
+            for candidate in self._hierarchical_prefix_candidates(key)
+        )
+
+    def _overlay_flash_keys(
+        self,
+        overlay: 'WindowFlashOverlay',
+        keys: Set[str],
+    ) -> Set[str]:
+        """Return active keys that have exact or hierarchical targets in an overlay."""
+        overlay_keys = keys & overlay._elements.keys()
+        hierarchical_keys = overlay._hierarchical_delegate_keys
+        if not hierarchical_keys:
+            return overlay_keys
+
+        for key in keys:
+            for candidate in self._hierarchical_prefix_candidates(key):
+                if candidate == key:
+                    continue
+                if candidate in hierarchical_keys:
+                    overlay_keys.add(candidate)
+        return overlay_keys
 
     def _update_delegate_element(self, element: FlashElement) -> None:
         """Repaint only the delegate-owned item rect for a flashing list/tree row."""
@@ -1730,13 +2809,38 @@ class _GlobalFlashCoordinator:
     def _update_overlay_for_keys(self, overlay: 'WindowFlashOverlay', keys: Set[str]) -> bool:
         """Update delegate rows directly and report whether overlay paint is needed."""
         needs_overlay_paint = False
+        updated_delegate_sources: Set[str] = set()
         for key in keys:
             for element in overlay._elements.get(key, []):
                 if element.skip_overlay_paint:
+                    if element.source_id in updated_delegate_sources:
+                        continue
+                    if element.source_id is not None:
+                        updated_delegate_sources.add(element.source_id)
                     self._update_delegate_element(element)
                 else:
                     needs_overlay_paint = True
         return needs_overlay_paint
+
+    def _arm_overlay_for_paint(self, overlay: 'WindowFlashOverlay') -> tuple[float, float, float]:
+        """Keep the window-level overlay paintable and above dynamic form content."""
+        geometry_ms = 0.0
+        show_ms = 0.0
+        raise_ms = 0.0
+        target_geometry = overlay._window.rect()
+        if overlay.geometry() != target_geometry:
+            started = time.perf_counter()
+            overlay.setGeometry(target_geometry)
+            geometry_ms = (time.perf_counter() - started) * 1000.0
+            overlay._needs_raise = True
+        if not overlay.isVisible():
+            overlay._needs_raise = True
+        if overlay.isVisible() and overlay._needs_raise:
+            started = time.perf_counter()
+            overlay.raise_()
+            raise_ms = (time.perf_counter() - started) * 1000.0
+            overlay._needs_raise = False
+        return geometry_ms, show_ms, raise_ms
 
     def _on_global_tick(self) -> None:
         """Global tick - BATCH compute ALL colors, then trigger ONE repaint per window.
@@ -1746,6 +2850,7 @@ class _GlobalFlashCoordinator:
         - Trigger window overlay repaints: O(w) where w = number of windows
         - Each overlay paintEvent: O(k_window) elements
         """
+        tick_started = time.perf_counter()
         now = time.perf_counter()
         self._tick_count += 1
 
@@ -1774,10 +2879,28 @@ class _GlobalFlashCoordinator:
             del self._flash_start_times[key]
             self._key_base_colors.pop(key, None)  # Clean up color cache
 
+        # Run coalesced non-flash visual work inside the same frame boundary
+        # before overlay update requests are issued.
+        self._flush_visual_frame_callbacks()
+
         # ==================== TRIGGER WINDOW OVERLAY REPAINTS ====================
         # FIX 1 & 2: Simplified single-path repaint (all keys scoped, no dirty tracking complexity)
         active_windows_this_frame = set()
         computed_keys = set(self._computed_colors.keys())
+        trace_next_tick = self._trace_next_tick
+        overlay_paint_count = 0
+        overlay_visible_key_count = 0
+        overlay_rect_count = 0
+        match_elapsed_ms = 0.0
+        delegate_elapsed_ms = 0.0
+        paint_request_elapsed_ms = 0.0
+        arm_elapsed_ms = 0.0
+        arm_geometry_ms = 0.0
+        arm_show_ms = 0.0
+        arm_raise_ms = 0.0
+        request_update_elapsed_ms = 0.0
+        if trace_next_tick:
+            self._trace_next_tick = False
 
         # Find windows that had keys expire this frame (need final clear repaint)
         expired_keys_by_window: Dict[int, Set[str]] = {}
@@ -1791,7 +2914,10 @@ class _GlobalFlashCoordinator:
                 except RuntimeError:
                     continue  # Window deleted
 
-                expired_window_keys = expired_keys_set & overlay._elements.keys()
+                expired_window_keys = self._overlay_flash_keys(
+                    overlay,
+                    expired_keys_set,
+                )
                 if expired_window_keys:
                     expired_keys_by_window[window_id] = expired_window_keys
 
@@ -1804,19 +2930,47 @@ class _GlobalFlashCoordinator:
                 # Window deleted
                 continue
 
-            # Find which of this overlay's registered elements are currently flashing
-            window_keys = computed_keys & overlay._elements.keys()
+            # Find which active keys have exact or hierarchical targets here.
+            phase_started = time.perf_counter()
+            window_keys = self._overlay_flash_keys(overlay, computed_keys)
+            match_elapsed_ms += (time.perf_counter() - phase_started) * 1000.0
 
             if window_keys:
                 active_windows_this_frame.add(window_id)
+                phase_started = time.perf_counter()
                 needs_overlay_paint = self._update_overlay_for_keys(overlay, window_keys)
+                delegate_elapsed_ms += (time.perf_counter() - phase_started) * 1000.0
 
                 # Only update overlay if there are elements that need it
                 if needs_overlay_paint:
                     try:
-                        overlay.update()
+                        phase_started = time.perf_counter()
+                        geometry_ms, show_ms, raise_ms = self._arm_overlay_for_paint(overlay)
+                        arm_elapsed_ms += (time.perf_counter() - phase_started) * 1000.0
+                        arm_geometry_ms += geometry_ms
+                        arm_show_ms += show_ms
+                        arm_raise_ms += raise_ms
+                        phase_started = time.perf_counter()
+                        visible_keys, rects = overlay.request_flash_update_for_keys(window_keys)
+                        request_update_elapsed_ms += (time.perf_counter() - phase_started) * 1000.0
+                        paint_request_elapsed_ms = arm_elapsed_ms + request_update_elapsed_ms
+                        if rects:
+                            overlay_paint_count += 1
+                            overlay_visible_key_count += visible_keys
+                            overlay_rect_count += rects
                     except RuntimeError:
                         logger.debug(f"[FLASH] Window {window_id} deleted during animation")
+
+        if trace_next_tick:
+            flash_trace(
+                "coordinator.tick",
+                computed=len(computed_keys),
+                expired=len(expired_keys),
+                active_windows=len(active_windows_this_frame),
+                overlays=len(WindowFlashOverlay._overlays),
+                elapsed_ms=f"{(time.perf_counter() - tick_started) * 1000.0:.3f}",
+                keys=sorted(computed_keys),
+            )
 
         self._active_windows = active_windows_this_frame
 
@@ -1832,17 +2986,58 @@ class _GlobalFlashCoordinator:
                 except RuntimeError:
                     continue  # Window deleted
 
+                phase_started = time.perf_counter()
                 needs_overlay_paint = self._update_overlay_for_keys(overlay, expired_window_keys)
+                delegate_elapsed_ms += (time.perf_counter() - phase_started) * 1000.0
                 if needs_overlay_paint:
                     try:
-                        overlay.update()  # One final repaint to clear overlay-painted flashes
+                        phase_started = time.perf_counter()
+                        geometry_ms, show_ms, raise_ms = self._arm_overlay_for_paint(overlay)
+                        arm_elapsed_ms += (time.perf_counter() - phase_started) * 1000.0
+                        arm_geometry_ms += geometry_ms
+                        arm_show_ms += show_ms
+                        arm_raise_ms += raise_ms
+                        phase_started = time.perf_counter()
+                        visible_keys, rects = overlay.request_flash_update_for_keys(
+                            expired_window_keys,
+                            clear_after=True,
+                        )
+                        request_update_elapsed_ms += (time.perf_counter() - phase_started) * 1000.0
+                        paint_request_elapsed_ms = arm_elapsed_ms + request_update_elapsed_ms
+                        if rects:
+                            overlay_paint_count += 1
+                            overlay_visible_key_count += visible_keys
+                            overlay_rect_count += rects
                     except RuntimeError:
                         raise
 
+        tick_elapsed_ms = (time.perf_counter() - tick_started) * 1000.0
+        if TimeTravelProfiler.enabled() and (
+            tick_elapsed_ms >= 4.0 or self._tick_count % 10 == 0
+        ):
+            logging.getLogger(TimeTravelProfiler.logger_name).info(
+                "TT_PHASE name=%s elapsed_ms=%.3f computed=%r expired=%r active_windows=%r overlays=%r overlay_paints=%r visible_keys=%r rects=%r match_ms=%.3f delegate_ms=%.3f paint_request_ms=%.3f arm_ms=%.3f arm_geometry_ms=%.3f arm_show_ms=%.3f arm_raise_ms=%.3f request_update_ms=%.3f",
+                "pyqt.flash.coordinator_tick",
+                tick_elapsed_ms,
+                len(computed_keys),
+                len(expired_keys),
+                len(active_windows_this_frame),
+                len(WindowFlashOverlay._overlays),
+                overlay_paint_count,
+                overlay_visible_key_count,
+                overlay_rect_count,
+                match_elapsed_ms,
+                delegate_elapsed_ms,
+                paint_request_elapsed_ms,
+                arm_elapsed_ms,
+                arm_geometry_ms,
+                arm_show_ms,
+                arm_raise_ms,
+                request_update_elapsed_ms,
+            )
+
         # Diagnostic logging - show REAL work being done
         if self._tick_count % 30 == 0:
-            overlay_paint_count = sum(1 for wid in active_windows_this_frame
-                                       if wid in WindowFlashOverlay._overlays)
             logger.debug(f"[FLASH PERF] tick={self._tick_count} colors={len(self._computed_colors)} overlays_painted={overlay_paint_count} total_overlays={len(WindowFlashOverlay._overlays)}")
 
         # Stop timer if nothing active
@@ -1854,7 +3049,8 @@ class VisualUpdateMixin:
 
     TRUE O(1) ARCHITECTURE:
     - Flash timing owned by global coordinator
-    - get_flash_color_for_key() returns pre-computed colors (O(1) lookup)
+    - flash colors come from pre-computed ObjectState-path lookups (O(1) exact,
+      bounded ancestor lookup for delegate rows)
     - Window-level overlay renders ALL elements in ONE paintEvent
     """
 
@@ -1868,12 +3064,37 @@ class VisualUpdateMixin:
         """Initialize visual update state. Call in __init__."""
         self._text_update_pending = False
         # Track all flash registrations so they can be re-registered after overlay cleanup
-        self._flash_registrations: List[Tuple[str, Callable[[str], FlashElement], QWidget]] = []
+        self._flash_registrations: List[
+            Tuple[
+                str,
+                Callable[[str], FlashElement],
+                QWidget,
+                Optional[Callable[[str], str | None]],
+                str | None,
+            ]
+        ] = []
+        self._flash_registration_lifecycle_keys: Set[Tuple[int, str, int, str | None]] = set()
 
         # Text update timer (per-widget, debounced)
         self._text_timer = QTimer()
         self._text_timer.setSingleShot(True)
         self._text_timer.timeout.connect(self._execute_text_update_batch)
+
+    def flash_scope_id(self) -> str | None:
+        """Return the optional scope prefix for local flash keys."""
+        return None
+
+    def flash_masks_descendant_leaf_widgets(self) -> bool:
+        """Return True when standard container flashes mask leaf descendants."""
+        return False
+
+    def flash_unmasked_widgets(self) -> tuple[QWidget, ...]:
+        """Return descendant widgets excluded from standard descendant masks."""
+        return ()
+
+    def flash_title_mask_widgets(self) -> tuple[QWidget, ...]:
+        """Return title-row widgets that should be masked during container flashes."""
+        return ()
 
     def _get_scoped_flash_key(self, key: str) -> str:
         """Get flash key with scope prefix to prevent cross-window contamination.
@@ -1885,8 +3106,9 @@ class VisualUpdateMixin:
             plate1 window: "step_0" → "plate1::step_0"
             plate2 window: "step_0" → "plate2::step_0"
         """
-        if hasattr(self, 'scope_id') and self.scope_id:
-            return f"{self.scope_id}::{key}"
+        scope_id = self.flash_scope_id()
+        if scope_id:
+            return f"{scope_id}::{key}"
         return key
 
     def _register_flash_element_internal(
@@ -1895,43 +3117,158 @@ class VisualUpdateMixin:
         element_factory: Callable[[str], FlashElement],
         widget: QWidget,
         *,
-        record: bool = True
+        record: bool = True,
+        lifecycle_widgets: tuple[QWidget | None, ...] = (),
+        source_id_factory: Optional[Callable[[str], str | None]] = None,
     ) -> None:
         """Internal helper for flash element registration. DRY for all element types.
 
         FAIL-LOUD: No exception handling - registration failures should crash.
         """
         scoped_key = self._get_scoped_flash_key(key)
+        source_id = (
+            source_id_factory(scoped_key)
+            if source_id_factory is not None
+            else None
+        )
+        overlay = WindowFlashOverlay.get_for_window(widget) if widget is not None else None
+        element: FlashElement | None = None
+        if overlay is None or not overlay.has_element_source(scoped_key, source_id):
+            element = element_factory(scoped_key)
+            if source_id is None:
+                source_id = element.source_id
+
         if record:
             # Avoid duplicate bookkeeping for the same widget/key pair
             already_recorded = any(
-                existing_key == key and existing_widget is widget
-                for existing_key, _, existing_widget in self._flash_registrations
+                existing_key == key
+                and existing_widget is widget
+                and existing_source_id == source_id
+                for (
+                    existing_key,
+                    _,
+                    existing_widget,
+                    _existing_source_factory,
+                    existing_source_id,
+                ) in self._flash_registrations
             )
             if not already_recorded:
-                self._flash_registrations.append((key, element_factory, widget))
+                self._flash_registrations.append(
+                    (key, element_factory, widget, source_id_factory, source_id)
+                )
+            self._connect_flash_lifecycle_cleanup(
+                key,
+                scoped_key,
+                source_id,
+                widget,
+                lifecycle_widgets,
+            )
 
         if widget is not None:
-            overlay = WindowFlashOverlay.get_for_window(widget)
             if overlay is not None:
-                element = element_factory(scoped_key)
+                if element is None:
+                    flash_trace(
+                        "register.existing_source",
+                        key=key,
+                        scoped=scoped_key,
+                        widget=type(widget).__qualname__,
+                        window=id(overlay._window),
+                        overlay=id(overlay),
+                        source=source_id,
+                    )
+                    return
                 overlay.register_element(element)
+                flash_trace(
+                    "register.immediate",
+                    key=key,
+                    scoped=scoped_key,
+                    widget=type(widget).__qualname__,
+                    window=id(overlay._window),
+                    overlay=id(overlay),
+                    source=source_id,
+                )
                 logger.debug(f"[FLASH] Immediate registration: key={scoped_key}")
             else:
                 coordinator = _GlobalFlashCoordinator.get()
                 coordinator.add_pending_registration(
                     scoped_key,
                     lambda: element_factory(scoped_key),
-                    widget
+                    widget,
+                    source_id,
+                )
+                flash_trace(
+                    "register.deferred_no_overlay",
+                    key=key,
+                    scoped=scoped_key,
+                    widget=type(widget).__qualname__,
+                    source=source_id,
                 )
                 logger.debug(f"[FLASH] Deferred registration (pending): key={scoped_key}, no overlay yet")
+
+    def _connect_flash_lifecycle_cleanup(
+        self,
+        key: str,
+        scoped_key: str,
+        source_id: str | None,
+        owner_widget: QWidget,
+        lifecycle_widgets: tuple[QWidget | None, ...],
+    ) -> None:
+        """Remove flash registrations when any widget they close over is destroyed."""
+        widgets: list[QWidget] = []
+        seen_widget_ids: set[int] = set()
+        for candidate in (owner_widget, *lifecycle_widgets):
+            if candidate is None or sip.isdeleted(candidate):
+                continue
+            candidate_id = id(candidate)
+            if candidate_id in seen_widget_ids:
+                continue
+            seen_widget_ids.add(candidate_id)
+            widgets.append(candidate)
+
+        for lifecycle_widget in widgets:
+            lifecycle_key = (id(lifecycle_widget), key, id(owner_widget), source_id)
+            if lifecycle_key in self._flash_registration_lifecycle_keys:
+                continue
+            self._flash_registration_lifecycle_keys.add(lifecycle_key)
+            lifecycle_widget.destroyed.connect(
+                lambda _obj=None, cleanup_key=lifecycle_key: (
+                    self._cleanup_flash_registration(cleanup_key)
+                )
+            )
+
+    def _cleanup_flash_registration(
+        self,
+        lifecycle_key: Tuple[int, str, int, str | None],
+    ) -> None:
+        """Drop recorded and overlay flash elements for a destroyed dependency."""
+        self._flash_registration_lifecycle_keys.discard(lifecycle_key)
+        _, key, owner_widget_id, source_id = lifecycle_key
+        scoped_key = self._get_scoped_flash_key(key)
+        self._flash_registrations = [
+            (registered_key, element_factory, widget, source_id_factory, registered_source_id)
+            for (
+                registered_key,
+                element_factory,
+                widget,
+                source_id_factory,
+                registered_source_id,
+            ) in self._flash_registrations
+            if not (
+                registered_key == key
+                and id(widget) == owner_widget_id
+                and registered_source_id == source_id
+            )
+        ]
+        for overlay in list(WindowFlashOverlay._overlays.values()):
+            overlay.unregister_element_source(scoped_key, source_id)
 
     def register_flash_groupbox(self, key: str, groupbox: 'QWidget') -> None:
         """Register a groupbox for flash rendering."""
         self._register_flash_element_internal(
             key,
             lambda k: create_groupbox_element(k, groupbox),  # type: ignore
-            groupbox
+            groupbox,
+            source_id_factory=lambda k: groupbox_flash_source_id(k, groupbox),
         )
 
     def register_flash_groupbox_full(self, key: str, groupbox: 'QWidget') -> None:
@@ -1942,7 +3279,57 @@ class VisualUpdateMixin:
         self._register_flash_element_internal(
             key,
             lambda k: create_groupbox_element(k, groupbox, use_full_rect=True),  # type: ignore
-            groupbox
+            groupbox,
+            source_id_factory=lambda k: groupbox_flash_source_id(k, groupbox, use_full_rect=True),
+        )
+
+    def register_flash_widget_rect(self, key: str, widget: QWidget) -> None:
+        """Register a widget for direct full-rect flash rendering."""
+        self._register_flash_element_internal(
+            key,
+            lambda k: create_widget_rect_element(k, widget),
+            widget,
+            source_id_factory=lambda _k: widget_rect_flash_source_id(widget),
+        )
+
+    def register_flash_table_cell_rect(
+        self,
+        key: str,
+        target: "StructuralTableCellTarget",
+    ) -> None:
+        """Register an item-backed table cell for direct flash rendering."""
+        self._register_flash_element_internal(
+            key,
+            lambda k: create_table_cell_element(k, target),
+            target.table.viewport(),
+            source_id_factory=lambda _k: table_cell_flash_source_id(target),
+        )
+
+    def register_flash_masked_container(
+        self,
+        key: str,
+        container: QWidget,
+        mask_rects: Callable[[QWidget], Iterable[Tuple[QRect, bool]]],
+        *,
+        label_widget: Optional[QWidget] = None,
+        layout_watch_widgets: Iterable[QWidget] = (),
+    ) -> None:
+        """Register a container flash with structural descendant masks."""
+        self._register_flash_element_internal(
+            key,
+            lambda k: create_structural_masked_container_element(
+                k,
+                container,
+                mask_rects,
+                layout_watch_widgets=layout_watch_widgets,
+            ),
+            container,
+            lifecycle_widgets=(label_widget,),
+            source_id_factory=lambda k: groupbox_flash_source_id(
+                k,
+                container,
+                inverse_masking=True,
+            ),
         )
 
     def register_flash_tree_item(self, key: str, tree: 'QTreeWidget', get_index: Callable[[], Any]) -> None:
@@ -1970,15 +3357,28 @@ class VisualUpdateMixin:
         self._register_flash_element_internal(
             key,
             lambda k: create_groupbox_element(k, groupbox, leaf_widget=leaf_widget, label_widget=label_widget),  # type: ignore
-            groupbox
+            groupbox,
+            lifecycle_widgets=(leaf_widget, label_widget),
+            source_id_factory=lambda k: groupbox_flash_source_id(
+                k,
+                groupbox,
+                leaf_widget=leaf_widget,
+                label_widget=label_widget,
+            ),
         )
 
     def reregister_flash_elements(self) -> None:
         """Re-register all previously registered flash elements (after overlay cleanup)."""
-        if not getattr(self, "_flash_registrations", None):
+        if not self._flash_registrations:
             return
-        for key, element_factory, widget in list(self._flash_registrations):
-            self._register_flash_element_internal(key, element_factory, widget, record=False)
+        for key, element_factory, widget, source_id_factory, _source_id in list(self._flash_registrations):
+            self._register_flash_element_internal(
+                key,
+                element_factory,
+                widget,
+                record=False,
+                source_id_factory=source_id_factory,
+            )
 
     def queue_visual_update(self) -> None:
         """Queue text/placeholder update (debounced)."""
@@ -1993,12 +3393,16 @@ class VisualUpdateMixin:
             key: The flash key
             timestamp: Optional shared timestamp for batch sync (all keys in batch use same time)
         """
-        now = timestamp if timestamp is not None else time.perf_counter()
-
-        # Queue in global coordinator (processes pending registrations + triggers overlay)
         coordinator = _GlobalFlashCoordinator.get()
-        window = self.window() if hasattr(self, 'window') else None  # type: ignore
-        coordinator.queue_flash(key, window, timestamp=now)
+        window = self.window() if isinstance(self, QWidget) else None
+        coordinator.queue_flash(key, window, timestamp=timestamp)
+
+    def queue_flash_batch(self, keys: Iterable[str]) -> None:
+        """Start multiple global flashes with one coordinator registration/timer pass."""
+        unique_keys = list(dict.fromkeys(keys))
+        if not unique_keys:
+            return
+        _GlobalFlashCoordinator.get().queue_flash_batch(unique_keys)
 
     def queue_flash_local(self, key: str, *, scoped: bool = True) -> None:
         """Start flash for key in THIS WINDOW ONLY.
@@ -2011,10 +3415,21 @@ class VisualUpdateMixin:
         Key is automatically scoped to prevent cross-window contamination.
         """
         scoped_key = self._get_scoped_flash_key(key) if scoped else key
+        flash_trace(
+            "queue.local.attempt",
+            key=key,
+            scoped=scoped_key,
+            manager_scope=self.flash_scope_id(),
+        )
 
-        window = self.window() if hasattr(self, 'window') else None  # type: ignore
+        window = self.window() if isinstance(self, QWidget) else None
         if window is None:
-            logger.debug(f"[FLASH] queue_flash_local: key={key} → scoped={scoped_key}, no window")
+            flash_trace("queue.local.skip_no_window", key=key, scoped=scoped_key)
+            logger.debug(
+                "[FLASH] queue_flash_local skipped: key=%s scoped=%s no window",
+                key,
+                scoped_key,
+            )
             return
 
         window_id = id(window)
@@ -2025,37 +3440,151 @@ class VisualUpdateMixin:
 
         overlay = WindowFlashOverlay._overlays.get(window_id)
         if overlay is None:
-            logger.debug(f"[FLASH] queue_flash_local: key={key} → scoped={scoped_key}, no overlay for window {window_id}")
+            flash_trace(
+                "queue.local.skip_no_overlay",
+                key=key,
+                scoped=scoped_key,
+                window=window_id,
+                overlays=len(WindowFlashOverlay._overlays),
+            )
+            logger.debug(
+                "[FLASH] queue_flash_local skipped: key=%s scoped=%s no overlay for window %s",
+                key,
+                scoped_key,
+                window_id,
+            )
             return
 
-        # Check if scoped key exists in this window's overlay
-        if scoped_key not in overlay._elements:
-            logger.debug(f"[FLASH] queue_flash_local: key={key} → scoped={scoped_key} NOT IN overlay._elements. Available keys: {list(overlay._elements.keys())}")
+        # Check if scoped key exists in this window's overlay, either as an
+        # exact paint target or as a hierarchy-row prefix subscriber.
+        if (
+            scoped_key not in overlay._elements
+            and not coordinator._overlay_has_hierarchical_flash_target(
+                overlay,
+                scoped_key,
+            )
+        ):
+            flash_trace(
+                "queue.local.skip_missing_key",
+                key=key,
+                scoped=scoped_key,
+                window=window_id,
+                overlay=id(overlay),
+                available=list(overlay._elements.keys()),
+            )
+            logger.debug(
+                "[FLASH] queue_flash_local skipped: key=%s scoped=%s missing; available=%s",
+                key,
+                scoped_key,
+                list(overlay._elements.keys()),
+            )
             return
 
-        now = time.perf_counter()
-        # Check if this is a NEW flash (not re-triggering existing animation)
-        is_new_flash = scoped_key not in coordinator._flash_start_times
+        is_new_flash = (
+            scoped_key not in coordinator._flash_start_times
+            and scoped_key not in coordinator._pending_flash_keys
+        )
+        coordinator._enqueue_flash_keys((scoped_key,))
 
-        # FIX 1: Store in unified dict (key is already scoped, prevents cross-window contamination)
-        coordinator._flash_start_times[scoped_key] = now
+        flash_trace(
+            "queue.local.queued",
+            key=key,
+            scoped=scoped_key,
+            window=window_id,
+            overlay=id(overlay),
+            new=is_new_flash,
+            elements=len(overlay._elements.get(scoped_key, ())),
+            active_keys=len(coordinator._flash_start_times),
+        )
+        logger.debug(
+            "[FLASH] queue_flash_local queued: key=%s scoped=%s window=%s",
+            key,
+            scoped_key,
+            window_id,
+        )
 
-        # CRITICAL: Invalidate geometry cache for NEW flashes (same as queue_flash)
-        # This ensures fresh geometry after dynamic element registration (e.g., leaf flash)
-        if is_new_flash:
-            overlay._invalidate_geometry_cache()
+    def queue_flash_local_batch(self, keys: Iterable[str], *, scoped: bool = True) -> None:
+        """Start multiple local flashes with one pending-registration and timer pass."""
+        unique_keys = tuple(dict.fromkeys(keys))
+        if not unique_keys:
+            return
 
-        # Start timer - active windows will be determined in tick based on computed colors
-        coordinator._start_timer()
+        scoped_keys = tuple(
+            self._get_scoped_flash_key(key) if scoped else key
+            for key in unique_keys
+        )
+        window = self.window() if isinstance(self, QWidget) else None
+        if window is None:
+            flash_trace(
+                "queue.local.batch_skip_no_window",
+                count=len(scoped_keys),
+                manager_scope=self.flash_scope_id(),
+            )
+            return
 
-        logger.debug(f"[FLASH] queue_flash_local: key={key} → scoped={scoped_key}, window={window_id}, SUCCESS")
+        window_id = id(window)
+        coordinator = _GlobalFlashCoordinator.get()
+        coordinator._process_pending_registrations()
 
-    def get_flash_color_for_key(self, key: str) -> Optional[QColor]:
-        """Get pre-computed flash color for key. O(1) dict lookup.
+        overlay = WindowFlashOverlay._overlays.get(window_id)
+        if overlay is None:
+            flash_trace(
+                "queue.local.batch_skip_no_overlay",
+                count=len(scoped_keys),
+                window=window_id,
+                overlays=len(WindowFlashOverlay._overlays),
+            )
+            return
 
-        Used by delegates during paint - returns color from global coordinator.
-        """
-        return _GlobalFlashCoordinator.get().get_computed_color(key)
+        queueable_keys: list[str] = []
+        for scoped_key in scoped_keys:
+            if (
+                scoped_key in overlay._elements
+                or coordinator._overlay_has_hierarchical_flash_target(
+                    overlay,
+                    scoped_key,
+                )
+            ):
+                queueable_keys.append(scoped_key)
+
+        if not queueable_keys:
+            flash_trace(
+                "queue.local.batch_skip_missing",
+                requested=len(scoped_keys),
+                window=window_id,
+                overlay=id(overlay),
+            )
+            return
+
+        new_count = 0
+        for scoped_key in queueable_keys:
+            is_new_flash = (
+                scoped_key not in coordinator._flash_start_times
+                and scoped_key not in coordinator._pending_flash_keys
+            )
+            if is_new_flash:
+                new_count += 1
+
+        coordinator._enqueue_flash_keys(queueable_keys)
+
+        flash_trace(
+            "queue.local.batch_queued",
+            requested=len(scoped_keys),
+            queued=len(queueable_keys),
+            new=new_count,
+            window=window_id,
+            overlay=id(overlay),
+            active_keys=len(coordinator._flash_start_times),
+        )
+
+    def get_flash_color_for_object_state_path(
+        self,
+        object_state_path: str,
+    ) -> Optional[QColor]:
+        """Get the current flash color for an ObjectState-backed delegate row."""
+        return _GlobalFlashCoordinator.get().get_computed_color_for_object_state_path(
+            object_state_path
+        )
 
     def _execute_text_update_batch(self) -> None:
         """Execute pending text update."""

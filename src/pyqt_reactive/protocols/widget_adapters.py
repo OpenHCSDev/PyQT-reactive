@@ -39,6 +39,7 @@ except ImportError:
 from .widget_protocols import (
     ValueGettable, ValueSettable, PlaceholderCapable,
     PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter,
+    ResolvedValuePreviewSettable,
     WidgetCapability, widget_supports_capability
 )
 
@@ -53,6 +54,7 @@ if PYQT6_AVAILABLE:
         def __init__(self, *args, **kwargs):
             self._placeholder_state_active = False
             self._cached_placeholder_text: str | None = None
+            self._cached_placeholder_resolved_value: Any = None
             super().__init__(*args, **kwargs)
 
         def has_placeholder_state(self) -> bool:
@@ -70,8 +72,15 @@ if PYQT6_AVAILABLE:
         def set_cached_placeholder_text(self, placeholder_text: str) -> None:
             self._cached_placeholder_text = placeholder_text
 
+        def cached_placeholder_resolved_value(self) -> Any:
+            return self._cached_placeholder_resolved_value
+
+        def set_cached_placeholder_resolved_value(self, value: Any) -> None:
+            self._cached_placeholder_resolved_value = value
+
         def clear_placeholder_cache(self) -> None:
             self._cached_placeholder_text = None
+            self._cached_placeholder_resolved_value = None
 
 
     class LineEditAdapter(PlaceholderStateMixin, QLineEdit, ValueGettable, ValueSettable, PlaceholderCapable,
@@ -305,7 +314,8 @@ if PYQT6_AVAILABLE:
 
 
     class CheckboxGroupAdapter(PlaceholderStateMixin, QGroupBox, ValueGettable, ValueSettable,
-                               ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
+                               ResolvedValuePreviewSettable, ChangeSignalEmitter,
+                               metaclass=PyQtWidgetMeta):
         """
         Adapter for checkbox group (List[Enum]) implementing OpenHCS ABCs.
 
@@ -373,9 +383,31 @@ if PYQT6_AVAILABLE:
                     # Set to True if in list, False if not (both are concrete values)
                     checkbox.set_value(enum_value in value)
             else:
-                # Fallback: treat as None (placeholder state)
-                for checkbox in self._checkboxes.values():
-                    checkbox.set_value(None)
+                raise TypeError(
+                    "CheckboxGroupAdapter values must be list or None, "
+                    f"got {type(value).__name__}."
+                )
+
+        def set_resolved_value_preview(self, value: Any) -> None:
+            """Preview a resolved enum list while preserving raw placeholder state."""
+            if value is None:
+                inherited_values = frozenset()
+            elif isinstance(value, list):
+                inherited_values = frozenset(value)
+            else:
+                raise TypeError(
+                    "CheckboxGroupAdapter resolved previews must be list or None, "
+                    f"got {type(value).__name__}."
+                )
+
+            for enum_value, checkbox in self.checkbox_items():
+                if not isinstance(checkbox, ResolvedValuePreviewSettable):
+                    raise TypeError(
+                        "Checkbox group children must implement "
+                        "ResolvedValuePreviewSettable."
+                    )
+                checkbox.set_resolved_value_preview(enum_value in inherited_values)
+            self.mark_placeholder_state()
 
         def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
             """
@@ -420,7 +452,8 @@ if PYQT6_AVAILABLE:
 if PYQT6_AVAILABLE:
     from .widget_protocols import (
         ValueGettable, ValueSettable, PlaceholderCapable,
-        PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter
+        PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter,
+        ResolvedValuePreviewSettable,
     )
 
     # Register all adapter classes
@@ -440,7 +473,8 @@ if PYQT6_AVAILABLE:
         capabilities = set()
         abc_types = {
             ValueGettable, ValueSettable, PlaceholderCapable,
-            PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter
+            PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter,
+            ResolvedValuePreviewSettable,
         }
 
         for abc_type in abc_types:

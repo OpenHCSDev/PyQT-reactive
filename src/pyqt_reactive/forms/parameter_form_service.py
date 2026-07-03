@@ -16,7 +16,9 @@ from objectstate import (
     should_hide_ui_parameter,
 )
 from dataclasses import dataclass
-from typing import Dict, Type, Optional, List
+from enum import Enum
+from types import UnionType
+from typing import Dict, Type, Optional, List, Union, get_args, get_origin, get_type_hints
 
 from objectstate import LazyDefaultPlaceholderService
 # Old field path detection removed - using simple field name matching
@@ -36,6 +38,9 @@ from pyqt_reactive.forms.parameter_value_contracts import (
     ParameterTypesByName,
     ParameterValue,
 )
+
+
+_NO_CONVERSION = object()
 
 
 def _type_label(param_type: Type) -> str:
@@ -276,6 +281,14 @@ class ParameterFormService:
         if isinstance(value, str) and value == CONSTANTS.NONE_STRING_LITERAL:
             return None
 
+        structured_value = self._convert_value_by_annotation(
+            value,
+            param_type,
+            param_name,
+        )
+        if structured_value is not _NO_CONVERSION:
+            return structured_value
+
         # Handle enum types
         if self._type_utils.is_enum_type(param_type):
             return param_type(value)
@@ -291,7 +304,6 @@ class ParameterFormService:
 
         # Handle Union types (e.g., Union[List[str], str, int])
         # Try to convert to the most specific type that matches
-        from typing import get_origin, get_args, Union
         if get_origin(param_type) is Union:
             union_args = get_args(param_type)
             # Filter out NoneType
@@ -343,6 +355,183 @@ class ParameterFormService:
                 return None
 
         return value
+
+    def _convert_value_by_annotation(
+        self,
+        value: ParameterValue,
+        param_type: Type,
+        param_name: str,
+    ) -> ParameterValue | object:
+        """Recursively rebuild structured values from JSON-like containers."""
+        origin = get_origin(param_type)
+
+        if origin in (Union, UnionType):
+            return self._convert_union_value(value, param_type, param_name)
+
+        if self._type_utils.is_enum_type(param_type):
+            if isinstance(value, param_type):
+                return value
+            return param_type(value)
+
+        if dataclasses.is_dataclass(param_type):
+            return self._convert_dataclass_value(value, param_type, param_name)
+
+        if origin is tuple:
+            return self._convert_tuple_value(value, param_type, param_name)
+
+        if origin is list:
+            return self._convert_list_value(value, param_type, param_name)
+
+        if origin is dict:
+            return self._convert_dict_value(value, param_type, param_name)
+
+        return _NO_CONVERSION
+
+    def _convert_union_value(
+        self,
+        value: ParameterValue,
+        param_type: Type,
+        param_name: str,
+    ) -> ParameterValue | object:
+        last_error: Exception | None = None
+        for candidate_type in get_args(param_type):
+            if candidate_type is type(None):
+                continue
+            try:
+                converted = self._convert_value_by_annotation(
+                    value,
+                    candidate_type,
+                    param_name,
+                )
+            except Exception as exc:
+                last_error = exc
+                continue
+            if converted is not _NO_CONVERSION:
+                return converted
+            if isinstance(candidate_type, type) and isinstance(value, candidate_type):
+                return value
+        if last_error is not None:
+            raise last_error
+        return _NO_CONVERSION
+
+    def _convert_dataclass_value(
+        self,
+        value: ParameterValue,
+        dataclass_type: Type,
+        param_name: str,
+    ) -> ParameterValue | object:
+        if isinstance(value, dataclass_type):
+            return value
+        if not isinstance(value, dict):
+            return _NO_CONVERSION
+
+        try:
+            type_hints = get_type_hints(dataclass_type)
+        except Exception:
+            type_hints = {}
+
+        kwargs = {}
+        for field in dataclasses.fields(dataclass_type):
+            if field.name not in value:
+                continue
+            field_value = value[field.name]
+            field_type = type_hints.get(field.name, field.type)
+            converted = self._convert_value_by_annotation(
+                field_value,
+                field_type,
+                field.name,
+            )
+            kwargs[field.name] = (
+                field_value if converted is _NO_CONVERSION else converted
+            )
+
+        try:
+            return dataclass_type(**kwargs)
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid dataclass value for parameter {param_name!r}: {value!r}"
+            ) from exc
+
+    def _convert_tuple_value(
+        self,
+        value: ParameterValue,
+        param_type: Type,
+        param_name: str,
+    ) -> ParameterValue | object:
+        if not isinstance(value, (list, tuple)):
+            return _NO_CONVERSION
+
+        args = get_args(param_type)
+        if len(args) == 2 and args[1] is Ellipsis:
+            item_type = args[0]
+            return tuple(
+                self._converted_container_item(item, item_type, param_name)
+                for item in value
+            )
+
+        if args and len(value) != len(args):
+            raise ValueError(
+                f"Invalid tuple length for parameter {param_name!r}: "
+                f"expected {len(args)}, got {len(value)}."
+            )
+        if not args:
+            return tuple(value)
+
+        return tuple(
+            self._converted_container_item(item, item_type, param_name)
+            for item, item_type in zip(value, args)
+        )
+
+    def _convert_list_value(
+        self,
+        value: ParameterValue,
+        param_type: Type,
+        param_name: str,
+    ) -> ParameterValue | object:
+        if not isinstance(value, list):
+            return _NO_CONVERSION
+
+        args = get_args(param_type)
+        if not args:
+            return value
+        item_type = args[0]
+        return [
+            self._converted_container_item(item, item_type, param_name)
+            for item in value
+        ]
+
+    def _convert_dict_value(
+        self,
+        value: ParameterValue,
+        param_type: Type,
+        param_name: str,
+    ) -> ParameterValue | object:
+        if not isinstance(value, dict):
+            return _NO_CONVERSION
+
+        args = get_args(param_type)
+        if len(args) != 2:
+            return value
+
+        key_type, item_type = args
+        return {
+            self._converted_container_item(key, key_type, param_name):
+            self._converted_container_item(item, item_type, param_name)
+            for key, item in value.items()
+        }
+
+    def _converted_container_item(
+        self,
+        value: ParameterValue,
+        item_type: Type,
+        param_name: str,
+    ) -> ParameterValue:
+        converted = self._convert_value_by_annotation(
+            value,
+            item_type,
+            param_name,
+        )
+        return value if converted is _NO_CONVERSION else converted
 
     def get_parameter_display_info(self, param_name: str, param_type: Type,
                                  description: Optional[str] = None) -> Dict[str, str]:

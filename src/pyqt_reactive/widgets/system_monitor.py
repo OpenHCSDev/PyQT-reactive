@@ -23,6 +23,7 @@ PYQTGRAPH_AVAILABLE = None  # None = not checked, True = available, False = not 
 pg = None  # Will be set when pyqtgraph is imported
 
 # Import the SystemMonitorCore service (framework-agnostic)
+from pyqt_reactive.animation import queue_visual_frame_callback
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import ColorScheme
 
@@ -908,12 +909,21 @@ class SystemMonitorWidget(QWidget):
             self.update_system_info(metrics)
 
             if PYQTGRAPH_AVAILABLE is True:
-                self.update_pyqtgraph_plots(metrics)
+                self._queue_pyqtgraph_plot_update(metrics)
             elif PYQTGRAPH_AVAILABLE is False:
                 self.update_fallback_display(metrics)
 
         except Exception as e:
             logger.warning(f"Failed to update display: {e}")
+
+    def _queue_pyqtgraph_plot_update(self, metrics: dict) -> None:
+        """Coalesce plot rendering with the shared visual-frame coordinator."""
+
+        metrics_snapshot = metrics.copy()
+        queue_visual_frame_callback(
+            self,
+            lambda: self.update_pyqtgraph_plots(metrics_snapshot),
+        )
 
     def _start_render_timer(self):
         """Start the plot render timer, capped at metric update cadence."""

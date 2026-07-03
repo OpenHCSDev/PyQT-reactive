@@ -18,11 +18,11 @@ class ScopeColorSchemeHost:
 
 
 class TreeFlashColorProvider(ABC):
-    """Provides precomputed flash colors for config tree delegates."""
+    """Provides precomputed flash colors for ObjectState-backed delegates."""
 
     @abstractmethod
-    def get_flash_color_for_key(self, key: str) -> Optional[QColor]:
-        """Return the current flash color for a scoped key."""
+    def get_flash_color_for_object_state_path(self, object_state_path: str) -> Optional[QColor]:
+        """Return the current flash color for a delegate-painted ObjectState row."""
         ...
 
 
@@ -33,7 +33,7 @@ class ConfigTreeFlashManager(TreeFlashColorProvider):
 
     @abstractmethod
     def _get_scoped_flash_key(self, key: str) -> str:
-        """Return the scoped flash key used by the flash coordinator."""
+        """Return the scoped ObjectState path used by the flash coordinator."""
         ...
 
     @abstractmethod

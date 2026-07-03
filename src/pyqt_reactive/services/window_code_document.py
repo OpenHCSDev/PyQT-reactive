@@ -25,6 +25,14 @@ class WindowCodeDocument:
 class WindowCodeDocumentDriver(ABC):
     """Read/apply code-mode content for one WindowManager scope."""
 
+    def current_revision_token(self) -> str | None:
+        """Return a document-local revision token when ObjectState is not authoritative."""
+        return None
+
+    def records_object_state_snapshot_on_apply(self) -> bool:
+        """Return whether applying this document must advance ObjectState history."""
+        return True
+
     @abstractmethod
     def read_document(self, clean: bool = True) -> WindowCodeDocument:
         """Return the current code document."""

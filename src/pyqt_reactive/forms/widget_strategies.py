@@ -427,13 +427,15 @@ class PyQt6WidgetCreationAuthority:
     def _resolve_request(self, request: WidgetCreationRequest) -> ResolvedWidgetRequest:
         resolved_type = resolve_optional(request.param_type)
         enum_type = enum_member_type(resolved_type)
+        current_value = request.current_value
         if enum_type is not None:
             resolved_type = enum_type
+            current_value = self._extract_single_enum_value(current_value)
 
         return ResolvedWidgetRequest(
             source=request,
             resolved_type=resolved_type,
-            current_value=self._extract_single_enum_value(request.current_value),
+            current_value=current_value,
         )
 
     @staticmethod
@@ -596,12 +598,22 @@ def create_pyqt6_widget(
 class PlaceholderConfig:
     """Declarative placeholder configuration."""
     PLACEHOLDER_PREFIX = "Pipeline default: "
-    # Stronger styling that overrides application theme
-    PLACEHOLDER_STYLE = "color: #888888 !important; font-style: italic !important; opacity: 0.7;"
     INTERACTION_HINTS = {
         'checkbox': 'click to set your own value',
         'combobox': 'select to set your own value'
     }
+
+    @classmethod
+    def text_color_name(cls) -> str:
+        return "#888888"
+
+    @classmethod
+    def text_style(cls, *, include_opacity: bool = True) -> str:
+        opacity = " opacity: 0.7;" if include_opacity else ""
+        return (
+            f"color: {cls.text_color_name()} !important; "
+            f"font-style: italic !important;{opacity}"
+        )
 
 
 def _placeholder_state(widget: QWidget) -> PlaceholderStateTrackable:
@@ -636,6 +648,16 @@ def _get_cached_placeholder_text(widget: QWidget) -> str | None:
 def _set_cached_placeholder_text(widget: QWidget, placeholder_text: str) -> None:
     """Store cached placeholder text on the widget's nominal state contract."""
     _placeholder_state(widget).set_cached_placeholder_text(placeholder_text)
+
+
+def _get_cached_placeholder_resolved_value(widget: QWidget):
+    """Return cached resolved placeholder value from the widget state contract."""
+    return _placeholder_state(widget).cached_placeholder_resolved_value()
+
+
+def _set_cached_placeholder_resolved_value(widget: QWidget, value) -> None:
+    """Store cached resolved placeholder value on the widget state contract."""
+    _placeholder_state(widget).set_cached_placeholder_resolved_value(value)
 
 
 def _clear_cached_placeholder_text(widget: QWidget) -> None:
@@ -686,7 +708,7 @@ class PlaceholderRenderer:
                 }
             """
         else:
-            style = PlaceholderConfig.PLACEHOLDER_STYLE
+            style = PlaceholderConfig.text_style()
 
         widget.setStyleSheet(style)
         widget.setToolTip(f"{placeholder_text} ({interaction_hint})")
@@ -731,31 +753,6 @@ class PlaceholderRenderer:
             _placeholder_state(widget).mark_placeholder_state()
             widget.update()
         except Exception:
-            widget.setToolTip(placeholder_text)
-
-    def apply_checkbox_group_with_value(
-        self,
-        widget: CheckboxGroupAdapter,
-        resolved_value: ParameterValue | None,
-        placeholder_text: str
-    ) -> None:
-        """Apply checkbox-group placeholder from the resolved enum list."""
-        try:
-            if resolved_value is None:
-                inherited_enums = []
-            elif isinstance(resolved_value, list):
-                inherited_enums = resolved_value
-            else:
-                raise TypeError(f"Checkbox group placeholder requires list or None, got {type(resolved_value).__name__}")
-
-            for enum_value, checkbox in widget.checkbox_items():
-                individual_placeholder = f"Pipeline default: {enum_value in inherited_enums}"
-                self.apply_checkbox(checkbox, individual_placeholder)
-
-            _placeholder_state(widget).mark_placeholder_state()
-            widget.setToolTip(f"{placeholder_text} (click any checkbox to set your own value)")
-        except Exception:
-            logger.exception("Failed to apply checkbox group placeholder")
             widget.setToolTip(placeholder_text)
 
     def apply_path_widget(self, widget: EnhancedPathWidget, placeholder_text: str) -> None:
@@ -882,18 +879,9 @@ def _register_none_aware_lineedit_strategy():
     """Register NoneAwareLineEdit strategy."""
     WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareLineEdit] = PLACEHOLDER_RENDERER.apply_lineedit
 
-def _register_none_aware_checkbox_strategy():
-    """Register NoneAwareCheckBox strategy dynamically to avoid circular imports."""
-    try:
-        from pyqt_reactive.widgets import NoneAwareCheckBox
-        WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareCheckBox] = PLACEHOLDER_RENDERER.apply_checkbox
-    except ImportError:
-        pass  # NoneAwareCheckBox not available
-
 # Register widget strategies
 _register_path_widget_strategy()
 _register_none_aware_lineedit_strategy()
-_register_none_aware_checkbox_strategy()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1153,12 +1141,15 @@ class PyQt6WidgetEnhancer:
         if not isinstance(widget, QWidget):
             raise TypeError(f"Placeholder support requires QWidget, got {type(widget).__name__}")
 
+        if isinstance(widget, ResolvedValuePreviewSettable):
+            raise TypeError(
+                f"Widget {type(widget).__name__} owns typed resolved previews; "
+                "use apply_placeholder_with_value."
+            )
+
         cached_placeholder = _get_cached_placeholder_text(widget)
         if cached_placeholder == placeholder_text:
             return  # No change needed
-
-        if isinstance(widget, CheckboxGroupAdapter):
-            raise TypeError("Checkbox group placeholders require apply_placeholder_with_value")
 
         # Direct widget type mapping for enhanced placeholders
         widget_strategy = WIDGET_PLACEHOLDER_STRATEGIES.get(type(widget))
@@ -1187,24 +1178,20 @@ class PyQt6WidgetEnhancer:
         if not isinstance(widget, QWidget):
             raise TypeError(f"Placeholder support requires QWidget, got {type(widget).__name__}")
 
-        if (
-            resolved_value is not None
-            and isinstance(widget, ResolvedValuePreviewSettable)
-        ):
+        if isinstance(widget, ResolvedValuePreviewSettable):
+            if (
+                _get_cached_placeholder_text(widget) == placeholder_text
+                and _get_cached_placeholder_resolved_value(widget) == resolved_value
+            ):
+                return
             widget.set_resolved_value_preview(resolved_value)
             _set_cached_placeholder_text(widget, placeholder_text)
+            _set_cached_placeholder_resolved_value(widget, resolved_value)
             return
 
         cached_placeholder = _get_cached_placeholder_text(widget)
         if cached_placeholder == placeholder_text:
             return  # No change needed
-
-        # Check for checkbox group (QGroupBox with _checkboxes attribute)
-        # Use type-safe value directly instead of parsing text
-        if isinstance(widget, CheckboxGroupAdapter):
-            PLACEHOLDER_RENDERER.apply_checkbox_group_with_value(widget, resolved_value, placeholder_text)
-            _set_cached_placeholder_text(widget, placeholder_text)
-            return
 
         # For other widgets, fall back to text-based placeholder
         PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
@@ -1236,7 +1223,14 @@ class PyQt6WidgetEnhancer:
                 else:
                     placeholder_text = f"Pipeline default: {field_value}"
 
-                PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+                if isinstance(widget, ResolvedValuePreviewSettable):
+                    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+                        widget,
+                        field_value,
+                        placeholder_text,
+                    )
+                else:
+                    PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
         except Exception:
             # Silently fail if placeholder can't be applied
             pass

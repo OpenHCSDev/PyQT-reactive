@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QTextEdit, QAbstractSpinBox
 )
 from PyQt6.QtCore import Qt
+from pyqt_reactive.protocols import ValueGettable
 import logging
 
 logger = logging.getLogger(__name__)
@@ -236,10 +237,18 @@ class WidgetService:
         manager=None
     ) -> None:
         """Update widget value with signal blocking and optional placeholder application."""
-        self._execute_with_signal_blocking(widget, lambda: self._dispatch_widget_update(widget, value))
+        if self._widget_value_needs_update(widget, value):
+            self._execute_with_signal_blocking(widget, lambda: self._dispatch_widget_update(widget, value))
 
         if not skip_context_behavior and manager:
             self._apply_context_behavior(widget, value, param_name, manager)
+
+    @staticmethod
+    def _widget_value_needs_update(widget: QWidget, value: Any) -> bool:
+        """Return whether a widget assignment would change its nominal value."""
+        if not isinstance(widget, ValueGettable):
+            return True
+        return widget.get_value() != value
 
     def _execute_with_signal_blocking(self, widget: QWidget, operation: Callable) -> None:
         """Execute operation with widget signals blocked."""

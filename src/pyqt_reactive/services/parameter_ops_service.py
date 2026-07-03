@@ -289,6 +289,7 @@ class ParameterOpsService(ParameterServiceABC):
             manager._apply_to_nested_managers(
                 lambda _, nested_manager: self.refresh_with_live_context(nested_manager)
             )
+            self._refresh_root_flash_registrations(manager)
 
     def _deferred_refresh_with_live_context(self, manager) -> None:
         """Deferred refresh implementation - called after QTimer.singleShot."""
@@ -300,6 +301,13 @@ class ParameterOpsService(ParameterServiceABC):
         manager._apply_to_nested_managers(
             lambda _, nested_manager: self.refresh_with_live_context(nested_manager)
         )
+        self._refresh_root_flash_registrations(manager)
+
+    def _refresh_root_flash_registrations(self, manager) -> None:
+        """Replay flash registrations after a root form refreshes live placeholders."""
+        if manager._parent_manager is not None:
+            return
+        manager.reregister_flash_elements()
 
     def refresh_all_placeholders(self, manager) -> None:
         """Refresh placeholder text for all widgets in a form.
@@ -313,7 +321,6 @@ class ParameterOpsService(ParameterServiceABC):
 
             from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
             from objectstate import LazyDefaultPlaceholderService
-
             logger.debug(f"[PLACEHOLDER] {manager.field_id}: Refreshing placeholders via ObjectState")
 
             monitor = get_monitor("Placeholder resolution per field")
@@ -330,13 +337,11 @@ class ParameterOpsService(ParameterServiceABC):
                 # Use manager.parameters (scoped) not state.parameters (full paths)
                 current_value = manager.parameters.get(param_name)
                 should_apply_placeholder = (current_value is None)
+                full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+                resolved_value = manager.state.get_resolved_value(full_path)
 
                 if should_apply_placeholder:
                     with monitor.measure():
-                        # Compute full dotted path for nested PFMs
-                        full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-                        # Get raw resolved value from ObjectState using full path
-                        resolved_value = manager.state.get_resolved_value(full_path)
                         # Format for display (VIEW responsibility)
                         placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
                             resolved_value, manager.config.placeholder_prefix
@@ -344,3 +349,5 @@ class ParameterOpsService(ParameterServiceABC):
                         if placeholder_text:
                             # Use type-safe method that passes actual value for checkbox groups
                             PyQt6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
+                elif PyQt6WidgetEnhancer.has_placeholder_state(widget):
+                    PyQt6WidgetEnhancer._clear_placeholder_state(widget)

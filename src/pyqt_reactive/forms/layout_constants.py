@@ -34,15 +34,19 @@ class ParameterFormLayoutConfig:
     groupbox_margins: tuple = (5, 5, 5, 5)  # ⭐ Margins inside groupbox (left, top, right, bottom)
     groupbox_margin_top: int = 5        # ⭐ QSS margin-top for QGroupBox
     groupbox_padding_top: int = 5       # ⭐ QSS padding-top for QGroupBox
+    groupbox_corner_radius: int = 3     # QSS/flash radius for form section containers
+    dialog_groupbox_corner_radius: int = 5  # QSS radius for standalone dialog groupboxes
 
     # Widget-level settings
     widget_fixed_height: int | None = None  # None = auto, or set to fixed pixel height
     widget_padding: int = 5  # ⭐ WIDGET INTERNAL PADDING - controls height of input fields!
+    widget_corner_radius: int = 3
     row_fixed_height: int | None = None  # ⭐ Fixed height for each parameter row (None = auto)
 
     # Button dimensions
     reset_button_width: int = 60
     button_height: int = 32  # SSOT for all button heights
+    progress_chunk_corner_radius: int = 2
 
 
 # Default compact configuration
@@ -94,3 +98,9 @@ ULTRA_COMPACT_LAYOUT = ParameterFormLayoutConfig(
 
 # Current active configuration - change this to switch layouts globally
 CURRENT_LAYOUT = COMPACT_LAYOUT
+
+
+def default_container_corner_radius_px() -> float:
+    """Fallback radius for container painting when live QSS has no radius."""
+
+    return float(CURRENT_LAYOUT.groupbox_corner_radius)

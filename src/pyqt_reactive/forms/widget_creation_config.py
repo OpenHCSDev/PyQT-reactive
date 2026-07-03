@@ -143,6 +143,7 @@ class EnabledTitleWidgetMoveContext:
     title_widget: QWidget
     checkbox_widget: NoneAwareCheckBox | None
     enabled_reset_button: QWidget | None
+    provenance_button: QWidget | None = None
 
 
 class EnabledTitleWidgetMoveAuthority:
@@ -155,11 +156,13 @@ class EnabledTitleWidgetMoveAuthority:
         self.bind_title_toggle(context)
         self.prepare_reset_button(context)
         provenance_button = self.create_provenance_button(context)
+        context.provenance_button = provenance_button
         context.container.addEnableableWidgets(
             context.title_widget,
             context.enabled_reset_button,
             provenance_button,
         )
+        self.register_title_flash_target(context)
         self.remove_empty_source_row(context)
         logger.debug("🔍 _move_enabled_widget_to_title: COMPLETE")
 
@@ -329,6 +332,57 @@ class EnabledTitleWidgetMoveAuthority:
         ResetButtonStyler.apply(reset_button, color_scheme)
         reset_button.setMaximumWidth(60)
         reset_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+
+    def register_title_flash_target(
+        self,
+        context: EnabledTitleWidgetMoveContext,
+    ) -> None:
+        """Register title-row field chrome as this field's structural flash target."""
+
+        context.request.nested_manager.register_field_flash_target(
+            context.request.enabled_field,
+            self.title_field_flash_target(
+                container=context.container,
+                title_widget=context.title_widget,
+                checkbox_widget=context.checkbox_widget,
+                reset_button=context.enabled_reset_button,
+                provenance_button=context.provenance_button,
+            ),
+        )
+
+    @staticmethod
+    def title_field_flash_target(
+        *,
+        container: GroupBoxWithHelp,
+        title_widget: QWidget,
+        checkbox_widget: QWidget | None = None,
+        reset_button: QWidget | None = None,
+        provenance_button: QWidget | None = None,
+    ):
+        """Build the standard structural target for enableable title chrome."""
+
+        from PyQt6.QtWidgets import QWidget
+        from pyqt_reactive.widgets.structural_table import (
+            StructuralMaskedContainerTarget,
+            StructuralWidgetTarget,
+            StructuralWidgetSetTarget,
+        )
+
+        chrome_widgets = tuple(
+            widget
+            for widget in (
+                container._title_label,
+                checkbox_widget or title_widget,
+                reset_button,
+                provenance_button,
+            )
+            if isinstance(widget, QWidget)
+        )
+        return StructuralMaskedContainerTarget(
+            container=container,
+            masked_target=StructuralWidgetSetTarget(chrome_widgets),
+            scroll_target=StructuralWidgetTarget(container._title_label),
+        )
 
     def create_provenance_button(
         self,
@@ -982,6 +1036,7 @@ class WidgetCreationPipeline:
         self.add_reset_controls()
         self.connect_optional_checkbox()
         self.store_and_connect_widget()
+        self.initialize_widget_semantics()
         return self.runtime.container
 
     def create_container(self) -> None:
@@ -1188,6 +1243,12 @@ class WidgetCreationPipeline:
         if rt.manager.read_only:
             WidgetService.make_readonly(rt.main_widget, rt.manager.config.color_scheme)
 
+    def initialize_widget_semantics(self) -> None:
+        """Apply ObjectState dirty/default chrome once the widget is registered."""
+
+        rt = self.runtime
+        rt.manager.chrome_sync.update_label_styling(rt.param_info.name)
+
     def on_widget_change(self, pname, value) -> None:
         from objectstate import ObjectStateRegistry
 
@@ -1195,7 +1256,10 @@ class WidgetCreationPipeline:
         converted_value = manager._convert_widget_value(value, pname)
         event = FieldChangeEvent(pname, converted_value, manager)
         if manager.state and manager.state._parent_state is not None:
-            with ObjectStateRegistry.atomic("edit func parameter"):
+            with ObjectStateRegistry.atomic(
+                "edit parameter",
+                scope_id=manager.scope_id,
+            ):
                 FieldChangeDispatcher.instance().dispatch(event)
         else:
             FieldChangeDispatcher.instance().dispatch(event)

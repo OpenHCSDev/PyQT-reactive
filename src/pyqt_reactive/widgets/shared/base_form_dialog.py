@@ -172,6 +172,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         scope_key = self.window_manager_scope_id()
         if scope_key is None:
             super().show()
+            self._schedule_managed_window_visual_refresh()
             return
 
         if WindowManager.is_open(scope_key):
@@ -186,8 +187,22 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
             code_document_driver=self.window_code_document_driver(),
         )
         super().show()
+        self._schedule_managed_window_visual_refresh()
         QTimer.singleShot(0, lambda: WindowManager.position_window_near_cursor(self))
         logger.debug("[SINGLETON] Registered and showed new window for %s", scope_key)
+
+    def _schedule_managed_window_visual_refresh(self) -> None:
+        """Refresh window-level visual infrastructure once Qt has shown the window."""
+        QTimer.singleShot(0, self._refresh_managed_window_visuals)
+
+    def _refresh_managed_window_visuals(self) -> None:
+        """Ensure this visible window owns current flash overlay registrations."""
+        from pyqt_reactive.animation import WindowFlashOverlay
+
+        WindowFlashOverlay.get_for_window(self)
+        self._flash_overlay_cleaned = False
+        for form_manager in self.form_managers():
+            form_manager.form_tree.root().reregister_flash_elements()
 
     def accept(self):
         """Mark the managed ObjectState saved before accepting the dialog."""
@@ -198,6 +213,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
         super().accept()
         self._unregister_managed_window()
+        self._cleanup_window_flash_overlay()
         self._cleanup_managed_listeners()
 
     def mark_saved_and_refresh_all(self) -> None:
@@ -229,6 +245,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
         super().reject()
         self._unregister_managed_window()
+        self._cleanup_window_flash_overlay()
         self._cleanup_managed_listeners()
 
     def closeEvent(self, event):
@@ -239,6 +256,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
             self.state_restore_policy.restore(state)
 
         self._unregister_managed_window()
+        self._cleanup_window_flash_overlay()
         self._cleanup_managed_listeners()
         super().closeEvent(event)
 
@@ -247,6 +265,16 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         scope_key = self.window_manager_scope_id()
         if scope_key:
             WindowManager.unregister(scope_key)
+
+    def _cleanup_window_flash_overlay(self) -> None:
+        """Release flash overlay resources owned by this top-level window."""
+        if self._flash_overlay_cleaned:
+            return
+        self._flash_overlay_cleaned = True
+
+        from pyqt_reactive.animation import WindowFlashOverlay
+
+        WindowFlashOverlay.cleanup_window(self)
 
     def _cleanup_managed_listeners(self) -> None:
         """Disconnect ObjectState listeners owned by this managed form window."""

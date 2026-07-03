@@ -541,21 +541,22 @@ class FormBuildOrchestrator:
             # This ensures styling is applied AFTER the widget is visible and painted
             pass
 
-        # Initialize dirty indicators for all labels based on current state
-        # This handles the case where the form opens with pre-existing dirty state
-        with timer("  Initialize dirty indicators", threshold_ms=5.0):
-            self._initialize_dirty_indicators(manager)
+        # Initialize semantic indicators for all labels and compound widgets
+        # based on current state. This handles forms that open with pre-existing
+        # dirty fields or signature-default overrides.
+        with timer("  Initialize semantic indicators", threshold_ms=5.0):
+            self._initialize_semantic_indicators(manager)
 
-    def _initialize_dirty_indicators(self, manager) -> None:
-        """Initialize dirty indicators for all labels in manager and nested managers."""
-        if not manager.state.dirty_fields:
+    def _initialize_semantic_indicators(self, manager) -> None:
+        """Initialize dirty/default chrome in manager and nested managers."""
+        if not manager.state.dirty_fields and not manager.state.signature_diff_fields:
             return
-        # Refresh all labels in this manager
         for param_name in manager.labels:
             manager.chrome_sync.update_label_styling(param_name)
-        # Recursively initialize nested managers
+        for param_name in manager.widgets:
+            manager.chrome_sync.update_label_styling(param_name)
         for nested_manager in manager.nested_managers.values():
-            self._initialize_dirty_indicators(nested_manager)
+            self._initialize_semantic_indicators(nested_manager)
 
     @staticmethod
     def _apply_callbacks(callback_list: List[Callable]) -> None:

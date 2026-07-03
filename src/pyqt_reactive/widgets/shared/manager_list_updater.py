@@ -44,10 +44,12 @@ class ManagerListUpdateOperations(
     cleanup_flash_subscriptions: Callable[[], None]
     clear_scope_to_list_item: Callable[[], None]
     format_item: Callable[[ListItemT, int, UpdateContextT], DisplayTextT]
+    should_refresh_text_for_scope_change: Callable[[ListItemT, set[str]], bool]
     list_item_data_for: Callable[[ListItemT, int], ListItemDataT]
     tooltip_for: Callable[[ListItemT], str]
     extra_data_for: Callable[[ListItemT, int], dict[int, RoleValueT]]
     set_styling_roles: Callable[[QListWidgetItem, DisplayTextT, ListItemT], None]
+    refresh_styling_roles: Callable[[QListWidgetItem, ListItemT], None]
     apply_scope_color: Callable[[QListWidgetItem, ListItemT, int], None]
     subscribe_flash: Callable[[ListItemT, QListWidgetItem, str], None]
     post_update: Callable[[], None]
@@ -185,6 +187,53 @@ class ManagerListUpdater:
             self._rebuild_items(operations, snapshot.backing_items, update_context)
         operations.post_update()
 
+    def refresh_scopes(
+        self,
+        operations: ManagerListUpdateOperations[
+            ListItemT,
+            UpdateContextT,
+            DisplayTextT,
+            ListItemDataT,
+            PlaceholderDataT,
+            RoleValueT,
+        ],
+        scope_ids: set[str],
+        changed_paths_by_scope: dict[str, set[str]] | None = None,
+    ) -> bool:
+        """Refresh visual roles for existing rows addressed by ObjectState scope."""
+        if not scope_ids:
+            return False
+        if operations.placeholder() is not None:
+            self.update(operations)
+            return True
+
+        update_context = operations.prepare_update()
+        refreshed = False
+        for index, item_obj in enumerate(operations.backing_items):
+            scope_id = operations.scope_for_item(item_obj)
+            if scope_id not in scope_ids:
+                continue
+            list_item = operations.item_list.item(index)
+            if list_item is None:
+                continue
+            self._refresh_list_item(
+                operations,
+                list_item,
+                item_obj,
+                index,
+                update_context,
+                changed_paths=(
+                    changed_paths_by_scope.get(scope_id, set())
+                    if changed_paths_by_scope is not None
+                    else set()
+                ),
+            )
+            refreshed = True
+
+        if refreshed:
+            operations.update_button_states()
+        return refreshed
+
     def _update_existing_items(
         self,
         operations: ManagerListUpdateOperations[
@@ -246,7 +295,17 @@ class ManagerListUpdater:
         item_obj: ListItemT,
         index: int,
         update_context: UpdateContextT,
+        *,
+        changed_paths: set[str] | None = None,
     ) -> None:
+        if changed_paths and not operations.should_refresh_text_for_scope_change(
+            item_obj,
+            changed_paths,
+        ):
+            operations.refresh_styling_roles(list_item, item_obj)
+            operations.apply_scope_color(list_item, item_obj, index)
+            return
+
         display_text = operations.format_item(item_obj, index, update_context)
         text_changed = list_item.text() != display_text
         if text_changed:

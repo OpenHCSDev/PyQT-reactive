@@ -400,15 +400,7 @@ class WindowManager:
         original_close = window.closeEvent
 
         def close_wrapper(event):
-            # Unregister window before closing
-            if scope_id in cls._scoped_windows:
-                del cls._scoped_windows[scope_id]
-                if scope_id in cls._navigation_drivers:
-                    del cls._navigation_drivers[scope_id]
-                if scope_id in cls._code_document_drivers:
-                    del cls._code_document_drivers[scope_id]
-                logger.debug(f"[WINDOW_MGR] Unregistered window on close: {scope_id}")
-
+            cls.unregister(scope_id)
             original_close(event)
 
         window.closeEvent = close_wrapper
@@ -627,6 +619,9 @@ class WindowManager:
             scope_id: Scope to unregister
         """
         if scope_id in cls._scoped_windows:
+            from pyqt_reactive.animation import WindowFlashOverlay
+
+            WindowFlashOverlay.cleanup_window(cls._scoped_windows[scope_id])
             del cls._scoped_windows[scope_id]
             if scope_id in cls._navigation_drivers:
                 del cls._navigation_drivers[scope_id]

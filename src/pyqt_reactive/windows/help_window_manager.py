@@ -5,7 +5,7 @@ import logging
 from typing import Union, Callable, Optional
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QTextEdit, QScrollArea, QWidget, QMessageBox
+    QTextEdit, QScrollArea, QWidget, QMessageBox, QSizePolicy
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCursor, QGuiApplication
@@ -48,6 +48,10 @@ HELP_WINDOW_LARGE_WIDTH = 820
 HELP_WINDOW_MAX_WIDTH = 900
 HELP_WINDOW_MAX_HEIGHT = 720
 HELP_WINDOW_SCREEN_MARGIN = 64
+HELP_WINDOW_CONTENT_MARGIN = 4
+HELP_WINDOW_CONTENT_SPACING = 4
+HELP_WINDOW_DIALOG_MARGIN = 6
+HELP_WINDOW_DIALOG_SPACING = 6
 ABSENT_VALUE_LABEL = "None"
 
 
@@ -89,6 +93,16 @@ def help_window_width_for_content(docstring_info) -> int:
     return HELP_WINDOW_MIN_WIDTH
 
 
+def help_window_width_for_parameter_content(content: ParameterHelpContent) -> int:
+    """Choose a readable help-window width from parameter-help content."""
+    text_length = len(content.summary) + len(content.description)
+    if text_length >= 800:
+        return HELP_WINDOW_LARGE_WIDTH
+    if text_length >= 180:
+        return HELP_WINDOW_MEDIUM_WIDTH
+    return HELP_WINDOW_MIN_WIDTH
+
+
 class BaseHelpWindow(QDialog):
     """Base class for all PyQt6 help windows - reuses Textual TUI help logic."""
     
@@ -111,21 +125,36 @@ class BaseHelpWindow(QDialog):
     def setup_ui(self):
         """Setup the base help window UI."""
         layout = QVBoxLayout(self)
-        
+        layout.setContentsMargins(
+            HELP_WINDOW_DIALOG_MARGIN,
+            HELP_WINDOW_DIALOG_MARGIN,
+            HELP_WINDOW_DIALOG_MARGIN,
+            HELP_WINDOW_DIALOG_MARGIN,
+        )
+        layout.setSpacing(HELP_WINDOW_DIALOG_SPACING)
+
         # Content area (to be filled by subclasses)
         self.content_area = QScrollArea()
         self.content_area.setWidgetResizable(True)
         self.content_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.content_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.content_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.content_area.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.content_area.setStyleSheet("QScrollArea { border: none; padding: 0px; margin: 0px; }")
         layout.addWidget(self.content_area)
-        
+
         # Close button - styled like other buttons
         button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(HELP_WINDOW_DIALOG_SPACING)
         button_layout.addStretch()
         
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.close)
-        close_btn.setStyleSheet(f"""
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.close)
+        self.close_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.color_scheme.to_hex(self.color_scheme.button_normal_bg)};
                 color: {self.color_scheme.to_hex(self.color_scheme.button_text)};
@@ -141,9 +170,86 @@ class BaseHelpWindow(QDialog):
                 background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
             }}
         """)
-        button_layout.addWidget(close_btn)
-        
+        button_layout.addWidget(self.close_button)
+
         layout.addLayout(button_layout)
+
+    def set_content_widget(self, content_widget: QWidget, target_width: int) -> None:
+        """Install content and size the dialog to show available content."""
+        self.content_area.setWidget(content_widget)
+        self.resize_to_content(content_widget, target_width)
+
+    def available_help_bounds(self) -> tuple[int, int]:
+        """Return max help-window dimensions bounded by the active screen."""
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return HELP_WINDOW_MAX_WIDTH, HELP_WINDOW_MAX_HEIGHT
+
+        available = screen.availableGeometry()
+        return (
+            min(HELP_WINDOW_MAX_WIDTH, available.width() - HELP_WINDOW_SCREEN_MARGIN),
+            min(HELP_WINDOW_MAX_HEIGHT, available.height() - HELP_WINDOW_SCREEN_MARGIN),
+        )
+
+    def resize_to_content(self, content_widget: QWidget, requested_width: int) -> None:
+        """Resize to fit content where possible, bounded by available screen size."""
+        max_width, max_height = self.available_help_bounds()
+        target_width = min(requested_width, max_width)
+        content_width = max(0, target_width - (HELP_WINDOW_DIALOG_MARGIN * 2))
+
+        content_widget.setMinimumWidth(content_width)
+        if content_widget.layout() is not None:
+            content_widget.layout().activate()
+        content_widget.adjustSize()
+
+        dialog_layout = self.layout()
+        if dialog_layout is not None:
+            dialog_layout.activate()
+        button_height = self.close_button.sizeHint().height()
+        content_height = content_widget.sizeHint().height()
+        chrome_height = button_height + (HELP_WINDOW_DIALOG_MARGIN * 2) + HELP_WINDOW_DIALOG_SPACING
+        viewport_height = min(
+            content_height + 2,
+            max(40, max_height - chrome_height),
+        )
+        target_height = min(
+            max_height,
+            max(96, viewport_height + chrome_height + 4),
+        )
+
+        self.content_area.setMinimumWidth(content_width)
+        self.content_area.setMinimumHeight(viewport_height)
+        self.content_area.setMaximumHeight(viewport_height)
+        self.setMinimumWidth(target_width)
+        self.setMaximumSize(max_width, max_height)
+        self.resize(target_width, target_height)
+
+
+def help_content_label(
+    text: str,
+    *,
+    color_scheme: ColorScheme,
+    accent: bool = False,
+    title: bool = False,
+) -> QLabel:
+    """Create compact wrapped help text labels."""
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    color = color_scheme.text_accent if accent else color_scheme.text_primary
+    font_size = 13 if title else 12
+    weight = "font-weight: bold;" if title else ""
+    label.setStyleSheet(
+        "QLabel { "
+        f"color: {color_scheme.to_hex(color)}; "
+        f"font-size: {font_size}px; "
+        f"{weight} "
+        "background-color: transparent; "
+        "padding: 0px; "
+        "margin: 0px; "
+        "}"
+    )
+    return label
 
 
 class DocstringHelpWindow(BaseHelpWindow):
@@ -162,6 +268,18 @@ class DocstringHelpWindow(BaseHelpWindow):
             title = f"Help: {help_target_display_name(target)}"
 
         super().__init__(title, color_scheme, parent)
+        self.populate_content()
+
+    def set_help_target(
+        self,
+        target: Union[Callable, type],
+        *,
+        title: str,
+    ) -> None:
+        """Replace displayed callable/class docs without exposing storage details."""
+        self.target = target
+        self.docstring_info = docstring_info_for_target(target)
+        self.setWindowTitle(title)
         self.populate_content()
         
     def populate_content(self):
@@ -185,68 +303,84 @@ class DocstringHelpWindow(BaseHelpWindow):
 
         content_widget = QWidget()
         layout = QVBoxLayout(content_widget)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(5)
+        layout.setContentsMargins(
+            HELP_WINDOW_CONTENT_MARGIN,
+            HELP_WINDOW_CONTENT_MARGIN,
+            HELP_WINDOW_CONTENT_MARGIN,
+            HELP_WINDOW_CONTENT_MARGIN,
+        )
+        layout.setSpacing(HELP_WINDOW_CONTENT_SPACING)
 
         # Function/class summary
         if self.docstring_info.summary:
             logger.debug(f"🔍 populate_content: summary={self.docstring_info.summary[:50]}...")
-            summary_label = QLabel(self.docstring_info.summary)
-            summary_label.setWordWrap(True)
-            summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            summary_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px; background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)}; padding: 5px;")
+            summary_label = help_content_label(
+                self.docstring_info.summary,
+                color_scheme=self.color_scheme,
+                title=True,
+            )
             layout.addWidget(summary_label)
             logger.info(f"🔍 Added summary_label with style: {summary_label.styleSheet()}")
 
         # Full description
         if self.docstring_info.description:
             logger.debug(f"🔍 populate_content: description={self.docstring_info.description[:50]}...")
-            desc_label = QLabel(self.docstring_info.description)
-            desc_label.setWordWrap(True)
-            desc_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            desc_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px; background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)}; padding: 5px;")
+            desc_label = help_content_label(
+                self.docstring_info.description,
+                color_scheme=self.color_scheme,
+            )
             layout.addWidget(desc_label)
             
         # Parameters section
         if self.docstring_info.parameters:
-            params_label = QLabel("Parameters:")
-            params_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            params_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-size: 14px; font-weight: bold; margin-top: 8px;")
+            params_label = help_content_label(
+                "Parameters:",
+                color_scheme=self.color_scheme,
+                accent=True,
+                title=True,
+            )
             layout.addWidget(params_label)
 
             for param_name, param_desc in self.docstring_info.parameters.items():
                 # Parameter name
-                name_label = QLabel(f"• {param_name}")
-                name_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-                name_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px; margin-left: 5px; margin-top: 3px;")
+                name_label = help_content_label(
+                    f"• {param_name}",
+                    color_scheme=self.color_scheme,
+                )
                 layout.addWidget(name_label)
 
                 # Parameter description
                 if param_desc:
-                    desc_label = QLabel(param_desc)
-                    desc_label.setWordWrap(True)
-                    desc_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-                    desc_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px; margin-left: 20px;")
+                    desc_label = help_content_label(
+                        param_desc,
+                        color_scheme=self.color_scheme,
+                    )
                     layout.addWidget(desc_label)
                 
         # Returns section
         if self.docstring_info.returns:
-            returns_label = QLabel("Returns:")
-            returns_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            returns_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-size: 14px; font-weight: bold; margin-top: 8px;")
+            returns_label = help_content_label(
+                "Returns:",
+                color_scheme=self.color_scheme,
+                accent=True,
+                title=True,
+            )
             layout.addWidget(returns_label)
 
-            returns_desc = QLabel(self.docstring_info.returns)
-            returns_desc.setWordWrap(True)
-            returns_desc.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            returns_desc.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 12px; margin-left: 5px;")
+            returns_desc = help_content_label(
+                self.docstring_info.returns,
+                color_scheme=self.color_scheme,
+            )
             layout.addWidget(returns_desc)
-            
+
         # Examples section
         if self.docstring_info.examples:
-            examples_label = QLabel("Examples:")
-            examples_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-            examples_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-size: 14px; font-weight: bold; margin-top: 8px;")
+            examples_label = help_content_label(
+                "Examples:",
+                color_scheme=self.color_scheme,
+                accent=True,
+                title=True,
+            )
             layout.addWidget(examples_label)
 
             examples_text = QTextEdit()
@@ -268,38 +402,72 @@ class DocstringHelpWindow(BaseHelpWindow):
             """)
             layout.addWidget(examples_text)
             
-        layout.addStretch()
-        self.content_area.setWidget(content_widget)
-        
         logger.info(f"🔍 populate_content() COMPLETED - content_widget children: {content_widget.children()}")
         logger.info(f"🔍 Window stylesheet: {self.styleSheet()[:200]}...")
 
-        # Auto-size to content
-        self.resize_to_content(content_widget)
+        self.set_content_widget(
+            content_widget,
+            help_window_width_for_content(self.docstring_info),
+        )
 
-    def resize_to_content(self, content_widget: QWidget) -> None:
-        """Resize to fit content where possible, bounded by available screen size."""
-        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
-        if screen is None:
-            available = None
-        else:
-            available = screen.availableGeometry()
-        if available is None:
-            max_width = HELP_WINDOW_MAX_WIDTH
-            max_height = HELP_WINDOW_MAX_HEIGHT
-        else:
-            max_width = min(HELP_WINDOW_MAX_WIDTH, available.width() - HELP_WINDOW_SCREEN_MARGIN)
-            max_height = min(HELP_WINDOW_MAX_HEIGHT, available.height() - HELP_WINDOW_SCREEN_MARGIN)
 
-        target_width = min(help_window_width_for_content(self.docstring_info), max_width)
-        content_widget.setMinimumWidth(max(0, target_width - 40))
-        content_widget.layout().activate()
-        content_widget.adjustSize()
+class ParameterHelpWindow(BaseHelpWindow):
+    """Help window for one parameter or dataclass field."""
 
-        self.setMaximumSize(max_width, max_height)
-        self.adjustSize()
-        target_height = min(max_height, max(180, self.sizeHint().height()))
-        self.resize(target_width, target_height)
+    def __init__(
+        self,
+        content: ParameterHelpContent,
+        title: str = "Parameter",
+        color_scheme: Optional[ColorScheme] = None,
+        parent=None,
+    ):
+        self.content = content
+        super().__init__(title, color_scheme, parent)
+        self.populate_content()
+
+    def set_parameter_content(
+        self,
+        content: ParameterHelpContent,
+        *,
+        title: str,
+    ) -> None:
+        """Replace displayed parameter content without changing renderer type."""
+        self.content = content
+        self.setWindowTitle(title)
+        self.populate_content()
+
+    def populate_content(self) -> None:
+        """Populate compact parameter help content."""
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
+        layout.setContentsMargins(
+            HELP_WINDOW_CONTENT_MARGIN,
+            HELP_WINDOW_CONTENT_MARGIN,
+            HELP_WINDOW_CONTENT_MARGIN,
+            HELP_WINDOW_CONTENT_MARGIN,
+        )
+        layout.setSpacing(HELP_WINDOW_CONTENT_SPACING)
+
+        if self.content.summary:
+            layout.addWidget(
+                help_content_label(
+                    self.content.summary,
+                    color_scheme=self.color_scheme,
+                    title=True,
+                )
+            )
+        if self.content.description:
+            layout.addWidget(
+                help_content_label(
+                    self.content.description,
+                    color_scheme=self.color_scheme,
+                )
+            )
+
+        self.set_content_widget(
+            content_widget,
+            help_window_width_for_parameter_content(self.content),
+        )
 
 
 class HelpWindowManager:
@@ -319,7 +487,6 @@ class HelpWindowManager:
             return
 
         available = screen.availableGeometry()
-        window.adjustSize()
         size = window.size()
 
         x = cursor_pos.x() - size.width() - 16
@@ -354,20 +521,22 @@ class HelpWindowManager:
             # Check if existing window is still valid
             if isinstance(cls._help_window, QDialog):
                 try:
-                    if not cls._help_window.isHidden():
+                    if (
+                        not cls._help_window.isHidden()
+                        and isinstance(cls._help_window, DocstringHelpWindow)
+                    ):
                         logger.info(f"🔍 Reusing existing help window")
-                        cls._help_window.target = target
-                        cls._help_window.docstring_info = docstring_info_for_target(target)
                         if title is None:
                             window_title = f"Help: {help_target_display_name(target)}"
                         else:
                             window_title = title
-                        cls._help_window.setWindowTitle(window_title)
-                        cls._help_window.populate_content()
+                        cls._help_window.set_help_target(target, title=window_title)
                         cls._position_window_near_cursor(cls._help_window)
                         cls._help_window.raise_()
                         cls._help_window.activateWindow()
                         return
+                    if not cls._help_window.isHidden():
+                        cls._help_window.close()
                 except RuntimeError:
                     # Window was deleted, clear reference
                     cls._help_window = None
@@ -394,23 +563,11 @@ class HelpWindowManager:
         help_target: Union[Callable, type, None] = None,
         parent=None,
     ):
-        """Show help for a parameter - creates a fake docstring object and uses DocstringHelpWindow."""
+        """Show help for a parameter using parameter-help content directly."""
         import logging
         logger = logging.getLogger(__name__)
 
         try:
-            # Create a fake docstring info object for the parameter
-            from dataclasses import dataclass
-
-            @dataclass
-            class FakeDocstringInfo:
-                summary: str = ""
-                description: str = ""
-                parameters: dict = None
-                returns: str = ""
-                examples: str = ""
-
-            # Build parameter display - combine everything into summary to create single QLabel
             param_desc = resolved_parameter_description(
                 help_target=help_target,
                 param_name=param_name,
@@ -420,13 +577,6 @@ class HelpWindowManager:
                 param_name=param_name,
                 param_type=param_type,
                 description=param_desc,
-            )
-            fake_info = FakeDocstringInfo(
-                summary=help_content.summary,
-                description=help_content.description,
-                parameters={},
-                returns="",
-                examples=""
             )
 
             if param_desc:
@@ -438,25 +588,29 @@ class HelpWindowManager:
             # Check if existing window is still valid
             if isinstance(cls._help_window, QDialog):
                 try:
-                    if not cls._help_window.isHidden():
-                        cls._help_window.docstring_info = fake_info
-                        cls._help_window.setWindowTitle(f"Parameter: {param_name}")
-                        cls._help_window.populate_content()
+                    if (
+                        not cls._help_window.isHidden()
+                        and isinstance(cls._help_window, ParameterHelpWindow)
+                    ):
+                        cls._help_window.set_parameter_content(
+                            help_content,
+                            title=f"Parameter: {param_name}",
+                        )
                         cls._position_window_near_cursor(cls._help_window)
                         cls._help_window.raise_()
                         cls._help_window.activateWindow()
                         return
+                    if not cls._help_window.isHidden():
+                        cls._help_window.close()
                 except RuntimeError:
                     # Window was deleted, clear reference
                     cls._help_window = None
 
-            # Create new window with fake target
-            class FakeTarget:
-                __name__ = param_name
-
-            cls._help_window = DocstringHelpWindow(FakeTarget, title=f"Parameter: {param_name}", parent=parent)
-            cls._help_window.docstring_info = fake_info
-            cls._help_window.populate_content()
+            cls._help_window = ParameterHelpWindow(
+                help_content,
+                title=f"Parameter: {param_name}",
+                parent=parent,
+            )
             cls._help_window.show()
             cls._position_window_near_cursor(cls._help_window)
 

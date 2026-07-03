@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, Mapping, Optional
 
+from objectstate import DottedFieldPath
+
 
 class FunctionPatternField:
     """Nominal owner for function-pattern parent-field semantics."""
@@ -29,6 +31,17 @@ class FunctionPatternField:
     def scope_token_prefix(cls) -> str:
         return cls.parameter_name()
 
+    @classmethod
+    def owns_field_path(cls, field_path: str | None) -> bool:
+        """Return whether a field path belongs to the function-pattern field."""
+
+        if not isinstance(field_path, str):
+            return False
+        return (
+            DottedFieldPath(cls.parameter_name()).contains_path(field_path)
+            or field_path.startswith(cls.token_field_prefix)
+        )
+
 
 FUNCTION_FIELD_ROOT = FunctionPatternField.parameter_name()
 FUNCTION_TOKEN_FIELD_PREFIX = FunctionPatternField.token_field_prefix
@@ -46,9 +59,7 @@ class FunctionFieldTarget:
 
 def is_function_field_path(field_path: str | None) -> bool:
     """Return True when the field path targets function-pattern UI."""
-    return isinstance(field_path, str) and field_path.startswith(
-        FunctionPatternField.parameter_name()
-    )
+    return FunctionPatternField.owns_field_path(field_path)
 
 
 def build_function_token_field_path(

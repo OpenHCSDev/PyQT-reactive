@@ -10,6 +10,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from pyqt_reactive.animation.flash_trace import flash_trace
+
 if TYPE_CHECKING:
     from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 
@@ -117,25 +119,26 @@ class FieldDispatchContextFactory:
 class SourceStateUpdateStage:
     """Applies the edited value to ObjectState and syncs the source widget."""
 
-    def run(self, context: FieldDispatchContext) -> None:
+    def run(self, context: FieldDispatchContext) -> set[str]:
         # ObjectState.update_parameter() enforces the invariant:
         # state mutation -> global cache invalidation.
         from objectstate import ObjectStateRegistry
 
         if context.event.is_reset:
-            context.source.state.update_parameter(
+            changed_paths = context.source.state.update_parameter(
                 context.source_path,
                 context.event.value,
             )
         else:
             with ObjectStateRegistry.defer_live_invalidations():
-                context.source.state.update_parameter(
+                changed_paths = context.source.state.update_parameter(
                     context.source_path,
                     context.event.value,
                 )
         context.source.sync_after_model_field_change(
             context.event.field_name,
             context.source_path,
+            changed_paths=changed_paths,
         )
         if DEBUG_DISPATCHER:
             reset_note = " (reset to None)" if context.event.is_reset else ""
@@ -144,6 +147,7 @@ class SourceStateUpdateStage:
                 context.source_path,
                 reset_note,
             )
+        return changed_paths
 
 
 class SiblingPlaceholderRefreshStage:
@@ -243,7 +247,7 @@ class SiblingPlaceholderRefreshStage:
 class LiveContextNotificationStage:
     """Broadcasts ObjectState live-context changes to form/list listeners."""
 
-    DEBOUNCE_MS = 180
+    DEBOUNCE_MS = 0
 
     def __init__(self) -> None:
         self._timer = None
@@ -374,6 +378,14 @@ class FieldChangeDispatcher:
             )
 
             context = self._context_factory.build(event)
+            flash_trace(
+                "dispatch.context",
+                source=context.source.field_id,
+                root=context.root.field_id,
+                source_path=context.source_path,
+                root_path=context.root_path,
+                reset=context.event.is_reset,
+            )
             self._source_state_update.run(context)
             self._sibling_placeholder_refresh.run(context)
             self._live_context_notification.run(context)

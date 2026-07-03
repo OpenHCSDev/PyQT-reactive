@@ -5,15 +5,15 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from PyQt6.QtCore import QRect
-from PyQt6.QtWidgets import QListWidgetItem, QWidget
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QListWidgetItem
 
 from objectstate import ObjectStateRegistry
-from pyqt_reactive.animation import FlashElement, WindowFlashOverlay
+from pyqt_reactive.animation import WindowFlashOverlay, create_list_item_element
 from pyqt_reactive.widgets.shared.list_item_delegate import (
     DIRTY_FIELDS_ROLE,
-    FLASH_KEY_ROLE,
     LAYOUT_ROLE,
+    OBJECT_STATE_PATH_ROLE,
     SIG_DIFF_FIELDS_ROLE,
     StyledText,
     StyledTextLayout,
@@ -33,6 +33,8 @@ class ManagerListVisualState:
         self._dirty_subscriptions: dict[str, tuple[Any, Any]] = {}
         self._scope_to_list_item: dict[str, QListWidgetItem] = {}
         self._pending_flash_scopes: set[str] = set()
+        self._pending_changed_scope_paths: dict[str, set[str]] = {}
+        self._scope_change_flush_scheduled = False
         ObjectStateRegistry.add_resolved_changed_callback(
             self._on_registry_resolved_changed
         )
@@ -65,14 +67,17 @@ class ManagerListVisualState:
             return
 
         self._scope_to_list_item[scope_id] = list_item
-        element = FlashElement(
-            key=scope_id,
-            get_rect_in_window=lambda window: self._list_item_rect(scope_id, window),
-            needs_scroll_clipping=False,
-            source_id=f"list_item:{id(self._manager)}:{scope_id}",
-            skip_overlay_paint=True,
-            delegate_widget=self._manager.item_list,
-            get_model_index=lambda: self._model_index(scope_id),
+
+        def row_for_scope() -> int:
+            row_item = self._scope_to_list_item.get(scope_id)
+            if row_item is None:
+                return -1
+            return self._manager.item_list.row(row_item)
+
+        element = create_list_item_element(
+            scope_id,
+            self._manager.item_list,
+            row_for_scope,
         )
         overlay = WindowFlashOverlay.get_for_window(self._manager)
         logger.debug(
@@ -100,9 +105,9 @@ class ManagerListVisualState:
             return
 
         if scope_id not in self._dirty_subscriptions:
-            def on_state_changed():
+            def on_state_changed(_changed_paths: set[str]):
                 logger.debug("DIRTY_DEBUG on_state_changed: scope=%s", scope_id)
-                self._manager.queue_visual_update()
+                self._manager.queue_list_scope_visual_update(scope_id, _changed_paths)
 
             state.on_state_changed(on_state_changed)
             self._dirty_subscriptions[scope_id] = (state, on_state_changed)
@@ -110,7 +115,7 @@ class ManagerListVisualState:
 
         if scope_id in self._pending_flash_scopes:
             self._pending_flash_scopes.remove(scope_id)
-            self._manager.queue_flash(scope_id)
+            self._manager.queue_flash_batch((scope_id,))
 
     def cleanup(self) -> None:
         logger.debug(
@@ -140,6 +145,8 @@ class ManagerListVisualState:
         """Clear row state and pending flashes for an explicit list-context switch."""
         self.cleanup()
         self._pending_flash_scopes.clear()
+        self._pending_changed_scope_paths.clear()
+        self._scope_change_flush_scheduled = False
 
     def dispose(self) -> None:
         """Release registry callbacks and row subscriptions for widget teardown."""
@@ -153,17 +160,37 @@ class ManagerListVisualState:
         scope_id: str,
         changed_paths: set[str],
     ) -> None:
-        del changed_paths
-        self._mark_scope_changed(scope_id)
+        self._queue_scope_changed(scope_id, changed_paths)
 
-    def _mark_scope_changed(self, scope_id: str) -> None:
+    def _queue_scope_changed(self, scope_id: str, changed_paths: set[str]) -> None:
         if not scope_id:
             return
         if scope_id in self._scope_to_list_item:
-            self._manager.queue_flash(scope_id)
-            self._manager.queue_visual_update()
+            self._pending_changed_scope_paths.setdefault(scope_id, set()).update(changed_paths)
+            if not self._scope_change_flush_scheduled:
+                self._scope_change_flush_scheduled = True
+                QTimer.singleShot(0, self._flush_scope_changes)
             return
         self._pending_flash_scopes.add(scope_id)
+
+    def _flush_scope_changes(self) -> None:
+        pending = dict(self._pending_changed_scope_paths)
+        self._pending_changed_scope_paths.clear()
+        self._scope_change_flush_scheduled = False
+        if not pending:
+            return
+
+        visible_scopes = [
+            scope_id
+            for scope_id in pending
+            if scope_id in self._scope_to_list_item
+        ]
+        if not visible_scopes:
+            return
+
+        self._manager.queue_flash_batch(visible_scopes)
+        for scope_id in visible_scopes:
+            self._manager.queue_list_scope_visual_update(scope_id, pending[scope_id])
 
     def dirty_fields(self, item: Any) -> set:
         try:
@@ -204,6 +231,15 @@ class ManagerListVisualState:
                 isinstance(display_text, StyledText),
             )
 
+    def refresh_item_styling_roles(
+        self,
+        list_item: QListWidgetItem,
+        item_obj: Any,
+    ) -> None:
+        """Refresh row state roles without rebuilding declared display text."""
+        self._set_item_data_if_changed(list_item, DIRTY_FIELDS_ROLE, self.dirty_fields(item_obj))
+        self._set_item_data_if_changed(list_item, SIG_DIFF_FIELDS_ROLE, self.signature_diff_fields(item_obj))
+
     def apply_scope_color(self, list_item: QListWidgetItem, item: Any, index: int) -> None:
         scope_info = self._list_item_scope(item, index)
         if not scope_info:
@@ -216,7 +252,7 @@ class ManagerListVisualState:
             list_item.setBackground(bg_color)
 
         self._set_item_data_if_changed(list_item, self._scope_border_role, scheme)
-        self._set_item_data_if_changed(list_item, FLASH_KEY_ROLE, scope_id)
+        self._set_item_data_if_changed(list_item, OBJECT_STATE_PATH_ROLE, scope_id)
 
     @staticmethod
     def _set_item_data_if_changed(list_item: QListWidgetItem, role: int, value: Any) -> None:
@@ -225,45 +261,3 @@ class ManagerListVisualState:
 
     def _list_item_scope(self, item: Any, index: int) -> Optional[tuple[str, Any]]:
         return self._item_access.list_item_scope(item, index)
-
-    def _list_item_rect(self, scope_id: str, window: QWidget) -> Optional[QRect]:
-        if scope_id not in self._scope_to_list_item:
-            logger.debug(
-                "FLASH_DEBUG list_item_rect: scope_id %s not in scope map (has %s keys)",
-                scope_id,
-                len(self._scope_to_list_item),
-            )
-            return None
-        item = self._scope_to_list_item[scope_id]
-        if item is None:
-            logger.debug("FLASH_DEBUG list_item_rect: item is None for %s", scope_id)
-            return None
-
-        visual_rect = self._manager.item_list.visualItemRect(item)
-        if visual_rect.isEmpty():
-            logger.debug("FLASH_DEBUG list_item_rect: visual_rect is empty for %s", scope_id)
-            return None
-
-        viewport = self._manager.item_list.viewport()
-        if viewport is None:
-            logger.debug("FLASH_DEBUG list_item_rect: viewport is None for %s", scope_id)
-            return None
-
-        clipped_rect = visual_rect.intersected(viewport.rect())
-        if clipped_rect.isEmpty():
-            logger.debug("FLASH_DEBUG list_item_rect: clipped_rect is empty for %s", scope_id)
-            return None
-
-        global_pos = viewport.mapToGlobal(clipped_rect.topLeft())
-        local_pos = window.mapFromGlobal(global_pos)
-        result = QRect(local_pos, clipped_rect.size())
-        logger.debug("FLASH_DEBUG list_item_rect: SUCCESS for %s, rect=%s", scope_id, result)
-        return result
-
-    def _model_index(self, scope_id: str):
-        if scope_id not in self._scope_to_list_item:
-            return None
-        item = self._scope_to_list_item[scope_id]
-        if item is None:
-            return None
-        return self._manager.item_list.indexFromItem(item)

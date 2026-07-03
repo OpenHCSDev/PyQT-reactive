@@ -32,8 +32,8 @@ from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
 
-# Custom data role for flash key (matches list_item_delegate pattern)
-TREE_FLASH_KEY_ROLE = Qt.ItemDataRole.UserRole + 20
+# Custom data role for the ObjectState path backing this tree row.
+TREE_OBJECT_STATE_PATH_ROLE = Qt.ItemDataRole.UserRole + 20
 TreeItemDoubleClickHandler = Callable[[QTreeWidgetItem, int], None]
 ScrollToSection = Callable[[str], None]
 FieldForClass = Callable[[Type], str | None]
@@ -164,7 +164,7 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
 
         Args:
             parent: Parent widget (QTreeWidget)
-            manager: Flash manager with get_flash_color_for_key() method
+            manager: Flash manager with ObjectState-path flash lookup
         """
         super().__init__(parent)
         self._manager = manager
@@ -180,9 +180,9 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
         opt.text = ""
 
         # Draw flash background BEHIND text (inside item rect)
-        flash_key = index.data(TREE_FLASH_KEY_ROLE)
-        if flash_key and self._manager is not None:
-            flash_color = self._manager.get_flash_color_for_key(flash_key)
+        object_state_path = index.data(TREE_OBJECT_STATE_PATH_ROLE)
+        if object_state_path and self._manager is not None:
+            flash_color = self._manager.get_flash_color_for_object_state_path(object_state_path)
             if flash_color and flash_color.alpha() > 0:
                 # Override flash color to match the owning window's scope color scheme.
                 window = self.parent()
@@ -403,7 +403,7 @@ class ConfigHierarchyTreeHelper:
         if self._state is None:
             return
 
-        def on_state_changed():
+        def on_state_changed(_changed_paths: set[str]):
             dirty_fields = self._state.dirty_fields
             self.update_dirty_styling(dirty_fields)
             tree.viewport().update()
@@ -536,32 +536,19 @@ class ConfigHierarchyTreeHelper:
         )
 
     def _register_flash_element(self, item: QTreeWidgetItem, field_path: str) -> None:
-        """Register tree item for flash rendering.
-
-        Stores SCOPED flash key in item data for delegate lookup, and registers with
-        WindowFlashOverlay (with skip_overlay_paint=True since delegate handles painting).
-
-        Tree items use 'tree::' prefix to avoid key collision with groupboxes,
-        allowing independent flash control (tree can flash without groupbox and vice versa).
-        """
+        """Register a tree item under its ObjectState field path."""
         if self._flash_manager is None or self._current_tree is None:
             return
 
-        # Tree items use separate key namespace to avoid groupbox collision
-        tree_key = f"tree::{field_path}"
-
-        # Get scoped key from flash manager (matches what's used for color lookup)
-        scoped_key = self._flash_manager._get_scoped_flash_key(tree_key)
-
-        # Store SCOPED flash key in item data for delegate to look up
-        item.setData(0, TREE_FLASH_KEY_ROLE, scoped_key)
+        scoped_key = self._flash_manager._get_scoped_flash_key(field_path)
+        item.setData(0, TREE_OBJECT_STATE_PATH_ROLE, scoped_key)
 
         tree = self._current_tree
-        # Create closure that finds item's current index (handles tree rebuild)
+
         def get_index():
             return tree.indexFromItem(item)
 
-        self._flash_manager.register_flash_tree_item(tree_key, tree, get_index)
+        self._flash_manager.register_flash_tree_item(field_path, tree, get_index)
 
     def populate_from_root_dataclass(
         self,

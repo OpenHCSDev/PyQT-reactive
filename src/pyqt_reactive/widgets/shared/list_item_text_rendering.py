@@ -6,6 +6,7 @@ from typing import Optional, Set
 
 from PyQt6.QtCore import QSize
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter
+from objectstate import DottedFieldPath
 
 from pyqt_reactive.widgets.shared.styled_text_layout import Segment, StyledTextLayout
 
@@ -16,7 +17,7 @@ def field_matches(path: Optional[str], field_set: Set[str]) -> bool:
         return False
     if path == "":
         return bool(field_set)
-    return path in field_set or any(field.startswith(path + ".") for field in field_set)
+    return DottedFieldPath(path).contains_any(field_set)
 
 
 @dataclass(frozen=True)

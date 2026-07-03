@@ -6,7 +6,7 @@ Used by ConfigWindow and StepParameterEditorWidget.
 """
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from PyQt6.QtWidgets import QScrollArea, QWidget
 
@@ -17,6 +17,9 @@ from pyqt_reactive.services.window_navigation import (
     RegisteredWindowNavigationRequest,
     WindowNavigationDriver,
 )
+
+if TYPE_CHECKING:
+    from pyqt_reactive.widgets.structural_table import StructuralFlashTarget
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ class ScrollTarget:
     groupbox_widget: Optional[QWidget]
     current_manager: Any
     is_field: bool
+    structural_flash_target: Optional["StructuralFlashTarget"] = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,9 @@ class ScrollableFormWindowNavigationDriver(FormFieldWindowNavigationDriver):
             form_manager=lambda: owner.form_manager,
         )
         self._owner = owner
+        self.stable_geometry_sample_count = 2
+        self._last_geometry_signature = None
+        self._stable_geometry_samples = 0
 
     def readiness(
         self,
@@ -70,13 +77,23 @@ class ScrollableFormWindowNavigationDriver(FormFieldWindowNavigationDriver):
                 wait_reason=NavigationWaitReason.LAYOUT,
             )
 
-        target = self._owner._resolve_scroll_target(request.field_path)
+        target = self._owner._resolve_scroll_target(
+            request.field_path,
+            warn_missing=False,
+        )
+        if target is None:
+            target = self._owner._resolve_nearest_ancestor_scroll_target(request.field_path)
         if target is None:
             return RegisteredWindowNavigationReadiness(
                 wait_reason=NavigationWaitReason.FIELD_TARGET,
             )
 
         viewport = self._owner._scroll_viewport()
+        if not self._target_geometry_is_stable(request, target, viewport):
+            return RegisteredWindowNavigationReadiness(
+                wait_reason=NavigationWaitReason.LAYOUT,
+            )
+
         if (
             viewport.content_widget is None
             or viewport.viewport_height <= 0
@@ -98,6 +115,34 @@ class ScrollableFormWindowNavigationDriver(FormFieldWindowNavigationDriver):
             )
 
         return readiness
+
+    def _target_geometry_is_stable(
+        self,
+        request: RegisteredWindowNavigationRequest,
+        target: ScrollTarget,
+        viewport: ScrollViewport,
+    ) -> bool:
+        widget_top, widget_height, widget_bottom = self._owner._target_visual_bounds(
+            target,
+            viewport,
+        )
+        signature = (
+            request.field_path,
+            id(target.target_widget),
+            id(self._owner._target_sizing_widget(target)),
+            widget_top,
+            widget_height,
+            widget_bottom,
+            viewport.viewport_height,
+            viewport.vertical_scroll_bar.maximum(),
+        )
+        if signature != self._last_geometry_signature:
+            self._last_geometry_signature = signature
+            self._stable_geometry_samples = 1
+            return False
+
+        self._stable_geometry_samples += 1
+        return self._stable_geometry_samples >= self.stable_geometry_sample_count
 
 
 class ScrollableFormMixin:
@@ -131,8 +176,11 @@ class ScrollableFormMixin:
             logger.warning("Scroll area not initialized; cannot navigate to section")
             return
 
-        target = self._resolve_scroll_target(field_name)
+        target = self._resolve_scroll_target(field_name, warn_missing=False)
         if target is None:
+            target = self._resolve_nearest_ancestor_scroll_target(field_name)
+        if target is None:
+            self._resolve_scroll_target(field_name, warn_missing=True)
             return
 
         viewport = self._scroll_viewport()
@@ -150,7 +198,12 @@ class ScrollableFormMixin:
         if flash:
             self._flash_scroll_target(target)
 
-    def _resolve_scroll_target(self, field_name: str) -> Optional[ScrollTarget]:
+    def _resolve_scroll_target(
+        self,
+        field_name: str,
+        *,
+        warn_missing: bool = True,
+    ) -> Optional[ScrollTarget]:
         """Resolve a dotted form path to a concrete widget and section path."""
         parts = field_name.split('.')
         current_manager = self.form_manager
@@ -167,7 +220,8 @@ class ScrollableFormMixin:
                 )
                 if inline_target is not None:
                     return inline_target
-                logger.warning(f"❌ Part '{part}' not in nested_managers at depth {i}")
+                if warn_missing:
+                    logger.warning(f"❌ Part '{part}' not in nested_managers at depth {i}")
                 return None
             current_manager = current_manager.nested_managers[part]
             section_parts.append(part)
@@ -187,12 +241,22 @@ class ScrollableFormMixin:
                 target_widget = nested_manager.widgets[first_param_name]
         elif leaf_name in current_manager.widgets:
             target_widget = current_manager.widgets[leaf_name]
+            inline_owner_target = self._resolve_inline_dataclass_owner_target(
+                field_name=field_name,
+                current_manager=current_manager,
+                section_parts=section_parts,
+                inline_field_name=leaf_name,
+            )
+            if inline_owner_target is not None:
+                return inline_owner_target
         else:
-            logger.warning(f"❌ Leaf '{leaf_name}' not found in widgets or nested_managers")
+            if warn_missing:
+                logger.warning(f"❌ Leaf '{leaf_name}' not found in widgets or nested_managers")
             return None
 
         if target_widget is None:
-            logger.warning(f"⚠️ No target widget found for {field_name}")
+            if warn_missing:
+                logger.warning(f"⚠️ No target widget found for {field_name}")
             return None
 
         is_field = leaf_name in current_manager.widgets and leaf_name not in current_manager.nested_managers
@@ -206,6 +270,44 @@ class ScrollableFormMixin:
             is_field=is_field,
         )
 
+    def _resolve_inline_dataclass_owner_target(
+        self,
+        *,
+        field_name: str,
+        current_manager: Any,
+        section_parts: list[str],
+        inline_field_name: str,
+    ) -> Optional[ScrollTarget]:
+        """Resolve an inline dataclass owner path to its structural container."""
+        from pyqt_reactive.widgets.structural_table import (
+            resolve_inline_dataclass_structural_target,
+        )
+
+        inline_widget = current_manager.widgets.get(inline_field_name)
+        if not isinstance(inline_widget, QWidget):
+            return None
+
+        inline_prefix = tuple(section_parts + [inline_field_name])
+        structural_result = resolve_inline_dataclass_structural_target(
+            inline_widget=inline_widget,
+            inline_field_path=inline_prefix,
+            display_path=field_name,
+        )
+        if structural_result is None:
+            return None
+
+        structural_target = structural_result.target
+        return ScrollTarget(
+            field_name=field_name,
+            leaf_name=structural_result.child_field_name,
+            section_path=".".join(inline_prefix),
+            target_widget=structural_target.scroll_widget(),
+            groupbox_widget=None,
+            current_manager=current_manager,
+            is_field=False,
+            structural_flash_target=structural_target,
+        )
+
     def _resolve_inline_dataclass_child_target(
         self,
         *,
@@ -216,7 +318,12 @@ class ScrollableFormMixin:
         child_field_name: str,
     ) -> Optional[ScrollTarget]:
         """Resolve a child field rendered inside an inline dataclass widget."""
-        from pyqt_reactive.protocols import ChildFieldNavigationTargetProvider
+        from pyqt_reactive.protocols import (
+            ChildFieldNavigationTargetProvider,
+        )
+        from pyqt_reactive.widgets.structural_table import (
+            resolve_inline_dataclass_structural_target,
+        )
         from pyqt_reactive.widgets.shared.clickable_help_components import (
             InlineDataclassGroupBox,
         )
@@ -225,11 +332,34 @@ class ScrollableFormMixin:
         if not isinstance(inline_widget, InlineDataclassGroupBox):
             return None
 
-        target_widget: QWidget = inline_widget
+        inline_prefix = tuple(section_parts + [inline_field_name])
+        structural_result = resolve_inline_dataclass_structural_target(
+            inline_widget=inline_widget,
+            inline_field_path=inline_prefix,
+            display_path=field_name,
+            owner_child_field_name=child_field_name,
+        )
+        if structural_result is not None:
+            structural_target = structural_result.target
+            return ScrollTarget(
+                field_name=field_name,
+                leaf_name=structural_result.child_field_name,
+                section_path=".".join(section_parts + [inline_field_name]),
+                target_widget=structural_target.scroll_widget(),
+                groupbox_widget=None,
+                current_manager=current_manager,
+                is_field=False,
+                structural_flash_target=structural_target,
+            )
+
+        target_widget: QWidget
         if isinstance(inline_widget, ChildFieldNavigationTargetProvider):
             child_widget = inline_widget.child_field_navigation_target(child_field_name)
-            if isinstance(child_widget, QWidget):
-                target_widget = child_widget
+            if not isinstance(child_widget, QWidget):
+                return None
+            target_widget = child_widget
+        else:
+            target_widget = inline_widget
 
         section_path = ".".join(section_parts + [inline_field_name])
         return ScrollTarget(
@@ -241,6 +371,23 @@ class ScrollableFormMixin:
             current_manager=current_manager,
             is_field=False,
         )
+
+    def _resolve_nearest_ancestor_scroll_target(self, field_name: str) -> Optional[ScrollTarget]:
+        """Resolve the nearest visible ancestor for a missing deep field path."""
+        parts = tuple(part for part in field_name.split(".") if part)
+        if len(parts) <= 1:
+            return None
+
+        for prefix_length in range(len(parts) - 1, 0, -1):
+            ancestor_path = ".".join(parts[:prefix_length])
+            target = self._resolve_scroll_target(
+                ancestor_path,
+                warn_missing=False,
+            )
+            if target is not None:
+                return target
+
+        return None
 
     def _scroll_viewport(self) -> ScrollViewport:
         """Capture scroll-area geometry once for a navigation operation."""
@@ -268,9 +415,19 @@ class ScrollableFormMixin:
         widget_top = widget_pos.y()
         return widget_top, widget_height, widget_top + widget_height
 
+    def _target_visual_bounds(
+        self,
+        target: ScrollTarget,
+        viewport: ScrollViewport,
+    ) -> tuple[int, int, int]:
+        if target.structural_flash_target is not None:
+            rect = target.structural_flash_target.scroll_rect_in(viewport.content_widget)
+            if rect is not None:
+                return rect.y(), rect.height(), rect.y() + rect.height()
+        return self._target_bounds(self._target_sizing_widget(target), viewport)
+
     def _target_is_fully_visible(self, target: ScrollTarget, viewport: ScrollViewport) -> bool:
-        sizing_widget = self._target_sizing_widget(target)
-        widget_top, _, widget_bottom = self._target_bounds(sizing_widget, viewport)
+        widget_top, _, widget_bottom = self._target_visual_bounds(target, viewport)
         return widget_top >= viewport.viewport_top and widget_bottom <= viewport.viewport_bottom
 
     def _target_scroll_position(self, target: ScrollTarget, viewport: ScrollViewport) -> int:
@@ -279,32 +436,11 @@ class ScrollableFormMixin:
         return self._section_scroll_position(target, viewport)
 
     def _field_scroll_position(self, target: ScrollTarget, viewport: ScrollViewport) -> int:
-        groupbox_for_field = target.groupbox_widget or (
-            self.form_manager.form_tree.groupbox_for_prefix(target.section_path)
-            if target.section_path
-            else None
-        )
-        if groupbox_for_field:
-            gb_top, gb_height, _ = self._target_bounds(groupbox_for_field, viewport)
-            if gb_height <= viewport.viewport_height:
-                gb_center = gb_top + gb_height // 2
-                target_scroll = max(0, gb_center - viewport.viewport_height // 2)
-                logger.debug(
-                    f"📜 SCROLL: Field {target.field_name} - groupbox fits, centering groupbox: "
-                    f"gb_height={gb_height}, viewport_height={viewport.viewport_height}"
-                )
-                return target_scroll
-
-            field_center = self._widget_center(target.target_widget, viewport)
-            logger.debug(f"📜 SCROLL: Field {target.field_name} - groupbox too tall, centering field")
-            return max(0, field_center - viewport.viewport_height // 2)
-
         field_center = self._widget_center(target.target_widget, viewport)
         return max(0, field_center - viewport.viewport_height // 2)
 
     def _section_scroll_position(self, target: ScrollTarget, viewport: ScrollViewport) -> int:
-        sizing_widget = self._target_sizing_widget(target)
-        widget_top, widget_height, _ = self._target_bounds(sizing_widget, viewport)
+        widget_top, widget_height, _ = self._target_visual_bounds(target, viewport)
 
         if widget_height >= viewport.viewport_height:
             logger.debug(
@@ -328,96 +464,26 @@ class ScrollableFormMixin:
 
     def _flash_scroll_target(self, target: ScrollTarget) -> None:
         """Flash the resolved target locally after navigation."""
+        if target.structural_flash_target is not None:
+            target_key = target.field_name
+            target.structural_flash_target.register_flash(self.form_manager, target_key)
+            logger.info(
+                f"⚡ FLASH_DEBUG: Calling queue_flash_local({target_key}) "
+                f"on form_manager scope_id={self.form_manager.scope_id}"
+            )
+            self.form_manager.queue_flash_local(target_key)
+            return
         if target.is_field:
-            self._queue_leaf_flash_for_navigation(target.section_path, target.leaf_name, target.target_widget)
+            self.form_manager._queue_leaf_flash_for_path(target.field_name)
+        elif target.section_path and target.field_name != target.section_path:
+            self.form_manager._queue_leaf_flash_for_path(target.field_name)
         elif target.section_path:
             logger.info(
                 f"⚡ FLASH_DEBUG: Calling queue_flash_local({target.section_path}) "
                 f"on form_manager scope_id={self.form_manager.scope_id}"
             )
             self.form_manager.queue_flash_local(target.section_path)
-            self.form_manager.queue_flash_local(f"tree::{target.section_path}")
         logger.debug(f"⚡ Flashed for {target.field_name} (local)")
-
-    def _queue_leaf_flash_for_navigation(self, section_path: str, leaf_name: str, leaf_widget) -> None:
-        """Queue a leaf flash for navigation to a specific field.
-
-        Uses INVERSE masking: flash the groupbox + all siblings, mask the leaf widget + its label.
-        This highlights "all fields that inherited the change" while keeping
-        the actual changed widget visible.
-
-        For ROOT fields (no section_path), flash the entire form area.
-        """
-        from pyqt_reactive.animation import WindowFlashOverlay
-        from pyqt_reactive.animation.flash_mixin import _GlobalFlashCoordinator
-
-        logger.debug(f"🔍 QUEUE_LEAF_NAV_START section_path='{section_path}' leaf_name='{leaf_name}' leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}")
-
-        # Get the overlay and check what's registered
-        window = self.window()
-        overlay = WindowFlashOverlay._overlays.get(id(window)) if window else None
-
-        if not section_path:
-            # Root field case - use the same approach as editing (line 1146-1209 in parameter_form_manager.py)
-            logger.debug(f"🔍 QUEUE_LEAF_NAV_ROOT section='{leaf_name}'")
-
-            # Get the groupbox (same as editing: parent of form_manager)
-            groupbox = self.form_manager.parent()
-            # Get the leaf widget (same as editing: from widgets dict)
-            actual_leaf_widget = self.form_manager.widgets.get(leaf_name)
-            # Get the label widget (for proper masking)
-            label_widget = self.form_manager.labels.get(leaf_name)
-
-            logger.debug(f"🔍 QUEUE_LEAF_NAV: groupbox={type(groupbox).__name__ if groupbox else None}")
-            logger.debug(f"🔍 QUEUE_LEAF_NAV: leaf_widget={type(actual_leaf_widget).__name__ if actual_leaf_widget else None}")
-            logger.debug(f"🔍 QUEUE_LEAF_NAV: label_widget={type(label_widget).__name__ if label_widget else None}")
-
-            if groupbox and actual_leaf_widget:
-                # Register with groupbox, leaf_widget, AND label_widget
-                leaf_flash_key = f"param_{leaf_name}"
-                logger.debug(f"🔍 QUEUE_LEAF_NAV: register_flash_leaf key='{leaf_flash_key}'")
-                logger.debug(f"🔍 QUEUE_LEAF_NAV: groupbox geometry={groupbox.geometry()}")
-                logger.debug(f"🔍 QUEUE_LEAF_NAV: leaf_widget geometry={actual_leaf_widget.geometry()}")
-                if label_widget:
-                    logger.debug(f"🔍 QUEUE_LEAF_NAV: label_widget geometry={label_widget.geometry()}")
-                # Pass label_widget instead of None for proper masking
-                self.form_manager.register_flash_leaf(leaf_flash_key, groupbox, actual_leaf_widget, label_widget=label_widget)
-
-            # Process pending registrations
-            _GlobalFlashCoordinator.get()._process_pending_registrations()
-
-            # Queue the flash
-            leaf_flash_key = f"param_{leaf_name}"
-            self.form_manager.queue_flash_local(leaf_flash_key)
-            logger.debug(f"🔍 QUEUE_LEAF_NAV_QUEUED key='{leaf_flash_key}'")
-            return
-
-        # Nested field case
-        leaf_flash_key = f"{section_path}.{leaf_name}"
-        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED section='{section_path}' leaf='{leaf_name}' key='{leaf_flash_key}'")
-
-        # Get widgets for nested field - same approach as editing
-        groupbox = self.form_manager.form_tree.groupbox_for_prefix(section_path)
-        nested_manager = self.form_manager.form_tree.nested_manager_for_prefix(section_path)
-        leaf_widget = nested_manager.widgets.get(leaf_name) if nested_manager else None
-        label_widget = nested_manager.labels.get(leaf_name) if nested_manager else None
-
-        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED groupbox={type(groupbox).__name__ if groupbox else None}")
-        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED leaf_widget={type(leaf_widget).__name__ if leaf_widget else None}")
-        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED label_widget={type(label_widget).__name__ if label_widget else None}")
-
-        if groupbox and leaf_widget:
-            # Call SAME method as editing - register_flash_leaf with label_widget
-            logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED: Calling register_flash_leaf")
-            self.form_manager.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=label_widget)
-
-        # Process pending registrations
-        _GlobalFlashCoordinator.get()._process_pending_registrations()
-
-        # Queue the flash
-        self.form_manager.queue_flash_local(leaf_flash_key)
-        self.form_manager.queue_flash_local(f"tree::{section_path}")
-        logger.debug(f"🔍 QUEUE_LEAF_NAV_NESTED_QUEUED leaf='{leaf_flash_key}' tree='tree::{section_path}'")
 
     def select_and_scroll_to_field(self, field_path: str) -> None:
         """Public API for WindowManager navigation protocol.

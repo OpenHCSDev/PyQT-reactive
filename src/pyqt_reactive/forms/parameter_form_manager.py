@@ -8,9 +8,11 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor
 
 from pyqt_reactive.animation import FlashMixin
+from pyqt_reactive.animation.flash_trace import flash_trace
 # FlashableGroupBox not extracted - OpenHCS specific
 from objectstate import (
     DataclassFieldAccess,
+    DottedFieldPath,
     FieldAccessError,
     register_hierarchy_relationship,
     unregister_hierarchy_relationship,
@@ -18,6 +20,7 @@ from objectstate import (
 
 if TYPE_CHECKING:
     from objectstate import ObjectState
+    from pyqt_reactive.widgets.structural_table import StructuralFlashTarget
 
 from .widget_creation_types import ParameterFormManager as ParameterFormManagerABC, _CombinedMeta
 # timer decorator made optional
@@ -126,9 +129,9 @@ class ParameterFormTypeResolver:
 
     @staticmethod
     def path_has_children(parameters: Dict[str, Any], dotted_path: str) -> bool:
-        prefix = f"{dotted_path}."
+        owner_path = DottedFieldPath(dotted_path)
         return any(
-            path.startswith(prefix)
+            owner_path.contains_path(path)
             for path in parameters
             if path != dotted_path
         )
@@ -141,11 +144,14 @@ class ParameterFormTypeResolver:
                 (key, value) for key, value in state.parameters.items() if "." not in key
             )
 
-        prefix_dot = f"{field_id}."
+        owner_path = DottedFieldPath(field_id)
         result = ParameterDefaultsByName()
         for path, value in state.parameters.items():
-            if path.startswith(prefix_dot):
-                remainder = path[len(prefix_dot):]
+            if owner_path.contains_path(path) and path != field_id:
+                suffix = path[len(field_id):]
+                if not suffix.startswith("."):
+                    continue
+                remainder = suffix[1:]
                 if "." not in remainder:
                     result[remainder] = value
         return result
@@ -449,6 +455,7 @@ class ParameterFormManager(
             # STEP 3: Initialize VIEW-only attributes
             self.widgets, self.reset_buttons, self.nested_managers = {}, {}, {}
             self.labels = {}  # Track LabelWithHelp widgets for bold styling
+            self._field_flash_targets: Dict[str, "StructuralFlashTarget"] = {}
             self._pending_nested_managers: Dict[str, 'ParameterFormManager'] = {}
             self.form_tree = ParameterFormTreeIndex(self)
             self.chrome_sync = ParameterFormChromeSync(self)
@@ -458,12 +465,14 @@ class ParameterFormManager(
             self._dispatching = False
             self._cross_window_refresh_timer: Optional[QTimer] = None
             self.shared_reset_fields = set()  # VIEW-only: tracks field paths for cross-window reset styling
+            self._locally_applied_model_paths: Set[str] = set()
 
             # CROSS-WINDOW: Connect to change notifications (only root managers)
-            # Nested managers are internal to their window and should not participate in cross-window updates
+            # Nested managers are internal to their window and should not participate in cross-window updates.
+            # Root forms subscribe to their ObjectState's path-scoped resolved-change signal below; the
+            # registry-wide listener remains for non-form preview/list consumers that do not own an ObjectState.
             if self._parent_manager is None:
                 from objectstate import ObjectStateRegistry
-                ObjectStateRegistry.connect_listener(self._on_live_context_changed)
                 # Invalidate cache so newly opened windows build fresh snapshots
                 ObjectStateRegistry.increment_token(notify=False)
             
@@ -494,6 +503,9 @@ class ParameterFormManager(
             # ANTI-DUCK-TYPING: Initialize ABC-based widget operations
             self._widget_ops = WidgetOperations()
             self._context_event_coordinator = None
+            self._pending_path_scoped_state_refresh: set[str] | None = None
+            self._pending_resolved_changed_paths: Set[str] = set()
+            self._resolved_changed_flush_scheduled = False
 
             # GAME ENGINE: Initialize flash overlay state BEFORE building widgets
             # (widgets call register_flash_groupbox during build_form)
@@ -525,7 +537,7 @@ class ParameterFormManager(
 
             # Materialized state changes: Subscribe once (root only)
             if self._parent_manager is None:
-                self.state.on_state_changed(self.chrome_sync.state_changed)
+                self.state.on_state_changed(self._on_materialized_state_changed)
 
             # STEP 8: _user_set_fields starts empty and is populated only when user edits widgets
             # (via _emit_parameter_change). Do NOT populate during initialization, as that would
@@ -767,7 +779,12 @@ class ParameterFormManager(
 
         # Register with root manager for async completion tracking
         # Count parameters with nested id
-        param_count = sum(1 for path in self.state.parameters.keys() if path.startswith(f'{nested_id}.'))
+        nested_path = DottedFieldPath(nested_id)
+        param_count = sum(
+            1
+            for path in self.state.parameters.keys()
+            if path != nested_id and nested_path.contains_path(path)
+        )
         root_manager = self
         while root_manager._parent_manager is not None:
             root_manager = root_manager._parent_manager
@@ -847,18 +864,25 @@ class ParameterFormManager(
         # ANTI-DUCK-TYPING: Skip widget update for nested containers (they don't implement ValueSettable)
         if param_name in self.widgets:
             widget = self.widgets[param_name]
-            from pyqt_reactive.protocols.widget_protocols import ValueSettable
-            if isinstance(widget, ValueSettable):
+            from pyqt_reactive.protocols.widget_protocols import (
+                RawResolvedValueSettable,
+                ValueSettable,
+            )
+            if isinstance(widget, ValueSettable) and not isinstance(
+                widget,
+                RawResolvedValueSettable,
+            ):
                 self._widget_service.update_widget_value(widget, converted_value, param_name, False, self)
 
-        # ATOMIC: If this state has a parent (e.g., function in a step), wrap in atomic
-        # This coalesces function parameter changes with parent step updates into one undo
+        # ATOMIC: If this state has a parent, wrap in atomic so forwarded parent
+        # updates remain one undo step while preserving this state's scope as the
+        # semantic edit owner.
         has_parent = self.state._parent_state is not None
         logger.debug(f"[ATOMIC_CHECK] field_id={self.field_id}, has_parent={has_parent}, state={self.state}")
         if has_parent:
             from objectstate import ObjectStateRegistry
             logger.debug(f"[ATOMIC_CHECK] Entering atomic block for {param_name}")
-            with ObjectStateRegistry.atomic("edit func parameter"):
+            with ObjectStateRegistry.atomic("edit parameter", scope_id=self.scope_id):
                 # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
                 # This is INSIDE the atomic block so parent step updates are also coalesced
                 event = FieldChangeEvent(param_name, converted_value, self)
@@ -868,9 +892,6 @@ class ParameterFormManager(
             # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
             event = FieldChangeEvent(param_name, converted_value, self)
             FieldChangeDispatcher.instance().dispatch(event)
-
-        # Update label styling after parameter change
-        self.chrome_sync.update_label_styling(param_name)
 
     def reset_parameter(self, param_name: str) -> None:
         """Reset parameter to signature default.
@@ -908,15 +929,59 @@ class ParameterFormManager(
 
     def queue_field_flash(self, full_path: str) -> None:
         """Queue flash feedback for a changed field path."""
+        flash_trace(
+            "form.queue_field_flash",
+            manager=self.field_id,
+            root=self.form_tree.root().field_id,
+            path=full_path,
+        )
         self.form_tree.root()._queue_leaf_flash_for_path(full_path)
 
-    def sync_after_model_field_change(self, param_name: str, full_path: str) -> None:
+    def flash_scope_id(self) -> str | None:
+        """Return this form's ObjectState scope for local flash isolation."""
+        return self.scope_id
+
+    def sync_after_model_field_change(
+        self,
+        param_name: str,
+        full_path: str,
+        *,
+        queue_flash: bool = True,
+        changed_paths: Set[str] | None = None,
+    ) -> None:
         """Synchronize visible field chrome after ObjectState accepts a change."""
-        self.chrome_sync.after_model_field_change(param_name, full_path)
+        refreshed_compound_owner_paths: set[str] = set()
+        if changed_paths:
+            refreshed_compound_owner_paths = (
+                self.chrome_sync.refresh_widgets_for_paths(changed_paths)
+                or set()
+            )
+        self._locally_applied_model_paths.add(full_path)
+        self.chrome_sync.after_model_field_change(
+            param_name,
+            full_path,
+            queue_flash=queue_flash,
+            changed_paths=changed_paths,
+            refreshed_compound_owner_paths=refreshed_compound_owner_paths,
+        )
 
     def sync_enabled_field_visuals(self, value: ParameterValue) -> None:
         """Synchronize enabled-field dependent styling after an enabled change."""
         self.chrome_sync.enabled_field_visuals(value)
+
+    def register_field_flash_target(
+        self,
+        field_name: str,
+        target: "StructuralFlashTarget",
+    ) -> None:
+        """Register a field-owned structural flash target."""
+
+        self._field_flash_targets[field_name] = target
+
+    def field_flash_target(self, field_name: str) -> "StructuralFlashTarget | None":
+        """Return a field-owned structural flash target, if one was declared."""
+
+        return self._field_flash_targets.get(field_name)
 
     def update_groupbox_dirty_markers(self, dirty_prefixes: set, sig_diff_prefixes: set = None) -> None:
         """Update groupbox titles with dirty markers and signature diff underline.
@@ -1020,7 +1085,7 @@ class ParameterFormManager(
 
             # Unregister state change callback (root only)
             if self._parent_manager is None:
-                self.state.off_state_changed(self.chrome_sync.state_changed)
+                self.state.off_state_changed(self._on_materialized_state_changed)
 
             if self.context_obj is not None and not self._parent_manager:
                 unregister_hierarchy_relationship(type(self.object_instance))
@@ -1035,6 +1100,20 @@ class ParameterFormManager(
         Called during time-travel to sync Qt widgets with restored ObjectState.
         """
         self.chrome_sync.refresh_widgets_from_state()
+
+    def _on_materialized_state_changed(self, changed_paths: Set[str]) -> None:
+        """Refresh dirty/signature chrome after materialized ObjectState changes."""
+        if self._parent_manager is not None:
+            return
+        if changed_paths:
+            if self._resolved_changed_flush_scheduled:
+                if self._pending_path_scoped_state_refresh is None:
+                    self._pending_path_scoped_state_refresh = set()
+                self._pending_path_scoped_state_refresh.update(changed_paths)
+                return
+            self.chrome_sync.state_changed_for_paths(changed_paths)
+            return
+        self.chrome_sync.state_changed()
 
     # ==================== GROUPBOX FLASH ANIMATION (FlashMixin) ====================
 
@@ -1054,7 +1133,32 @@ class ParameterFormManager(
         if self._parent_manager is not None:
             return  # Only root manager handles this
 
+        self._pending_resolved_changed_paths.update(changed_paths)
+        if self._resolved_changed_flush_scheduled:
+            return
+        self._resolved_changed_flush_scheduled = True
+        QTimer.singleShot(0, self._flush_resolved_values_changed)
+
+    def _flush_resolved_values_changed(self) -> None:
+        """Flush coalesced resolved-value UI refresh for one root manager."""
+        if self._parent_manager is not None:
+            return
+        changed_paths = set(self._pending_resolved_changed_paths)
+        self._pending_resolved_changed_paths.clear()
+        self._resolved_changed_flush_scheduled = False
+        if not changed_paths:
+            return
+        local_paths = set(self._locally_applied_model_paths)
+        self._locally_applied_model_paths.clear()
+        widget_refresh_paths = self._widget_refresh_paths_for_changed_paths(
+            changed_paths,
+            local_paths,
+        )
+        deferred_state_refresh_paths = self._pending_path_scoped_state_refresh or set()
+        state_refresh_paths = changed_paths | deferred_state_refresh_paths
+
         from objectstate import ObjectStateRegistry
+        from objectstate.time_travel_profile import TimeTravelProfiler
 
         logger.debug(f"🔔 CALLBACK_LEAK_DEBUG: _on_resolved_values_changed invoked for {self.field_id}, "
                    f"changed_paths={changed_paths}")
@@ -1064,26 +1168,58 @@ class ParameterFormManager(
         # drive flash/styling. Local form edits have already set the same value;
         # external ObjectState mutations (MCP, restore, time travel) need this
         # listener to pull the visible widget values from ObjectState.
-        self.chrome_sync.refresh_widgets_for_paths(changed_paths)
+        with TimeTravelProfiler.phase(
+            "pyqt.form.refresh_widgets_for_paths",
+            scope=self.state.scope_id,
+            paths=len(changed_paths),
+        ):
+            refreshed_compound_owner_paths: set[str] = set()
+            if widget_refresh_paths:
+                refreshed_compound_owner_paths.update(
+                    self.chrome_sync.refresh_widgets_for_paths(widget_refresh_paths)
+                    or set()
+                )
+            if state_refresh_paths:
+                self.chrome_sync.state_changed_for_paths(
+                    state_refresh_paths,
+                    refreshed_compound_owner_paths,
+                )
+            self._pending_path_scoped_state_refresh = None
 
         if ObjectStateRegistry._in_time_travel:
             # CRITICAL: Refresh enabled styling for all managers after time-travel
             # Widget updates bypass the FieldChangeDispatcher (signals blocked), so styling
             # isn't triggered automatically. We must manually sync styling to match restored state.
-            self._apply_to_nested_managers(
-                lambda _, manager: manager._enabled_field_styling_service.refresh_enabled_styling(manager)
-            )
+            with TimeTravelProfiler.phase(
+                "pyqt.form.refresh_enabled_styling",
+                scope=self.state.scope_id,
+            ):
+                self._apply_to_nested_managers(
+                    lambda _, manager: manager._enabled_field_styling_service.refresh_enabled_styling(manager)
+                )
 
         # For each changed path, register and queue a LEAF flash
-        for path in changed_paths:
-            if self.field_id:
-                if '.' in path:
-                    path_prefix = path.rsplit('.', 1)[0]
-                    if path_prefix != self.field_id:
+        with TimeTravelProfiler.phase(
+            "pyqt.form.queue_flash_paths",
+            scope=self.state.scope_id,
+            paths=len(changed_paths),
+        ):
+            flash_paths: list[str] = []
+            for path in ParameterFormManager._flash_paths_for_changed_paths(changed_paths):
+                if self.field_id:
+                    if '.' in path:
+                        path_prefix = path.rsplit('.', 1)[0]
+                        if path_prefix != self.field_id:
+                            continue
+                    else:
                         continue
-                else:
-                    continue
-            self._queue_leaf_flash_for_path(path)
+                queued_path = self._queue_leaf_flash_for_path(
+                    path,
+                    queue_flash=False,
+                )
+                if queued_path is not None:
+                    flash_paths.append(queued_path)
+            self.queue_flash_local_batch(flash_paths)
 
         if changed_paths:
             sample_path = next(iter(changed_paths))
@@ -1091,39 +1227,153 @@ class ParameterFormManager(
             sample_prefix = sample_path.rsplit('.', 1)[0] if '.' in sample_path else None
             logger.debug(f"[FLASH TRAIL] prefix={sample_prefix}, leaf_field={sample_leaf}")
 
-    def _queue_leaf_flash_for_path(self, path: str) -> None:
+    @classmethod
+    def _exclude_local_edit_paths(
+        cls,
+        changed_paths: Set[str],
+        local_paths: Set[str],
+    ) -> Set[str]:
+        """Return changed paths that were not just applied by this form."""
+        if not local_paths:
+            return set(changed_paths)
+        return {
+            changed_path
+            for changed_path in changed_paths
+            if not any(
+                DottedFieldPath(local_path).contains_path(changed_path)
+                for local_path in local_paths
+            )
+        }
+
+    def _widget_refresh_paths_for_changed_paths(
+        self,
+        changed_paths: Set[str],
+        local_paths: Set[str],
+    ) -> Set[str]:
+        """Return changed paths whose visible widget value must be pulled from ObjectState."""
+
+        if not local_paths:
+            return set(changed_paths)
+
+        return {
+            changed_path
+            for changed_path in changed_paths
+            if (
+                not any(
+                    DottedFieldPath(local_path).contains_path(changed_path)
+                    for local_path in local_paths
+                )
+                or self._path_needs_resolved_preview_refresh(changed_path)
+            )
+        }
+
+    def _path_needs_resolved_preview_refresh(self, path: str) -> bool:
+        """Return whether a raw ``None`` path needs its inherited preview repainted."""
+
+        missing = object()
+        raw_value = self.state.parameters.get(path, missing)
+        if raw_value is not None:
+            return False
+        return self.state.get_resolved_value(path) is not None
+
+    @staticmethod
+    def _flash_paths_for_changed_paths(changed_paths: Set[str]) -> tuple[str, ...]:
+        """Return the most specific visual paths from an ObjectState change set."""
+
+        from objectstate import StructuralFieldPath
+
+        structural_groups: dict[str, list[str]] = {}
+        nonstructural_paths: list[str] = []
+        for path in sorted(changed_paths):
+            structural_path = StructuralFieldPath.from_display_path(path)
+            if structural_path is None:
+                nonstructural_paths.append(path)
+                continue
+            structural_groups.setdefault(
+                structural_path.owner_field_path.value,
+                [],
+            ).append(path)
+
+        selected_paths: set[str] = set()
+        suppressed_paths: set[str] = set()
+        for owner_path, leaf_paths in structural_groups.items():
+            if len(leaf_paths) == 1:
+                selected_paths.add(leaf_paths[0])
+                suppressed_paths.add(owner_path)
+                continue
+            selected_paths.add(owner_path)
+            suppressed_paths.update(leaf_paths)
+
+        for path in nonstructural_paths:
+            if path in suppressed_paths:
+                continue
+            path_owner = DottedFieldPath(path)
+            if any(
+                other != path
+                and path_owner.contains_path(other)
+                for other in selected_paths
+            ):
+                continue
+            selected_paths.add(path)
+        return tuple(sorted(selected_paths))
+
+    def _queue_leaf_flash_for_path(
+        self,
+        path: str,
+        *,
+        queue_flash: bool = True,
+    ) -> str | None:
         """Queue a leaf flash for a changed path.
 
         Finds the groupbox, leaf widget, and its label, registers a leaf flash element
         (which masks title + leaf_widget + label_widget), and queues the flash animation.
         """
         if self._parent_manager is not None:
-            self.form_tree.root()._queue_leaf_flash_for_path(path)
-            return
+            flash_trace(
+                "form.leaf_flash.delegate_to_root",
+                manager=self.field_id,
+                root=self.form_tree.root().field_id,
+                path=path,
+            )
+            return self.form_tree.root()._queue_leaf_flash_for_path(
+                path,
+                queue_flash=queue_flash,
+            )
 
+        flash_trace("form.leaf_flash.start", manager=self.field_id, path=path)
         logger.debug("[FLASH TRAIL] _queue_leaf_flash_for_path START: path=%s", path)
+        if self._queue_structural_flash_for_object_state_path(
+            path,
+            queue_flash=queue_flash,
+        ):
+            return path
+
         # Find the prefix (groupbox) and leaf field name
         prefix = self.form_tree.matching_prefix(path)
         leaf_field = path.split('.')[-1] if '.' in path else path
 
-        # SPECIAL CASE: For enable/disable toggles, flash the whole groupbox
-        # so styling changes are visible (don't mask widgets).
-        from python_introspect import Enableable
-
-        enabled_field = Enableable.require_parameter_name()
         if prefix:
             # Nested dataclass case: find groupbox and nested manager
             groupbox = self.form_tree.groupbox_for_prefix(prefix)
             if not groupbox:
+                flash_trace(
+                    "form.leaf_flash.skip_no_groupbox",
+                    manager=self.field_id,
+                    path=path,
+                    prefix=prefix,
+                )
                 logger.debug(f"[FLASH] No groupbox found for prefix={prefix}")
-                return
+                return None
             nested_manager = self.form_tree.nested_manager_for_prefix(prefix)
             if not nested_manager:
+                flash_trace(
+                    "form.leaf_flash.skip_no_nested_manager",
+                    manager=self.field_id,
+                    path=path,
+                    prefix=prefix,
+                )
                 logger.debug(f"[FLASH] No nested manager found for prefix={prefix}")
-                return
-            nested_remainder = path[len(prefix) + 1:] if path.startswith(prefix + ".") else ""
-            if self._queue_inline_dataclass_flash_for_path(nested_manager, nested_remainder):
-                return
+                return None
             leaf_widget = nested_manager.widgets.get(leaf_field)
             label_widget = nested_manager.labels.get(leaf_field)
             logger.debug(
@@ -1131,23 +1381,27 @@ class ParameterFormManager(
                 type(leaf_widget).__name__ if leaf_widget else None,
                 type(label_widget).__name__ if label_widget else None,
             )
-            leaf_flash_key = f"{prefix}.{leaf_field}"
-            tree_key = f"tree::{prefix}"
+            flash_path = path
         else:
             # Flat parameter case (e.g., function parameters): use this manager directly
             # Parent widget (GroupBoxWithHelp) serves as the groupbox container
             groupbox = self.parent()
             leaf_widget = self.widgets.get(leaf_field)
             label_widget = self.labels.get(leaf_field)
-            leaf_flash_key = f"param_{leaf_field}"
-            tree_key = None  # No tree item for flat parameters
+            flash_path = path
 
             from pyqt_reactive.widgets.shared.clickable_help_components import FlashableGroupBox
             if isinstance(leaf_widget, FlashableGroupBox):
-                self.queue_flash_local(leaf_widget._flash_key)
-                return
-            if self._queue_inline_dataclass_flash_for_path(self, path):
-                return
+                flash_trace(
+                    "form.leaf_flash.flash_groupbox_widget",
+                    manager=self.field_id,
+                    path=path,
+                    widget=type(leaf_widget).__qualname__,
+                )
+                self.register_flash_groupbox(path, leaf_widget)
+                if queue_flash:
+                    self.queue_flash_local(path)
+                return path
 
         def _find_function_pane_ancestor(widget: QWidget | None) -> QWidget | None:
             from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
@@ -1161,97 +1415,159 @@ class ParameterFormManager(
 
         pane = _find_function_pane_ancestor(groupbox) if groupbox is not None else None
 
-        enabled_suffix = "_enabled"
-        if (leaf_field == enabled_field or leaf_field.endswith(enabled_suffix)) and groupbox is not None:
-            if pane is not None:
-                groupbox = pane
-            logger.debug(
-                "[FLASH] Enabled toggle detected: leaf_field=%s prefix=%s groupbox=%s flash_key=%s",
-                leaf_field,
-                prefix,
-                type(groupbox).__name__,
-                groupbox._flash_key if pane is not None else prefix,
+        target_owner = nested_manager if prefix else self
+        field_flash_target = target_owner.field_flash_target(leaf_field)
+        if field_flash_target is not None:
+            flash_trace(
+                "form.leaf_flash.register_field_target",
+                manager=self.field_id,
+                path=path,
+                prefix=prefix,
+                leaf=leaf_field,
+                target=type(field_flash_target).__qualname__,
             )
-            if pane is not None:
-                logger.debug(
-                    "[FLASH] Enabled toggle: queueing pane flash key=%s (scoped=%s)",
-                    groupbox._flash_key,
-                    self._get_scoped_flash_key(groupbox._flash_key)
-                )
-            flash_key = groupbox._flash_key if pane is not None else (
-                prefix if prefix else leaf_flash_key
-            )
-            self.register_flash_groupbox_full(flash_key, groupbox)
-            self.queue_flash_local(flash_key)
-            logger.debug("[FLASH] Enabled toggle: queued full groupbox flash key=%s", flash_key)
-
-            # Keep the configuration hierarchy tree in sync with enable toggles.
-            # Non-enabled edits queue both the leaf flash and the tree::prefix flash below;
-            # the enabled-toggle special-case must do the same.
-            if tree_key:
-                self.queue_flash_local(tree_key)
-            return
+            field_flash_target.register_flash(self, path)
+            if queue_flash:
+                self.queue_flash_local(path)
+            return path
 
         # For nested parameters inside function panes, flash the pane to include title rows
         if pane is not None:
             groupbox = pane
 
         if not leaf_widget:
-            # Fallback to groupbox flash if leaf widget not found
+            # Some fields render as container-only sections; flash the rendered
+            # field container when no separate leaf widget exists.
             if prefix:
-                logger.debug(f"[FLASH] No leaf widget for {leaf_field}, falling back to groupbox flash")
-                self.queue_flash_local(prefix)
+                flash_trace(
+                    "form.leaf_flash.container_target",
+                    manager=self.field_id,
+                    path=path,
+                    prefix=prefix,
+                    leaf=leaf_field,
+                    groupbox=type(groupbox).__qualname__ if groupbox is not None else None,
+                )
+                logger.debug("[FLASH] No leaf widget for %s; flashing field container", leaf_field)
+                self.register_flash_groupbox(path, groupbox)
+                if queue_flash:
+                    self.queue_flash_local(path)
+                return path
             else:
+                flash_trace(
+                    "form.leaf_flash.skip_no_flat_leaf",
+                    manager=self.field_id,
+                    path=path,
+                    leaf=leaf_field,
+                )
                 logger.debug(f"[FLASH] No leaf widget for flat param {leaf_field}")
-            return
+            return None
 
         # Flat parameter case: flash the full groupbox, mask only the changed field
         if not prefix:
             # Get label widget for proper masking (same as nested fields)
             label_widget = self.labels.get(leaf_field)
-            self.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=label_widget)
-            self.queue_flash_local(leaf_flash_key)
-            return
+            flash_trace(
+                "form.leaf_flash.register_flat_leaf",
+                manager=self.field_id,
+                path=flash_path,
+                leaf=leaf_field,
+                widget=type(leaf_widget).__qualname__,
+                groupbox=type(groupbox).__qualname__ if groupbox is not None else None,
+            )
+            self.register_flash_leaf(flash_path, groupbox, leaf_widget, label_widget=label_widget)
+            if queue_flash:
+                self.queue_flash_local(flash_path)
+            return flash_path
 
         # Register leaf flash element (dynamic registration for this specific change)
-        logger.debug("[FLASH TRAIL] Calling register_flash_leaf with leaf_flash_key=%s", leaf_flash_key)
-        self.register_flash_leaf(leaf_flash_key, groupbox, leaf_widget, label_widget=label_widget)
+        logger.debug("[FLASH TRAIL] Calling register_flash_leaf with flash_path=%s", flash_path)
+        flash_trace(
+            "form.leaf_flash.register_nested_leaf",
+            manager=self.field_id,
+            path=flash_path,
+            prefix=prefix,
+            leaf=leaf_field,
+            widget=type(leaf_widget).__qualname__,
+            groupbox=type(groupbox).__qualname__ if groupbox is not None else None,
+        )
+        self.register_flash_leaf(flash_path, groupbox, leaf_widget, label_widget=label_widget)
 
         # Queue leaf flash (groupbox with inverse masking for the specific widget)
-        self.queue_flash_local(leaf_flash_key)
-        logger.debug("[FLASH TRAIL] Queued flash for leaf_flash_key=%s", leaf_flash_key)
-        
-        # Also queue tree item flash if this is a nested parameter
-        if tree_key:
-            self.queue_flash_local(tree_key)
-            
-        logger.debug(f"[FLASH] Queued leaf flash: key={leaf_flash_key}, leaf={leaf_field}")
+        if queue_flash:
+            self.queue_flash_local(flash_path)
+        logger.debug("[FLASH TRAIL] Queued flash for flash_path=%s", flash_path)
+        logger.debug(f"[FLASH] Queued leaf flash: key={flash_path}, leaf={leaf_field}")
+        return flash_path
 
-    def _queue_inline_dataclass_flash_for_path(
+    def _queue_structural_flash_for_object_state_path(
         self,
-        manager: 'ParameterFormManager',
         path: str,
+        *,
+        queue_flash: bool = True,
     ) -> bool:
-        """Flash an inline dataclass value widget for one of its child paths."""
-        if "." not in path:
-            return False
+        """Resolve an ObjectState path to an inline structural target and flash it."""
 
-        container_field = path.split(".", 1)[0]
-        container_widget = manager.widgets.get(container_field)
-        from pyqt_reactive.widgets.shared.clickable_help_components import FlashableGroupBox
-        if not isinstance(container_widget, FlashableGroupBox):
-            return False
-
-        self.queue_flash_local(container_widget._flash_key)
-        logger.debug(
-            "[FLASH] Queued inline dataclass flash: key=%s child_path=%s",
-            container_widget._flash_key,
-            path,
+        from pyqt_reactive.widgets.structural_table import (
+            resolve_inline_dataclass_structural_target,
         )
-        return True
 
-    # PAINT-TIME API: get_flash_color_for_key() inherited from VisualUpdateMixin
-    # Groupboxes and tree items call this during paint to get current flash color
+        for manager in self._iter_form_managers():
+            for field_name, widget in manager.widgets.items():
+                owner_path = manager._object_state_path_for_field(field_name)
+                if not DottedFieldPath(owner_path).contains_path(path):
+                    continue
+                child_field_name = self._relative_child_field_name(
+                    owner_path,
+                    path,
+                )
+                structural_result = resolve_inline_dataclass_structural_target(
+                    inline_widget=widget,
+                    inline_field_path=tuple(owner_path.split(".")),
+                    display_path=path,
+                    owner_child_field_name=child_field_name,
+                )
+                if structural_result is None:
+                    continue
+                flash_trace(
+                    "form.structural_flash.match",
+                    manager=self.field_id,
+                    path=path,
+                    owner=owner_path,
+                    field=field_name,
+                    child=structural_result.child_field_name,
+                    target=type(structural_result.target).__qualname__,
+                )
+                structural_result.target.register_flash(self, path)
+                if queue_flash:
+                    self.queue_flash_local(path)
+                logger.debug(
+                    "[FLASH] Queued structural ObjectState flash: key=%s child_path=%s",
+                    path,
+                    structural_result.child_field_name,
+                )
+                return True
+        return False
+
+    def _iter_form_managers(self):
+        """Yield this form manager and descendants in ObjectState path order."""
+
+        yield self
+        for nested_manager in self.nested_managers.values():
+            yield from nested_manager._iter_form_managers()
+
+    def _object_state_path_for_field(self, field_name: str) -> str:
+        """Return the ObjectState display path for a direct field."""
+
+        return f"{self.field_id}.{field_name}" if self.field_id else field_name
+
+    @staticmethod
+    def _relative_child_field_name(owner_path: str, path: str) -> str | None:
+        """Return the direct child field under an ObjectState owner path."""
+
+        return DottedFieldPath(owner_path).direct_child_name(path)
+
+    # PAINT-TIME API: ObjectState-path flash lookup inherited from VisualUpdateMixin.
+    # Groupboxes and item delegates use the registered ObjectState path to get current flash color.
 
     def _execute_text_update(self) -> None:
         """Execute queued external repaint callbacks for form companion widgets."""

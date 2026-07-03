@@ -9,6 +9,10 @@ semantic color scheme references.
 import logging
 from enum import Enum
 
+from PyQt6.QtGui import QColor
+
+from pyqt_reactive.forms import layout_constants
+
 from .color_scheme import ColorScheme
 
 logger = logging.getLogger(__name__)
@@ -76,6 +80,7 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for dialog styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         return f"""
             QDialog {{
                 background-color: {cs.to_hex(cs.window_bg)};
@@ -84,7 +89,7 @@ class StyleSheetGenerator:
             QGroupBox {{
                 font-weight: bold;
                 border: none;
-                border-radius: 5px;
+                border-radius: {layout.dialog_groupbox_corner_radius}px;
                 margin-top: 5px;
                 padding-top: 5px;
                 background-color: {cs.to_hex(cs.panel_bg)};
@@ -103,7 +108,7 @@ class StyleSheetGenerator:
                 background-color: {cs.to_hex(cs.input_bg)};
                 color: {cs.to_hex(cs.input_text)};
                 border: 1px solid {cs.to_hex(cs.input_border)};
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 padding: 5px;
             }}
             QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
@@ -122,12 +127,13 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for tree/list widget styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         return f"""
             QTreeWidget, QListWidget {{
                 background-color: {cs.to_hex(cs.panel_bg)};
                 color: {cs.to_hex(cs.text_primary)};
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 selection-background-color: {cs.to_hex(cs.selection_bg)};
             }}
             QTreeWidget::item, QListWidget::item {{
@@ -167,12 +173,13 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for table widget styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         return f"""
             QTableWidget {{
                 background-color: {cs.to_hex(cs.panel_bg)};
                 color: {cs.to_hex(cs.text_primary)};
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 gridline-color: {cs.to_hex(cs.border_color)};
                 selection-background-color: {cs.to_hex(cs.selection_bg)};
             }}
@@ -206,13 +213,14 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for button styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         return f"""
             QPushButton {{
                 background-color: {cs.to_hex(cs.button_normal_bg)};
                 color: {cs.to_hex(cs.button_text)};
                 border: none;
-                border-radius: 3px;
-                padding: 5px;
+                border-radius: {layout.widget_corner_radius}px;
+                padding: {layout.widget_padding}px;
             }}
             QPushButton:hover {{
                 background-color: {cs.to_hex(cs.button_hover_bg)};
@@ -234,13 +242,14 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for combo box styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         return f"""
             QComboBox {{
                 background-color: {cs.to_hex(cs.input_bg)};
                 color: {cs.to_hex(cs.input_text)};
                 border: 1px solid {cs.to_hex(cs.input_border)};
-                border-radius: 3px;
-                padding: 5px;
+                border-radius: {layout.widget_corner_radius}px;
+                padding: {layout.widget_padding}px;
             }}
             QComboBox::drop-down {{
                 border: none;
@@ -264,17 +273,18 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for progress bar styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         return f"""
             QProgressBar {{
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 background-color: {cs.to_hex(cs.progress_bg)};
                 color: {cs.to_hex(cs.text_primary)};
                 text-align: center;
             }}
             QProgressBar::chunk {{
                 background-color: {cs.to_hex(cs.progress_fill)};
-                border-radius: 2px;
+                border-radius: {layout.progress_chunk_corner_radius}px;
             }}
         """
     
@@ -286,12 +296,13 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for frame styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         return f"""
             QFrame {{
                 background-color: {cs.to_hex(cs.frame_bg)};
                 border: none;
-                border-radius: 3px;
-                padding: 5px;
+                border-radius: {layout.widget_corner_radius}px;
+                padding: {layout.widget_padding}px;
             }}
         """
 
@@ -303,6 +314,7 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for tab widget styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         # Use grey shades for tabs instead of blue selection color
         # Lighter grey for inactive tabs, darker grey for selected tab
         inactive_tab_bg = cs.button_normal_bg  # Lighter grey
@@ -311,15 +323,15 @@ class StyleSheetGenerator:
         return f"""
             QTabWidget::pane {{
                 border: 1px solid {cs.to_hex(cs.border_color)};
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 background-color: {cs.to_hex(cs.panel_bg)};
             }}
             QTabBar::tab {{
                 background-color: {cs.to_hex(inactive_tab_bg)};
                 color: {cs.to_hex(cs.text_secondary)};
                 border: none;
-                border-top-left-radius: 3px;
-                border-top-right-radius: 3px;
+                border-top-left-radius: {layout.widget_corner_radius}px;
+                border-top-right-radius: {layout.widget_corner_radius}px;
                 padding: 8px 16px;
                 margin-right: 2px;
             }}
@@ -398,12 +410,11 @@ class StyleSheetGenerator:
         Returns:
             str: Complete QStyleSheet for config window styling
         """
-        from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-
         cs = self.color_scheme
-        widget_padding = CURRENT_LAYOUT.widget_padding
-        groupbox_margin_top = CURRENT_LAYOUT.groupbox_margin_top
-        groupbox_padding_top = CURRENT_LAYOUT.groupbox_padding_top
+        layout = layout_constants.CURRENT_LAYOUT
+        widget_padding = layout.widget_padding
+        groupbox_margin_top = layout.groupbox_margin_top
+        groupbox_padding_top = layout.groupbox_padding_top
 
         return f"""
             QDialog {{
@@ -413,7 +424,7 @@ class StyleSheetGenerator:
             QGroupBox {{
                 font-weight: bold;
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.groupbox_corner_radius}px;
                 margin-top: {groupbox_margin_top}px;
                 padding-top: {groupbox_padding_top}px;
                 background-color: {cs.to_hex(cs.panel_bg)};
@@ -432,7 +443,7 @@ class StyleSheetGenerator:
                 background-color: {cs.to_hex(cs.input_bg)};
                 color: {cs.to_hex(cs.input_text)};
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 padding: {widget_padding}px;
             }}
             QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
@@ -442,7 +453,7 @@ class StyleSheetGenerator:
                 background-color: {cs.to_hex(cs.button_normal_bg)};
                 color: {cs.to_hex(cs.button_text)};
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 padding: {widget_padding}px;
             }}
             QPushButton:hover {{
@@ -461,7 +472,7 @@ class StyleSheetGenerator:
             QFrame {{
                 background-color: {cs.to_hex(cs.panel_bg)};
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 padding: 0px;
             }}
         """
@@ -474,6 +485,7 @@ class StyleSheetGenerator:
             dict: Dictionary with button styles for generic, reset, cancel, save
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
 
         return {
             "generic": f"""
@@ -481,7 +493,7 @@ class StyleSheetGenerator:
                     background-color: {cs.to_hex(cs.button_normal_bg)};
                     color: {cs.to_hex(cs.button_text)};
                     border: 1px solid {cs.to_hex(cs.border_light)};
-                    border-radius: 3px;
+                    border-radius: {layout.widget_corner_radius}px;
                     padding: 8px;
                     font-size: 11px;
                 }}
@@ -497,7 +509,7 @@ class StyleSheetGenerator:
                     background-color: {cs.to_hex(cs.button_normal_bg)};
                     color: {cs.to_hex(cs.button_text)};
                     border: none;
-                    border-radius: 3px;
+                    border-radius: {layout.widget_corner_radius}px;
                     padding: 6px 10px;
                     font-size: 11px;
                 }}
@@ -507,13 +519,18 @@ class StyleSheetGenerator:
                 QPushButton:pressed {{
                     background-color: {cs.to_hex(cs.button_pressed_bg)};
                 }}
+                QPushButton:disabled {{
+                    background-color: {cs.to_hex(cs.button_disabled_bg)};
+                    color: {cs.to_hex(cs.button_disabled_text)};
+                    border: none;
+                }}
             """,
             "reset": f"""
                 QPushButton {{
                     background-color: {cs.to_hex(cs.button_normal_bg)};
                     color: {cs.to_hex(cs.button_text)};
                     border: 1px solid {cs.to_hex(cs.border_light)};
-                    border-radius: 3px;
+                    border-radius: {layout.widget_corner_radius}px;
                     padding: 8px;
                 }}
                 QPushButton:hover {{
@@ -525,7 +542,7 @@ class StyleSheetGenerator:
                     background-color: {cs.to_hex(cs.button_normal_bg)};
                     color: {cs.to_hex(cs.button_text)};
                     border: 1px solid {cs.to_hex(cs.border_light)};
-                    border-radius: 3px;
+                    border-radius: {layout.widget_corner_radius}px;
                     padding: 8px;
                 }}
                 QPushButton:hover {{
@@ -537,7 +554,7 @@ class StyleSheetGenerator:
                     background-color: {cs.to_hex(cs.selection_bg)};
                     color: {cs.to_hex(cs.selection_text)};
                     border: 1px solid {cs.to_hex(cs.selection_bg)};
-                    border-radius: 3px;
+                    border-radius: {layout.widget_corner_radius}px;
                     padding: 8px;
                 }}
                 QPushButton:hover {{
@@ -545,6 +562,47 @@ class StyleSheetGenerator:
                 }}
             """
         }
+
+    def generate_scope_accent_button_style(self, accent_color: QColor) -> str:
+        """Generate a scoped accent button style using this theme's button states."""
+        cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
+
+        hex_color = accent_color.name()
+        hex_lighter = accent_color.lighter(115).name()
+        hex_darker = accent_color.darker(115).name()
+        border = "none"
+        text_color = "white"
+        if (
+            accent_color.red() >= 230
+            and accent_color.green() >= 230
+            and accent_color.blue() >= 230
+        ):
+            hex_color = "#555555"
+            hex_lighter = "#666666"
+            hex_darker = "#444444"
+            border = "1px solid #ffffff"
+
+        return f"""
+            QPushButton {{
+                background-color: {hex_color};
+                color: {text_color};
+                border: {border};
+                border-radius: {layout.widget_corner_radius}px;
+                padding: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {hex_lighter};
+            }}
+            QPushButton:pressed {{
+                background-color: {hex_darker};
+            }}
+            QPushButton:disabled {{
+                background-color: {cs.to_hex(cs.button_disabled_bg)};
+                color: {cs.to_hex(cs.button_disabled_text)};
+                border: none;
+            }}
+        """
 
     def require_config_button_style(self, style_name: str) -> str:
         """Return a named config button style or fail on an undeclared style key."""
@@ -565,12 +623,13 @@ class StyleSheetGenerator:
             str: Complete QStyleSheet for plate manager styling
         """
         cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
         return f"""
             QListWidget {{
                 background-color: {cs.to_hex(cs.panel_bg)};
                 color: {cs.to_hex(cs.text_primary)};
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 padding: 5px;
             }}
             QListWidget::item {{
@@ -587,14 +646,14 @@ class StyleSheetGenerator:
             QFrame {{
                 background-color: {cs.to_hex(cs.window_bg)};
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 padding: 5px;
             }}
             QPushButton {{
                 background-color: {cs.to_hex(cs.button_normal_bg)};
                 color: {cs.to_hex(cs.button_text)};
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 padding: 5px;
             }}
             QPushButton:hover {{
@@ -609,14 +668,14 @@ class StyleSheetGenerator:
             }}
             QProgressBar {{
                 border: none;
-                border-radius: 3px;
+                border-radius: {layout.widget_corner_radius}px;
                 background-color: {cs.to_hex(cs.progress_bg)};
                 color: {cs.to_hex(cs.text_primary)};
                 text-align: center;
             }}
             QProgressBar::chunk {{
                 background-color: {cs.to_hex(cs.progress_fill)};
-                border-radius: 2px;
+                border-radius: {layout.progress_chunk_corner_radius}px;
             }}
         """
 

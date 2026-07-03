@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Widget ABC contracts for OpenHCS UI frameworks.
 
@@ -18,7 +20,19 @@ Inspired by OpenHCS patterns:
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Callable, ClassVar
+from typing import TYPE_CHECKING, Any, Callable, ClassVar
+
+if TYPE_CHECKING:
+    from PyQt6.QtWidgets import QWidget
+    from objectstate import (
+        DottedFieldPath,
+        ObjectStateSubfieldSemanticIndex,
+        StructuralValuePath,
+    )
+    from pyqt_reactive.forms.inline_dataclass_context import (
+        InlineDataclassChildFieldIdentity,
+    )
+    from pyqt_reactive.widgets.structural_table import StructuralFlashTarget
 
 
 class WidgetCapability(str, Enum):
@@ -103,6 +117,30 @@ class ResolvedValuePreviewSettable(ABC):
         pass
 
 
+class RawResolvedValueSettable(ABC):
+    """
+    ABC for widgets that can atomically apply a raw value and resolved preview.
+
+    Lazy dataclass widgets can avoid rendering a raw intermediate state when a
+    form refresh already has both ObjectState values available.
+    """
+
+    @abstractmethod
+    def set_raw_value_with_resolved_preview(
+        self,
+        raw_value: Any,
+        resolved_value: Any,
+    ) -> None:
+        """
+        Set the editable raw value and resolved display preview in one pass.
+
+        Args:
+            raw_value: Raw ObjectState value for editing.
+            resolved_value: Resolved ObjectState value for inherited preview.
+        """
+        pass
+
+
 class ChildFieldChromeRefreshable(ABC):
     """
     ABC for compound widgets that render chrome for their own child fields.
@@ -114,7 +152,10 @@ class ChildFieldChromeRefreshable(ABC):
     """
 
     @abstractmethod
-    def refresh_child_field_chrome(self) -> None:
+    def refresh_child_field_chrome(
+        self,
+        owner_field_paths: tuple["DottedFieldPath", ...] | None = None,
+    ) -> None:
         """Refresh dirty/signature/reset chrome for child fields."""
         pass
 
@@ -130,12 +171,58 @@ class ChildFieldNavigationTargetProvider(ABC):
     """
 
     @abstractmethod
-    def child_field_navigation_target(self, field_name: str) -> Any | None:
+    def child_field_navigation_target(self, field_name: str) -> "QWidget | None":
         """
         Return the widget that visually represents a child field, if present.
 
         Args:
             field_name: Direct child field name inside the compound widget.
+        """
+        pass
+
+
+class ChildFieldIdentityProvider(ABC):
+    """ABC for compound widgets that expose nominal child ObjectState identity."""
+
+    @abstractmethod
+    def child_field_identity(
+        self,
+        field_name: str,
+    ) -> "InlineDataclassChildFieldIdentity":
+        """Return the nominal identity for one direct child field."""
+        pass
+
+
+class ChildFieldSemanticChromeRefreshable(ABC):
+    """ABC for compound widgets that render semantic chrome for child leaves."""
+
+    @abstractmethod
+    def child_field_semantic_owner_paths(self) -> tuple["DottedFieldPath", ...]:
+        """Return ObjectState owner paths for structural child semantics."""
+        pass
+
+    @abstractmethod
+    def refresh_child_field_semantics(
+        self,
+        owner_field_path: "DottedFieldPath",
+        semantic_index: "ObjectStateSubfieldSemanticIndex",
+    ) -> None:
+        """Refresh dirty/default/inherited chrome for an ObjectState owner field."""
+        pass
+
+
+class ChildSubfieldNavigationTargetProvider(ABC):
+    """ABC for compound widgets that expose structural descendant targets."""
+
+    @abstractmethod
+    def child_subfield_navigation_target(
+        self,
+        child_identity: "InlineDataclassChildFieldIdentity",
+        relative_path: "StructuralValuePath",
+    ) -> "StructuralFlashTarget | None":
+        """Return a concrete visual target for a child structural path.
+
+        An empty ``relative_path`` represents the child structural owner itself.
         """
         pass
 
@@ -212,8 +299,18 @@ class PlaceholderStateTrackable(WidgetCapabilityTagged):
         pass
 
     @abstractmethod
+    def cached_placeholder_resolved_value(self) -> Any:
+        """Return cached placeholder resolved value, if any."""
+        pass
+
+    @abstractmethod
+    def set_cached_placeholder_resolved_value(self, value: Any) -> None:
+        """Cache the resolved value after a successful preview render."""
+        pass
+
+    @abstractmethod
     def clear_placeholder_cache(self) -> None:
-        """Clear cached placeholder text."""
+        """Clear cached placeholder text and resolved value."""
         pass
 
 

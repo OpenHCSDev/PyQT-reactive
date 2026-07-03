@@ -7,7 +7,13 @@ Prevents accidental value changes from mouse wheel events.
 from enum import Enum
 from typing import Callable
 
-from PyQt6.QtWidgets import QCheckBox, QStyleOptionComboBox, QStyle, QApplication
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QStyle,
+    QStyleOptionButton,
+    QStyleOptionComboBox,
+)
 from PyQt6.QtGui import QWheelEvent, QFont, QColor, QPainter
 from PyQt6.QtCore import Qt
 
@@ -18,6 +24,7 @@ from pyqt_reactive.protocols import (
     DoubleSpinBoxAdapter,
     PlaceholderStateMixin,
     PyQtWidgetMeta,
+    ResolvedValuePreviewSettable,
     SpinBoxAdapter,
     ValueGettable,
     ValueSettable,
@@ -172,6 +179,7 @@ class NoneAwareCheckBox(
     QCheckBox,
     ValueGettable,
     ValueSettable,
+    ResolvedValuePreviewSettable,
     ChangeSignalEmitter,
     metaclass=PyQtWidgetMeta,
 ):
@@ -181,6 +189,8 @@ class NoneAwareCheckBox(
     Shows inherited value as grayed placeholder when value is None.
     Clicking converts placeholder to explicit value.
     """
+
+    PLACEHOLDER_PAINT_OPACITY = 0.45
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -225,10 +235,26 @@ class NoneAwareCheckBox(
 
     def set_placeholder_preview(self, checked: bool) -> None:
         """Display an inherited checkbox value without making it concrete."""
-        self.setChecked(checked)
-        self._value_state = CheckboxValueState.PLACEHOLDER
-        self.mark_placeholder_state()
-        self._apply_placeholder_palette()
+        signals_blocked = self.blockSignals(True)
+        try:
+            self.setChecked(checked)
+            self._value_state = CheckboxValueState.PLACEHOLDER
+            self.mark_placeholder_state()
+            self._apply_placeholder_palette()
+        finally:
+            self.blockSignals(signals_blocked)
+
+    def set_resolved_value_preview(self, value) -> None:
+        """Display an inherited resolved bool while preserving raw None."""
+        if value is None:
+            self.set_placeholder_preview(False)
+            return
+        if not isinstance(value, bool):
+            raise TypeError(
+                "NoneAwareCheckBox resolved previews require bool or None values, "
+                f"got {type(value).__name__}."
+            )
+        self.set_placeholder_preview(value)
 
     def convert_placeholder_to_concrete(self) -> None:
         """Keep the displayed value but mark it as a user-controlled value."""
@@ -247,8 +273,13 @@ class NoneAwareCheckBox(
         """Apply grey palette to make checkmark dim like placeholder text."""
         from PyQt6.QtGui import QPalette
         palette = self.palette()
-        # Set text color to grey - this affects the checkmark color
-        palette.setColor(QPalette.ColorRole.Text, QColor(136, 136, 136))  # Grey like placeholder text
+        placeholder_color = QColor(136, 136, 136)
+        for role in (
+            QPalette.ColorRole.Text,
+            QPalette.ColorRole.WindowText,
+            QPalette.ColorRole.ButtonText,
+        ):
+            palette.setColor(role, placeholder_color)
         self.setPalette(palette)
 
     def _apply_concrete_palette(self):
@@ -257,7 +288,12 @@ class NoneAwareCheckBox(
         # Use application palette to get the proper text color for the theme
         app_palette = QApplication.palette()
         palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Text, app_palette.color(QPalette.ColorRole.Text))
+        for role in (
+            QPalette.ColorRole.Text,
+            QPalette.ColorRole.WindowText,
+            QPalette.ColorRole.ButtonText,
+        ):
+            palette.setColor(role, app_palette.color(role))
         self.setPalette(palette)
 
     def mousePressEvent(self, event):
@@ -276,22 +312,20 @@ class NoneAwareCheckBox(
             super().paintEvent(event)
             return
 
-        # Placeholder: Draw with grey text color to dim the checkmark
-        from PyQt6.QtWidgets import QStyle, QStyleOptionButton
-        
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Get the checkbox style option
+        painter.setOpacity(self.PLACEHOLDER_PAINT_OPACITY)
+
         option = QStyleOptionButton()
         self.initStyleOption(option)
-        
-        # Set grey text color - this affects the checkmark color
-        option.palette.setColor(option.palette.ColorRole.Text, QColor(136, 136, 136))
-        
-        # Draw the checkbox with the modified palette
+        for role in (
+            option.palette.ColorRole.Text,
+            option.palette.ColorRole.WindowText,
+            option.palette.ColorRole.ButtonText,
+        ):
+            option.palette.setColor(role, QColor(136, 136, 136))
+
         self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
-        
         painter.end()
 
 

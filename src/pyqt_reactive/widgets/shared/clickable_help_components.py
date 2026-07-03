@@ -6,21 +6,26 @@ from dataclasses import dataclass
 from typing import Union, Callable, Optional
 from objectstate import ObjectState
 from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox, QVBoxLayout, QSizePolicy, QAbstractButton
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtProperty, QRect, QRectF, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtProperty, QRect, QRectF, QSize, QTimer
 from PyQt6.QtGui import QFont, QCursor, QColor, QPainter
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.animation import FlashMixin
+from pyqt_reactive.forms import layout_constants
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
 from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 from pyqt_reactive.protocols import (
     ChildFieldChromeRefreshable,
+    ChildFieldIdentityProvider,
     ChildFieldNavigationTargetProvider,
+    ChildFieldSemanticChromeRefreshable,
+    ChildSubfieldNavigationTargetProvider,
     InlineDataclassGroupBoxChromeProvider,
     ChangeSignalEmitter,
     PlaceholderStateMixin,
     PyQtWidgetMeta,
+    RawResolvedValueSettable,
     ResolvedValuePreviewSettable,
     ValueGettable,
     ValueSettable,
@@ -343,7 +348,7 @@ class HelpIndicator(QLabel):
                 color: {colors.text};
                 font-size: 10px;
                 border: {colors.border};
-                border-radius: 3px;
+                border-radius: {layout_constants.CURRENT_LAYOUT.widget_corner_radius}px;
                 padding: 1px 3px;
                 background-color: {colors.background};
             }}
@@ -481,7 +486,7 @@ class HelpButton(QPushButton):
                 color: {colors.text};
                 border: {colors.border};
                 padding: {padding};
-                border-radius: 3px;
+                border-radius: {layout_constants.CURRENT_LAYOUT.widget_corner_radius}px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
@@ -911,7 +916,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
     """PyQt6 group box with integrated help for dataclass titles - mirrors Textual TUI pattern.
 
     Inherits from FlashableGroupBox to support smooth flash animations.
-    Uses PAINT-TIME color computation via manager.get_flash_color_for_key().
+    Uses paint-time ObjectState-path flash color computation.
     Supports scope-based borders matching window border patterns.
     """
 
@@ -1001,6 +1006,10 @@ class GroupBoxWithHelp(FlashableGroupBox):
         # Content area for child widgets
         self.content_layout = QVBoxLayout()
         main_layout.addLayout(self.content_layout)
+
+    def flash_masks_descendant_leaf_widgets(self) -> bool:
+        """GroupBoxWithHelp flashes preserve readable child controls."""
+        return True
 
     def set_dirty_marker(self, is_dirty: bool, has_sig_diff: bool = False) -> None:
         """Update title styling for dirty (asterisk) and signature diff (underline).
@@ -1130,8 +1139,9 @@ class GroupBoxWithHelp(FlashableGroupBox):
 
     def _paint_scope_background(self, layers) -> None:
         """Paint subtle scope-colored background (matching list item style)."""
+        from pyqt_reactive.animation import get_widget_corner_radius
+        from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
         from pyqt_reactive.widgets.shared.scope_visual_config import ScopeVisualConfig
-        from pyqt_reactive.animation import get_widget_corner_radius, DEFAULT_CORNER_RADIUS
 
         # Get border rect (accounts for margin-top offset)
         rect = self._get_border_rect()
@@ -1139,7 +1149,7 @@ class GroupBoxWithHelp(FlashableGroupBox):
         # Get corner radius for rounded background
         radius = get_widget_corner_radius(self)
         if radius == 0:
-            radius = DEFAULT_CORNER_RADIUS
+            radius = default_container_corner_radius_px()
 
         # Calculate content rect (inside borders)
         border_inset = sum(layer[0] for layer in layers) if layers else 0
@@ -1200,10 +1210,11 @@ class GroupBoxWithHelp(FlashableGroupBox):
         Uses _get_border_rect() for geometry matching flash overlay.
         """
         rect = self._get_border_rect()
-        from pyqt_reactive.animation import get_widget_corner_radius, DEFAULT_CORNER_RADIUS
+        from pyqt_reactive.animation import get_widget_corner_radius
+        from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
         radius = get_widget_corner_radius(self)
         if radius == 0:
-            radius = DEFAULT_CORNER_RADIUS
+            radius = default_container_corner_radius_px()
 
         ScopeBorderRenderer.paint_border_layers(
             self,
@@ -1313,17 +1324,28 @@ class InlineDataclassGroupBox(
     GroupBoxWithHelp,
     ValueGettable,
     ValueSettable,
+    RawResolvedValueSettable,
     ResolvedValuePreviewSettable,
     ChildFieldChromeRefreshable,
+    ChildFieldIdentityProvider,
     ChildFieldNavigationTargetProvider,
+    ChildFieldSemanticChromeRefreshable,
+    ChildSubfieldNavigationTargetProvider,
     ChangeSignalEmitter,
     metaclass=PyQtWidgetMeta,
 ):
     """GroupBoxWithHelp that delegates field value behavior to an inline editor."""
 
+    PROGRAMMATIC_CHANGE_SUPPRESSION_RELEASE_TICKS = 1
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._inline_value_widget = None
+        self._change_signal_suppression_depth = 0
+        self._pending_programmatic_change_values = []
+        self._inline_change_signal_callbacks: dict[Callable, Callable] = {}
+        self._has_resolved_value_preview = False
+        self._resolved_value_preview = None
 
     def set_value_widget(self, widget) -> None:
         self._inline_value_widget = widget
@@ -1357,7 +1379,13 @@ class InlineDataclassGroupBox(
                 "Inline dataclass value widget must implement ValueSettable, "
                 f"got {type(self._inline_value_widget).__name__}."
             )
-        self._inline_value_widget.set_value(value)
+        self._begin_programmatic_value_update(value)
+        try:
+            self._inline_value_widget.set_value(value)
+            self._has_resolved_value_preview = False
+            self._resolved_value_preview = None
+        finally:
+            self._end_programmatic_value_update()
 
     def set_resolved_value_preview(self, value) -> None:
         if not isinstance(self._inline_value_widget, ResolvedValuePreviewSettable):
@@ -1365,15 +1393,72 @@ class InlineDataclassGroupBox(
                 "Inline dataclass value widget must implement ResolvedValuePreviewSettable, "
                 f"got {type(self._inline_value_widget).__name__}."
             )
-        self._inline_value_widget.set_resolved_value_preview(value)
+        if self._has_resolved_value_preview and value == self._resolved_value_preview:
+            return
+        self._begin_programmatic_value_update(value)
+        try:
+            self._inline_value_widget.set_resolved_value_preview(value)
+            self._resolved_value_preview = value
+            self._has_resolved_value_preview = True
+        finally:
+            self._end_programmatic_value_update()
 
-    def refresh_child_field_chrome(self) -> None:
+    def set_raw_value_with_resolved_preview(self, raw_value, resolved_value) -> None:
+        if not isinstance(self._inline_value_widget, RawResolvedValueSettable):
+            raise TypeError(
+                "Inline dataclass value widget must implement RawResolvedValueSettable, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        self._begin_programmatic_value_update(raw_value, resolved_value)
+        try:
+            self._inline_value_widget.set_raw_value_with_resolved_preview(
+                raw_value,
+                resolved_value,
+            )
+            self._resolved_value_preview = resolved_value
+            self._has_resolved_value_preview = True
+        finally:
+            self._end_programmatic_value_update()
+
+    def _begin_programmatic_value_update(self, *values) -> None:
+        self._change_signal_suppression_depth += 1
+        self._pending_programmatic_change_values.extend(values)
+
+    def _end_programmatic_value_update(self) -> None:
+        if self._change_signal_suppression_depth > 0:
+            self._change_signal_suppression_depth -= 1
+        if self._change_signal_suppression_depth == 0:
+            self._schedule_programmatic_value_update_release(
+                self.PROGRAMMATIC_CHANGE_SUPPRESSION_RELEASE_TICKS
+            )
+
+    def _schedule_programmatic_value_update_release(self, ticks: int) -> None:
+        if ticks <= 0:
+            self._release_programmatic_value_update()
+            return
+        QTimer.singleShot(
+            0,
+            lambda: self._schedule_programmatic_value_update_release(ticks - 1),
+        )
+
+    def _release_programmatic_value_update(self) -> None:
+        self._pending_programmatic_change_values.clear()
+
+    def _should_suppress_inline_change(self, value) -> bool:
+        if self._change_signal_suppression_depth > 0:
+            return True
+        for pending_value in self._pending_programmatic_change_values:
+            if value == pending_value:
+                return True
+        return False
+
+    def refresh_child_field_chrome(self, owner_field_paths=None) -> None:
         if not isinstance(self._inline_value_widget, ChildFieldChromeRefreshable):
             raise TypeError(
                 "Inline dataclass value widget must implement ChildFieldChromeRefreshable, "
                 f"got {type(self._inline_value_widget).__name__}."
             )
-        self._inline_value_widget.refresh_child_field_chrome()
+        self._inline_value_widget.refresh_child_field_chrome(owner_field_paths)
 
     def child_field_navigation_target(self, field_name: str):
         if not isinstance(
@@ -1383,13 +1468,62 @@ class InlineDataclassGroupBox(
             return None
         return self._inline_value_widget.child_field_navigation_target(field_name)
 
+    def child_field_identity(self, field_name: str):
+        if not isinstance(self._inline_value_widget, ChildFieldIdentityProvider):
+            raise TypeError(
+                "Inline dataclass value widget must implement ChildFieldIdentityProvider "
+                "to expose structural child targets, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        return self._inline_value_widget.child_field_identity(field_name)
+
+    def child_field_semantic_owner_paths(self):
+        if not isinstance(
+            self._inline_value_widget,
+            ChildFieldSemanticChromeRefreshable,
+        ):
+            return ()
+        return self._inline_value_widget.child_field_semantic_owner_paths()
+
+    def refresh_child_field_semantics(self, owner_field_path, semantic_index) -> None:
+        if not isinstance(
+            self._inline_value_widget,
+            ChildFieldSemanticChromeRefreshable,
+        ):
+            return
+        self._inline_value_widget.refresh_child_field_semantics(
+            owner_field_path,
+            semantic_index,
+        )
+
+    def child_subfield_navigation_target(
+        self,
+        child_identity,
+        relative_path,
+    ):
+        if not isinstance(
+            self._inline_value_widget,
+            ChildSubfieldNavigationTargetProvider,
+        ):
+            return None
+        return self._inline_value_widget.child_subfield_navigation_target(
+            child_identity,
+            relative_path,
+        )
+
     def connect_change_signal(self, callback) -> None:
         if not isinstance(self._inline_value_widget, ChangeSignalEmitter):
             raise TypeError(
                 "Inline dataclass value widget must implement ChangeSignalEmitter, "
                 f"got {type(self._inline_value_widget).__name__}."
             )
-        self._inline_value_widget.connect_change_signal(callback)
+        def delegated_callback(value) -> None:
+            if self._should_suppress_inline_change(value):
+                return
+            callback(value)
+
+        self._inline_change_signal_callbacks[callback] = delegated_callback
+        self._inline_value_widget.connect_change_signal(delegated_callback)
 
     def disconnect_change_signal(self, callback) -> None:
         if not isinstance(self._inline_value_widget, ChangeSignalEmitter):
@@ -1397,4 +1531,7 @@ class InlineDataclassGroupBox(
                 "Inline dataclass value widget must implement ChangeSignalEmitter, "
                 f"got {type(self._inline_value_widget).__name__}."
             )
-        self._inline_value_widget.disconnect_change_signal(callback)
+        delegated_callback = self._inline_change_signal_callbacks.pop(callback, None)
+        if delegated_callback is None:
+            return
+        self._inline_value_widget.disconnect_change_signal(delegated_callback)

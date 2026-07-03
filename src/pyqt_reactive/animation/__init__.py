@@ -13,8 +13,10 @@ from .flash_mixin import (
     get_flash_color,
     get_flash_color_from_palette,
     FlashElement,
+    create_list_item_element,
     get_widget_corner_radius,
-    DEFAULT_CORNER_RADIUS,
+    queue_visual_frame_callback,
+    active_visual_frame_work_count,
 )
 
 # Optional OpenGL support
@@ -32,7 +34,9 @@ __all__ = [
     "get_flash_color",
     "get_flash_color_from_palette",
     "FlashElement",
+    "create_list_item_element",
     "FlashOverlayOpenGL",
     "get_widget_corner_radius",
-    "DEFAULT_CORNER_RADIUS",
+    "queue_visual_frame_callback",
+    "active_visual_frame_work_count",
 ]

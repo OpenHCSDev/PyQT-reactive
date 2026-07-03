@@ -161,13 +161,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         elif isinstance(self.title_layout, QLayout):
             self._flash_title_container = self.title_layout.parentWidget()
 
-        # Flash behavior: include title + module label in flash region
-        self._flash_include_title = True
-        self._flash_unmasked_widgets = set()
+        self._module_path_label: Optional[QLabel] = None
+        self._flash_mask_excluded_widgets: set[QWidget] = set()
         if isinstance(self._title_label, QLabel):
-            self._flash_unmasked_widgets.add(self._title_label)
+            self._flash_mask_excluded_widgets.add(self._title_label)
         if isinstance(self._help_button, QWidget):
-            self._flash_unmasked_widgets.add(self._help_button)
+            self._flash_mask_excluded_widgets.add(self._help_button)
 
         # Initialize color scheme
         self.color_scheme = color_scheme or ColorScheme()
@@ -187,21 +186,6 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         self.func_scope_prefix = func_scope_prefix
         # Stable per-occurrence token supplied by the owning list editor.
         self.func_scope_token = str(func_scope_token) if func_scope_token else None
-
-        # Register this pane for whole-pane flashing (after scope_id is set)
-        if self._flash_key == "":
-            self._flash_key = f"function_pane::{id(self)}"
-        self.register_flash_groupbox_full(self._flash_key, self)
-        try:
-            scoped_key = self._get_scoped_flash_key(self._flash_key)
-            logger.debug(
-                "[FLASH] FunctionPaneWidget register: flash_key=%s scoped_key=%s scope_id=%s",
-                self._flash_key,
-                scoped_key,
-                self.scope_id
-            )
-        except Exception:
-            pass
 
         # Business logic state
         self.index = index
@@ -313,7 +297,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             self._module_path_label = module_label
             module_label.setFont(QFont("Arial", 8))
             module_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; padding: 2px 0;")
-            self._flash_unmasked_widgets.add(module_label)
+            self._flash_mask_excluded_widgets.add(module_label)
             
             # Find the main layout and insert module path at index 0 (before title)
             main_layout = self.layout()
@@ -351,7 +335,28 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             )
 
             self.addTitleWidget(button)
-            self._flash_unmasked_widgets.add(button)
+            self._flash_mask_excluded_widgets.add(button)
+
+    def flash_unmasked_widgets(self) -> tuple[QWidget, ...]:
+        """Return function-pane title widgets excluded from descendant masks."""
+        return tuple(
+            widget
+            for widget in self._flash_mask_excluded_widgets
+            if not widget.isHidden()
+        )
+
+    def flash_title_mask_widgets(self) -> tuple[QWidget, ...]:
+        """Return title-row controls that should remain readable while flashing."""
+        widgets: list[QWidget] = []
+        if self._module_path_label is not None and self._module_path_label.isVisible():
+            widgets.append(self._module_path_label)
+        if self._flash_title_container is not None and self._flash_title_container.isVisible():
+            widgets.extend(
+                child
+                for child in self._flash_title_container.findChildren(QWidget)
+                if child.isVisible()
+            )
+        return tuple(widgets)
 
     def _move_enabled_widget_to_title(self):
         """Move enabled widget using shared groupbox machinery."""
@@ -432,6 +437,13 @@ class FunctionPaneWidget(GroupBoxWithHelp):
                 "FunctionPaneWidget requires func_scope_token for deterministic ObjectState scope."
             )
         func_scope_id = f"{func_parent_scope}::{token}"
+        if self._flash_key == "":
+            self._flash_key = func_scope_id
+            self.register_flash_groupbox_full(self._flash_key, self)
+            logger.debug(
+                "[FLASH] FunctionPaneWidget register: object_state_path=%s",
+                self._flash_key,
+            )
 
         exclude_params = (
             FunctionPatternCodeDocumentService.reserved_parameter_names(self.func)

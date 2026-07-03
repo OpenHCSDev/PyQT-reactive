@@ -6,13 +6,17 @@ and other widgets that display items with preview labels.
 """
 
 import logging
+from dataclasses import dataclass
 
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle
-from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen
-from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPolygon
+from PyQt6.QtCore import Qt, QRect, QPoint
 
 from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
-from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+from pyqt_reactive.widgets.shared.scope_visual_config import (
+    ScopeColorScheme,
+    get_scope_visual_config,
+)
 from pyqt_reactive.widgets.shared.list_item_text_rendering import (
     StyledTextRenderer,
     StyledTextSizeCalculator,
@@ -28,12 +32,14 @@ from pyqt_reactive.widgets.shared.styled_text_layout import (
 
 # Custom data role for scope color scheme (must match manager)
 SCOPE_SCHEME_ROLE = Qt.ItemDataRole.UserRole + 10
-# Flash key role - stores scope_id for flash color lookup
-FLASH_KEY_ROLE = Qt.ItemDataRole.UserRole + 11
+# ObjectState path role - stores the row scope/path used for flash color lookup
+OBJECT_STATE_PATH_ROLE = Qt.ItemDataRole.UserRole + 11
 # Per-field styling roles
 LAYOUT_ROLE = Qt.ItemDataRole.UserRole + 12  # StyledTextLayout for structured rendering
 DIRTY_FIELDS_ROLE = Qt.ItemDataRole.UserRole + 13  # Set[str] - dotted paths of dirty fields
 SIG_DIFF_FIELDS_ROLE = Qt.ItemDataRole.UserRole + 14  # Set[str] - dotted paths of sig-diff fields
+LEADING_MARKER_ROLE_OFFSET = 15
+LEADING_MARKER_ROLE = Qt.ItemDataRole.UserRole + LEADING_MARKER_ROLE_OFFSET  # ListItemLeadingMarker
 
 # Backwards compat alias
 SEGMENTS_ROLE = LAYOUT_ROLE
@@ -47,6 +53,13 @@ BORDER_PATTERNS = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ListItemLeadingMarker:
+    """Declarative leading marker for externally owned row state."""
+
+    color: QColor | None = None
 
 
 class MultilinePreviewItemDelegate(QStyledItemDelegate):
@@ -112,9 +125,9 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
             self._paint_scope_background(painter, content_rect, scheme, layers)
 
         # Flash effect - drawn BEHIND text but inside borders
-        flash_key = index.data(FLASH_KEY_ROLE)
-        if flash_key and self._manager is not None:
-            flash_color = self._manager.get_flash_color_for_key(flash_key)
+        object_state_path = index.data(OBJECT_STATE_PATH_ROLE)
+        if object_state_path and self._manager is not None:
+            flash_color = self._manager.get_flash_color_for_object_state_path(object_state_path)
             if flash_color and flash_color.alpha() > 0:
                 if isinstance(scheme, ScopeColorScheme):
                     base_rgb = scheme.base_color_rgb
@@ -142,6 +155,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         layout = index.data(LAYOUT_ROLE)
         dirty_fields = index.data(DIRTY_FIELDS_ROLE) or set()
         sig_diff_fields = index.data(SIG_DIFF_FIELDS_ROLE) or set()
+        leading_marker = index.data(LEADING_MARKER_ROLE)
 
         base_font = QFont(option.font)
         base_font.setStrikeOut(is_disabled)
@@ -150,7 +164,20 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         fm = QFontMetrics(base_font)
         line_height = fm.height()
         text_rect = option.rect
-        x_start = text_rect.left() + 5
+        visual_config = get_scope_visual_config()
+        marker_gutter_width = (
+            visual_config.LIST_ITEM_LEADING_MARKER_GUTTER_WIDTH_PX
+            if isinstance(leading_marker, ListItemLeadingMarker)
+            else 0
+        )
+        if isinstance(leading_marker, ListItemLeadingMarker):
+            self._paint_leading_marker(
+                painter,
+                text_rect,
+                leading_marker,
+                is_selected=is_selected,
+            )
+        x_start = text_rect.left() + 5 + marker_gutter_width
         y_offset = text_rect.top() + fm.ascent() + 3
 
         try:
@@ -178,6 +205,53 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
 
         if scheme is not None:
             self._paint_border_layers(painter, option.rect, scheme)
+
+    def _paint_leading_marker(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        marker: ListItemLeadingMarker,
+        *,
+        is_selected: bool,
+    ) -> None:
+        """Paint a strong row-level marker without encoding its domain meaning."""
+        visual_config = get_scope_visual_config()
+        marker_color = (
+            QColor(marker.color)
+            if marker.color is not None
+            else QColor(*visual_config.LIST_ITEM_LEADING_MARKER_COLOR_RGB)
+        )
+        if is_selected:
+            marker_color = QColor(self.selected_text_color)
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(marker_color)
+
+        stripe_top_margin = visual_config.LIST_ITEM_LEADING_MARKER_STRIPE_TOP_MARGIN_PX
+        stripe = QRect(
+            rect.left() + visual_config.LIST_ITEM_LEADING_MARKER_STRIPE_LEFT_PX,
+            rect.top() + stripe_top_margin,
+            visual_config.LIST_ITEM_LEADING_MARKER_STRIPE_WIDTH_PX,
+            max(0, rect.height() - (stripe_top_margin * 2)),
+        )
+        stripe_radius = visual_config.LIST_ITEM_LEADING_MARKER_STRIPE_RADIUS_PX
+        painter.drawRoundedRect(stripe, stripe_radius, stripe_radius)
+
+        mid_y = rect.center().y()
+        triangle_left = rect.left() + visual_config.LIST_ITEM_LEADING_MARKER_TRIANGLE_LEFT_PX
+        triangle_width = visual_config.LIST_ITEM_LEADING_MARKER_TRIANGLE_WIDTH_PX
+        triangle_half_height = visual_config.LIST_ITEM_LEADING_MARKER_TRIANGLE_HALF_HEIGHT_PX
+        triangle = QPolygon(
+            [
+                QPoint(triangle_left, mid_y - triangle_half_height),
+                QPoint(triangle_left, mid_y + triangle_half_height),
+                QPoint(triangle_left + triangle_width, mid_y),
+            ]
+        )
+        painter.drawPolygon(triangle)
+        painter.restore()
 
     def _paint_plain_text_fallback(
         self,
