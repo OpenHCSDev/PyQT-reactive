@@ -4,7 +4,6 @@ from typing import Any
 from weakref import WeakKeyDictionary
 from PyQt6 import sip
 from PyQt6.QtWidgets import QCheckBox, QLabel, QGraphicsOpacityEffect
-from pyqt_reactive.protocols.widget_protocols import PlaceholderStateTrackable
 from objectstate.time_travel_profile import TimeTravelProfiler
 import logging
 
@@ -27,6 +26,14 @@ class EnabledFieldStylingService:
         self._value_widgets_by_container: WeakKeyDictionary[Any, list] = WeakKeyDictionary()
         self._dimmed_property_name = "enabled_field_dimmed"
         self._dimmed_opacity = 0.4
+
+    def invalidate_widget_cache(self, manager) -> None:
+        """Invalidate cached widget discovery after a form's widget tree changes."""
+        self._last_enabled_values.pop(manager, None)
+        self._direct_widgets_by_manager.pop(manager, None)
+        group_box = manager.form_tree.owning_groupbox(manager)
+        if group_box is not None:
+            self._value_widgets_by_container.pop(group_box, None)
     
     def apply_initial_enabled_styling(self, manager) -> None:
         """
@@ -358,20 +365,12 @@ class EnabledFieldStylingService:
         if sip.isdeleted(widget):
             return False
 
-        effective_dimmed = dimmed
-        if (
-            effective_dimmed
-            and isinstance(widget, PlaceholderStateTrackable)
-            and widget.has_placeholder_state()
-        ):
-            effective_dimmed = False
-
         current = widget.property(self._dimmed_property_name) is True
-        if current == effective_dimmed:
+        if current == dimmed:
             return False
 
-        widget.setProperty(self._dimmed_property_name, effective_dimmed)
-        if effective_dimmed:
+        widget.setProperty(self._dimmed_property_name, dimmed)
+        if dimmed:
             effect = QGraphicsOpacityEffect()
             effect.setOpacity(self._dimmed_opacity)
             widget.setGraphicsEffect(effect)

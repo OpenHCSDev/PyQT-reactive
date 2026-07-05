@@ -22,6 +22,7 @@ from pyqt_reactive.protocols import (
     ChildFieldSemanticChromeRefreshable,
     ChildSubfieldNavigationTargetProvider,
     InlineDataclassGroupBoxChromeProvider,
+    InlineDataclassRootResettable,
     ChangeSignalEmitter,
     PlaceholderStateMixin,
     PyQtWidgetMeta,
@@ -1331,6 +1332,7 @@ class InlineDataclassGroupBox(
     ChildFieldNavigationTargetProvider,
     ChildFieldSemanticChromeRefreshable,
     ChildSubfieldNavigationTargetProvider,
+    InlineDataclassRootResettable,
     ChangeSignalEmitter,
     metaclass=PyQtWidgetMeta,
 ):
@@ -1510,6 +1512,15 @@ class InlineDataclassGroupBox(
             child_identity,
             relative_path,
         )
+
+    def reset_inline_dataclass_fields(self) -> None:
+        if not isinstance(self._inline_value_widget, InlineDataclassRootResettable):
+            raise TypeError(
+                "Inline dataclass value widget must implement InlineDataclassRootResettable "
+                "for container reset-all behavior, "
+                f"got {type(self._inline_value_widget).__name__}."
+            )
+        self._inline_value_widget.reset_inline_dataclass_fields()
 
     def connect_change_signal(self, callback) -> None:
         if not isinstance(self._inline_value_widget, ChangeSignalEmitter):

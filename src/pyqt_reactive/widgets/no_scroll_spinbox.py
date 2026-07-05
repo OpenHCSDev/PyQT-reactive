@@ -224,7 +224,11 @@ class NoneAwareCheckBox(
 
     def connect_change_signal(self, callback: Callable[[bool | None], None]) -> None:
         """Implement ChangeSignalEmitter ABC."""
-        self.stateChanged.connect(lambda: callback(self.get_value()))
+        def emit_concrete_value() -> None:
+            self.convert_placeholder_to_concrete()
+            callback(self.get_value())
+
+        self.stateChanged.connect(emit_concrete_value)
 
     def disconnect_change_signal(self, callback: Callable[[bool | None], None]) -> None:
         """Implement ChangeSignalEmitter ABC."""

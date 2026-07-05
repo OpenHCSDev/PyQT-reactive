@@ -164,6 +164,13 @@ class EnabledTitleWidgetMoveAuthority:
         )
         self.register_title_flash_target(context)
         self.remove_empty_source_row(context)
+        context.request.nested_manager._enabled_field_styling_service.invalidate_widget_cache(
+            context.request.nested_manager
+        )
+        if isinstance(context.request.parent_manager, ParameterFormManager):
+            context.request.parent_manager._enabled_field_styling_service.invalidate_widget_cache(
+                context.request.parent_manager
+            )
         logger.debug("🔍 _move_enabled_widget_to_title: COMPLETE")
 
     def resolve_context(
@@ -852,7 +859,7 @@ _WIDGET_CREATION_CONFIG: dict[WidgetCreationType, WidgetCreationConfig] = {
         setup_layout=None,
         create_main_widget=WidgetCreationHandlers._create_inline_dataclass_widget,
         needs_label=False,
-        needs_reset_button=False,
+        needs_reset_button=True,
         needs_unwrap_type=True,
         is_optional=False,
     ),
@@ -973,6 +980,49 @@ class WidgetCreationRuntime:
     layout: QLayout | None = None
     title_components: OptionalTitleComponents | None = None
     main_widget: QWidget | None = None
+
+
+class DataclassResetAllBinding(ABC, metaclass=AutoRegisterMeta):
+    """Nominal reset-all target for dataclass-shaped parameter containers."""
+
+    __registry_key__ = "creation_type"
+    __skip_if_no_key__ = True
+    creation_type: ClassVar[WidgetCreationType | None] = None
+
+    @classmethod
+    def for_creation_type(
+        cls,
+        creation_type: WidgetCreationType,
+    ) -> "DataclassResetAllBinding":
+        return cls.__registry__[creation_type]()
+
+    @abstractmethod
+    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
+        """Return the reset-all action for one dataclass container."""
+        pass
+
+
+class NestedDataclassResetAllBinding(DataclassResetAllBinding):
+    """Reset-all for regular nested dataclasses delegates to their child manager."""
+
+    creation_type = WidgetCreationType.NESTED
+
+    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
+        nested_manager = runtime.manager.nested_managers.get(runtime.param_info.name)
+        if nested_manager is None:
+            raise RuntimeError(
+                f"Nested dataclass {runtime.param_info.name!r} has no nested manager."
+            )
+        return nested_manager.reset_all_parameters
+
+
+class InlineDataclassResetAllBinding(DataclassResetAllBinding):
+    """Reset-all for inline dataclasses delegates to the inline value widget."""
+
+    creation_type = WidgetCreationType.INLINE_DATACLASS
+
+    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
+        return runtime.container.reset_inline_dataclass_fields
 
 
 class WidgetCreationPipeline:
@@ -1147,7 +1197,7 @@ class WidgetCreationPipeline:
         if rt.config.is_optional:
             self._connect_optional_reset_button()
         elif rt.config.is_nested:
-            self._add_nested_reset_button()
+            self._add_dataclass_reset_all_button()
         else:
             self._add_regular_reset_button()
 
@@ -1159,7 +1209,7 @@ class WidgetCreationPipeline:
         if nested_manager:
             rt.title_components.reset_all_button.clicked.connect(lambda: nested_manager.reset_all_parameters())
 
-    def _add_nested_reset_button(self) -> None:
+    def _add_dataclass_reset_all_button(self) -> None:
         from PyQt6.QtWidgets import QHBoxLayout, QPushButton
 
         rt = self.runtime
@@ -1179,9 +1229,10 @@ class WidgetCreationPipeline:
         reset_all_button.setToolTip(f"Reset all parameters in {rt.ctx.display_info['field_label']} to defaults")
         ResetButtonStyler.apply(reset_all_button, rt.manager.color_scheme)
         self._log_widget("reset_all", reset_all_button)
-        nested_manager = rt.manager.nested_managers.get(rt.param_info.name)
-        if nested_manager:
-            reset_all_button.clicked.connect(lambda: nested_manager.reset_all_parameters())
+        reset_all = DataclassResetAllBinding.for_creation_type(
+            rt.creation_type
+        ).reset_callback(rt)
+        reset_all_button.clicked.connect(lambda: reset_all())
         rt.container.addTitleWidget(reset_all_button)
 
     def _add_regular_reset_button(self) -> None:

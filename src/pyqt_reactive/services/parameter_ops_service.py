@@ -40,7 +40,8 @@ if TYPE_CHECKING:
     from pyqt_reactive.forms.parameter_info_types import (
         OptionalDataclassInfo,
         DirectDataclassInfo,
-        GenericInfo
+        GenericInfo,
+        InlineDataclassWidgetInfo,
     )
 
 logger = logging.getLogger(__name__)
@@ -170,28 +171,40 @@ class ParameterOpsService(ParameterServiceABC):
 
         MODEL mutation through ObjectState, then VIEW-only widget updates.
         """
-        param_name = info.name
-        # CRITICAL: Compute full dotted path for nested PFMs
+        self._reset_value_widget_parameter(info.name, manager)
+
+    def _reset_InlineDataclassWidgetInfo(
+        self,
+        info: InlineDataclassWidgetInfo,
+        manager,
+    ) -> None:
+        """Reset inline dataclass value widget to its signature default."""
+        self._reset_value_widget_parameter(info.name, manager)
+
+    def _reset_value_widget_parameter(self, param_name: str, manager) -> None:
+        """Reset a parameter whose form widget owns its value directly."""
         dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
-        # MODEL mutation through ObjectState (handles tracking, cache invalidation)
         manager.state.reset_parameter(dotted_path)
         reset_value = manager.state.parameters.get(dotted_path)
 
-        # Invalidate cache token BEFORE refreshing placeholder
         from objectstate import ObjectStateRegistry
         ObjectStateRegistry.increment_token()
 
-        # VIEW-only: Update widget
-        if param_name in manager.widgets:
-            widget = manager.widgets[param_name]
-            from .signal_service import SignalService
-            with SignalService.block_signals(widget):
-                manager._widget_service.update_widget_value(
-                    widget, reset_value, param_name, skip_context_behavior=False, manager=manager
-                )
-            # Refresh placeholder if value is None
-            if reset_value is None:
-                self.refresh_single_placeholder(manager, param_name)
+        if param_name not in manager.widgets:
+            return
+
+        widget = manager.widgets[param_name]
+        from .signal_service import SignalService
+        with SignalService.block_signals(widget):
+            manager._widget_service.update_widget_value(
+                widget,
+                reset_value,
+                param_name,
+                skip_context_behavior=False,
+                manager=manager,
+            )
+        if reset_value is None:
+            self.refresh_single_placeholder(manager, param_name)
 
     # DELETED: _get_reset_value - ObjectState owns defaults
     # DELETED: _update_reset_tracking - ObjectState.reset_parameter handles tracking

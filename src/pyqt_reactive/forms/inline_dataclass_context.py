@@ -109,9 +109,65 @@ class InlineDataclassFormContext:
         default_value = self.state.signature_default(identity.object_state_path.value)
         if self.raw_child_value(field_name) == default_value:
             return
+        updated_value = replace_raw(container_value, **{field_name: default_value})
         self.manager.update_parameter(
             self.local_owner_path.value,
-            replace_raw(container_value, **{field_name: default_value}),
+            updated_value,
+        )
+        self._sync_owner_widget(updated_value)
+
+    def reset_children(self) -> None:
+        """Reset every declared inline dataclass child field in one update."""
+
+        container_value = self.state.parameters[self.owner_path.value]
+        updates = {}
+        for dataclass_field in dataclass_fields(self.owner_type):
+            field_name = dataclass_field.name
+            identity = self.child_identity(field_name)
+            default_value = self.state.signature_default(identity.object_state_path.value)
+            if self.raw_child_value(field_name) != default_value:
+                updates[field_name] = default_value
+
+        if not updates:
+            return
+
+        updated_value = replace_raw(container_value, **updates)
+        self.manager.update_parameter(
+            self.local_owner_path.value,
+            updated_value,
+        )
+        self._sync_owner_widget(updated_value)
+
+    def _sync_owner_widget(self, raw_value) -> None:
+        """Synchronize the owner inline widget after an in-widget reset action."""
+
+        from pyqt_reactive.protocols import (
+            RawResolvedValueSettable,
+            ValueSettable,
+        )
+        from pyqt_reactive.services.signal_service import SignalService
+
+        owner_widget = self.manager.widgets.get(self.local_owner_path.value)
+        if owner_widget is None:
+            raise RuntimeError(
+                f"Inline dataclass owner widget {self.local_owner_path.value!r} "
+                "is not registered."
+            )
+
+        resolved_value = self.state.get_resolved_value(self.owner_path.value)
+        with SignalService.block_signals(owner_widget):
+            if isinstance(owner_widget, RawResolvedValueSettable):
+                owner_widget.set_raw_value_with_resolved_preview(
+                    raw_value,
+                    resolved_value,
+                )
+                return
+            if isinstance(owner_widget, ValueSettable):
+                owner_widget.set_value(raw_value)
+                return
+        raise TypeError(
+            "Inline dataclass owner widget must implement a value-setting protocol, "
+            f"got {type(owner_widget).__name__}."
         )
 
     def update_reset_button_styling(self, button, field_name: str) -> None:

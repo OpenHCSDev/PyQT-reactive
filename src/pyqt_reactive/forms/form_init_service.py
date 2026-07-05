@@ -422,6 +422,7 @@ class FormBuildOrchestrator:
                     )
                     widget = manager._create_widget_for_param(param_info)
                     content_layout.addWidget(widget)
+                    manager._enabled_field_styling_service.invalidate_widget_cache(manager)
 
         self._execute_post_build_sequence(manager)
 
@@ -454,6 +455,8 @@ class FormBuildOrchestrator:
                 len(batch_widgets),
                 manager._pfm_seq,
             )
+            manager._enabled_field_styling_service.invalidate_widget_cache(manager)
+            manager._enabled_field_styling_service.refresh_enabled_styling(manager)
 
         def on_async_complete():
             logger.debug(

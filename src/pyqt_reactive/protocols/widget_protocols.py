@@ -248,6 +248,15 @@ class InlineDataclassGroupBoxChromeProvider(ABC):
         pass
 
 
+class InlineDataclassRootResettable(ABC):
+    """ABC for inline dataclass widgets that can reset their child fields."""
+
+    @abstractmethod
+    def reset_inline_dataclass_fields(self) -> None:
+        """Reset the inline dataclass child fields to their signature defaults."""
+        pass
+
+
 class PlaceholderCapable(ABC):
     """
     ABC for widgets that can display placeholder text.
