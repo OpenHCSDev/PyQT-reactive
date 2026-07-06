@@ -11,10 +11,10 @@ import inspect
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, get_type_hints
 
 from objectstate import ObjectState, ObjectStateRegistry, patch_lazy_constructors
-from python_introspect import parameter_exclusions
+from python_introspect import parameter_exclusions, set_parameter_exclusions
 
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.pattern_metadata import PatternScopeToken
@@ -31,6 +31,12 @@ from pyqt_reactive.services.window_code_document import (
 )
 
 logger = logging.getLogger(__name__)
+FUNCTION_PATTERN_AUTHORITY_ATTR = "__function_pattern_authority__"
+
+
+def function_pattern_authority(func):
+    """Return the real callable authority for an editable function-pattern view."""
+    return getattr(func, FUNCTION_PATTERN_AUTHORITY_ATTR, func)
 
 
 class FunctionAuthority(Protocol):
@@ -79,6 +85,107 @@ class FunctionPatternValue:
 
     func: FunctionAuthority
     kwargs: FunctionKwargs
+
+
+class EditableFunctionPatternCallable:
+    """Callable view whose signature includes explicit function-pattern kwargs."""
+
+    def __init__(
+        self,
+        authority: FunctionAuthority,
+        kwargs: Mapping[str, ParameterValue] | None,
+    ) -> None:
+        self.__function_pattern_authority__ = authority
+        self.__name__ = getattr(authority, "__name__", type(authority).__name__)
+        self.__qualname__ = getattr(authority, "__qualname__", self.__name__)
+        self.__module__ = getattr(authority, "__module__", type(authority).__module__)
+        self.__doc__ = getattr(authority, "__doc__", None)
+        self.__wrapped__ = authority
+        self.__annotations__ = self._annotations(authority, kwargs or {})
+        self.__signature__ = self._signature(authority, kwargs or {})
+        hidden = parameter_exclusions(authority)
+        if hidden:
+            set_parameter_exclusions(self, hidden)
+
+    def __call__(self, *args: ParameterValue, **kwargs: ParameterValue):
+        return self.__function_pattern_authority__(*args, **kwargs)
+
+    @classmethod
+    def for_entry(
+        cls,
+        func: FunctionAuthority,
+        kwargs: Mapping[str, ParameterValue] | None,
+    ) -> FunctionAuthority:
+        """Return an editable callable view when kwargs extend the signature."""
+        if not kwargs:
+            return func
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            return func
+        if all(name in signature.parameters for name in kwargs):
+            return func
+        return cls(func, kwargs)
+
+    @staticmethod
+    def _signature(
+        authority: FunctionAuthority,
+        kwargs: Mapping[str, ParameterValue],
+    ) -> inspect.Signature:
+        signature = inspect.signature(authority)
+        resolved_annotations = EditableFunctionPatternCallable._resolved_annotations(
+            authority
+        )
+        parameters = [
+            parameter.replace(annotation=resolved_annotations[name])
+            if name in resolved_annotations
+            else parameter
+            for name, parameter in signature.parameters.items()
+        ]
+        existing = set(signature.parameters)
+        for name, value in kwargs.items():
+            if name in existing:
+                continue
+            parameters.append(
+                inspect.Parameter(
+                    name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=value,
+                    annotation=EditableFunctionPatternCallable._annotation(value),
+                )
+            )
+        return signature.replace(parameters=parameters)
+
+    @staticmethod
+    def _annotations(
+        authority: FunctionAuthority,
+        kwargs: Mapping[str, ParameterValue],
+    ) -> dict[str, Any]:
+        annotations = EditableFunctionPatternCallable._resolved_annotations(authority)
+        for name, value in kwargs.items():
+            annotations.setdefault(
+                name,
+                EditableFunctionPatternCallable._annotation(value),
+            )
+        return annotations
+
+    @staticmethod
+    def _resolved_annotations(authority: FunctionAuthority) -> dict[str, Any]:
+        try:
+            return get_type_hints(authority, include_extras=True)
+        except Exception:
+            return dict(getattr(authority, "__annotations__", {}))
+
+    @staticmethod
+    def _annotation(value: ParameterValue) -> Any:
+        if value is None:
+            return Any
+        if isinstance(value, tuple):
+            element_types = {type(item) for item in value if item is not None}
+            if len(element_types) == 1:
+                return tuple[next(iter(element_types)), ...]
+            return tuple[Any, ...]
+        return type(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,6 +518,8 @@ class FunctionPatternCodeDocumentService:
     @staticmethod
     def same_function_authority(left, right) -> bool:
         """Return whether two callable objects represent the same authority."""
+        left = function_pattern_authority(left)
+        right = function_pattern_authority(right)
         return left is right or left == right
 
     @classmethod
@@ -566,11 +675,15 @@ class FunctionPatternCodeDocumentService:
         if current is not None:
             ObjectStateRegistry.unregister(current, _skip_snapshot=True)
 
+        editable_func = EditableFunctionPatternCallable.for_entry(
+            entry.func,
+            entry.kwargs,
+        )
         func_state = ObjectState(
-            object_instance=entry.func,
+            object_instance=editable_func,
             scope_id=scope_id,
             parent_state=parent_state,
-            exclude_params=cls.reserved_parameter_names(entry.func),
+            exclude_params=cls.reserved_parameter_names(editable_func),
             initial_values=dict(entry.kwargs),
         )
         ObjectStateRegistry.register(func_state, _skip_snapshot=True)
@@ -614,7 +727,7 @@ class FunctionPatternCodeDocumentService:
                 f"Child scope {scope_id!r} does not own a callable value."
             )
         return FunctionPatternValue(
-            func=child_state.object_instance,
+            func=function_pattern_authority(child_state.object_instance),
             kwargs=self.reconstruct_kwargs_from_state(child_state),
         )
 

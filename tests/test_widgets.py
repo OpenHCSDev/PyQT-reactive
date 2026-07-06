@@ -5,6 +5,18 @@ from dataclasses import dataclass
 from enum import Enum
 
 
+class QuotedAnnotationMode(Enum):
+    A = "a"
+    B = "b"
+
+
+def process_with_quoted_enum_union(
+    image,
+    mode: "QuotedAnnotationMode | str" = QuotedAnnotationMode.A,
+):
+    return image
+
+
 def test_no_scroll_spinbox(qapp):
     """Test NoScrollSpinBox creation."""
     from pyqt_reactive.widgets import NoScrollSpinBox
@@ -344,6 +356,58 @@ def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
         choice_widget = nested.widgets["choice"]
         assert isinstance(choice_widget, QComboBox)
         assert choice_widget.currentData() is Mode.A
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
+    """Editable function-pattern wrappers preserve resolved enum widget types."""
+    from PyQt6.QtCore import QEventLoop, QTimer
+    from PyQt6.QtWidgets import QComboBox
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.services.function_pattern_code_document import (
+        EditableFunctionPatternCallable,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    editable = EditableFunctionPatternCallable.for_entry(
+        process_with_quoted_enum_union,
+        {"extra_setting": "value"},
+    )
+
+    @dataclass
+    class BaseConfig:
+        output_dir: str = "/tmp"
+
+    set_base_config_type(BaseConfig)
+    ObjectStateRegistry.clear()
+    state = ObjectState(
+        editable,
+        scope_id="test::editable_quoted_enum",
+        initial_values={"mode": QuotedAnnotationMode.B, "extra_setting": "value"},
+    )
+    manager = ParameterFormManager(
+        state=state,
+        config=FormManagerConfig(
+            color_scheme=ColorScheme(),
+            function_target=editable,
+            use_scroll_area=False,
+        ),
+    )
+
+    try:
+        loop = QEventLoop()
+        QTimer.singleShot(200, loop.quit)
+        loop.exec()
+
+        mode_widget = manager.widgets["mode"]
+        assert isinstance(mode_widget, QComboBox)
+        assert mode_widget.currentData() is QuotedAnnotationMode.B
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
