@@ -219,28 +219,22 @@ class EnabledFieldStylingService:
         if manager in self._direct_widgets_by_manager:
             return self._direct_widgets_by_manager[manager]
 
-        direct_widgets = []
         all_widgets = self.widget_ops.get_all_value_widgets(manager)
         logger.debug(f"[GET_DIRECT_WIDGETS] field_id={manager.field_id}, total widgets found: {len(all_widgets)}, nested_managers: {list(manager.nested_managers.keys())}")
 
-        for widget in all_widgets:
-            if sip.isdeleted(widget):
-                continue
-            widget_name = f"{widget.__class__.__name__}({widget.objectName() or 'no-name'})"
-            object_name = widget.objectName()
+        nested_widget_ids: set[int] = set()
+        for _, _, container in manager.form_tree.direct_child_groupboxes():
+            nested_widget_ids.add(id(container))
+            nested_widget_ids.update(
+                id(widget)
+                for widget in self.widget_ops.get_all_value_widgets(container)
+            )
 
-            # Check if widget belongs to a nested manager
-            belongs_to_nested = False
-            for nested_name, nested_manager in manager.nested_managers.items():
-                nested_field_id = nested_manager.field_id
-                if object_name and object_name.startswith(nested_field_id + '_'):
-                    belongs_to_nested = True
-                    logger.debug(f"[GET_DIRECT_WIDGETS] ❌ EXCLUDE {widget_name} - belongs to nested manager {nested_field_id}")
-                    break
-
-            if not belongs_to_nested:
-                direct_widgets.append(widget)
-                logger.debug(f"[GET_DIRECT_WIDGETS] ✅ INCLUDE {widget_name}")
+        direct_widgets = [
+            widget
+            for widget in all_widgets
+            if not sip.isdeleted(widget) and id(widget) not in nested_widget_ids
+        ]
 
         logger.debug(f"[GET_DIRECT_WIDGETS] field_id={manager.field_id}, returning {len(direct_widgets)} direct widgets")
 
