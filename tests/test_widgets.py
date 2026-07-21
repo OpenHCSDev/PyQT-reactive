@@ -2513,6 +2513,7 @@ def test_dynamic_flash_registration_rebuilds_valid_geometry_cache(qapp) -> None:
 
 def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
     """The real local queue path must produce visible overlay pixels."""
+    from PyQt6.QtCore import QCoreApplication, QEvent
     from PyQt6.QtWidgets import QDialog, QGroupBox, QVBoxLayout, QWidget
 
     from pyqt_reactive.animation.flash_mixin import (
@@ -2534,6 +2535,8 @@ def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
     coordinator._computed_colors.clear()
     coordinator._flash_start_times.clear()
     coordinator._active_windows.clear()
+    coordinator._pending_flash_keys.clear()
+    coordinator._pending_flash_flush_scheduled = False
 
     dialog = QDialog()
     dialog.resize(320, 220)
@@ -2576,9 +2579,18 @@ def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
     assert painted != baseline
     assert painted.alpha() > 0
 
+    if coordinator._timer is not None:
+        coordinator._timer.stop()
     coordinator._computed_colors.clear()
+    coordinator._flash_start_times.clear()
+    coordinator._active_windows.clear()
+    coordinator._pending_flash_keys.clear()
+    coordinator._pending_flash_flush_scheduled = False
     WindowFlashOverlay.cleanup_window(dialog)
     dialog.close()
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(overlay, QEvent.Type.DeferredDelete)
+    QCoreApplication.sendPostedEvents(dialog, QEvent.Type.DeferredDelete)
 
 
 def test_table_cell_flash_element_paints_visible_cell_pixels(qapp) -> None:
