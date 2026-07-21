@@ -289,7 +289,8 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         def _scan_and_emit() -> None:
             try:
                 servers = self._scan_service.scan_ports(self.ports_to_scan)
-                self._scan_complete.emit(servers)
+                if not self._lifecycle_state.is_cleaning_up():
+                    self._scan_complete.emit(servers)
             finally:
                 self._scan_in_flight = False
 
