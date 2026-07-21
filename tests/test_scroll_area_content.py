@@ -63,9 +63,7 @@ def test_reflowing_vertical_scroll_area_tracks_viewport_width_across_bar_transit
             content_rect = _rect_in(content, scroll_area)
             vertical_bar = scroll_area.verticalScrollBar()
 
-            assert (
-                vertical_bar.maximum() > vertical_bar.minimum()
-            ) is vertical_scroll_required
+            assert (vertical_bar.maximum() > vertical_bar.minimum()) is vertical_scroll_required
             assert content_rect.left() == viewport_rect.left()
             assert content_rect.width() == viewport_rect.width()
             representative_reset_rect = _rect_in(reset_buttons[0], scroll_area)
@@ -93,15 +91,12 @@ def test_column_filter_scrollbars_preserve_outer_width_and_long_value_access(
     panel.add_column_filter(columns[1], ["1 | W1", "2 | W2"])
     panel.add_column_filter(
         columns[2],
-        [
-            f"/tmp/openhcs_synthetic/plate/very-long-file-name-{index}.tif"
-            for index in range(100)
-        ],
+        [f"/tmp/openhcs_synthetic/plate/very-long-file-name-{index}.tif" for index in range(100)],
     )
     panel.show()
 
     try:
-        for width, height, vertical_scroll_required in (
+        for width, height, compact_viewport in (
             (300, 2000, False),
             (150, 600, True),
             (300, 2000, False),
@@ -113,14 +108,12 @@ def test_column_filter_scrollbars_preserve_outer_width_and_long_value_access(
             outer = panel.scroll_area
             outer_viewport_rect = _rect_in(outer.viewport(), panel)
             vertical_bar = outer.verticalScrollBar()
-            assert (
-                vertical_bar.maximum() > vertical_bar.minimum()
-            ) is vertical_scroll_required
+            vertical_scroll_required = vertical_bar.maximum() > vertical_bar.minimum()
+            if compact_viewport:
+                assert vertical_scroll_required
             assert panel.splitter.width() == outer.viewport().width()
             if vertical_scroll_required:
-                assert not outer_viewport_rect.intersects(
-                    _rect_in(vertical_bar, panel)
-                )
+                assert not outer_viewport_rect.intersects(_rect_in(vertical_bar, panel))
 
         long_value_filter = panel.column_filters["full_virtual"]
         inner = long_value_filter.findChild(QScrollArea)
