@@ -327,6 +327,9 @@ class StagedWrapLayout(QWidget):
         self._groups = groups
         self._stay_priority = stay_priority
         self._right_align_names = set(right_align_names or [])
+        # Group contents and size policies can change while names and available
+        # width remain stable. Rebuild instead of reusing that stale row cache.
+        self._last_width = -1
         self._update_layout()
 
     def refresh_layout(self):
