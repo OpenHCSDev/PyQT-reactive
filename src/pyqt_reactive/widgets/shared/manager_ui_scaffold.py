@@ -87,9 +87,9 @@ def create_manager_header(
         )
 
         status_label = QLabel("Ready")
-        # Match the explicitly sized title typography so viewport capacity is
-        # stable across platform theme defaults and headless Qt backends.
-        status_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        status_font = status_label.font()
+        status_font.setBold(True)
+        status_label.setFont(status_font)
         status_label.setStyleSheet(
             f"color: {color_scheme.to_hex(color_scheme.status_success)}; "
             "padding: 0px; margin: 0px;"
