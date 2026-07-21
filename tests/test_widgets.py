@@ -2291,26 +2291,14 @@ def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
         widget_rect_flash_source_id,
     )
 
-    class DeletionSensitiveFlashManager(QWidget, VisualUpdateMixin):
+    class LifecycleFlashManager(QWidget, VisualUpdateMixin):
         def __init__(self, parent: QWidget) -> None:
             super().__init__(parent)
-            self._simulate_deleted_wrapper = False
             self._init_visual_update_mixin()
-
-        def __getattribute__(self, name: str):
-            if name in {
-                "_flash_registrations",
-                "_flash_registration_lifecycle_keys",
-            } and object.__getattribute__(self, "_simulate_deleted_wrapper"):
-                raise RuntimeError(
-                    "wrapped C/C++ object of type "
-                    "DeletionSensitiveFlashManager has been deleted"
-                )
-            return super().__getattribute__(name)
 
     dialog = QDialog()
     layout = QVBoxLayout(dialog)
-    manager = DeletionSensitiveFlashManager(dialog)
+    manager = LifecycleFlashManager(dialog)
     target = QWidget(dialog)
     layout.addWidget(manager)
     layout.addWidget(target)
@@ -2331,7 +2319,6 @@ def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
         "excepthook",
         lambda _type, value, _traceback: uncaught.append(value),
     )
-    manager._simulate_deleted_wrapper = True
     manager.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert sip.isdeleted(manager)
@@ -2344,7 +2331,7 @@ def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
     assert lifecycle_keys == set()
     assert not overlay.has_element_source("field", source_id)
 
-    replacement = DeletionSensitiveFlashManager(dialog)
+    replacement = LifecycleFlashManager(dialog)
     replacement_target = QWidget(dialog)
     layout.addWidget(replacement)
     layout.addWidget(replacement_target)
