@@ -3133,7 +3133,10 @@ class VisualUpdateMixin:
         self._flash_registration_lifecycle_keys: Set[Tuple[int, str, int, str | None]] = set()
 
         # Text update timer (per-widget, debounced)
-        self._text_timer = QTimer()
+        # The timer is part of the widget's visual-update lifecycle. Parenting
+        # it to the mixin host makes Qt destroy and disconnect it before the
+        # wrapped QWidget becomes invalid on every platform.
+        self._text_timer = QTimer(self)
         self._text_timer.setSingleShot(True)
         self._text_timer.timeout.connect(self._execute_text_update_batch)
 

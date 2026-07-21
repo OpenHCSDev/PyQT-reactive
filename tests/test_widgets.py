@@ -2312,6 +2312,7 @@ def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
     assert overlay.has_element_source("field", source_id)
     registrations = manager._flash_registrations
     lifecycle_keys = manager._flash_registration_lifecycle_keys
+    assert manager._text_timer.parent() is manager
 
     uncaught: list[BaseException] = []
     monkeypatch.setattr(
