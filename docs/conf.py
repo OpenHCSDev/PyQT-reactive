@@ -11,7 +11,7 @@ project = "pyqt_reactive"
 copyright = "2024, Tristan Simas"
 author = "Tristan Simas"
 version = "0.1"
-release = "0.1.21"
+release = "0.1.22"
 
 # General configuration
 extensions = [
