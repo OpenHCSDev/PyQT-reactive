@@ -599,38 +599,50 @@ def test_form_window_action_header_exposes_stable_actions(qapp):
     assert header.action("cancel") is cancel_button
 
 
-def test_form_window_action_header_wraps_actions_only_under_pressure(qapp):
-    """Titles and right-aligned action groups share one row whenever they fit."""
+def test_form_window_action_header_places_semantic_groups_by_capacity(qapp):
+    """Semantic groups stay attached to their declared header regions."""
+    from PyQt6.QtCore import QRect, Qt
     from PyQt6.QtWidgets import QPushButton
 
     from pyqt_reactive.widgets.shared.form_window_action_header import (
         FormWindowActionHeader,
         HeaderAction,
         HeaderActionGroup,
+        HeaderActionGroupRole,
     )
     from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
         _widget_required_width,
     )
 
-    button_labels = ("Cancel", "Save", "Reset", "View Code", "Help")
-    buttons = [QPushButton(label) for label in button_labels]
+    buttons = {
+        label: QPushButton(label)
+        for label in ("Cancel", "Save", "Reset", "View Code", "Help")
+    }
     header = FormWindowActionHeader(
         title_text="Config PipelineConfig",
         action_groups=[
             HeaderActionGroup(
-                "commands",
+                "help",
+                [HeaderAction("help", buttons["Help"])],
+                role=HeaderActionGroupRole.TITLE_COMPANION,
+            ),
+            HeaderActionGroup(
+                "auxiliary",
                 [
-                    HeaderAction(action_id, button)
-                    for action_id, button in zip(
-                        ("cancel", "save", "reset", "view_code", "help"),
-                        buttons,
-                        strict=True,
-                    )
+                    HeaderAction("reset", buttons["Reset"]),
+                    HeaderAction("view_code", buttons["View Code"]),
                 ],
-            )
+                role=HeaderActionGroupRole.AUXILIARY,
+            ),
+            HeaderActionGroup(
+                "commit",
+                [
+                    HeaderAction("cancel", buttons["Cancel"]),
+                    HeaderAction("save", buttons["Save"]),
+                ],
+                role=HeaderActionGroupRole.COMMIT,
+            ),
         ],
-        stay_priority=["commands"],
-        right_aligned_group_ids=["commands"],
     )
     layout = header._layout_widget
     header.show()
@@ -639,37 +651,171 @@ def test_form_window_action_header_wraps_actions_only_under_pressure(qapp):
         name: _widget_required_width(widget)
         for name, widget in layout._groups
     }
-    required_width = layout._row_width(["title", "commands"], widths)
+    required_width = layout._row_width(["title", "auxiliary", "commit"], widths)
     header.resize(required_width, header.sizeHint().height())
     qapp.processEvents()
     layout._update_layout()
     qapp.processEvents()
 
-    assert layout._last_row1 == ["title", "commands"]
+    assert layout._last_row1 == ["title", "auxiliary", "commit"]
     assert layout._last_row2 == []
     assert header.header_label.wordWrap()
-    assert header.header_label.height() <= header.header_label.sizeHint().height() + 1
+    text_flags = int(
+        Qt.AlignmentFlag.AlignLeft.value | Qt.TextFlag.TextWordWrap.value
+    )
+    text_rect = header.header_label.fontMetrics().boundingRect(
+        QRect(0, 0, header.header_label.width(), 10_000),
+        text_flags,
+        header.header_label.text(),
+    )
+    one_line_text_height = header.header_label.fontMetrics().boundingRect(
+        QRect(0, 0, 10_000, 10_000),
+        text_flags,
+        header.header_label.text(),
+    ).height()
+    assert text_rect.height() == one_line_text_height, (
+        widths,
+        required_width,
+        header.width(),
+        layout.width(),
+        [(name, widget.geometry().getRect()) for name, widget in layout._groups],
+        header.header_label.geometry().getRect(),
+    )
     assert header.header_label.width() >= header.header_label.fontMetrics().horizontalAdvance(
         header.header_label.text()
     )
-    command_group = dict(layout._groups)["commands"]
-    assert command_group.geometry().right() >= layout.contentsRect().right() - 1
+    title_group = dict(layout._groups)["title"]
+    commit_group = dict(layout._groups)["commit"]
+    assert buttons["Help"].parentWidget() is title_group
+    assert header.header_label.geometry().right() < buttons["Help"].geometry().left()
+    assert commit_group.geometry().right() >= layout.contentsRect().right() - 1
 
     header.resize(required_width - 1, header.sizeHint().height() * 2)
     layout._update_layout()
     qapp.processEvents()
 
-    assert layout._last_row1 == ["title"]
-    assert layout._last_row2 == ["commands"]
-    assert command_group.geometry().right() >= layout.contentsRect().right() - 1
+    assert layout._last_row1 == ["title", "commit"]
+    assert layout._last_row2 == ["auxiliary"]
+    assert commit_group.geometry().right() >= layout.contentsRect().right() - 1
+    auxiliary_group = dict(layout._groups)["auxiliary"]
+    assert auxiliary_group.geometry().right() >= layout.contentsRect().right() - 1
 
-    compact_width = header.header_label.minimumSizeHint().width()
+
+def test_form_window_action_header_contains_wrapped_title_and_restores_wide_layout(qapp):
+    """Genuine pressure wraps the title without clipping or stale row geometry."""
+    from PyQt6.QtCore import QRect, Qt
+    from PyQt6.QtWidgets import QPushButton
+
+    from pyqt_reactive.widgets.shared.form_window_action_header import (
+        FormWindowActionHeader,
+        HeaderAction,
+        HeaderActionGroup,
+        HeaderActionGroupRole,
+    )
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        _widget_required_width,
+    )
+
+    help_button = QPushButton("Help")
+    reset_button = QPushButton("Reset")
+    commit_button = QPushButton("Cancel and Save")
+    header = FormWindowActionHeader(
+        title_text="Config PipelineConfigurationWithLongName",
+        action_groups=[
+            HeaderActionGroup(
+                "help",
+                [HeaderAction("help", help_button)],
+                role=HeaderActionGroupRole.TITLE_COMPANION,
+            ),
+            HeaderActionGroup(
+                "auxiliary",
+                [HeaderAction("reset", reset_button)],
+                role=HeaderActionGroupRole.AUXILIARY,
+            ),
+            HeaderActionGroup(
+                "commit",
+                [HeaderAction("commit", commit_button)],
+                role=HeaderActionGroupRole.COMMIT,
+            ),
+        ],
+    )
+    layout = header._layout_widget
+    header.show()
+    qapp.processEvents()
+
+    widths = {
+        name: _widget_required_width(widget)
+        for name, widget in layout._groups
+    }
+    wide_width = layout._row_width(["title", "auxiliary", "commit"], widths)
+    header.resize(wide_width, header.sizeHint().height())
+    layout._update_layout()
+    qapp.processEvents()
+    header.resize(wide_width, header.sizeHint().height())
+    qapp.processEvents()
+
+    assert layout._last_row1 == ["title", "auxiliary", "commit"]
+    assert layout._last_row2 == []
+    text_flags = int(
+        Qt.AlignmentFlag.AlignLeft.value | Qt.TextFlag.TextWordWrap.value
+    )
+    wide_text_rect = header.header_label.fontMetrics().boundingRect(
+        QRect(0, 0, header.header_label.width(), 10_000),
+        text_flags,
+        header.header_label.text(),
+    )
+    one_line_text_height = header.header_label.fontMetrics().boundingRect(
+        QRect(0, 0, 10_000, 10_000),
+        text_flags,
+        header.header_label.text(),
+    ).height()
+    assert wide_text_rect.height() == one_line_text_height
+
+    reset_button.setVisible(False)
+    header.refresh_layout()
+    compact_width = max(
+        widths["commit"],
+        help_button.sizeHint().width()
+        + header.header_label.minimumSizeHint().width()
+        + layout._spacing,
+    )
     header.resize(compact_width, header.sizeHint().height() * 3)
     layout._update_layout()
     qapp.processEvents()
+    header.resize(compact_width, header.sizeHint().height())
+    qapp.processEvents()
 
-    assert header.header_label.width() == compact_width
-    assert header.header_label.height() > header.header_label.sizeHint().height()
+    assert layout._last_row1 == ["auxiliary", "commit"]
+    assert layout._last_row2 == ["title"]
+    compact_text_rect = header.header_label.fontMetrics().boundingRect(
+        QRect(0, 0, header.header_label.width(), 10_000),
+        text_flags,
+        header.header_label.text(),
+    )
+    assert compact_text_rect.height() > one_line_text_height
+    assert compact_text_rect.height() <= header.header_label.contentsRect().height()
+    title_group = dict(layout._groups)["title"]
+    assert header.header_label.geometry().bottom() <= title_group.contentsRect().bottom()
+    assert title_group.mapTo(header, title_group.rect().bottomLeft()).y() <= (
+        header.contentsRect().bottom()
+    )
+
+    reset_button.setVisible(True)
+    header.resize(wide_width, header.height())
+    header.refresh_layout()
+    qapp.processEvents()
+    header.resize(wide_width, header.sizeHint().height())
+    qapp.processEvents()
+
+    assert layout._last_row1 == ["title", "auxiliary", "commit"]
+    assert layout._last_row2 == []
+    assert header.height() == layout.heightForWidth(wide_width)
+    restored_text_rect = header.header_label.fontMetrics().boundingRect(
+        QRect(0, 0, header.header_label.width(), 10_000),
+        text_flags,
+        header.header_label.text(),
+    )
+    assert restored_text_rect.height() == one_line_text_height
 
 
 def test_groupbox_title_keeps_reset_all_on_one_row_at_capacity(qapp):
