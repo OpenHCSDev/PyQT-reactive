@@ -25,6 +25,14 @@ def _rect_in(widget: QWidget, owner: QWidget) -> QRect:
     return QRect(widget.mapTo(owner, widget.rect().topLeft()), widget.size())
 
 
+def _contents_rect_in(widget: QWidget, owner: QWidget) -> QRect:
+    contents_rect = widget.contentsRect()
+    return QRect(
+        widget.mapTo(owner, contents_rect.topLeft()),
+        contents_rect.size(),
+    )
+
+
 def _settle() -> None:
     QTest.qWait(25)
 
@@ -72,6 +80,69 @@ def test_reflowing_vertical_scroll_area_tracks_viewport_width_across_bar_transit
                 vertical_bar_rect = _rect_in(vertical_bar, scroll_area)
                 assert not viewport_rect.intersects(vertical_bar_rect)
                 assert not representative_reset_rect.intersects(vertical_bar_rect)
+                occupied_rect = viewport_rect.united(vertical_bar_rect)
+                assert occupied_rect.left() == scroll_area.contentsRect().left()
+                assert occupied_rect.right() == scroll_area.contentsRect().right()
+            else:
+                assert viewport_rect.left() == scroll_area.contentsRect().left()
+                assert viewport_rect.right() == scroll_area.contentsRect().right()
+    finally:
+        scroll_area.close()
+
+
+def test_reflowing_vertical_scroll_area_preserves_base_margins_stably(qapp) -> None:
+    content = QWidget()
+    content_layout = QVBoxLayout(content)
+    for index in range(30):
+        content_layout.addWidget(QLabel(f"row {index}", content))
+
+    scroll_area = ReflowingVerticalScrollArea()
+    base_margins = (3, 4, 7, 6)
+    scroll_area.setViewportMargins(*base_margins)
+    scroll_area.setWidget(content)
+    scroll_area.resize(300, 180)
+    scroll_area.show()
+
+    try:
+        _settle()
+        vertical_bar = scroll_area.verticalScrollBar()
+        assert vertical_bar.maximum() > vertical_bar.minimum()
+        assert not _rect_in(scroll_area.viewport(), scroll_area).intersects(
+            _rect_in(vertical_bar, scroll_area)
+        )
+
+        effective_margins = scroll_area.viewportMargins()
+        assert effective_margins.left() >= base_margins[0]
+        assert effective_margins.top() == base_margins[1]
+        assert effective_margins.right() >= base_margins[2]
+        assert effective_margins.bottom() == base_margins[3]
+        compact_snapshot = (
+            effective_margins,
+            _rect_in(scroll_area.viewport(), scroll_area),
+        )
+        for _ in range(4):
+            qapp.processEvents()
+        assert (
+            scroll_area.viewportMargins(),
+            _rect_in(scroll_area.viewport(), scroll_area),
+        ) == compact_snapshot
+
+        scroll_area.resize(300, 2000)
+        _settle()
+        expanded_margins = scroll_area.viewportMargins()
+        assert (
+            expanded_margins.left(),
+            expanded_margins.top(),
+            expanded_margins.right(),
+            expanded_margins.bottom(),
+        ) == base_margins
+
+        scroll_area.resize(300, 180)
+        _settle()
+        assert (
+            scroll_area.viewportMargins(),
+            _rect_in(scroll_area.viewport(), scroll_area),
+        ) == compact_snapshot
     finally:
         scroll_area.close()
 
@@ -113,7 +184,12 @@ def test_column_filter_scrollbars_preserve_outer_width_and_long_value_access(
                 assert vertical_scroll_required
             assert panel.splitter.width() == outer.viewport().width()
             if vertical_scroll_required:
-                assert not outer_viewport_rect.intersects(_rect_in(vertical_bar, panel))
+                vertical_bar_rect = _rect_in(vertical_bar, panel)
+                assert not outer_viewport_rect.intersects(vertical_bar_rect)
+                occupied_rect = outer_viewport_rect.united(vertical_bar_rect)
+                outer_contents_rect = _contents_rect_in(outer, panel)
+                assert occupied_rect.left() == outer_contents_rect.left()
+                assert occupied_rect.right() == outer_contents_rect.right()
 
         long_value_filter = panel.column_filters["full_virtual"]
         inner = long_value_filter.findChild(QScrollArea)
