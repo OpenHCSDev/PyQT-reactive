@@ -2765,6 +2765,62 @@ def test_none_aware_line_edit_debounces_text_commits(qapp):
     assert values == ["abc"]
 
 
+def test_none_aware_int_edit_preserves_committed_value_during_invalid_text(qapp):
+    """Reactive refreshes can inspect transient invalid text without crashing."""
+    from PyQt6.QtGui import QValidator
+
+    from pyqt_reactive.forms.widget_strategies import NoneAwareIntEdit
+    from pyqt_reactive.services.widget_service import WidgetService
+
+    widget = NoneAwareIntEdit()
+    service = WidgetService()
+    widget.set_value(7777)
+
+    widget.setText("6665765765")
+    state, _, _ = widget.validator().validate(widget.text(), 0)
+    assert state != QValidator.State.Acceptable
+
+    service.update_widget_value(widget, 7777)
+    assert widget.text() == "6665765765"
+    assert widget.get_value() == 7777
+
+    service.update_widget_value(widget, 5555)
+    assert widget.text() == "5555"
+    assert widget.get_value() == 5555
+
+    widget.set_value(None)
+    assert widget.text() == ""
+    assert widget.get_value() is None
+
+
+def test_none_aware_int_edit_does_not_commit_invalid_text(qapp):
+    """Only empty or validator-acceptable integer text reaches form state."""
+    from PyQt6.QtCore import QEventLoop, QTimer
+
+    from pyqt_reactive.forms.widget_strategies import NoneAwareIntEdit
+
+    widget = NoneAwareIntEdit()
+    widget.set_value(7777)
+    values = []
+    widget.connect_change_signal(values.append)
+
+    widget.setText("6665765765")
+    loop = QEventLoop()
+    QTimer.singleShot(180, loop.quit)
+    loop.exec()
+
+    assert values == []
+    assert widget.get_value() == 7777
+
+    widget.setText("5555")
+    loop = QEventLoop()
+    QTimer.singleShot(180, loop.quit)
+    loop.exec()
+
+    assert values == [5555]
+    assert widget.get_value() == 5555
+
+
 def test_multiline_delegate_plain_text_fallback_is_quiet(qapp, caplog):
     """List placeholder rows without structured layouts are normal rows."""
     import logging

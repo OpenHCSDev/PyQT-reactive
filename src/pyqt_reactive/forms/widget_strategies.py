@@ -74,11 +74,13 @@ class DebouncedTextSignalMixin:
         self,
         callback: ParameterSignalCallback,
         value_getter: Callable[[], ParameterValue | None],
+        is_committable: Callable[[], bool] | None = None,
     ) -> None:
         self._text_change_emitters[callback] = DebouncedTextChangeEmitter(
             self,
             callback,
             value_getter,
+            is_committable=is_committable,
         )
 
     def disconnect_debounced_text_signal(self, callback: ParameterSignalCallback) -> None:
@@ -137,21 +139,52 @@ class NoneAwareIntEdit(
     """QLineEdit that only allows digits and properly handles None values for integer fields."""
 
     def __init__(self, parent=None):
+        self._committed_value: int | None = None
         super().__init__(parent)
         self.setValidator(QIntValidator())
 
+    def set_value(self, value: ParameterValue | None) -> None:
+        """Assign the authoritative value used while edited text is transient."""
+        self._committed_value = value
+        super().set_value(value)
+
     def get_value(self):
-        """Get value, returning None for empty text or converting to int."""
+        """Return the edited integer, or the committed value for invalid text."""
+        is_acceptable, value = self._interpreted_text_value()
+        if is_acceptable:
+            return value
+        return self._committed_value
+
+    def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
+        """Commit only empty or validator-acceptable integer text."""
+        self.connect_debounced_text_signal(
+            callback,
+            self._commit_current_text,
+            is_committable=self._current_text_is_committable,
+        )
+
+    def _current_text_is_committable(self) -> bool:
+        is_acceptable, _ = self._interpreted_text_value()
+        return is_acceptable
+
+    def _commit_current_text(self) -> int | None:
+        is_acceptable, value = self._interpreted_text_value()
+        if not is_acceptable:
+            raise RuntimeError("Cannot commit invalid NoneAwareIntEdit text")
+        self._committed_value = value
+        return value
+
+    def _interpreted_text_value(self) -> tuple[bool, int | None]:
         text = self.text().strip()
         if text == "":
-            return None
+            return True, None
         validator = self.validator()
         if validator is None:
             raise TypeError("NoneAwareIntEdit requires a QIntValidator before value extraction")
         state, _, _ = validator.validate(text, 0)
         if state != QValidator.State.Acceptable:
-            raise ValueError(f"Invalid integer text in NoneAwareIntEdit: {text!r}")
-        return int(text)
+            return False, None
+        return True, int(text)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -923,12 +956,14 @@ class DebouncedTextChangeEmitter:
         callback: WidgetSignalCallback,
         value_getter: Callable[[], WidgetValue | None],
         delay_ms: int = TEXT_CHANGE_COMMIT_DEBOUNCE_MS,
+        is_committable: Callable[[], bool] | None = None,
     ) -> None:
         from PyQt6.QtCore import QTimer
 
         self._widget = widget
         self._callback = callback
         self._value_getter = value_getter
+        self._is_committable = is_committable
         self._timer = QTimer(widget)
         self._timer.setSingleShot(True)
         self._timer.setInterval(delay_ms)
@@ -947,6 +982,8 @@ class DebouncedTextChangeEmitter:
         self.emit()
 
     def emit(self) -> None:
+        if self._is_committable is not None and not self._is_committable():
+            return
         self._callback(self._value_getter())
 
     def disconnect(self) -> None:
