@@ -129,6 +129,38 @@ class ResponsiveTwoRowWidget(QWidget):
         self._do_switch()
         self._timer.start(0)
 
+    def release_widgets(self, *widgets: QWidget) -> bool:
+        """Release widget ownership so later reflows cannot reinsert them."""
+
+        def retained(
+            owned_widgets: list[tuple[QWidget, int]],
+        ) -> list[tuple[QWidget, int]]:
+            return [
+                (owned_widget, stretch)
+                for owned_widget, stretch in owned_widgets
+                if all(owned_widget is not widget for widget in widgets)
+            ]
+
+        left_widgets = retained(self._left_widgets)
+        right_widgets = retained(self._right_widgets)
+        changed = (
+            len(left_widgets) != len(self._left_widgets)
+            or len(right_widgets) != len(self._right_widgets)
+        )
+        if not changed:
+            return False
+
+        self._left_widgets = left_widgets
+        self._right_widgets = right_widgets
+        self._do_switch()
+        self._timer.start(0)
+        return True
+
+    def is_empty(self) -> bool:
+        """Return whether this row owns no remaining presentation widgets."""
+
+        return not self._left_widgets and not self._right_widgets
+
     def _check_switch(self) -> None:
         """Check if we need to switch layouts based on content width."""
         available_width = self.contentsRect().width()

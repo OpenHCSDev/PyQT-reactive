@@ -139,6 +139,7 @@ class EnabledTitleWidgetMoveContext:
     request: EnabledTitleWidgetMoveRequest
     container: GroupBoxWithHelp
     source_layout: QLayout
+    source_row: ResponsiveParameterRow | None
     enabled_widget: QWidget
     title_widget: QWidget
     checkbox_widget: NoneAwareCheckBox | None
@@ -185,6 +186,7 @@ class EnabledTitleWidgetMoveAuthority:
         )
         container = self.groupbox_container(request)
         source_layout = self.source_layout(enabled_widget)
+        source_row = self.responsive_source_row(enabled_widget)
         checkbox_widget = None
         if isinstance(enabled_widget, NoneAwareCheckBox):
             checkbox_widget = enabled_widget
@@ -198,6 +200,7 @@ class EnabledTitleWidgetMoveAuthority:
             request=request,
             container=container,
             source_layout=source_layout,
+            source_row=source_row,
             enabled_widget=enabled_widget,
             title_widget=enabled_widget,
             checkbox_widget=checkbox_widget,
@@ -241,17 +244,41 @@ class EnabledTitleWidgetMoveAuthority:
             raise RuntimeError("Enableable widget parent has no layout.")
         return enabled_widget_layout
 
+    @staticmethod
+    def responsive_source_row(
+        enabled_widget: QWidget,
+    ) -> ResponsiveParameterRow | None:
+        """Return the responsive row that currently owns the field widget."""
+
+        ancestor = enabled_widget.parentWidget()
+        while ancestor is not None:
+            if isinstance(ancestor, ResponsiveParameterRow):
+                return ancestor
+            ancestor = ancestor.parentWidget()
+        return None
+
     def detach_source_row_widgets(self, context: EnabledTitleWidgetMoveContext) -> None:
         enabled_label = context.request.nested_manager.labels.get(
             context.request.enabled_field
         )
-        if enabled_label is not None:
-            context.source_layout.removeWidget(enabled_label)
-            enabled_label.hide()
+        source_widgets = tuple(
+            widget
+            for widget in (
+                enabled_label,
+                context.enabled_widget,
+                context.enabled_reset_button,
+            )
+            if widget is not None
+        )
+        if context.source_row is not None:
+            context.source_row.release_widgets(*source_widgets)
+        else:
+            for widget in source_widgets:
+                context.source_layout.removeWidget(widget)
 
-        context.source_layout.removeWidget(context.enabled_widget)
-        if context.enabled_reset_button is not None:
-            context.source_layout.removeWidget(context.enabled_reset_button)
+        if enabled_label is not None:
+            enabled_label.hide()
+            enabled_label.setParent(None)
 
     def wrap_checkbox_for_title(self, context: EnabledTitleWidgetMoveContext) -> None:
         if context.checkbox_widget is None:
@@ -438,6 +465,14 @@ class EnabledTitleWidgetMoveAuthority:
         context: EnabledTitleWidgetMoveContext,
     ) -> None:
         from PyQt6.QtWidgets import QWidget
+
+        if context.source_row is not None:
+            if not context.source_row.is_empty():
+                return
+            context.source_row.hide()
+            context.source_row.setParent(None)
+            context.source_row.deleteLater()
+            return
 
         if context.source_layout.count() != 0:
             return
