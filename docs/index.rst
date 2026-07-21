@@ -72,7 +72,8 @@ Requirements
 
 * Python 3.11+
 * PyQt6 >= 6.4.0
-* objectstate >= 0.1.0
+* ObjectState >= 1.0.18
+* python-introspect >= 0.1.5
 
 Contents
 --------

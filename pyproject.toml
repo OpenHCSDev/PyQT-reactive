@@ -24,9 +24,15 @@ classifiers = [
 keywords = ["pyqt6", "forms", "reactive", "gui", "widgets", "dataclass"]
 
 dependencies = [
+    "magicgui>=0.7.0",
+    "metaclass-registry>=0.1.5",
     "PyQt6>=6.4.0",
     "objectstate>=1.0.18",
+    "psutil>=5.9",
+    "Pygments>=2.15",
+    "pyzmq>=22.0",
     "python-introspect>=0.1.5",
+    "zmqruntime>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -43,10 +49,6 @@ docs = [
     "sphinx-rtd-theme>=2.0",
     "sphinx-autodoc-typehints>=1.25",
 ]
-magicgui = [
-    "magicgui>=0.7.0",
-]
-
 [project.urls]
 Homepage = "https://github.com/OpenHCSDev/pyqt-reactive"
 Documentation = "https://pyqt-reactive.readthedocs.io"
