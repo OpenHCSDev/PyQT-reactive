@@ -77,12 +77,9 @@ class ScrollableFormWindowNavigationDriver(FormFieldWindowNavigationDriver):
                 wait_reason=NavigationWaitReason.LAYOUT,
             )
 
-        target = self._owner._resolve_scroll_target(
+        target, is_fallback = self._owner._resolve_navigation_scroll_target(
             request.field_path,
-            warn_missing=False,
         )
-        if target is None:
-            target = self._owner._resolve_nearest_ancestor_scroll_target(request.field_path)
         if target is None:
             return RegisteredWindowNavigationReadiness(
                 wait_reason=NavigationWaitReason.FIELD_TARGET,
@@ -99,16 +96,28 @@ class ScrollableFormWindowNavigationDriver(FormFieldWindowNavigationDriver):
             or viewport.viewport_height <= 0
             or viewport.vertical_scroll_bar.maximum() <= 0
         ):
-            if self._owner._target_is_fully_visible(target, viewport):
+            if self._owner._target_is_visible_for_navigation(
+                target,
+                viewport,
+                is_fallback=is_fallback,
+            ):
                 return readiness
             return RegisteredWindowNavigationReadiness(
                 wait_reason=NavigationWaitReason.LAYOUT,
             )
 
-        if self._owner._target_is_fully_visible(target, viewport):
+        if self._owner._target_is_visible_for_navigation(
+            target,
+            viewport,
+            is_fallback=is_fallback,
+        ):
             return readiness
 
-        target_scroll = self._owner._target_scroll_position(target, viewport)
+        target_scroll = self._owner._navigation_scroll_position(
+            target,
+            viewport,
+            is_fallback=is_fallback,
+        )
         if target_scroll > viewport.vertical_scroll_bar.maximum():
             return RegisteredWindowNavigationReadiness(
                 wait_reason=NavigationWaitReason.LAYOUT,
@@ -176,18 +185,24 @@ class ScrollableFormMixin:
             logger.warning("Scroll area not initialized; cannot navigate to section")
             return
 
-        target = self._resolve_scroll_target(field_name, warn_missing=False)
-        if target is None:
-            target = self._resolve_nearest_ancestor_scroll_target(field_name)
+        target, is_fallback = self._resolve_navigation_scroll_target(field_name)
         if target is None:
             self._resolve_scroll_target(field_name, warn_missing=True)
             return
 
         viewport = self._scroll_viewport()
-        if self._target_is_fully_visible(target, viewport):
+        if self._target_is_visible_for_navigation(
+            target,
+            viewport,
+            is_fallback=is_fallback,
+        ):
             logger.info(f"✅ Target {field_name} already visible, skipping scroll")
         else:
-            target_scroll = self._target_scroll_position(target, viewport)
+            target_scroll = self._navigation_scroll_position(
+                target,
+                viewport,
+                is_fallback=is_fallback,
+            )
             viewport.vertical_scroll_bar.setValue(target_scroll)
             logger.info(f"✅ Scrolled to {field_name} (target_scroll={target_scroll})")
 
@@ -389,6 +404,17 @@ class ScrollableFormMixin:
 
         return None
 
+    def _resolve_navigation_scroll_target(
+        self,
+        field_name: str,
+    ) -> tuple[ScrollTarget | None, bool]:
+        """Resolve a navigation target and whether it is an ancestor fallback."""
+
+        target = self._resolve_scroll_target(field_name, warn_missing=False)
+        if target is not None:
+            return target, False
+        return self._resolve_nearest_ancestor_scroll_target(field_name), True
+
     def _scroll_viewport(self) -> ScrollViewport:
         """Capture scroll-area geometry once for a navigation operation."""
         content_widget = self.scroll_area.widget()
@@ -429,6 +455,61 @@ class ScrollableFormMixin:
     def _target_is_fully_visible(self, target: ScrollTarget, viewport: ScrollViewport) -> bool:
         widget_top, _, widget_bottom = self._target_visual_bounds(target, viewport)
         return widget_top >= viewport.viewport_top and widget_bottom <= viewport.viewport_bottom
+
+    def _target_is_visible_for_navigation(
+        self,
+        target: ScrollTarget,
+        viewport: ScrollViewport,
+        *,
+        is_fallback: bool,
+    ) -> bool:
+        """Return whether navigation already has enough target context in view.
+
+        Exact targets must be fully visible. A nearest-ancestor fallback is only
+        a contextual approximation for a structural leaf that no longer exists,
+        so any visible portion of that ancestor is sufficient and must not
+        displace the user's current viewport.
+        """
+
+        if not is_fallback:
+            return self._target_is_fully_visible(target, viewport)
+        widget_top, widget_height, widget_bottom = self._target_visual_bounds(
+            target,
+            viewport,
+        )
+        return (
+            widget_height > 0
+            and widget_bottom > viewport.viewport_top
+            and widget_top < viewport.viewport_bottom
+        )
+
+    def _navigation_scroll_position(
+        self,
+        target: ScrollTarget,
+        viewport: ScrollViewport,
+        *,
+        is_fallback: bool,
+    ) -> int:
+        """Return the navigation position for an exact or contextual target."""
+
+        if not is_fallback:
+            return self._target_scroll_position(target, viewport)
+
+        widget_top, widget_height, widget_bottom = self._target_visual_bounds(
+            target,
+            viewport,
+        )
+        if widget_height >= viewport.viewport_height:
+            if widget_bottom <= viewport.viewport_top:
+                return max(0, widget_bottom - 1)
+            if widget_top >= viewport.viewport_bottom:
+                return max(0, widget_top - viewport.viewport_height + 1)
+            return viewport.viewport_top
+        if widget_top < viewport.viewport_top:
+            return max(0, widget_top)
+        if widget_bottom > viewport.viewport_bottom:
+            return max(0, widget_bottom - viewport.viewport_height)
+        return viewport.viewport_top
 
     def _target_scroll_position(self, target: ScrollTarget, viewport: ScrollViewport) -> int:
         if target.is_field:
