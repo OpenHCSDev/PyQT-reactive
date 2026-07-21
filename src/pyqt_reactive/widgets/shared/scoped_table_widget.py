@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import QTableWidget, QWidget
 
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
@@ -25,10 +26,16 @@ class _ScopedTableBorderOverlay(QWidget):
         self.setVisible(scheme is not None and bool(scheme.step_border_layers))
         self.update()
 
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, event) -> None:  # noqa: N802
         del event
         if self._scope_color_scheme is None:
             return
+        painter = QPainter(self)
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Source
+        )
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.end()
         ScopeBorderRenderer.paint_border_layers(
             self,
             self._scope_color_scheme,
@@ -70,7 +77,7 @@ class ScopedTableWidget(QTableWidget):
         self._border_overlay.set_scope_color_scheme(scheme)
         self.update()
 
-    def resizeEvent(self, event) -> None:
+    def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._border_overlay.setGeometry(self.rect())
         self._border_overlay.raise_()

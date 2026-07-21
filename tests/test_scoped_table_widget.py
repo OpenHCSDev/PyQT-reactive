@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QRect
-from PyQt6.QtGui import QImage, QPaintEvent
+from PyQt6.QtGui import QColor, QImage, QPainter, QPaintEvent, QPen
 from PyQt6.QtWidgets import QWidget
+
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
@@ -17,8 +18,8 @@ from pyqt_reactive.widgets.shared.clickable_help_components import (
     InlineDataclassGroupBox,
 )
 from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
-from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 
 
 def _scope_scheme() -> ScopeColorScheme:
@@ -56,6 +57,26 @@ def test_scoped_table_widget_accepts_scope_scheme_and_paints(qapp) -> None:
 
     table.set_scope_color_scheme(None)
     assert not table._border_overlay.isVisible()
+
+
+def test_scoped_table_overlay_clears_retained_pixels_before_repaint(qapp) -> None:
+    table = ScopedTableWidget(1, 1)
+    table.set_scope_color_scheme(_scope_scheme())
+    table.resize(80, 40)
+    table.show()
+    qapp.processEvents()
+
+    image = QImage(table._border_overlay.size(), QImage.Format.Format_ARGB32)
+    image.fill(0)
+    retained_line_y = image.height() // 2
+    painter = QPainter(image)
+    painter.setPen(QPen(QColor(40, 90, 120), 3))
+    painter.drawLine(0, retained_line_y, image.width() - 1, retained_line_y)
+    painter.end()
+
+    table._border_overlay.render(image)
+
+    assert image.pixelColor(image.width() // 2, retained_line_y).alpha() == 0
 
 
 def test_inline_dataclass_groupbox_propagates_scope_to_inline_widget(qapp) -> None:
