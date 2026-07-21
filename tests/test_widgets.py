@@ -303,7 +303,6 @@ def test_enum_union_uses_enum_widget(qapp):
 
 def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
     """Function forms derive widgets from signatures and ObjectState path types."""
-    from PyQt6.QtCore import QEventLoop, QTimer
     from PyQt6.QtWidgets import QComboBox
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.forms.parameter_form_manager import (
@@ -350,9 +349,7 @@ def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
     )
 
     try:
-        loop = QEventLoop()
-        QTimer.singleShot(200, loop.quit)
-        loop.exec()
+        qapp.processEvents()
 
         mode_widget = manager.widgets["mode"]
         assert isinstance(mode_widget, QComboBox)
@@ -370,7 +367,6 @@ def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
 
 def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
     """Editable function-pattern wrappers preserve resolved enum widget types."""
-    from PyQt6.QtCore import QEventLoop, QTimer
     from PyQt6.QtWidgets import QComboBox
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.forms.parameter_form_manager import (
@@ -408,9 +404,7 @@ def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
     )
 
     try:
-        loop = QEventLoop()
-        QTimer.singleShot(200, loop.quit)
-        loop.exec()
+        qapp.processEvents()
 
         mode_widget = manager.widgets["mode"]
         assert isinstance(mode_widget, QComboBox)
@@ -1600,7 +1594,6 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
     """Global config hierarchy rows use the same ObjectState path flashes as forms."""
     from dataclasses import field
 
-    from PyQt6.QtCore import QEventLoop, QTimer
     from PyQt6.QtWidgets import QDialog, QVBoxLayout
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.animation.flash_mixin import (
@@ -1661,9 +1654,13 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
         assert item.data(0, TREE_OBJECT_STATE_PATH_ROLE) == "child"
 
         manager.queue_flash_local("child")
-        loop = QEventLoop()
-        QTimer.singleShot(50, loop.quit)
-        loop.exec()
+        coordinator._flush_pending_flash_keys()
+        if coordinator._timer is not None:
+            coordinator._timer.stop()
+        for key in tuple(coordinator._flash_start_times):
+            coordinator._flash_start_times[key] -= coordinator._config.fade_in_s
+        coordinator._on_global_tick()
+        qapp.processEvents()
 
         assert manager.get_flash_color_for_object_state_path("child") is not None
         coordinator._flash_start_times.clear()
@@ -1671,9 +1668,13 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
         coordinator._computed_colors.clear()
 
         manager.queue_flash_local("child.value")
-        loop = QEventLoop()
-        QTimer.singleShot(50, loop.quit)
-        loop.exec()
+        coordinator._flush_pending_flash_keys()
+        if coordinator._timer is not None:
+            coordinator._timer.stop()
+        for key in tuple(coordinator._flash_start_times):
+            coordinator._flash_start_times[key] -= coordinator._config.fade_in_s
+        coordinator._on_global_tick()
+        qapp.processEvents()
 
         assert manager.get_flash_color_for_object_state_path("child") is not None
     finally:
@@ -2770,20 +2771,20 @@ def test_placeholder_state_methods_declare_generic_capability_tag(qapp):
 
 def test_none_aware_line_edit_debounces_text_commits(qapp):
     """Rapid typing commits one semantic value after the user pauses."""
-    from PyQt6.QtCore import QEventLoop, QTimer
     from pyqt_reactive.forms.widget_strategies import NoneAwareLineEdit
 
     widget = NoneAwareLineEdit()
     values = []
-    widget.connect_change_signal(values.append)
+    commit_value = values.append
+    widget.connect_change_signal(commit_value)
 
     widget.setText("a")
     widget.setText("ab")
     widget.setText("abc")
 
-    loop = QEventLoop()
-    QTimer.singleShot(180, loop.quit)
-    loop.exec()
+    emitter = widget._text_change_emitters[commit_value]
+    assert emitter._timer.isActive()
+    emitter.flush()
 
     assert values == ["abc"]
 
@@ -2818,27 +2819,25 @@ def test_none_aware_int_edit_preserves_committed_value_during_invalid_text(qapp)
 
 def test_none_aware_int_edit_does_not_commit_invalid_text(qapp):
     """Only empty or validator-acceptable integer text reaches form state."""
-    from PyQt6.QtCore import QEventLoop, QTimer
-
     from pyqt_reactive.forms.widget_strategies import NoneAwareIntEdit
 
     widget = NoneAwareIntEdit()
     widget.set_value(7777)
     values = []
-    widget.connect_change_signal(values.append)
+    commit_value = values.append
+    widget.connect_change_signal(commit_value)
+    emitter = widget._text_change_emitters[commit_value]
 
     widget.setText("6665765765")
-    loop = QEventLoop()
-    QTimer.singleShot(180, loop.quit)
-    loop.exec()
+    assert emitter._timer.isActive()
+    emitter.flush()
 
     assert values == []
     assert widget.get_value() == 7777
 
     widget.setText("5555")
-    loop = QEventLoop()
-    QTimer.singleShot(180, loop.quit)
-    loop.exec()
+    assert emitter._timer.isActive()
+    emitter.flush()
 
     assert values == [5555]
     assert widget.get_value() == 5555
@@ -2974,7 +2973,6 @@ def test_restore_selection_by_id_preserves_without_selection_signal(qapp):
 
 def test_visual_update_batch_repaints_after_text_update(qapp):
     """Role-only list updates still need an explicit repaint after batching."""
-    from PyQt6.QtCore import QEventLoop, QTimer
     from PyQt6.QtWidgets import QWidget
     from pyqt_reactive.animation.flash_mixin import VisualUpdateMixin
 
@@ -2994,9 +2992,9 @@ def test_visual_update_batch_repaints_after_text_update(qapp):
     widget = VisualUpdateProbe()
     widget.queue_visual_update()
 
-    loop = QEventLoop()
-    QTimer.singleShot(40, loop.quit)
-    loop.exec()
+    assert widget._text_timer.isActive()
+    widget._text_timer.stop()
+    widget._execute_text_update_batch()
 
     assert widget.text_updates == 1
     assert widget.repaint_updates == 1
