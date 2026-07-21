@@ -92,6 +92,7 @@ class ActionTabbedWindowBody(QWidget):
             self._active_actions_layout.addWidget(spec.actions)
         if self.tab_bar.currentIndex() != self.content_stack.currentIndex():
             self.content_stack.setCurrentIndex(self.tab_bar.currentIndex())
+        self.tab_bar.setVisible(self.content_stack.count() > 1)
         self._show_current_actions()
         return index
 

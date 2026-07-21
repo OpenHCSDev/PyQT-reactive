@@ -283,15 +283,16 @@ class ParameterOpsService(ParameterServiceABC):
 
         Args:
             manager: ParameterFormManager instance to refresh
-            defer: If True, defer refresh with QTimer to ensure async widget creation completes.
-                    Used during async widget creation to avoid race conditions.
+            defer: If True, defer refresh through the manager-owned QObject
+                lifecycle so async widget creation can complete safely.
         """
         logger.debug(f"🔍 REFRESH: {manager.field_id} (id={id(manager)}) refreshing placeholders, defer={defer}")
 
         if defer:
-            # Defer refresh to next event loop tick to ensure all async widget batches complete
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._deferred_refresh_with_live_context(manager))
+            manager.schedule_lifecycle_callback(
+                0,
+                lambda: self._deferred_refresh_with_live_context(manager),
+            )
         else:
             # Immediate refresh
             self.refresh_all_placeholders(manager)
@@ -305,7 +306,7 @@ class ParameterOpsService(ParameterServiceABC):
             self._refresh_root_flash_registrations(manager)
 
     def _deferred_refresh_with_live_context(self, manager) -> None:
-        """Deferred refresh implementation - called after QTimer.singleShot."""
+        """Run a deferred refresh while its manager QObject is still alive."""
         self.refresh_all_placeholders(manager)
         # CRITICAL: Also refresh enabled styling to ensure disabled fields show correctly
         manager._apply_to_nested_managers(
@@ -345,6 +346,9 @@ class ParameterOpsService(ParameterServiceABC):
                     _ = widget.objectName()
                 except RuntimeError:
                     logger.debug(f"[PLACEHOLDER] {manager.field_id}: Widget {param_name} was deleted, skipping")
+                    continue
+
+                if not PyQt6WidgetEnhancer.supports_placeholder(widget):
                     continue
 
                 # Use manager.parameters (scoped) not state.parameters (full paths)

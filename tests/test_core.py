@@ -144,6 +144,44 @@ def test_live_context_refresh_replays_root_flash_registrations():
     assert manager.reregister_count == 1
 
 
+def test_deferred_live_context_refresh_obeys_manager_qobject_lifetime(qapp):
+    """Deferred form work is cancelled when Qt destroys its manager owner."""
+    from PyQt6 import sip
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QWidget
+
+    from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
+    from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
+
+    class FormManager(QWidget):
+        field_id = "root"
+        schedule_lifecycle_callback = (
+            ParameterFormManager.schedule_lifecycle_callback
+        )
+
+    service = ParameterOpsService()
+    refreshed = []
+    service._deferred_refresh_with_live_context = refreshed.append
+
+    live_manager = FormManager()
+    service.refresh_with_live_context(live_manager, defer=True)
+    qapp.processEvents()
+    assert refreshed == [live_manager]
+
+    live_manager.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    refreshed.clear()
+    deleted_manager = FormManager()
+    service.refresh_with_live_context(deleted_manager, defer=True)
+    deleted_manager.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert sip.isdeleted(deleted_manager)
+
+    qapp.processEvents()
+    assert refreshed == []
+
+
 def test_window_flash_overlay_replaces_stale_cached_overlay(qapp, monkeypatch):
     """Overlay cache entries stay owned by the exact live top-level window."""
     from PyQt6.QtWidgets import QDialog

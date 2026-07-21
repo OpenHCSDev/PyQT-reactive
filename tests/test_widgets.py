@@ -200,6 +200,13 @@ def test_enableable_dimming_defers_to_placeholder_state_contract(qapp):
     assert service._set_widget_dimmed(checkbox, True)
     assert checkbox.graphicsEffect() is None
     assert checkbox.property("enabled_field_dimmed") is False
+    assert service._set_widget_dimmed(
+        checkbox,
+        True,
+        preserve_placeholder_paint=False,
+    )
+    assert checkbox.graphicsEffect() is not None
+    assert checkbox.property("enabled_field_dimmed") is True
 
     group = CheckboxGroupAdapter()
     group_checkbox = NoneAwareCheckBox()
@@ -438,6 +445,26 @@ def test_action_tabbed_window_body_switches_active_actions(qapp):
     qapp.processEvents()
     assert not first_actions.isVisible()
     assert second_actions.isVisible()
+
+
+def test_action_tabbed_window_body_shows_tabs_only_for_multiple_pages(qapp):
+    """A single page renders without tab chrome; a second page enables it."""
+    from PyQt6.QtWidgets import QLabel
+    from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
+        ActionTabSpec,
+        ActionTabbedWindowBody,
+    )
+
+    body = ActionTabbedWindowBody()
+    first_content = QLabel("first content")
+    body.add_tab(ActionTabSpec("First", first_content))
+
+    assert body.tab_bar.isHidden()
+    assert body.current_widget() is first_content
+
+    body.add_tab(ActionTabSpec("Second", QLabel("second content")))
+
+    assert not body.tab_bar.isHidden()
 
 
 def test_form_window_action_header_exposes_stable_actions(qapp):
@@ -1280,7 +1307,7 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
         coordinator._pending_flash_keys.clear()
         coordinator._computed_colors.clear()
         coordinator._active_windows.clear()
-        WindowFlashOverlay._overlays.clear()
+        WindowFlashOverlay.cleanup_window(host)
         host.deleteLater()
         manager.deleteLater()
         ObjectStateRegistry.clear()
@@ -1799,6 +1826,190 @@ def test_flash_registration_skips_factory_for_existing_visual_source(qapp) -> No
 
     WindowFlashOverlay.cleanup_window(dialog)
     dialog.close()
+
+
+def test_flash_overlay_cleanup_detaches_refreshed_event_sources(
+    qapp,
+    monkeypatch,
+) -> None:
+    """Cleanup detaches retained event sources even after scroll discovery refreshes."""
+    import sys
+
+    from PyQt6.QtWidgets import QDialog, QScrollArea, QVBoxLayout, QWidget
+
+    from pyqt_reactive.animation.flash_mixin import (
+        WindowFlashOverlay,
+        create_widget_rect_element,
+    )
+
+    dialog = QDialog()
+    layout = QVBoxLayout(dialog)
+    initial_scroll = QScrollArea(dialog)
+    initial_viewport = QWidget()
+    initial_scroll.setViewport(initial_viewport)
+    watched = QWidget(dialog)
+    layout.addWidget(initial_scroll)
+    layout.addWidget(watched)
+    dialog.show()
+    qapp.processEvents()
+
+    overlay = WindowFlashOverlay.get_for_window(watched)
+    assert overlay is not None
+    overlay.register_element(create_widget_rect_element("field", watched))
+
+    layout.removeWidget(initial_scroll)
+    initial_scroll.setParent(None)
+    replacement_scroll = QScrollArea(dialog)
+    replacement_viewport = QWidget()
+    replacement_scroll.setViewport(replacement_viewport)
+    layout.addWidget(replacement_scroll)
+    overlay._refresh_scroll_area_event_filters()
+
+    registered_source_ids = set(overlay._event_filter_sources)
+    assert {
+        id(dialog),
+        id(initial_viewport),
+        id(replacement_viewport),
+        id(watched),
+    } <= registered_source_ids
+
+    uncaught: list[BaseException] = []
+    monkeypatch.setattr(
+        sys,
+        "excepthook",
+        lambda _type, value, _traceback: uncaught.append(value),
+    )
+    WindowFlashOverlay.cleanup_window(dialog)
+    assert overlay._event_filter_sources == {}
+
+    cache = overlay._cache
+    del overlay._cache
+    QWidget(dialog)
+    QWidget(initial_viewport)
+    QWidget(replacement_viewport)
+    QWidget(watched)
+    qapp.processEvents()
+    overlay._cache = cache
+
+    assert uncaught == []
+
+    initial_scroll.deleteLater()
+    dialog.deleteLater()
+    qapp.processEvents()
+
+
+def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
+    qapp,
+    monkeypatch,
+) -> None:
+    """Destroyed targets clean captured flash state without dereferencing the owner."""
+    import sys
+
+    from PyQt6 import sip
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QDialog, QVBoxLayout, QWidget
+
+    from pyqt_reactive.animation.flash_mixin import (
+        VisualUpdateMixin,
+        WindowFlashOverlay,
+        widget_rect_flash_source_id,
+    )
+
+    class DeletionSensitiveFlashManager(QWidget, VisualUpdateMixin):
+        def __init__(self, parent: QWidget) -> None:
+            super().__init__(parent)
+            self._simulate_deleted_wrapper = False
+            self._init_visual_update_mixin()
+
+        def __getattribute__(self, name: str):
+            if name in {
+                "_flash_registrations",
+                "_flash_registration_lifecycle_keys",
+            } and object.__getattribute__(self, "_simulate_deleted_wrapper"):
+                raise RuntimeError(
+                    "wrapped C/C++ object of type "
+                    "DeletionSensitiveFlashManager has been deleted"
+                )
+            return super().__getattribute__(name)
+
+    dialog = QDialog()
+    layout = QVBoxLayout(dialog)
+    manager = DeletionSensitiveFlashManager(dialog)
+    target = QWidget(dialog)
+    layout.addWidget(manager)
+    layout.addWidget(target)
+    dialog.show()
+    qapp.processEvents()
+
+    manager.register_flash_widget_rect("field", target)
+    overlay = WindowFlashOverlay.get_for_window(target)
+    assert overlay is not None
+    source_id = widget_rect_flash_source_id(target)
+    assert overlay.has_element_source("field", source_id)
+    registrations = manager._flash_registrations
+    lifecycle_keys = manager._flash_registration_lifecycle_keys
+
+    uncaught: list[BaseException] = []
+    monkeypatch.setattr(
+        sys,
+        "excepthook",
+        lambda _type, value, _traceback: uncaught.append(value),
+    )
+    manager._simulate_deleted_wrapper = True
+    manager.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert sip.isdeleted(manager)
+    target.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+
+    assert uncaught == []
+    assert registrations == []
+    assert lifecycle_keys == set()
+    assert not overlay.has_element_source("field", source_id)
+
+    replacement = DeletionSensitiveFlashManager(dialog)
+    replacement_target = QWidget(dialog)
+    layout.addWidget(replacement)
+    layout.addWidget(replacement_target)
+    replacement.register_flash_widget_rect("field", replacement_target)
+    replacement_source_id = widget_rect_flash_source_id(replacement_target)
+    assert overlay.has_element_source("field", replacement_source_id)
+
+    replacement_target.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+    assert replacement._flash_registrations == []
+    assert replacement._flash_registration_lifecycle_keys == set()
+    assert not overlay.has_element_source("field", replacement_source_id)
+
+    replacement.deleteLater()
+    WindowFlashOverlay.cleanup_window(dialog)
+    dialog.close()
+
+
+def test_flash_lifecycle_cleanup_static_ast_has_no_owner_reference() -> None:
+    """Destroyed-signal cleanup must not dereference its deleted mixin owner."""
+    import ast
+    import inspect
+    import textwrap
+
+    from pyqt_reactive.animation.flash_mixin import VisualUpdateMixin
+
+    source = textwrap.dedent(
+        inspect.getsource(VisualUpdateMixin._cleanup_flash_registration)
+    )
+    method = ast.parse(source).body[0]
+
+    assert isinstance(method, ast.FunctionDef)
+    assert any(
+        isinstance(decorator, ast.Name) and decorator.id == "staticmethod"
+        for decorator in method.decorator_list
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == "self"
+        for node in ast.walk(method)
+    )
 
 
 def test_geometry_rebuild_reuses_duplicate_visual_source(qapp) -> None:

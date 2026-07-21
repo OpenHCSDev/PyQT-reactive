@@ -616,7 +616,6 @@ class WidgetCreationHandlers:
 
         Checkbox controls None vs instance state (independent of enabled field).
         """
-        from PyQt6.QtCore import QTimer
         from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
         def on_checkbox_changed(checked):
@@ -637,7 +636,12 @@ class WidgetCreationHandlers:
 
                 # Trigger the nested config's enabled handler to apply enabled styling
                 # CRITICAL FIX: Call the service method, not a non-existent manager method
-                QTimer.singleShot(0, lambda: nested_manager._enabled_field_styling_service.apply_initial_enabled_styling(nested_manager))
+                nested_manager.schedule_lifecycle_callback(
+                    0,
+                    lambda: nested_manager._enabled_field_styling_service.apply_initial_enabled_styling(
+                        nested_manager
+                    ),
+                )
             else:
                 # Config is None - set to None and block inputs
                 manager.update_parameter(param_info.name, None)

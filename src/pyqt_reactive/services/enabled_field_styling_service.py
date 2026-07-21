@@ -1,11 +1,14 @@
 """Enabled Field Styling Service - Visual styling for enabled/disabled states."""
 
+import logging
 from typing import Any
 from weakref import WeakKeyDictionary
-from PyQt6 import sip
-from PyQt6.QtWidgets import QCheckBox, QLabel, QGraphicsOpacityEffect
+
 from objectstate.time_travel_profile import TimeTravelProfiler
-import logging
+from PyQt6 import sip
+from PyQt6.QtWidgets import QCheckBox, QGraphicsOpacityEffect, QLabel
+
+from pyqt_reactive.protocols import PlaceholderStateTrackable
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +300,11 @@ class EnabledFieldStylingService:
             widgets=len(widgets),
             dimmed=should_dim,
         ):
-            changed = self._set_widgets_dimmed(widgets, should_dim)
+            changed = self._set_widgets_dimmed(
+                widgets,
+                should_dim,
+                preserve_placeholder_paint=False,
+            )
 
         if changed:
             group_box.update()
@@ -347,7 +354,11 @@ class EnabledFieldStylingService:
 
                 widgets_to_dim = self._get_value_widgets(group_box)
                 logger.debug(f"[ENABLED HANDLER] Applying dimming to nested config {param_name}, found {len(widgets_to_dim)} widgets")
-                changed = self._set_widgets_dimmed(widgets_to_dim, True)
+                changed = self._set_widgets_dimmed(
+                    widgets_to_dim,
+                    True,
+                    preserve_placeholder_paint=False,
+                )
 
                 if changed:
                     group_box.update()
@@ -360,10 +371,24 @@ class EnabledFieldStylingService:
         self._value_widgets_by_container[container] = widgets
         return widgets
 
-    def _set_widget_dimmed(self, widget, dimmed: bool) -> bool:
+    def _set_widget_dimmed(
+        self,
+        widget,
+        dimmed: bool,
+        *,
+        preserve_placeholder_paint: bool = True,
+    ) -> bool:
         """Apply this service's dimming effect only when the widget state changes."""
         if sip.isdeleted(widget):
             return False
+
+        if (
+            dimmed
+            and preserve_placeholder_paint
+            and isinstance(widget, PlaceholderStateTrackable)
+            and widget.has_placeholder_state()
+        ):
+            dimmed = False
 
         current = widget.property(self._dimmed_property_name) is True
         if current == dimmed:
@@ -385,6 +410,7 @@ class EnabledFieldStylingService:
         dimmed: bool,
         *,
         skip_labels: bool = False,
+        preserve_placeholder_paint: bool = True,
     ) -> bool:
         """Apply dimming to a widget batch with coalesced repaint scheduling."""
         changed = False
@@ -393,5 +419,9 @@ class EnabledFieldStylingService:
                 continue
             if skip_labels and isinstance(widget, QLabel):
                 continue
-            changed = self._set_widget_dimmed(widget, dimmed) or changed
+            changed = self._set_widget_dimmed(
+                widget,
+                dimmed,
+                preserve_placeholder_paint=preserve_placeholder_paint,
+            ) or changed
         return changed

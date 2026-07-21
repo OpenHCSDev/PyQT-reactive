@@ -20,7 +20,6 @@ from dataclasses import dataclass, field, make_dataclass, fields as dataclass_fi
 from typing import Any, Dict, Optional, Type, Callable, List, TypeVar
 from enum import Enum, auto
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
-from PyQt6.QtCore import QTimer
 import inspect
 import sys
 from abc import ABC
@@ -474,7 +473,12 @@ class FormBuildOrchestrator:
                 # Root manager: trigger final refresh after all widgets complete
                 # This is the single source of truth for when ALL async widget creation is done
                 # Use 500ms delay to ensure all async batches have completed
-                QTimer.singleShot(500, lambda: manager._parameter_ops_service.refresh_with_live_context(manager))
+                manager.schedule_lifecycle_callback(
+                    500,
+                    lambda: manager._parameter_ops_service.refresh_with_live_context(
+                        manager
+                    ),
+                )
 
             # Also refresh this manager immediately for progressive display
             self._execute_post_build_sequence(manager)

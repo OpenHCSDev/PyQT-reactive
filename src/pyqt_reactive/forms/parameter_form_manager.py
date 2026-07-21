@@ -298,14 +298,19 @@ class ParameterFormManager(
         _PFM_SEQ += 1
         self._pfm_seq = _PFM_SEQ
 
-        # If no explicit scope_accent_color provided, derive it from the state's scope_id
-        # using the centralized ScopeColorService. This avoids widget-tree traversal and
-        # ensures every widget created by this manager receives the proper accent color.
-        if config.scope_accent_color is None and state.scope_id is not None:
+        # The state scope owns data and notifications; an explicit config scope owns
+        # presentation when a top-level window renders that state in another scope.
+        visual_scope_id = (
+            config.scope_id if config.scope_id is not None else state.scope_id
+        )
+        if config.scope_accent_color is None and visual_scope_id is not None:
             try:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
                 svc = ScopeColorService.instance()
-                accent = svc.get_accent_color(state.scope_id, step_index=config.scope_step_index)
+                accent = svc.get_accent_color(
+                    visual_scope_id,
+                    step_index=config.scope_step_index,
+                )
                 if accent is not None:
                     config.scope_accent_color = accent
             except Exception:
@@ -379,13 +384,14 @@ class ParameterFormManager(
             self.render_enabled_in_header = config.render_enabled_in_header
             self._scope_accent_color = config.scope_accent_color  # Store for widget creation
             self._scope_step_index = config.scope_step_index
+            self._visual_scope_id = visual_scope_id
 
             # Store full scope color scheme for nested GroupBox borders/backgrounds
             self._scope_color_scheme = None
-            if self.scope_id is not None:
+            if self._visual_scope_id is not None:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
                 self._scope_color_scheme = ScopeColorService.instance().get_color_scheme(
-                    self.scope_id,
+                    self._visual_scope_id,
                     step_index=config.scope_step_index,
                 )
 
@@ -563,6 +569,29 @@ class ParameterFormManager(
         """Mark this form as fully initialized after root build completion."""
         self._initial_load_complete = True
 
+    def schedule_lifecycle_callback(
+        self,
+        delay_ms: int,
+        callback: Callable[[], None],
+    ) -> QTimer:
+        """Schedule callback work owned by this manager's QObject lifetime.
+
+        A static ``QTimer.singleShot`` retains its Python callable after this
+        widget's C++ object is deleted. Parenting the one-shot timer to the form
+        manager lets Qt cancel that work during destruction before the callback
+        can enter stale child widgets or flash factories.
+        """
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+
+        def run_callback() -> None:
+            timer.deleteLater()
+            callback()
+
+        timer.timeout.connect(run_callback)
+        timer.start(delay_ms)
+        return timer
+
     def setup_ui(self):
         """Set up the UI layout."""
         # timer decorator made optional
@@ -665,6 +694,8 @@ class ParameterFormManager(
         # Create widgets in batches using QTimer to yield to event loop
         batch_size = 3  # Create 3 widgets at a time
         index = 0
+        batch_timer = QTimer(self)
+        batch_timer.setSingleShot(True)
 
         def create_next_batch():
             nonlocal index
@@ -715,15 +746,21 @@ class ParameterFormManager(
 
             # Schedule next batch if there are more widgets
             if index < len(param_infos):
-                QTimer.singleShot(0, create_next_batch)
-            elif on_complete:
-                # All widgets created - defer completion callback to next event loop tick
-                # This ensures Qt has processed all layout updates and widgets are findable
-                logger.debug(f"[ASYNC_CREATE] All widgets created for {self.field_id}, scheduling on_complete callback")
-                QTimer.singleShot(0, on_complete)
+                batch_timer.start(0)
+                return
+
+            batch_timer.deleteLater()
+            if on_complete:
+                logger.debug(
+                    "[ASYNC_CREATE] All widgets created for %s, running "
+                    "on_complete callback",
+                    self.field_id,
+                )
+                on_complete()
 
         # Start creating widgets
-        QTimer.singleShot(0, create_next_batch)
+        batch_timer.timeout.connect(create_next_batch)
+        batch_timer.start(0)
 
     def _create_nested_form_inline(
         self,
@@ -750,6 +787,7 @@ class ParameterFormManager(
             parent_manager=self,
             color_scheme=self.config.color_scheme,
             field_id=nested_id,  # Scope access to nested fields
+            scope_id=self._visual_scope_id,
             scope_accent_color=self._scope_accent_color,  # Inherit scope accent color
             scope_step_index=self._scope_step_index,  # Preserve step index for scope styling
             function_target=unwrapped_type,

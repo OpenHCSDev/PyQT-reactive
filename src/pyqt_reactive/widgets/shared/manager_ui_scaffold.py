@@ -19,6 +19,11 @@ from PyQt6.QtWidgets import (
 from pyqt_reactive.core import ReorderableListWidget
 from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
 from pyqt_reactive.widgets.shared.list_item_delegate import MultilinePreviewItemDelegate
+from pyqt_reactive.widgets.shared.responsive_groupbox_title import (
+    ResponsiveGroupBoxTitle,
+)
+
+MANAGER_STATUS_MINIMUM_VISIBLE_CHARACTERS = 28
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,7 @@ class ManagerHeaderParts:
     """Container returned by create_manager_header."""
 
     header: QWidget
+    title_layout: ResponsiveGroupBoxTitle
     status_label: QLabel
     status_scroll: QScrollArea | None
 
@@ -35,6 +41,7 @@ class ManagerWidgetUiParts:
     """Widgets created for a standard manager list UI."""
 
     header: QWidget
+    title_layout: ResponsiveGroupBoxTitle
     status_label: QLabel
     status_scroll: QScrollArea | None
     item_list: ReorderableListWidget
@@ -57,7 +64,9 @@ def create_manager_header(
     title_label.setStyleSheet(
         f"color: {color_scheme.to_hex(color_scheme.text_accent)};"
     )
-    header_layout.addWidget(title_label)
+    title_layout = ResponsiveGroupBoxTitle(parent=header)
+    title_layout.set_title_widget(title_label)
+    header_layout.addWidget(title_layout, 1)
 
     if enable_status_scrolling:
         status_scroll = QScrollArea()
@@ -89,26 +98,31 @@ def create_manager_header(
         status_label.setAlignment(
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
         )
+        status_scroll.setMinimumWidth(
+            status_label.fontMetrics().averageCharWidth()
+            * MANAGER_STATUS_MINIMUM_VISIBLE_CHARACTERS
+        )
 
         status_scroll.setWidget(status_label)
-        header_layout.addWidget(status_scroll, 1)
+        title_layout.add_right_widget(status_scroll, 1)
         QTimer.singleShot(0, status_label.adjustSize)
 
         return ManagerHeaderParts(
             header=header,
+            title_layout=title_layout,
             status_label=status_label,
             status_scroll=status_scroll,
         )
 
-    header_layout.addStretch()
     status_label = QLabel("Ready")
     status_label.setStyleSheet(
         f"color: {color_scheme.to_hex(color_scheme.status_success)}; "
         "font-weight: bold;"
     )
-    header_layout.addWidget(status_label)
+    title_layout.add_right_widget(status_label)
     return ManagerHeaderParts(
         header=header,
+        title_layout=title_layout,
         status_label=status_label,
         status_scroll=None,
     )
@@ -172,6 +186,7 @@ def setup_manager_widget_ui(
     )
     return ManagerWidgetUiParts(
         header=header_parts.header,
+        title_layout=header_parts.title_layout,
         status_label=header_parts.status_label,
         status_scroll=header_parts.status_scroll,
         item_list=item_list,

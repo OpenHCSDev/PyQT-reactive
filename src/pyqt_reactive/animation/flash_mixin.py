@@ -1341,6 +1341,10 @@ class WindowFlashOverlay(QWidget):
         try:
             if sip.isdeleted(overlay):
                 return
+            for source in overlay._event_filter_sources.values():
+                if not sip.isdeleted(source):
+                    source.removeEventFilter(overlay)
+            overlay._event_filter_sources.clear()
             overlay._elements.clear()
             overlay._hierarchical_delegate_keys.clear()
             overlay.deleteLater()
@@ -1378,11 +1382,10 @@ class WindowFlashOverlay(QWidget):
         self._window = window
         self._elements: Dict[str, List[FlashElement]] = {}  # scoped ObjectState path -> elements
         self._hierarchical_delegate_keys: Set[str] = set()
-        self._element_widgets: Set[int] = set()
+        self._event_filter_sources: Dict[int, QObject] = {}
         self._element_widget_keys: Dict[int, Set[str]] = {}
         self._element_widget_signatures: Dict[int, Tuple[int, int, int, int, bool]] = {}
         self._scroll_areas: List[Any] = []
-        self._scroll_area_viewport_ids: Set[int] = set()
         self._scroll_areas_dirty = True
         self._needs_raise = True
 
@@ -1521,8 +1524,16 @@ class WindowFlashOverlay(QWidget):
     def _install_scroll_event_filters(self):
         """Install event filters on ALL scroll areas (QScrollArea, QTreeWidget, QListWidget, etc.)."""
         # Install filter on the window itself to catch layout changes
-        self._window.installEventFilter(self)
+        self._install_event_filter_on(self._window)
         self._refresh_scroll_area_event_filters()
+
+    def _install_event_filter_on(self, source: QObject) -> None:
+        """Install once and retain the exact QObject for synchronous teardown."""
+        source_id = id(source)
+        if source_id in self._event_filter_sources:
+            return
+        self._event_filter_sources[source_id] = source
+        source.installEventFilter(self)
 
     def _refresh_scroll_area_event_filters(self) -> None:
         """Refresh cached scroll areas and install viewport event filters."""
@@ -1541,11 +1552,7 @@ class WindowFlashOverlay(QWidget):
             viewport = scroll_area.viewport()
             if viewport is None or sip.isdeleted(viewport):
                 continue
-            viewport_id = id(viewport)
-            if viewport_id in self._scroll_area_viewport_ids:
-                continue
-            self._scroll_area_viewport_ids.add(viewport_id)
-            viewport.installEventFilter(self)
+            self._install_event_filter_on(viewport)
 
     def _install_widget_event_filter(self, element: FlashElement) -> None:
         """Install event filter on a flash element's widget to catch layout changes.
@@ -1559,11 +1566,10 @@ class WindowFlashOverlay(QWidget):
                 continue
             widget_id = id(widget)
             self._element_widget_keys.setdefault(widget_id, set()).add(element.key)
-            if widget_id in self._element_widgets:
+            if widget_id in self._element_widget_signatures:
                 continue
-            self._element_widgets.add(widget_id)
             self._element_widget_signatures[widget_id] = self._geometry_signature(widget)
-            widget.installEventFilter(self)
+            self._install_event_filter_on(widget)
             logger.debug("[FLASH] Installed event filter on widget %s", widget_id)
 
     def _invalidate_geometry_cache_for_widget(self, widget: QWidget) -> None:
@@ -3214,6 +3220,8 @@ class VisualUpdateMixin:
         lifecycle_widgets: tuple[QWidget | None, ...],
     ) -> None:
         """Remove flash registrations when any widget they close over is destroyed."""
+        registrations = self._flash_registrations
+        lifecycle_keys = self._flash_registration_lifecycle_keys
         widgets: list[QWidget] = []
         seen_widget_ids: set[int] = set()
         for candidate in (owner_widget, *lifecycle_widgets):
@@ -3231,20 +3239,39 @@ class VisualUpdateMixin:
                 continue
             self._flash_registration_lifecycle_keys.add(lifecycle_key)
             lifecycle_widget.destroyed.connect(
-                lambda _obj=None, cleanup_key=lifecycle_key: (
-                    self._cleanup_flash_registration(cleanup_key)
+                lambda _obj=None,
+                cleanup_key=lifecycle_key,
+                registration_records=registrations,
+                registration_lifecycle_keys=lifecycle_keys,
+                registered_scoped_key=scoped_key: (
+                    VisualUpdateMixin._cleanup_flash_registration(
+                        registration_records,
+                        registration_lifecycle_keys,
+                        cleanup_key,
+                        registered_scoped_key,
+                    )
                 )
             )
 
+    @staticmethod
     def _cleanup_flash_registration(
-        self,
+        registrations: List[
+            Tuple[
+                str,
+                Callable[[str], FlashElement],
+                QWidget,
+                Optional[Callable[[str], str | None]],
+                str | None,
+            ]
+        ],
+        lifecycle_keys: Set[Tuple[int, str, int, str | None]],
         lifecycle_key: Tuple[int, str, int, str | None],
+        scoped_key: str,
     ) -> None:
         """Drop recorded and overlay flash elements for a destroyed dependency."""
-        self._flash_registration_lifecycle_keys.discard(lifecycle_key)
+        lifecycle_keys.discard(lifecycle_key)
         _, key, owner_widget_id, source_id = lifecycle_key
-        scoped_key = self._get_scoped_flash_key(key)
-        self._flash_registrations = [
+        registrations[:] = [
             (registered_key, element_factory, widget, source_id_factory, registered_source_id)
             for (
                 registered_key,
@@ -3252,7 +3279,7 @@ class VisualUpdateMixin:
                 widget,
                 source_id_factory,
                 registered_source_id,
-            ) in self._flash_registrations
+            ) in registrations
             if not (
                 registered_key == key
                 and id(widget) == owner_widget_id

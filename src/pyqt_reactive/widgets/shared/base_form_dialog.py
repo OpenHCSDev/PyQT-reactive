@@ -211,6 +211,10 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
             logger.debug("[BASE_FORM_DIALOG] Marking ObjectState as saved on accept")
             state.mark_saved()
 
+        self.accept_committed_state()
+
+    def accept_committed_state(self) -> None:
+        """Accept after a specialized window has committed all owned states."""
         super().accept()
         self._unregister_managed_window()
         self._cleanup_window_flash_overlay()

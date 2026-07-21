@@ -1129,6 +1129,14 @@ class PyQt6WidgetEnhancer:
     """Widget enhancement using functional dispatch patterns."""
 
     @staticmethod
+    def supports_placeholder(widget: QWidget) -> bool:
+        """Return whether the registered widget authority can render a placeholder."""
+        return (
+            isinstance(widget, ResolvedValuePreviewSettable)
+            or WIDGET_PLACEHOLDER_STRATEGIES.get(type(widget)) is not None
+        )
+
+    @staticmethod
     def has_placeholder_state(widget: QWidget) -> bool:
         """Return whether the widget has placeholder chrome or cached placeholder data."""
         return _supports_placeholder_state(widget) and widget.has_placeholder_state()

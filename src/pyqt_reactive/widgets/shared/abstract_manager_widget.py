@@ -141,10 +141,12 @@ class ManagerUiLifecycleMixin:
             on_action=self.handle_button_action,
             button_grid_columns=self.BUTTON_GRID_COLUMNS,
         )
+        self.title_layout = ui_parts.title_layout
         self.status_label = ui_parts.status_label
         self._status_scroll = ui_parts.status_scroll
         self.item_list = ui_parts.item_list
-        self.buttons = ui_parts.button_panel.buttons
+        self.button_panel = ui_parts.button_panel
+        self.buttons = self.button_panel.buttons
 
     def setup_manager_connections(self) -> None:
         """
