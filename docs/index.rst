@@ -1,5 +1,5 @@
 pyqt-reactive
-============
+==============
 
 **React-quality reactive form generation framework for PyQt6**
 
@@ -43,7 +43,12 @@ Quick Example
 
    from dataclasses import dataclass
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactive.forms import ParameterFormManager
+   from objectstate import ObjectState, set_base_config_type
+   from pyqt_reactive.forms.parameter_form_manager import (
+       FormManagerConfig,
+       ParameterFormManager,
+   )
+   from pyqt_reactive.theming import ColorScheme
 
    @dataclass
    class ProcessingConfig:
@@ -53,11 +58,13 @@ Quick Example
        enable_gpu: bool = False
 
    app = QApplication([])
-   form = ParameterFormManager(ProcessingConfig)
+   set_base_config_type(ProcessingConfig)
+   state = ObjectState(ProcessingConfig(), scope_id="processing")
+   form = ParameterFormManager(
+       state,
+       config=FormManagerConfig(color_scheme=ColorScheme()),
+   )
    form.show()
-
-   # Get values back
-   config = form.collect_values()
    app.exec()
 
 Requirements
@@ -83,43 +90,20 @@ Contents
    :maxdepth: 2
    :caption: Architecture
 
-   architecture/parameter_form_service_architecture
-   architecture/parameter_form_lifecycle
-   architecture/parametric_widget_creation
-   architecture/widget_protocol_system
-   architecture/field_change_dispatcher
-   architecture/ui_services_architecture
-   architecture/service-layer-architecture
-   architecture/server_scanning_and_polling
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Widgets & Components
-
-   architecture/abstract_manager_widget
-   architecture/abstract_table_browser
-   architecture/zmq_server_browser_widget
-   architecture/tree_state_sync_system
-   architecture/list_item_preview_system
-   architecture/scope_visual_feedback_system
-   responsive_layout_widgets
-   tear_off_tabs
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Animation & Performance
-
-   architecture/flash_animation_system
-   architecture/gui_performance_patterns
-   architecture/cross_window_update_optimization
-   architecture/tree_aggregation_strategy
+   architecture/index
 
 .. toctree::
    :maxdepth: 2
    :caption: Development
 
-   development/ui-patterns
-   development/window_manager_usage
+   development/index
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Additional components
+
+   responsive_layout_widgets
+   tear_off_tabs
 
 .. toctree::
    :maxdepth: 2

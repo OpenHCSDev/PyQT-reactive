@@ -1,312 +1,61 @@
-Parameter Form Lifecycle Management
-===================================
+Parameter-form lifecycle
+========================
 
-**Complete lifecycle of parameter forms from creation to context synchronization.**
+``ParameterFormManager`` is a QWidget view over one authoritative
+``ObjectState``. It does not own a second configuration model.
 
-*Status: STABLE (describes main branch implementation)*
-*Module: pyqt_reactive.forms.parameter_form_manager*
+Construction
+------------
 
-.. note::
-   This document describes the **main branch** monolithic implementation. For the refactored service-oriented architecture currently in development, see :doc:`parameter_form_service_architecture`.
+1. The caller creates or retrieves an ``ObjectState`` for the edited object.
+2. It passes that state and a ``FormManagerConfig`` to
+   ``ParameterFormManager``.
+3. The manager derives typed form structure through python-introspect and the
+   widget strategy registry.
+4. Form services build widgets, connect signals, and project resolved state.
+5. Nested dataclasses receive nested managers tied to the same root state.
 
-Overview
+State updates
+-------------
+
+Widget edits are normalized through the form value contracts and written to
+ObjectState. Field-change dispatch then coordinates local styling, nested views,
+and path-scoped cross-window refresh. Resolved-value callbacks update inherited
+placeholders without materializing them as explicit edits.
+
+Cross-window lifetime
+---------------------
+
+Root managers subscribe to their state's materialized and resolved changes.
+Signal registration must last exactly as long as the manager. Nested managers
+belong to their root window and do not independently join the global
+cross-window set.
+
+Asynchronous work
+-----------------
+
+Large forms may create widgets progressively. Expensive placeholder or help
+resolution can run outside the GUI thread, but applying widget changes must
+return to the Qt thread. Debouncing coalesces rapid state notifications.
+
+Teardown
 --------
-Parameter forms must maintain consistency between widget state, internal parameters, and thread-local context. Traditional forms lose this synchronization during operations like reset, causing placeholder bugs. The lifecycle management system ensures all three states remain synchronized.
 
-:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.reset_parameter` orchestrates the complete reset lifecycle. It first determines the reset value (None for lazy configs), updates the internal parameter dictionary, updates the thread-local context to match, then updates the widget display and applies placeholder logic. This four-step process ensures that form state, context state, and widget display all stay in sync.
+Closing a root form disconnects state callbacks, signal-service registrations,
+timers, and nested managers. The ObjectState may outlive the window when it is
+registered for reuse by another view.
 
-This prevents the reset placeholder bug where forms show stale values instead of current defaults.
+Ownership boundary
+------------------
 
-Sequence Number Tracking
------------------------
+ObjectState owns values, resolution, hierarchy, dirty state, and history.
+pyqt-reactive owns generic form/view lifecycle. Host applications own domain
+configuration types, window workflows, and code/UI round trips.
 
-Each ``ParameterFormManager`` instance receives a unique sequence number (``_pfm_seq``) for debugging and tracking:
-
-.. code-block:: python
-
-    global _PFM_SEQ = 0
-
-    class ParameterFormManager(QWidget):
-        def __init__(self, ...):
-            global _PFM_SEQ
-            _PFM_SEQ += 1
-            self._pfm_seq = _PFM_SEQ
-
-This sequence number appears in debug logs to trace form creation and widget operations:
-
-.. code-block:: python
-
-    logger.debug(
-        "[PFM_INIT] seq=%s field_id=%s target=%s is_nested=%s parent_cls=%s",
-        self._pfm_seq,
-        self.field_id,
-        self._target_type_name,
-        self._parent_manager is not None,
-        type(self._parent_manager).__name__ if self._parent_manager else None,
-    )
-
-Nested Form Manager Tracking
---------------------------
-
-The system tracks parent-child relationships between nested form managers:
-
-.. code-block:: python
-
-    class ParameterFormManager(QWidget):
-        def _on_nested_manager_complete(self, nested_manager):
-            """Called when nested form manager completes widget creation."""
-            logger.debug(
-                "[NESTED_COMPLETE] nested_field_id=%s nested_seq=%s root_field_id=%s root_seq=%s",
-                nested_manager.field_id,
-                getattr(nested_manager, '_pfm_seq', None),
-                self.field_id,
-                getattr(self, '_pfm_seq', None),
-            )
-
-This enables debugging of complex form hierarchies with multiple nesting levels.
-
-Widget State Management
------------------------
-The form manager coordinates widget updates with context behavior application.
-
-Value Update Coordination
-~~~~~~~~~~~~~~~~~~~~~~~~~
-:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.update_widget_value` acts as the central coordinator for widget updates. It first blocks signals to prevent infinite loops, updates the widget's displayed value using type-specific dispatch, then applies context behavior (like placeholder text for None values). This ensures widgets show the right value without triggering cascading updates.
-
-Context Behavior Application
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._apply_context_behavior` decides whether to show placeholder text. If the value is None and we're in a lazy dataclass context, it calls the placeholder resolution system. If the value is not None, it clears any existing placeholder state. This creates the dynamic "Pipeline default: X" behavior.
-
-Rendering Optimizations
-~~~~~~~~~~~~~~~~~~~~~~~
-Several recent improvements keep typing responsive even with large forms:
-
-* :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._store_parameter_value` mirrors each edit into an in-memory cache so :py:meth:`get_current_values` no longer rereads every widget.
-* ``_placeholder_candidates`` tracks only the parameters that currently resolve to ``None``. Placeholder refreshes iterate over this set instead of the entire form.
-* Each widget stores a ``placeholder_signature`` (see :mod:`pyqt_reactive.forms.widget_strategies`) so placeholders that have not changed are skipped entirely, avoiding redundant repaints.
-
-Parameter Change Propagation
-----------------------------
-Changes flow from widgets through internal state to context synchronization.
-
-:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._emit_parameter_change` handles the flow when users change widget values. It converts the raw widget value to the correct type, updates the internal parameter dictionary, then emits a signal so other components can react. This is the normal path for user edits (as opposed to programmatic updates like reset).
-
-Thread-Local Context Synchronization
-------------------------------------
-Critical synchronization patterns ensure context reflects current form state.
-
-Reset Context Update Pattern
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.reset_parameter` updates thread-local context during reset using :py:func:`~dataclasses.replace` to prevent placeholder bugs.
-
-Visual State Synchronization
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Form managers synchronize visual indicators (``*`` and ``_``) with field state changes:
-
-**Label Styling**: :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._update_label_styling` applies ``*`` (dirty) and ``_`` (differs from signature) indicators to field labels.
-
-**Reset Button Styling**: :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._update_reset_button_styling` applies the same indicators to reset buttons, showing the target field's state.
-
-**Provenance Button Visibility**: :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._update_provenance_button_visibility` shows/hides the ``^`` provenance navigation button based on whether the field inherits from an ancestor.
-
-These updates are triggered:
-- During individual field reset (``reset_parameter()``)
-- After batch reset completes (``reset_all_parameters()``)
-- Via ``FieldChangeDispatcher`` for regular edits
-
-See :doc:`styling_architecture` for complete visual indicator semantics.
-
-UI Component Lifecycle Patterns
--------------------------------
-Different UI components have different form lifecycle requirements.
-
-Step Editor Lifecycle
-~~~~~~~~~~~~~~~~~~~~~
-Step editors show step configurations with isolated context. Forms are created with custom context providers that resolve against their parent pipeline configuration. Reset operations update the step-specific context without affecting other UI components.
-
-Pipeline Editor Lifecycle
-~~~~~~~~~~~~~~~~~~~~~~~~~
-Pipeline editors (plate manager style) handle pipeline-level configuration editing. Forms use standard thread-local context resolution and coordinate with the plate manager's save/load operations.
-
-Pipeline Config Lifecycle
-~~~~~~~~~~~~~~~~~~~~~~~~~
-Pipeline config editing (accessed from plate manager) creates forms that resolve against the current pipeline's thread-local context. Save operations update both the pipeline configuration and the thread-local context to maintain consistency.
-
-Global Config Lifecycle
-~~~~~~~~~~~~~~~~~~~~~~~
-Global config editing (accessed from main window) creates forms that show static defaults. Reset operations restore base class default values since there's no higher-level context to resolve against.
-
-Cross-Window Placeholder Updates
----------------------------------
-When multiple configuration dialogs are open simultaneously, they share live values for placeholder resolution. This enables real-time preview of configuration changes across windows.
-
-Live Context Collection
-~~~~~~~~~~~~~~~~~~~~~~~~
-:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._collect_live_context_from_other_windows` gathers current user-modified values from all active form managers. When a user types in one window, other windows immediately see the updated value in their placeholders. This creates a live preview system where configuration changes are visible before saving.
-
-Live Context Snapshots
-~~~~~~~~~~~~~~~~~~~~~~
-:py:class:`~pyqt_reactive.forms.parameter_form_manager.LiveContextSnapshot` wraps the collected values together with a monotonically increasing ``token``. As long as the token remains unchanged, :py:meth:`_build_context_stack` reuses cached GlobalPipelineConfig and PipelineConfig overlays instead of rebuilding them on every keystroke.
-
-Async Placeholder Resolution
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Once the initial load completes, :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._schedule_async_placeholder_refresh` offloads placeholder work to :class:`~pyqt_reactive.forms.parameter_form_manager._PlaceholderRefreshTask`. The worker receives the parameter snapshot, the ``_placeholder_candidates`` list, and the current :class:`LiveContextSnapshot`, resolves placeholders off the UI thread, then emits the results back to the main thread for application. This keeps the UI responsive even when dozens of placeholders participate.
-
-Active Manager Registry
-~~~~~~~~~~~~~~~~~~~~~~~~
-:py:attr:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._active_form_managers` maintains a class-level list of all active form manager instances. When a form manager is created, it registers itself in this list. When a dialog closes, it must unregister to prevent ghost references that cause infinite refresh loops.
-
-Signal-Based Synchronization
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Form managers emit :py:attr:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.context_value_changed` and :py:attr:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.context_refreshed` signals when values change. Other active managers listen to these signals and refresh their placeholders accordingly. This creates a reactive system where all windows stay synchronized.
-
-Cross-Window Debounce
-~~~~~~~~~~~~~~~~~~~~~
-:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._schedule_cross_window_refresh` debounces placeholder refreshes with :pyattr:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.CROSS_WINDOW_REFRESH_DELAY_MS` (currently 60 ms). Multiple rapid edits are coalesced into a single refresh burst without sacrificing the “live preview” feel.
-
-External Listener Pattern
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-Some UI components need to react to configuration changes but are not themselves form managers (e.g., the pipeline editor's preview labels showing "MAT", "NAP", "FIJI" indicators). The external listener pattern allows these components to register for cross-window notifications without participating in the full form manager lifecycle.
-
-**Registration**
-
-External listeners register via the class method :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.register_external_listener`:
-
-.. code-block:: python
-
-    # pipeline_editor.py
-    ParameterFormManager.register_external_listener(
-        self,
-        self._on_cross_window_context_changed,
-        self._on_cross_window_context_refreshed
-    )
-
-The registration stores a tuple ``(listener, value_changed_handler, refresh_handler)`` in the class-level ``_external_listeners`` list. Unlike form managers, external listeners:
-
-- Do not participate in the mesh signal topology (no bidirectional connections)
-- Do not emit signals themselves
-- Receive notifications via direct method calls, not Qt signals
-- Are not scoped (they receive all notifications regardless of ``scope_id``)
-
-**Notification Points**
-
-External listeners are notified at three critical points:
-
-1. **Global refresh** (:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.trigger_global_cross_window_refresh`): Called when global config changes or when all managers are unregistered (e.g., after cancel). Notifies all external listeners with ``refresh_handler(None, None)``.
-
-2. **Reset operations** (:py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.reset_all_parameters`): Called when a form is reset (either root or nested manager). Notifies external listeners with ``refresh_handler(object_instance, context_obj)`` via :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._notify_external_listeners_refreshed`.
-
-3. **Dialog cancel** (``reject()`` in :py:class:`~pyqt_reactive.widgets.shared.base_form_dialog.BaseFormDialog` subclasses): Called when a dialog is cancelled (Cancel button or Escape key). Must call :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.trigger_global_cross_window_refresh` AFTER unregistration to ensure external listeners receive the refresh notification.
-
-**Critical Implementation Requirements**
-
-For external listeners to work correctly:
-
-1. Cancel operations (``reject()``) must call :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.trigger_global_cross_window_refresh` AFTER ``super().reject()`` to ensure external listeners are notified after the window is unregistered.
-
-2. Reset operations must call :py:meth:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager._notify_external_listeners_refreshed` for both root and nested managers to ensure external listeners update immediately.
-
-3. External listeners must implement both ``value_changed_handler(field_path, new_value, editing_object, context_object)`` and ``refresh_handler(editing_object, context_object)`` to handle both incremental changes and full refreshes.
-
-**Example: Pipeline Editor Preview Labels**
-
-The pipeline editor uses external listeners to update preview labels (MAT, NAP, FIJI) when configuration changes occur in other windows:
-
-.. code-block:: python
-
-    # app/widgets/pipeline_editor.py
-    def setup_connections(self):
-        """Setup signal connections."""
-        # Register as external listener for cross-window updates
-        ParameterFormManager.register_external_listener(
-            self,
-            self._on_cross_window_context_changed,
-            self._on_cross_window_context_refreshed
-        )
-
-    def _on_cross_window_context_refreshed(self, editing_object, context_object):
-        """Handle cross-window context refresh (e.g., after cancel or reset)."""
-        logger.info(f"🔄 Pipeline editor: Context refreshed, refreshing preview labels")
-        self._update_step_list()  # Refresh all preview labels
-
-    def closeEvent(self, event):
-        """Handle widget close event."""
-        # Unregister external listener
-        ParameterFormManager.unregister_external_listener(self)
-        super().closeEvent(event)
-
-This pattern ensures that preview labels stay synchronized with configuration changes across all open windows, including when dialogs are cancelled or reset.
-
-Dialog Lifecycle Management
-----------------------------
-Proper dialog cleanup is critical to prevent ghost form managers that cause infinite refresh loops and runaway CPU usage.
-
-The Ghost Manager Problem
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-When a dialog closes without unregistering its form manager, it remains in the ``_active_form_managers`` registry as a "ghost". When a new dialog opens and the user types, the system collects context from the ghost manager, which triggers a refresh in the ghost, which collects context from the new manager, creating an infinite ping-pong loop.
-
-Qt Dialog Lifecycle Quirk
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-Qt's ``QDialog.accept()`` and ``QDialog.reject()`` methods do NOT trigger ``closeEvent()`` - they just hide the dialog and emit signals. This means cleanup code in ``closeEvent()`` is never called when users click Save or Cancel buttons. Dialogs must explicitly unregister in ``accept()``, ``reject()``, and ``closeEvent()`` to ensure cleanup happens regardless of how the dialog closes.
-
-BaseFormDialog Pattern
-~~~~~~~~~~~~~~~~~~~~~~
-:py:class:`~pyqt_reactive.widgets.shared.base_form_dialog.BaseFormDialog` solves the cleanup problem by providing a base class that automatically handles unregistration. It overrides ``accept()``, ``reject()``, and ``closeEvent()`` to call ``_unregister_all_form_managers()`` before closing. Subclasses implement ``_get_form_managers()`` to return their form manager instances, and the base class handles all cleanup automatically.
-
-This pattern ensures that every dialog using ParameterFormManager properly cleans up, preventing ghost manager bugs without requiring developers to remember manual cleanup in multiple methods.
-
-Form State Synchronization
---------------------------
-The three-state synchronization pattern ensures consistency across all UI components.
-
-Internal Parameter State
-~~~~~~~~~~~~~~~~~~~~~~~~
-:py:attr:`~pyqt_reactive.forms.parameter_form_manager.ParameterFormManager.parameters` stores the form's internal parameter dictionary. This represents the current user edits and serves as the source of truth for widget display.
-
-Thread-Local Context State
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-Thread-local context registries maintain placeholder resolution state. This must be kept synchronized with form state during operations like reset.
-
-Widget Display State
-~~~~~~~~~~~~~~~~~~~~
-Widget values and placeholder text reflect the combination of internal parameters and context resolution. The form manager ensures widgets always display the correct state based on current parameters and context.
-
-Example: BaseFormDialog Usage
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from pyqt_reactive.widgets.shared.base_form_dialog import BaseFormDialog
-   from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
-
-   class MyConfigDialog(BaseFormDialog):
-       """Configuration dialog with automatic cleanup."""
-
-       def __init__(self, config, parent=None):
-           super().__init__(parent)
-
-           # Create form manager
-           self.form_manager = ParameterFormManager(
-               field_id="my_config",
-               dataclass_type=type(config),
-               initial_values=config
-           )
-
-       def _get_form_managers(self):
-           """Return form managers to unregister (required by BaseFormDialog)."""
-           return [self.form_manager]
-
-       # No need to override accept(), reject(), or closeEvent()
-       # BaseFormDialog handles all cleanup automatically!
-
-This pattern ensures proper cleanup regardless of how the dialog closes (Save button → ``accept()``, Cancel button → ``reject()``, X button → ``closeEvent()``).
-
-See Also
+See also
 --------
-- :doc:`parameter_form_service_architecture` - Refactored service-oriented architecture (in development)
-- :doc:`context_system` - Thread-local context management patterns
-- :doc:`service-layer-architecture` - Service layer integration with forms
-- :doc:`code_ui_interconversion` - Code/UI interconversion patterns
-- :py:class:`~pyqt_reactive.widgets.shared.base_form_dialog.BaseFormDialog` - Base class for dialog cleanup
-- ``ConfigWindow`` - Example BaseFormDialog implementation
-- ``DualEditorWindow`` - Example BaseFormDialog implementation
+
+- :doc:`parameter_form_service_architecture`
+- :doc:`field_change_dispatcher`
+- :doc:`widget_protocol_system`
+- `ObjectState documentation <https://objectstate.readthedocs.io>`_

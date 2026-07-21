@@ -62,4 +62,3 @@
 4. Add GitHub Actions CI workflow
 
 **Estimated effort**: 10-17 hours to reach 90%+ readiness
-

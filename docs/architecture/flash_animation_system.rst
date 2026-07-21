@@ -145,7 +145,7 @@ The system supports multiple element types via ``FlashElement`` dataclass:
      - Step/function lists
 
 INVERSE Mode with Label Widget Masking
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 INVERSE mode now masks title + leaf_widget + label_widget (not all title row widgets):
 
@@ -214,4 +214,3 @@ See Also
 - :doc:`flash_callback_system` - How ObjectState triggers flash callbacks
 - :doc:`gui_performance_patterns` - Cross-window preview system
 - :doc:`abstract_manager_widget` - AbstractManagerWidget uses FlashMixin
-

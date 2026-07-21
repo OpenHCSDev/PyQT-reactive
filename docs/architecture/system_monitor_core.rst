@@ -48,7 +48,7 @@ Usage
 -----
 
 Basic Usage
-~~~~~~~~~~
+~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -102,7 +102,7 @@ GPU Detection
         print("No GPU detected")
 
 History Management
------------------
+------------------
 
 History Length
 ~~~~~~~~~~~~~~
@@ -137,7 +137,7 @@ Access individual metric histories:
     vram_history = monitor.get_vram_history()
 
 Current Metrics
-~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
 
 Get the most recent metrics:
 

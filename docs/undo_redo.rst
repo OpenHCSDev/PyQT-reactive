@@ -1,54 +1,51 @@
-Time Travel and Branching
+Time travel and branching
 =========================
 
-pyqt-reactive integrates with ObjectState's git-like time-travel system. When forms are bound
-to ObjectState, all user edits are automatically recorded in a DAG-based history.
+pyqt-reactive reflects state restored by ObjectState's history system.  History
+is owned by ObjectState; ``ParameterFormManager`` is a view over the current
+model and does not define a separate undo stack.
 
-Overview
---------
+Snapshots
+---------
 
-ObjectState provides a DAG-based history system (not just a linear undo/redo stack). When you edit
-form fields, changes are recorded as snapshots. You can:
-
-- **Time Travel**: Navigate back and forth through history (like git checkout)
-- **Jump to Snapshots**: Jump to any point in history by ID
-- **Branching**: Create alternative timelines for experimentation
-- **Atomic Operations**: Group multiple changes into a single snapshot
-
-Integration with Forms
-----------------------
-
-When a form is bound to ObjectState:
-
-1. **Automatic Recording**: Each field change triggers a snapshot
-2. **Dirty Tracking**: Unsaved changes are tracked automatically
-3. **Time Travel**: Navigate to any previous state without losing work
-4. **Branching**: Create experiment branches to explore alternatives
-
-Example
--------
+Use an ObjectState atomic operation when several edits should become one
+history entry.  Structural registration alone does not create a snapshot.
 
 .. code-block:: python
 
-   from pyqt_reactive.forms import ParameterFormManager
-   from objectstate import ObjectStateRegistry, config_context
+   from dataclasses import dataclass
+
+   from objectstate import ObjectState, ObjectStateRegistry
+   from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 
    @dataclass
-   class ProcessingConfig:
+   class ProcessingSettings:
        threshold: float = 0.5
        iterations: int = 10
 
-   # Create form with ObjectState context
-   with config_context(global_config):
-       form = ParameterFormManager(ProcessingConfig)
-       form.show()
+   state = ObjectState(ProcessingSettings(), scope_id="processing")
+   ObjectStateRegistry.register(state)
+   form = ParameterFormManager(state)
 
-       # User edits are automatically recorded
-       # Time travel available through ObjectStateRegistry
-       ObjectStateRegistry.time_travel_back()   # Go one step back
-       ObjectStateRegistry.time_travel_forward()  # Go one step forward
+   with ObjectStateRegistry.atomic("tune processing", scope_id="processing"):
+       state.update_parameter("threshold", 0.7)
+       state.update_parameter("iterations", 20)
 
-       # Create experiment branch
-       ObjectStateRegistry.create_branch("experiment_v2")
-       # ... make changes ...
-       ObjectStateRegistry.switch_branch("main")  # Back to original
+   ObjectStateRegistry.time_travel_back()
+   ObjectStateRegistry.time_travel_forward()
+
+ObjectState also provides ``time_travel_to_snapshot``, ``create_branch``, and
+``switch_branch`` for non-linear history.  Scope-aware applications should pass
+the appropriate ``scope_id`` where the ObjectState API accepts it.
+
+UI synchronization
+------------------
+
+Forms update the model through normal field-change handling and refresh when
+ObjectState changes are dispatched.  The lifecycle owner decides where atomic
+boundaries belong—for example, per committed editor action or around a larger
+multi-field command.  Do not assume that every keystroke automatically creates
+an independent snapshot.
+
+See the ObjectState documentation for snapshot storage, atomic-success
+semantics, and branch behavior.

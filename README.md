@@ -1,116 +1,67 @@
-# pyqt-reactor
+# pyqt-reactive
 
-**React-quality reactive form generation framework for PyQt6**
+Reactive, ObjectState-backed forms and reusable application infrastructure for
+PyQt6.
 
-[![PyPI version](https://badge.fury.io/py/pyqt-reactor.svg)](https://badge.fury.io/py/pyqt-reactor)
-[![Documentation Status](https://readthedocs.org/projects/pyqt-reactor/badge/?version=latest)](https://pyqt-reactor.readthedocs.io/en/latest/?badge=latest)
+[![PyPI version](https://badge.fury.io/py/pyqt-reactive.svg)](https://badge.fury.io/py/pyqt-reactive)
+[![Documentation Status](https://readthedocs.org/projects/pyqt-reactive/badge/?version=latest)](https://pyqt-reactive.readthedocs.io/en/latest/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Features
+## Quick start
 
-- **Dataclass-Driven Forms**: Automatically generate UI forms from Python dataclasses
-- **ObjectState Integration**: First-class support for lazy configuration and hierarchical inheritance
-- **ABC-Based Protocols**: Type-safe widget contracts with clean interfaces
-- **Reactive Updates**: React-style lifecycle hooks with cross-window synchronization
-- **Theming System**: ColorScheme-based styling with dynamic theme switching
-- **Flash Animations**: Game-engine inspired visual feedback for value changes
-- **Window Management**: Scoped window registry with navigation support
-
-## Quick Start
+``ParameterFormManager`` renders an existing ``ObjectState``. The state is the
+model; the form is a view over it.
 
 ```python
 from dataclasses import dataclass
+
 from PyQt6.QtWidgets import QApplication
-from pyqt_reactive.forms import ParameterFormManager
+from objectstate import ObjectState, set_base_config_type
+from pyqt_reactive.forms.parameter_form_manager import (
+    FormManagerConfig,
+    ParameterFormManager,
+)
+from pyqt_reactive.theming import ColorScheme
 
 @dataclass
 class ProcessingConfig:
     input_path: str = ""
-    output_path: str = ""
     num_workers: int = 4
     enable_gpu: bool = False
 
 app = QApplication([])
-form = ParameterFormManager(ProcessingConfig)
+set_base_config_type(ProcessingConfig)
+state = ObjectState(ProcessingConfig(), scope_id="processing")
+form = ParameterFormManager(
+    state,
+    config=FormManagerConfig(color_scheme=ColorScheme()),
+)
 form.show()
 app.exec()
 ```
 
+Do not pass a dataclass type or instance directly to
+``ParameterFormManager``. Create ``ObjectState(instance)`` so edits, dirty
+tracking, hierarchy, and cross-window updates share one authority.
+
+## Ownership
+
+pyqt-reactive owns generic widget protocols and strategies, form lifecycle,
+field-change dispatch, reusable services and managers, previews, animations,
+and window infrastructure. Host applications own domain workflows and adapters.
+
 ## Installation
 
 ```bash
-pip install pyqt-reactor
+python -m pip install pyqt-reactive
 ```
 
 For development:
+
 ```bash
-git clone https://github.com/trissim/pyqt-reactor.git
-cd pyqt-reactor
-pip install -e ".[dev]"
+git clone https://github.com/OpenHCSDev/PyQT-reactive.git
+cd PyQT-reactive
+python -m pip install -e ".[dev]"
 ```
 
-## Architecture
-
-The package is organized in layers:
-
-```
-pyqt_reactive/
-├── core/        # Tier 1: Pure PyQt6 utilities
-├── protocols/   # Tier 2: Widget ABCs and adapters
-├── services/    # Tier 3: Reusable service layer
-├── forms/       # Tier 4: ParameterFormManager
-├── theming/     # Color schemes and styling
-├── widgets/     # Extended widget implementations
-└── animation/   # Flash effects and visual feedback
-```
-
-## Key Components
-
-### ParameterFormManager
-
-Auto-generates forms from dataclasses with full type support:
-
-```python
-from pyqt_reactive.forms import ParameterFormManager
-
-form = ParameterFormManager(MyConfig)
-config = form.collect_values()  # Get typed config back
-```
-
-### WindowManager
-
-Singleton window registry with scope-based navigation:
-
-```python
-from pyqt_reactive.services import WindowManager
-
-window = WindowManager.show_or_focus("config:plate1", lambda: ConfigWindow(...))
-WindowManager.navigate_to("config:plate1", field="exposure_time")
-```
-
-### Theming
-
-Dynamic theme switching with consistent styling:
-
-```python
-from pyqt_reactive.theming import ColorScheme, apply_theme
-
-apply_theme(widget, ColorScheme.DARK)
-```
-
-## Documentation
-
-Full documentation available at [pyqt-reactor.readthedocs.io](https://pyqt-reactor.readthedocs.io)
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Contributing
-
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
-
-## Credits
-
-Developed by Tristan Simas. Extracted from [OpenHCS](https://github.com/trissim/openhcs) for general-purpose use.
+Full documentation: [pyqt-reactive.readthedocs.io](https://pyqt-reactive.readthedocs.io)

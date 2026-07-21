@@ -125,14 +125,21 @@ TearOffTabWidget is used automatically by TabbedFormWidget:
 
 .. code-block:: python
 
-   from pyqt_reactive.widgets.shared.tabbed_form_widget import TabbedFormWidget, TabbedFormConfig
+   from pyqt_reactive.widgets.shared.tabbed_form_widget import (
+       TabConfig,
+       TabbedFormConfig,
+       TabbedFormWidget,
+   )
    
    config = TabbedFormConfig(
-       form_field_configs=[...],
+       tabs=[
+           TabConfig(name="Input", field_ids=["input"]),
+           TabConfig(name="Output", field_ids=["output"]),
+       ],
        color_scheme=color_scheme
    )
    
-   tabbed = TabbedFormWidget(config=config)
+   tabbed = TabbedFormWidget(state=object_state, config=config)
    # Tabs can be torn off and docked elsewhere
 
 Cross-Window Workflow

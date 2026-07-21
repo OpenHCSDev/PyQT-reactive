@@ -1,114 +1,34 @@
-API Reference
-=============
+API orientation
+===============
 
-This section contains the complete API documentation for pyqt-reactive.
+pyqt-reactive keeps package ``__init__`` modules intentionally lightweight.
+Import concrete APIs from their owning modules.
 
-Core Modules
-------------
+Forms
+-----
 
-.. autosummary::
-   :toctree: generated
-   :recursive:
+``pyqt_reactive.forms.parameter_form_manager``
+   ``ParameterFormManager`` and ``FormManagerConfig``.
 
-   pyqt_reactive.core
-   pyqt_reactive.protocols
-   pyqt_reactive.services
-   pyqt_reactive.forms
-   pyqt_reactive.widgets
-   pyqt_reactive.theming
-   pyqt_reactive.animation
-   pyqt_reactive.windows
-   pyqt_reactive.dialogs
+``pyqt_reactive.forms.widget_strategies``
+   Nominal widget creation strategies.
 
-Module Documentation
---------------------
+``pyqt_reactive.forms.parameter_value_contracts``
+   Typed form contexts, parameter mappings, and widget values.
 
-pyqt_reactive.core
-~~~~~~~~~~~~~~~~~
+Services and protocols
+----------------------
 
-Core PyQt6 utilities with zero external dependencies.
+``pyqt_reactive.services`` contains reusable state-independent coordinators for
+field changes, signals, windows, navigation, process status, search, and widget
+trees. ``pyqt_reactive.protocols`` contains host-adapter ABCs.
 
-.. automodule:: pyqt_reactive.core
-   :members:
-   :undoc-members:
-   :show-inheritance:
+Widgets, theming, and animation
+-------------------------------
 
-pyqt_reactive.protocols
-~~~~~~~~~~~~~~~~~~~~~~
+Reusable widgets live under ``pyqt_reactive.widgets``. ``ColorScheme`` and
+``StyleSheetGenerator`` live under ``pyqt_reactive.theming``. Flash and visual
+update mechanics live under ``pyqt_reactive.animation``.
 
-Widget protocol definitions and adapters for type-safe widget contracts.
-
-.. automodule:: pyqt_reactive.protocols
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-pyqt_reactive.services
-~~~~~~~~~~~~~~~~~~~~~
-
-Service layer for form management and cross-cutting concerns.
-
-.. automodule:: pyqt_reactive.services
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-pyqt_reactive.forms
-~~~~~~~~~~~~~~~~~~
-
-Form generation and management from dataclasses.
-
-.. automodule:: pyqt_reactive.forms
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-pyqt_reactive.widgets
-~~~~~~~~~~~~~~~~~~~~
-
-Extended widget implementations with enhanced behavior.
-
-.. automodule:: pyqt_reactive.widgets
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-pyqt_reactive.theming
-~~~~~~~~~~~~~~~~~~~~
-
-Color schemes and styling system for dynamic theme switching.
-
-.. automodule:: pyqt_reactive.theming
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-pyqt_reactive.animation
-~~~~~~~~~~~~~~~~~~~~~
-
-Flash animations and visual feedback system.
-
-.. automodule:: pyqt_reactive.animation
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-pyqt_reactive.windows
-~~~~~~~~~~~~~~~~~~~~
-
-Window management and scoped window registry.
-
-.. automodule:: pyqt_reactive.windows
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-pyqt_reactive.dialogs
-~~~~~~~~~~~~~~~~~~~~
-
-Dialog components and utilities.
-
-.. automodule:: pyqt_reactive.dialogs
-   :members:
-   :undoc-members:
-   :show-inheritance:
+Host applications should adapt their domain declarations to these APIs rather
+than adding domain names or imports to the generic package.

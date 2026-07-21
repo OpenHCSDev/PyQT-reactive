@@ -1,5 +1,5 @@
 Persistent System Monitor
-========================
+=========================
 
 **Background thread-based system monitoring for non-blocking metric collection.**
 
@@ -16,7 +16,7 @@ Architecture
 ------------
 
 Thread-Based Architecture
-~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: text
 
@@ -43,7 +43,7 @@ Usage
 -----
 
 Basic Usage
-~~~~~~~~~~
+~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -145,7 +145,7 @@ Emitted when new metrics are collected. Only available in PyQt6 environment.
 Note: This signal is **not available** in non-PyQt6 environments (CLI, Textual TUI).
 
 Lifecycle Management
--------------------
+--------------------
 
 Start/Stop
 ~~~~~~~~~~
@@ -202,7 +202,7 @@ System monitoring has minimal CPU overhead:
 - **Total**: ~0.15-0.6% CPU at 2-second interval
 
 Memory Overhead
-~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
 
 Memory usage depends on history length:
 
@@ -213,7 +213,7 @@ Memory usage depends on history length:
     # 4 metrics * 600 points = ~57.6 KB
 
 Thread Contention
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 
 The background thread sleeps for ``update_interval`` seconds, minimizing contention:
 
@@ -230,7 +230,7 @@ Integration with PyQt6
 -------------------------
 
 Signal-Based Updates
-~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
 
 In PyQt6, use the ``metrics_updated`` signal:
 
@@ -261,7 +261,7 @@ Integration with Textual TUI
 ------------------------------
 
 Callback-Based Updates
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 
 In Textual TUI, poll the monitor periodically:
 

@@ -1,5 +1,5 @@
 Button Panel Component
-=====================
+======================
 
 **Reusable button panel with declarative configuration.**
 
@@ -34,7 +34,7 @@ Usage
 -----
 
 Basic Usage
-~~~~~~~~~~
+~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -87,64 +87,50 @@ By default, buttons are laid out in a single horizontal row. You can specify a g
         grid_columns=2,  # 2 columns
     )
 
-This creates a grid with the specified number of columns:
+``grid_columns=0`` keeps every action in one horizontal row. A positive value
+is the exact number of columns per complete row; the final row may be partial.
+For the three actions above, ``grid_columns=2`` places Refresh and Toggle in the
+first row and Export in the second. Placement follows declaration order.
 
-.. list-table::
-   :header-rows: 1
+Callback ownership
+------------------
 
-   * - grid_columns
-     - Layout
-   * - 0
-     - Single horizontal row
-   * - 1
-     - Single vertical column
-   * - 2
-     - 2x2 grid
-   * - 3
-     - 3x2 grid
-   * - 4
-     - 4x2 grid
-
-Integration with SystemMonitor
----------------------------
-
-``SystemMonitor`` uses ``ButtonPanel`` for its action buttons:
+``on_action`` is required and is the only click-dispatch boundary. The panel
+captures each declared ``action_id`` and invokes that callback directly; it does
+not expose a parallel Qt signal.
 
 .. code-block:: python
 
-    class SystemMonitorWidget(QWidget):
-        """System Monitor Widget."""
-
-        # Declarative button configuration
-        BUTTON_CONFIGS = [
-            ("Global Config", "global_config", "Open global configuration editor"),
-            ("Log Viewer", "log_viewer", "Open log viewer window"),
-            ("Custom Functions", "custom_functions", "Manage custom functions"),
-            ("Test Plate", "test_plate", "Generate synthetic test plate"),
-        ]
-
-        BUTTON_GRID_COLUMNS = 0  # Single row
-
+    class ActionsWidget(QWidget):
         def __init__(self, color_scheme=None, config=None, parent=None):
             super().__init__(parent)
-
-            # Create button panel
             self.button_panel = ButtonPanel(
-                button_configs=self.BUTTON_CONFIGS,
+                button_configs=[
+                    ("Refresh", "refresh", "Refresh the display"),
+                ],
+                on_action=self.handle_button_action,
                 style_generator=self.style_generator,
-                grid_columns=self.BUTTON_GRID_COLUMNS,
             )
 
-            # Connect actions
-            self.button_panel.action_triggered.connect(self.handle_button_action)
-
         def handle_button_action(self, action_id: str):
-            """Handle button panel actions."""
-            if action_id == "global_config":
-                self.show_global_config.emit()
-            elif action_id == "log_viewer":
-                self.show_log_viewer.emit()
-            # ... etc
+            if action_id == "refresh":
+                self.refresh()
+
+Appending a button
+------------------
+
+``add_button(action_id, button)`` appends an already constructed
+``QPushButton`` using the panel's declared row/grid policy, stores it under its
+exact action ID, and returns the button. Duplicate action IDs raise
+``ValueError``. The caller owns connecting a dynamically added button to the
+panel's ``on_action`` callback when that behavior is required; ``add_button``
+owns placement and identity, not a second dispatch mechanism.
+
+Manager title actions use ``FormWindowActionHeader`` and
+``StagedWrapLayout`` when capacity-based wrapping is required. That compositor
+groups stable action widgets and right-aligns declared groups; ``ButtonPanel``
+continues to own grid placement and callback dispatch. Neither component copies
+the other's action list.
 
 Styling
 -------
@@ -164,19 +150,8 @@ Styling
         style_generator=style_generator,  # Apply styles
     )
 
-Signals
--------
-
-**action_triggered** (pyqtSignal)
-
-Emitted when a button is clicked. Provides the ``action_id``:
-
-.. code-block:: python
-
-    panel.action_triggered.connect(lambda action_id: print(f"Action: {action_id}"))
-
 Migration from AbstractManagerWidget
-----------------------------------
+------------------------------------
 
 Before (AbstractManagerWidget):
 
@@ -228,5 +203,5 @@ See Also
 --------
 
 - :doc:`abstract_manager_widget` - Abstract manager widget (original button panel location)
-- :doc:`responsive_layout_widgets` - Responsive layout components
+- :doc:`../responsive_layout_widgets` - Responsive layout components
 - :doc:`system_monitor` - System monitor usage example

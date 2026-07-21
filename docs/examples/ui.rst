@@ -1,268 +1,148 @@
-UI Integration
+UI integration
 ==============
 
-Examples of building reactive forms with pyqt-reactive.
+pyqt-reactive forms are views over an existing ObjectState. Construct the state
+at the application lifecycle boundary, then pass that state to every form that
+edits the same object.
 
-Basic Form Generation
----------------------
-
-Create a form from a dataclass:
+Basic form
+----------
 
 .. code-block:: python
 
    from dataclasses import dataclass
+
    from PyQt6.QtWidgets import QApplication
-   from pyqt_reactive.forms import ParameterFormManager
+   from objectstate import ObjectState, set_base_config_type
+   from pyqt_reactive.forms.parameter_form_manager import (
+       FormManagerConfig,
+       ParameterFormManager,
+   )
+   from pyqt_reactive.theming import ColorScheme
 
    @dataclass
    class ProcessingConfig:
        input_path: str = ""
-       output_path: str = ""
        num_workers: int = 4
        enable_gpu: bool = False
-       threshold: float = 0.5
 
    app = QApplication([])
-
-   # Create form from dataclass
-   form = ParameterFormManager(ProcessingConfig)
+   set_base_config_type(ProcessingConfig)
+   state = ObjectState(ProcessingConfig(), scope_id="processing")
+   form = ParameterFormManager(
+       state,
+       config=FormManagerConfig(color_scheme=ColorScheme()),
+   )
    form.show()
-
-   # Collect values back as typed dataclass
-   config = form.collect_values()
-   print(f"Config: {config}")
-
    app.exec()
 
-Form with ObjectState Integration
-----------------------------------
+``ParameterFormManager`` accepts ``(state, config=None)``. It does not accept a
+dataclass type, and it does not own an independent value model. Read the edited
+object from ``state.to_object()`` at the application boundary.
 
-Bind a form to ObjectState for lazy configuration and inheritance:
-
-.. code-block:: python
-
-   from dataclasses import dataclass
-   from PyQt6.QtWidgets import QApplication
-   from pyqt_reactive.forms import ParameterFormManager
-   from objectstate import config_context, ObjectStateRegistry
-
-   @dataclass
-   class GlobalConfig:
-       threshold: float = 0.5
-       iterations: int = 10
-
-   @dataclass
-   class StepConfig:
-       threshold: float = None  # Inherit from global
-       iterations: int = None   # Inherit from global
-       name: str = "step_0"
-
-   app = QApplication([])
-
-   # Setup ObjectState context
-   global_cfg = GlobalConfig(threshold=0.7, iterations=20)
-
-   with config_context(global_cfg):
-       # Create form - fields with None will show inherited values as placeholders
-       form = ParameterFormManager(StepConfig)
-       form.show()
-
-       # Placeholder text shows: "0.7 (from GlobalConfig)"
-       # User can override by entering a value
-
-       app.exec()
-
-Reactive Field Updates
-----------------------
-
-Use FieldChangeDispatcher to react to field changes:
-
-.. code-block:: python
-
-   from dataclasses import dataclass
-   from PyQt6.QtWidgets import QApplication
-   from pyqt_reactive.forms import ParameterFormManager
-   from pyqt_reactive.services import FieldChangeDispatcher
-
-   @dataclass
-   class ImageConfig:
-       width: int = 512
-       height: int = 512
-       aspect_ratio: str = "1:1"
-
-   app = QApplication([])
-
-   form = ParameterFormManager(ImageConfig)
-   dispatcher = FieldChangeDispatcher()
-
-   # React to width changes
-   def on_width_changed(event):
-       print(f"Width changed to {event.value}")
-       # Update aspect ratio or height
-
-   dispatcher.subscribe("width", on_width_changed)
-   form.show()
-
-   app.exec()
-
-Theming and Styling
+Responding to edits
 -------------------
 
-Apply themes to forms:
+Use the manager's public signal rather than constructing the internal
+``FieldChangeDispatcher``:
 
 .. code-block:: python
 
-   from dataclasses import dataclass
-   from PyQt6.QtWidgets import QApplication
-   from pyqt_reactive.forms import ParameterFormManager
-   from pyqt_reactive.theming import ColorScheme, apply_theme
+   def on_parameter_changed(field_path, value):
+       print(f"{field_path} changed to {value!r}")
 
-   @dataclass
-   class AppConfig:
-       name: str = "MyApp"
-       debug: bool = False
+   form.parameter_changed.connect(on_parameter_changed)
 
-   app = QApplication([])
+The dispatcher coordinates state writes, placeholder refresh, enabled-field
+styling, and cross-window notifications inside the form lifecycle.
 
-   form = ParameterFormManager(AppConfig)
+Tabbed forms
+------------
 
-   # Apply dark theme
-   apply_theme(form, ColorScheme.DARK)
-
-   form.show()
-   app.exec()
-
-Flash Animations
-----------------
-
-Visual feedback when values change:
+``TabbedFormWidget`` shares one state across all child forms. Tabs declare the
+top-level field paths they display:
 
 .. code-block:: python
 
-   from dataclasses import dataclass
-   from PyQt6.QtWidgets import QApplication
-   from pyqt_reactive.forms import ParameterFormManager
+   from dataclasses import dataclass, field
 
-   @dataclass
-   class Config:
-       value: float = 0.5
-
-   app = QApplication([])
-
-   form = ParameterFormManager(Config)
-
-   # Flash animations automatically trigger on value changes
-   # Provides visual feedback similar to React component updates
-
-   form.show()
-   app.exec()
-
-Window Management
------------------
-
-Manage multiple windows with WindowManager:
-
-.. code-block:: python
-
-   from dataclasses import dataclass
-   from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton
-   from pyqt_reactive.services import WindowManager
-   from pyqt_reactive.forms import ParameterFormManager
-
-   @dataclass
-   class Config:
-       name: str = "default"
-
-   class ConfigWindow(QMainWindow):
-       def __init__(self, scope_id: str):
-           super().__init__()
-           self.scope_id = scope_id
-           layout = QVBoxLayout()
-           form = ParameterFormManager(Config)
-           layout.addWidget(form)
-           widget = QWidget()
-           widget.setLayout(layout)
-           self.setCentralWidget(widget)
-
-   app = QApplication([])
-
-   # Show or focus window
-   window = WindowManager.show_or_focus(
-       "config:main",
-       lambda: ConfigWindow("config:main")
+   from objectstate import ObjectState
+   from pyqt_reactive.widgets.shared.tabbed_form_widget import (
+       TabConfig,
+       TabbedFormConfig,
+       TabbedFormWidget,
    )
 
-   # Navigate to specific field
-   WindowManager.navigate_to("config:main", field="name")
+   @dataclass
+   class InputConfig:
+       path: str = ""
 
-   app.exec()
+   @dataclass
+   class OutputConfig:
+       directory: str = ""
 
-Service Registration
---------------------
+   @dataclass
+   class WorkflowConfig:
+       inputs: InputConfig = field(default_factory=InputConfig)
+       outputs: OutputConfig = field(default_factory=OutputConfig)
 
-Register custom providers with pyqt-reactive:
-
-.. code-block:: python
-
-   from pyqt_reactive.protocols import (
-       set_form_config,
-       register_llm_service,
-       register_codegen_provider,
-       FormGenConfig
+   state = ObjectState(WorkflowConfig(), scope_id="workflow")
+   tabs = TabbedFormWidget(
+       state=state,
+       config=TabbedFormConfig(
+           tabs=[
+               TabConfig(name="Inputs", field_ids=["inputs"]),
+               TabConfig(name="Outputs", field_ids=["outputs"]),
+           ],
+       ),
    )
 
-   # Configure form generation
-   config = FormGenConfig()
-   config.log_dir = "/tmp/logs"
-   set_form_config(config)
-
-   # Register custom LLM service
-   class MyLLMService:
-       def generate_pipeline(self, description: str) -> str:
-           return "# Generated pipeline"
-
-   register_llm_service(MyLLMService())
-
-   # Register custom code generator
-   class MyCodegenProvider:
-       def generate_code(self, config) -> str:
-           return "# Generated code"
-
-   register_codegen_provider(MyCodegenProvider())
-
-Custom Widgets
+Scoped windows
 --------------
 
-Create custom widgets that work with ParameterFormManager:
+``WindowManager`` is a class-level registry. ``show_or_focus`` creates a window
+only when the scope is not already open:
 
 .. code-block:: python
 
-   from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSlider
-   from PyQt6.QtCore import Qt, pyqtSignal
-   from pyqt_reactive.protocols import ValueGettable, ValueSettable
+   from PyQt6.QtWidgets import QMainWindow
+   from pyqt_reactive.services.window_manager import WindowManager
 
-   class CustomSliderWidget(QWidget, ValueGettable, ValueSettable):
-       """Custom slider widget with label."""
+   window = WindowManager.show_or_focus(
+       "workflow",
+       lambda: QMainWindow(),
+   )
 
-       value_changed = pyqtSignal(int)
+   WindowManager.focus_and_navigate("workflow")
+   WindowManager.close_window("workflow")
 
-       def __init__(self):
-           super().__init__()
-           layout = QVBoxLayout()
-           self.label = QLabel("0")
-           self.slider = QSlider(Qt.Orientation.Horizontal)
-           self.slider.setRange(0, 100)
-           self.slider.valueChanged.connect(self._on_value_changed)
-           layout.addWidget(self.label)
-           layout.addWidget(self.slider)
-           self.setLayout(layout)
+Hosts that support field or item navigation should register an explicit
+navigation driver with the window.
 
-       def get_value(self):
-           return self.slider.value()
+Service registration
+--------------------
 
-       def set_value(self, value):
-           self.slider.setValue(int(value))
+The generic service registry is keyed by a service type:
 
-       def _on_value_changed(self, value):
-           self.label.setText(str(value))
-           self.value_changed.emit(value)
+.. code-block:: python
+
+   from typing import Protocol
+
+   from pyqt_reactive.services.service_registry import ServiceRegistry
+
+   class StatusSink(Protocol):
+       def publish(self, message: str) -> None: ...
+
+   class ConsoleStatusSink:
+       def publish(self, message: str) -> None:
+           print(message)
+
+   ServiceRegistry.register(StatusSink, ConsoleStatusSink())
+   sink = ServiceRegistry.get(StatusSink)
+   if sink is not None:
+       sink.publish("ready")
+   ServiceRegistry.unregister(StatusSink)
+
+Register host services during application composition and clear registrations
+between isolated tests. Domain discovery and semantic registries belong to the
+host or their nominal owning package, not this UI service registry.
