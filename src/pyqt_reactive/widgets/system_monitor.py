@@ -29,8 +29,7 @@ from pyqt_reactive.theming import ColorScheme
 
 from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.services.persistent_system_monitor import PersistentSystemMonitor
-from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
-from pyqt_reactive.protocols import get_form_config
+from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
 
 logger = logging.getLogger(__name__)
 
@@ -65,21 +64,20 @@ class SystemMonitorWidget(QWidget):
     
     def __init__(self,
                  color_scheme: Optional[ColorScheme] = None,
-                 config: Optional[object] = None,
+                 config: Optional[PerformanceMonitorConfig] = None,
                  parent=None):
         """
         Initialize the system monitor widget.
 
         Args:
             color_scheme: Color scheme for styling (optional, uses default if None)
-            config: GUI configuration (optional, uses default if None)
+            config: System monitor configuration (optional, uses default if None)
             parent: Parent widget
         """
         super().__init__(parent)
 
         # Initialize configuration
-        self.config = config or get_form_config()
-        self.monitor_config = self._build_monitor_config(self.config)
+        self.monitor_config = config or PerformanceMonitorConfig()
 
         # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
@@ -90,7 +88,7 @@ class SystemMonitorWidget(QWidget):
         history_length = self.monitor_config.calculated_max_data_points
 
         # Core monitoring - use persistent thread for non-blocking metrics collection
-        sampler_config = self._monitor_sampler_config()
+        sampler_config = self.monitor_config.sampler_config
         self.monitor = SystemMonitorCore(
             history_length=history_length,
             sampler_config=sampler_config,
@@ -112,9 +110,6 @@ class SystemMonitorWidget(QWidget):
 
         # Plot update state. Curves use a fixed relative x-axis and update only
         # when new metric samples arrive.
-        self._render_timer = QTimer(self)
-        self._render_timer.setTimerType(Qt.TimerType.CoarseTimer)
-        self._render_timer.timeout.connect(self._render_frame)
         self._last_plot_history = None
         self._history_update_interval = None
         self._plot_point_budget = 2000
@@ -138,83 +133,6 @@ class SystemMonitorWidget(QWidget):
         self.setMinimumSize(200, 160)
 
         logger.debug("System monitor widget initialized")
-
-    def _build_monitor_config(self, config):
-        """Build a safe monitor config with defaults for missing attributes."""
-        from types import SimpleNamespace
-
-        default_colors = {
-            "cpu": "cyan",
-            "ram": "lime",
-            "gpu": "orange",
-            "vram": "magenta",
-        }
-        monitor = getattr(config, "performance_monitor", None)
-        if monitor is None:
-            update_fps = 10.0
-            render_fps = 30.0
-            history_duration_seconds = 60.0
-            update_interval_seconds = 1.0 / update_fps
-            calculated_max_data_points = int(history_duration_seconds / update_interval_seconds)
-            return SimpleNamespace(
-                update_fps=update_fps,
-                render_fps=render_fps,
-                history_duration_seconds=history_duration_seconds,
-                update_interval_seconds=update_interval_seconds,
-                calculated_max_data_points=calculated_max_data_points,
-                antialiasing=True,
-                use_opengl=True,
-                show_grid=True,
-                line_width=2.0,
-                chart_colors=default_colors,
-                enable_gpu_monitoring=True,
-                gpu_temperature_monitoring=True,
-                cpu_frequency_monitoring=True,
-                gpu_refresh_seconds=1.0,
-                cpu_frequency_refresh_seconds=5.0,
-            )
-
-        update_fps = getattr(monitor, "update_fps", 5.0)
-        render_fps = getattr(monitor, "render_fps", 30.0)
-        history_duration_seconds = getattr(monitor, "history_duration_seconds", 60.0)
-        update_interval_seconds = getattr(
-            monitor,
-            "update_interval_seconds",
-            1.0 / update_fps if update_fps else 1.0,
-        )
-        calculated_max_data_points = getattr(
-            monitor,
-            "calculated_max_data_points",
-            int(history_duration_seconds / update_interval_seconds) if update_interval_seconds else 60,
-        )
-        return SimpleNamespace(
-            update_fps=update_fps,
-            render_fps=render_fps,
-            history_duration_seconds=history_duration_seconds,
-            update_interval_seconds=update_interval_seconds,
-            calculated_max_data_points=calculated_max_data_points,
-            antialiasing=getattr(monitor, "antialiasing", True),
-            use_opengl=getattr(monitor, "use_opengl", True),
-            show_grid=getattr(monitor, "show_grid", True),
-            line_width=getattr(monitor, "line_width", 2.0),
-            chart_colors=getattr(monitor, "chart_colors", default_colors),
-            enable_gpu_monitoring=getattr(monitor, "enable_gpu_monitoring", True),
-            gpu_temperature_monitoring=getattr(monitor, "gpu_temperature_monitoring", True),
-            cpu_frequency_monitoring=getattr(monitor, "cpu_frequency_monitoring", True),
-            gpu_refresh_seconds=getattr(monitor, "gpu_refresh_seconds", 1.0),
-            cpu_frequency_refresh_seconds=getattr(monitor, "cpu_frequency_refresh_seconds", 5.0),
-        )
-
-    def _monitor_sampler_config(self, monitor_config=None) -> SystemMetricsSamplerConfig:
-        """Return the typed nonblocking sampler policy for monitor backends."""
-        monitor_config = monitor_config or self.monitor_config
-        return SystemMetricsSamplerConfig(
-            enable_gpu_monitoring=monitor_config.enable_gpu_monitoring,
-            gpu_temperature_monitoring=monitor_config.gpu_temperature_monitoring,
-            cpu_frequency_monitoring=monitor_config.cpu_frequency_monitoring,
-            gpu_refresh_seconds=monitor_config.gpu_refresh_seconds,
-            cpu_frequency_refresh_seconds=monitor_config.cpu_frequency_refresh_seconds,
-        )
 
     def create_loading_placeholder(self) -> QWidget:
         """
@@ -828,7 +746,6 @@ class SystemMonitorWidget(QWidget):
     def stop_monitoring(self):
         """Stop the persistent monitoring thread."""
         self.persistent_monitor.stop_monitoring()
-        self._stop_render_timer()
         logger.debug("System monitoring stopped")
 
     def cleanup(self):
@@ -925,20 +842,6 @@ class SystemMonitorWidget(QWidget):
             lambda: self.update_pyqtgraph_plots(metrics_snapshot),
         )
 
-    def _start_render_timer(self):
-        """Start the plot render timer, capped at metric update cadence."""
-        render_fps = max(1.0, float(self.monitor_config.render_fps))
-        update_fps = max(1.0, float(self.monitor_config.update_fps))
-        effective_fps = min(render_fps, update_fps)
-        interval_ms = max(1, int(1000.0 / effective_fps))
-        if not self._render_timer.isActive():
-            self._render_timer.start(interval_ms)
-
-    def _stop_render_timer(self):
-        """Stop render timer."""
-        if self._render_timer.isActive():
-            self._render_timer.stop()
-
     def _reset_plot_buffers(self):
         """Drop cached plot arrays/ranges after monitor history configuration changes."""
         self._history_length = 0
@@ -956,10 +859,6 @@ class SystemMonitorWidget(QWidget):
                 self._clear_curve(curve)
         except AttributeError:
             pass
-
-    def _render_frame(self):
-        """No-op retained for compatibility with older render-timer wiring."""
-        return
 
     def update_pyqtgraph_plots(self, metrics: Optional[dict] = None):
         """Update consolidated PyQtGraph plot data at metrics cadence."""
@@ -1183,29 +1082,26 @@ class SystemMonitorWidget(QWidget):
         interval_seconds = interval_ms / 1000.0
         self.persistent_monitor.set_update_interval(interval_seconds)
 
-    def update_config(self, new_config):
+    def update_config(self, new_config: PerformanceMonitorConfig):
         """
         Update the widget configuration and apply changes.
 
         Args:
             new_config: New configuration to apply
         """
-        old_config = self.config
-        old_monitor_config = self._build_monitor_config(old_config)
-        old_sampler_config = self._monitor_sampler_config(old_monitor_config)
-        self.config = new_config
-        self.monitor_config = self._build_monitor_config(new_config)
-        new_sampler_config = self._monitor_sampler_config()
+        old_monitor_config = self.monitor_config
+        old_sampler_config = old_monitor_config.sampler_config
+        self.monitor_config = new_config
+        new_sampler_config = new_config.sampler_config
 
-        # Check if we need to restart monitoring with new parameters
-        restart_fields = (
-            "update_fps",
-            "history_duration_seconds",
+        # Rebuild only when the configuration's derived sampling behavior changes.
+        needs_monitor_restart = (
+            old_monitor_config.update_interval_seconds
+            != new_config.update_interval_seconds
+            or old_monitor_config.calculated_max_data_points
+            != new_config.calculated_max_data_points
+            or old_sampler_config != new_sampler_config
         )
-        needs_monitor_restart = any(
-            getattr(old_monitor_config, field) != getattr(self.monitor_config, field)
-            for field in restart_fields
-        ) or old_sampler_config != new_sampler_config
 
         if needs_monitor_restart:
 
@@ -1244,34 +1140,56 @@ class SystemMonitorWidget(QWidget):
             # Restart monitoring
             self.start_monitoring()
 
-        # Update render timer FPS if needed
-        if getattr(old_monitor_config, "render_fps", None) != getattr(self.monitor_config, "render_fps", None):
-            if self._render_timer.isActive():
-                self._stop_render_timer()
-                self._start_render_timer()
-
-        # Update plot appearance if needed
-        if (old_config.performance_monitor.chart_colors != new_config.performance_monitor.chart_colors or
-            old_config.performance_monitor.line_width != new_config.performance_monitor.line_width):
-            self._update_plot_appearance()
+        # Plot presentation is cheap and idempotent. Applying the complete nominal
+        # config avoids a second field-dispatch table and also handles updates made
+        # before the asynchronous plot widgets are ready.
+        self._update_plot_appearance()
 
         logger.debug("Performance monitor configuration updated")
 
     def _update_plot_appearance(self):
         """Update plot appearance based on current configuration."""
+        if not all(
+            hasattr(self, attribute)
+            for attribute in (
+                "cpu_gpu_plot",
+                "ram_vram_plot",
+                "cpu_curve",
+                "ram_curve",
+                "gpu_curve",
+                "vram_curve",
+            )
+        ):
+            return
+
         colors = self.monitor_config.chart_colors
         line_width = self.monitor_config.line_width
+
+        self._plot_opengl_enabled = self._configure_plot_acceleration()
+        pg.setConfigOption("antialias", self._effective_plot_antialiasing())
 
         # Update curve pens
         self.cpu_curve.setPen(pg.mkPen(colors['cpu'], width=line_width))
         self.ram_curve.setPen(pg.mkPen(colors['ram'], width=line_width))
         self.gpu_curve.setPen(pg.mkPen(colors['gpu'], width=line_width))
         self.vram_curve.setPen(pg.mkPen(colors['vram'], width=line_width))
+        for curve in (
+            self.cpu_curve,
+            self.gpu_curve,
+            self.ram_curve,
+            self.vram_curve,
+        ):
+            self._configure_plot_curve(curve)
 
         # Update plot grid for consolidated plots (don't change X range here - let update_pyqtgraph_plots handle it)
         plots = [self.cpu_gpu_plot, self.ram_vram_plot]
         for plot in plots:
-            plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
+            plot.showGrid(
+                x=self.monitor_config.show_grid,
+                y=self.monitor_config.show_grid,
+                alpha=0.3,
+            )
+        self._apply_fixed_plot_ranges()
     
     def closeEvent(self, event):
         """Handle widget close event."""

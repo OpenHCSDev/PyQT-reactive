@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
@@ -138,6 +138,63 @@ def test_nvidia_smi_poller_respects_temperature_policy() -> None:
     metrics = poller._parse_gpu_line("12, 63, 2048, 8192, NVIDIA RTX")
 
     assert metrics.gpu_temp == 0
+
+
+def test_enable_gpu_monitoring_leaf_disables_gpu_provider(monkeypatch) -> None:
+    monkeypatch.setattr(sampler_module, "PersistentNvidiaSmiPoller", FakeGpuMetricsPoller)
+    config = replace(SystemMetricsSamplerConfig(), enable_gpu_monitoring=False)
+
+    sampler = SystemMetricsSampler(config)
+
+    assert sampler._gpu_poller is None
+    assert sampler._cached_gpu_metrics().gpu_name == "GPU Monitoring Disabled"
+    sampler.close()
+
+
+def test_gpu_temperature_monitoring_leaf_reaches_gpu_provider(monkeypatch) -> None:
+    FakeGpuMetricsPoller.created.clear()
+    monkeypatch.setattr(sampler_module, "PersistentNvidiaSmiPoller", FakeGpuMetricsPoller)
+    config = replace(SystemMetricsSamplerConfig(), gpu_temperature_monitoring=False)
+
+    sampler = SystemMetricsSampler(config)
+
+    assert FakeGpuMetricsPoller.created[-1].gpu_temperature_monitoring is False
+    sampler.close()
+
+
+def test_cpu_frequency_monitoring_leaf_disables_frequency_provider(monkeypatch) -> None:
+    monkeypatch.setattr(sampler_module, "BackgroundMetricPoller", FakeCpuFrequencyPoller)
+    config = replace(SystemMetricsSamplerConfig(), cpu_frequency_monitoring=False)
+
+    sampler = SystemMetricsSampler(config)
+
+    assert sampler._cpu_frequency_poller is None
+    assert sampler._cached_cpu_frequency() == 0
+    sampler.close()
+
+
+def test_gpu_refresh_seconds_leaf_reaches_gpu_provider(monkeypatch) -> None:
+    FakeGpuMetricsPoller.created.clear()
+    monkeypatch.setattr(sampler_module, "PersistentNvidiaSmiPoller", FakeGpuMetricsPoller)
+    config = replace(SystemMetricsSamplerConfig(), gpu_refresh_seconds=0.25)
+
+    sampler = SystemMetricsSampler(config)
+
+    assert FakeGpuMetricsPoller.created[-1].refresh_seconds == 0.25
+    sampler.close()
+
+
+def test_cpu_frequency_refresh_seconds_leaf_reaches_frequency_provider(
+    monkeypatch,
+) -> None:
+    FakeCpuFrequencyPoller.created.clear()
+    monkeypatch.setattr(sampler_module, "BackgroundMetricPoller", FakeCpuFrequencyPoller)
+    config = replace(SystemMetricsSamplerConfig(), cpu_frequency_refresh_seconds=2.0)
+
+    sampler = SystemMetricsSampler(config)
+
+    assert FakeCpuFrequencyPoller.created[-1].refresh_seconds == 2.0
+    sampler.close()
 
 
 def test_background_metric_poller_is_lazy_and_does_not_restart_after_stop() -> None:
