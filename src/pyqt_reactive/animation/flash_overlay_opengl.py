@@ -29,7 +29,12 @@ except ImportError:
     OPENGL_AVAILABLE = False
     QOpenGLWidget = object  # Dummy for type checking
 
-from .flash_mixin import FlashElement, OverlayGeometryCache
+from .flash_mixin import (
+    FlashElement,
+    OverlayGeometryCache,
+    _clip_rect_to_scroll_hierarchy,
+    _scroll_clip_rects_for_element,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -565,6 +570,21 @@ class WindowFlashOverlayGL(QOpenGLWidget if OPENGL_AVAILABLE else object):
                     rects.append(None)
                     regions.append(None)
                     continue
+
+                if element.needs_scroll_clipping:
+                    owning_clip_rects = _scroll_clip_rects_for_element(
+                        element,
+                        self._window,
+                    )
+                    if owning_clip_rects:
+                        rect = _clip_rect_to_scroll_hierarchy(
+                            rect,
+                            owning_clip_rects,
+                        )
+                        if rect is None or not rect.isValid():
+                            rects.append(None)
+                            regions.append(None)
+                            continue
 
                 radius = element.corner_radius
                 rects.append((rect, radius))

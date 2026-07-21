@@ -396,6 +396,45 @@ class FlashElement:
     delegate_widget: Optional[QWidget] = None
     get_model_index: Optional[Callable[[], Any]] = None  # Returns QModelIndex for targeted item updates (avoids full viewport repaint)
     layout_watch_widgets: Tuple[QWidget, ...] = field(default_factory=tuple)
+    scroll_clip_widget: Optional[QWidget] = None  # Visual owner whose ancestor viewports bound this element.
+
+
+def _scroll_clip_rects_for_element(
+    element: FlashElement,
+    window: QWidget,
+) -> List[QRect]:
+    """Return only the viewport bounds that own an element's visual target."""
+    from PyQt6.QtWidgets import QAbstractScrollArea
+
+    clip_rects: List[QRect] = []
+    widget = element.scroll_clip_widget
+    while widget is not None and widget is not window:
+        if isinstance(widget, QAbstractScrollArea):
+            viewport = widget.viewport()
+            if (
+                viewport is not None
+                and not sip.isdeleted(viewport)
+                and viewport.isVisible()
+            ):
+                viewport_rect = viewport.rect()
+                global_pos = viewport.mapToGlobal(viewport_rect.topLeft())
+                window_pos = window.mapFromGlobal(global_pos)
+                clip_rects.append(QRect(window_pos, viewport_rect.size()))
+        widget = widget.parentWidget()
+    return clip_rects
+
+
+def _clip_rect_to_scroll_hierarchy(
+    rect: QRect,
+    clip_rects: List[QRect],
+) -> Optional[QRect]:
+    """Intersect a visual rect with every viewport in its owning hierarchy."""
+    intersection = QRect(rect)
+    for clip_rect in clip_rects:
+        intersection = intersection.intersected(clip_rect)
+        if not intersection.isValid():
+            return None
+    return intersection
 
 
 @dataclass(frozen=True)
@@ -1000,6 +1039,7 @@ def create_groupbox_element(
                 *extra_layout_watch_widgets,
             )
         ),
+        scroll_clip_widget=groupbox,
     )
 
 
@@ -1039,6 +1079,7 @@ def create_structural_masked_container_element(
         ),
         corner_radius=radius,
         layout_watch_widgets=_unique_live_widgets((container, *layout_watch_widgets)),
+        scroll_clip_widget=container,
     )
 
 
@@ -1072,6 +1113,7 @@ def create_widget_rect_element(key: str, widget: QWidget) -> FlashElement:
         source_id=widget_rect_flash_source_id(widget),
         corner_radius=radius,
         layout_watch_widgets=(widget,),
+        scroll_clip_widget=widget,
     )
 
 
@@ -1106,6 +1148,7 @@ def create_table_cell_element(key: str, target: "StructuralTableCellTarget") -> 
         get_child_rects=None,
         source_id=table_cell_flash_source_id(target),
         layout_watch_widgets=(target.table, target.table.viewport()),
+        scroll_clip_widget=target.table,
     )
 
 
@@ -1713,8 +1756,14 @@ class WindowFlashOverlay(QWidget):
 
                 # Apply scroll area clipping if needed
                 rect_to_draw = rect
-                if element.needs_scroll_clipping and clip_rects:
-                    clipped_rect = self._clip_to_scroll_areas(rect, clip_rects)
+                if element.needs_scroll_clipping:
+                    owning_clip_rects = self._scroll_clip_rects_for_element(element)
+                    clipped_rect = self._clip_to_scroll_areas(
+                        rect,
+                        owning_clip_rects,
+                    )
+                    if not owning_clip_rects:
+                        clipped_rect = rect
                     if clipped_rect and clipped_rect.isValid():
                         rect_to_draw = clipped_rect
                     else:
@@ -2085,16 +2134,17 @@ class WindowFlashOverlay(QWidget):
         self._cache.clip_rects_valid = True
         return clip_rects
 
-    def _clip_to_scroll_areas(self, rect: QRect, clip_rects: List[QRect]) -> Optional[QRect]:
-        """Clip a flash rect to only the parts that intersect with scroll area viewports.
+    def _scroll_clip_rects_for_element(self, element: FlashElement) -> List[QRect]:
+        """Return only the viewport bounds that own an element's visual target."""
+        return _scroll_clip_rects_for_element(element, self._window)
 
-        Returns the clipped rect, or None if the rect doesn't intersect any scroll areas.
-        """
-        for clip_rect in clip_rects:
-            intersection = rect.intersected(clip_rect)
-            if intersection.isValid():
-                return intersection
-        return None
+    def _clip_to_scroll_areas(
+        self,
+        rect: QRect,
+        clip_rects: List[QRect],
+    ) -> Optional[QRect]:
+        """Intersect a flash rect with every viewport in its owning hierarchy."""
+        return _clip_rect_to_scroll_hierarchy(rect, clip_rects)
 
     def paintEvent(self, event) -> None:
         """GAME ENGINE: Render ALL flash effects in ONE paint call.
