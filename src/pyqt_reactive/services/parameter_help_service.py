@@ -258,7 +258,12 @@ def docstring_info_for_target(target: Union[Callable, type]) -> DocstringInfo:
     """Return help-window documentation, using field docs for dataclass targets."""
     dataclass_type = dataclass_type_for_target(target)
     if dataclass_type is None:
-        return DocstringExtractor.extract(target)
+        docstring_info = DocstringExtractor.extract(target)
+        parameters = dict(docstring_info.parameters or {})
+        for name, parameter_info in UnifiedParameterAnalyzer.analyze(target).items():
+            if name not in parameters and parameter_info.description:
+                parameters[name] = parameter_info.description
+        return docstring_info._replace(parameters=parameters)
 
     source_type = source_dataclass_type(dataclass_type)
     summary, description = split_docstring_summary(
@@ -268,7 +273,7 @@ def docstring_info_for_target(target: Union[Callable, type]) -> DocstringInfo:
     return DocstringInfo(
         summary=summary,
         description=description,
-        parameters=dataclass_parameter_descriptions(dataclass_type),
+        parameters=dataclass_parameter_descriptions(source_type),
         returns="",
         examples="",
     )
@@ -282,19 +287,8 @@ def parameter_description_from_target(
     if help_target is None:
         return None
 
-    dataclass_type = dataclass_type_for_target(help_target)
-    if dataclass_type is not None:
-        descriptions = dataclass_parameter_descriptions(dataclass_type)
-        if param_name not in descriptions:
-            return None
-        return descriptions[param_name]
-
-    docstring_info = DocstringExtractor.extract(help_target)
-    if not docstring_info.parameters:
-        return None
-    if param_name not in docstring_info.parameters:
-        return None
-    return docstring_info.parameters[param_name]
+    parameters = docstring_info_for_target(help_target).parameters or {}
+    return parameters.get(param_name)
 
 
 def resolved_parameter_description(

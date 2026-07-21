@@ -58,14 +58,11 @@ class ButtonPanel(QWidget):
     
     def _setup_ui(self):
         """Create the button layout."""
-        layout = QGridLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(5)
+        self._layout = QGridLayout(self)
+        self._layout.setContentsMargins(5, 5, 5, 5)
+        self._layout.setSpacing(5)
         
-        # Determine number of columns (0 means single row)
-        num_cols = self.grid_columns or len(self.button_configs)
-        
-        for i, (label, action_id, tooltip) in enumerate(self.button_configs):
+        for label, action_id, tooltip in self.button_configs:
             button = QPushButton(label)
             button.setToolTip(tooltip)
             
@@ -73,11 +70,21 @@ class ButtonPanel(QWidget):
                 button.setStyleSheet(self.style_generator.generate_button_style())
             
             button.clicked.connect(lambda checked, a=action_id: self.on_action(a))
-            self.buttons[action_id] = button
-            
-            row = i // num_cols
-            col = i % num_cols
-            layout.addWidget(button, row, col)
+            self.add_button(action_id, button)
+
+    def add_button(self, action_id: str, button: QPushButton) -> QPushButton:
+        """Append an action button using this panel's declared grid policy."""
+        if action_id in self.buttons:
+            raise ValueError(f"Button action already exists: {action_id!r}")
+
+        index = len(self.buttons)
+        if self.grid_columns:
+            row, column = divmod(index, self.grid_columns)
+        else:
+            row, column = 0, index
+        self._layout.addWidget(button, row, column)
+        self.buttons[action_id] = button
+        return button
     
     def set_button_enabled(self, action_id: str, enabled: bool):
         """Enable or disable a button by action_id."""
