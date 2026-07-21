@@ -1,24 +1,10 @@
 """Responsive title layout for GroupBoxWithHelp."""
 
-import logging
-
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from PyQt6.QtCore import QTimer, Qt
 
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import StagedWrapLayout
 from typing import Optional, List, Tuple
-
-# Global toggle for responsive wrapping
-_wrapping_enabled = True
-
-def set_wrapping_enabled(enabled: bool):
-    """Globally enable or disable responsive wrapping for all GroupBox titles."""
-    global _wrapping_enabled
-    _wrapping_enabled = enabled
-
-def is_wrapping_enabled() -> bool:
-    """Check if responsive wrapping is globally enabled."""
-    return _wrapping_enabled
 
 
 class ResponsiveGroupBoxTitle(QWidget):
@@ -34,10 +20,8 @@ class ResponsiveGroupBoxTitle(QWidget):
     INLINE_GROUP = "inline"
     RIGHT_GROUP = "right"
     
-    def __init__(self, parent=None, width_threshold: int = 300):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._threshold = width_threshold
-        self._is_horizontal = True
 
         # Transparent background so scope-tinted background shows through
         self.setAutoFillBackground(False)
@@ -101,12 +85,6 @@ class ResponsiveGroupBoxTitle(QWidget):
             self._help_layout.addWidget(widget)
         self._refresh_groups()
     
-    def minimumSizeHint(self):
-        """Return minimum size - log for debugging."""
-        from PyQt6.QtCore import QSize
-        size = super().minimumSizeHint()
-        return size
-    
     def add_right_widget(self, widget, stretch=0):
         self._right_widgets.append((widget, stretch))
         self._right_layout.addWidget(widget, stretch)
@@ -118,22 +96,7 @@ class ResponsiveGroupBoxTitle(QWidget):
         self._inline_layout.addWidget(widget, stretch)
         self._refresh_groups()
     
-    def insert_inline_widget(self, index, widget, stretch=0):
-        """Insert widget at specific position in row1 (doesn't move to row2).
-        
-        This is used for inserting inline widgets at a specific position,
-        such as right after the help button.
-        """
-        # Track as inline widget so it stays with title in vertical mode
-        if widget not in [w for w, _ in self._inline_widgets]:
-            self._inline_widgets.append((widget, stretch))
-        self._inline_layout.insertWidget(index, widget, stretch)
-        self._refresh_groups()
-    
     def _check_switch(self):
-        # Skip if wrapping is globally disabled
-        if not _wrapping_enabled:
-            return
         self._refresh_groups()
     
     def _do_switch(self):
@@ -144,32 +107,6 @@ class ResponsiveGroupBoxTitle(QWidget):
             self._timer.start(100)
         return super().eventFilter(a0, a1)
     
-    # Compatibility methods for QHBoxLayout API
-    def count(self):
-        """Return total widget count across both rows (for compatibility)."""
-        return self._title_layout.count() + self._help_layout.count() + self._inline_layout.count() + self._right_layout.count()
-    
-    def insertWidget(self, index, widget, stretch=0):
-        """Insert widget at position (for compatibility - adds to inline widgets)."""
-        # Track as inline widget so it stays with title in vertical mode
-        if widget not in [w for w, _ in self._inline_widgets]:
-            self._inline_widgets.append((widget, stretch))
-        self._inline_layout.insertWidget(index, widget, stretch)
-    
-    def itemAt(self, index):
-        """Get item at index (for compatibility - from row1)."""
-        layouts = [self._title_layout, self._help_layout, self._inline_layout, self._right_layout]
-        current = 0
-        for layout in layouts:
-            if index < current + layout.count():
-                return layout.itemAt(index - current)
-            current += layout.count()
-        return None
-    
-    def spacerItem(self):
-        """Check if there's a spacer (for compatibility)."""
-        return None  # We don't use spacers in the same way
-
     def _refresh_groups(self):
         if self._help_inline:
             groups = [

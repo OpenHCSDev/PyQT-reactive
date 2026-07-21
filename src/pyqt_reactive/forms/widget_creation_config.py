@@ -666,26 +666,13 @@ class WidgetCreationHandlers:
     def _create_regular_container(ctx: WidgetBuildContext) -> QWidget:
         """Create container for REGULAR widget type."""
         from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
-            ResponsiveParameterRow, is_wrapping_enabled as is_row_wrapping_enabled
+            ResponsiveParameterRow,
         )
-    
-        manager = ctx.manager
-        parent = manager.parent()
-    
-        # Check if responsive wrapping is enabled
-        if is_row_wrapping_enabled():
-            # Use responsive row that wraps when narrow
-            container = ResponsiveParameterRow(
-                width_threshold=150, 
-                parent=parent,
-                layout_config=ctx.layout_config
-            )
-        else:
-            # Use plain QWidget with QHBoxLayout (old non-wrapping style)
-            from PyQt6.QtWidgets import QWidget as QtWidget
-            container = QtWidget(parent)
 
-        return container
+        return ResponsiveParameterRow(
+            parent=ctx.manager.parent(),
+            layout_config=ctx.layout_config,
+        )
 
     def _create_nested_container(ctx: WidgetBuildContext) -> GroupBoxWithHelp:
         """Create container for NESTED widget type."""
@@ -1214,19 +1201,9 @@ class WidgetCreationPipeline:
             rt.title_components.reset_all_button.clicked.connect(lambda: nested_manager.reset_all_parameters())
 
     def _add_dataclass_reset_all_button(self) -> None:
-        from PyQt6.QtWidgets import QHBoxLayout, QPushButton
+        from PyQt6.QtWidgets import QPushButton
 
         rt = self.runtime
-        title_layout = rt.container.title_layout
-        title_label = rt.container._title_label
-        help_button = rt.container._help_button
-        if isinstance(title_layout, QHBoxLayout) and title_label and help_button:
-            title_idx = title_layout.indexOf(title_label)
-            help_idx = title_layout.indexOf(help_button)
-            if title_idx != -1 and help_idx != -1 and help_idx != title_idx + 1:
-                title_layout.removeWidget(help_button)
-                title_layout.insertWidget(title_idx + 1, help_button)
-
         reset_all_button = QPushButton("Reset All")
         reset_all_button.setMaximumWidth(80)
         reset_all_button.setFixedHeight(CURRENT_LAYOUT.button_height)
@@ -1237,7 +1214,7 @@ class WidgetCreationPipeline:
             rt.creation_type
         ).reset_callback(rt)
         reset_all_button.clicked.connect(lambda: reset_all())
-        rt.container.addTitleWidget(reset_all_button)
+        rt.container.addResetAllTitleWidget(reset_all_button)
 
     def _add_regular_reset_button(self) -> None:
         rt = self.runtime

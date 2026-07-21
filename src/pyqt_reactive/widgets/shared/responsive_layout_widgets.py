@@ -1,26 +1,45 @@
-"""Responsive layout widgets for PyQt6 - Uses layout config from manager"""
+"""Capacity-based responsive layout widgets for PyQt6."""
 
-import logging
 from enum import Enum
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QFontMetrics
-from typing import Optional, Any, List
+from PyQt6.QtCore import QSize, QTimer, Qt
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT, ParameterFormLayoutConfig
 
-# Global toggle for responsive wrapping
-_wrapping_enabled = True
 
-def set_wrapping_enabled(enabled: bool):
-    """Globally enable or disable responsive wrapping for all parameter rows."""
-    global _wrapping_enabled
-    _wrapping_enabled = enabled
+def _widget_required_width(widget: QWidget) -> int:
+    """Return the minimum width at which a widget remains usable."""
 
-def is_wrapping_enabled() -> bool:
-    """Check if responsive wrapping is globally enabled."""
-    return _wrapping_enabled
+    hint_width = widget.minimumSizeHint().width()
+    if hint_width < 0:
+        hint_width = widget.sizeHint().width()
+    return max(0, widget.minimumWidth(), hint_width)
+
+
+def _required_row_width(
+    widgets: list[QWidget],
+    *,
+    spacing: int,
+    margins,
+) -> int:
+    """Return the horizontal capacity required by one widget row."""
+
+    if not widgets:
+        return margins.left() + margins.right()
+    return (
+        sum(_widget_required_width(widget) for widget in widgets)
+        + spacing * (len(widgets) - 1)
+        + margins.left()
+        + margins.right()
+    )
 
 
 class ResponsiveRowLayoutMode(Enum):
@@ -28,16 +47,6 @@ class ResponsiveRowLayoutMode(Enum):
 
     HORIZONTAL = "horizontal"
     VERTICAL = "vertical"
-
-    def should_switch(self, available_width: int, content_width: int) -> bool:
-        if self is ResponsiveRowLayoutMode.HORIZONTAL:
-            return available_width < content_width
-        return available_width > (content_width + 20)
-
-    def next_mode(self) -> "ResponsiveRowLayoutMode":
-        if self is ResponsiveRowLayoutMode.HORIZONTAL:
-            return ResponsiveRowLayoutMode.VERTICAL
-        return ResponsiveRowLayoutMode.HORIZONTAL
 
     @property
     def uses_second_row(self) -> bool:
@@ -47,9 +56,8 @@ class ResponsiveRowLayoutMode(Enum):
 class ResponsiveTwoRowWidget(QWidget):
     """Widget that switches between 1-row (horizontal) and 2-row (vertical) layout."""
     
-    def __init__(self, width_threshold: int = 400, parent=None, layout_config=None):
+    def __init__(self, parent=None, layout_config=None):
         super().__init__(parent)
-        self._threshold = width_threshold
         self._layout_config = layout_config or CURRENT_LAYOUT
         self._layout_mode = ResponsiveRowLayoutMode.HORIZONTAL
 
@@ -68,8 +76,9 @@ class ResponsiveTwoRowWidget(QWidget):
 
         # Row 1: Always visible, contains left widgets + maybe right widgets
         self._row1 = QWidget()
-        self._row1.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)  # Fixed height
+        self._row1.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self._row1_layout = QHBoxLayout(self._row1)
+        self._row1_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self._row1_layout.setContentsMargins(*margins)
         self._row1_layout.setSpacing(spacing)
         self._main_layout.addWidget(self._row1)
@@ -77,170 +86,107 @@ class ResponsiveTwoRowWidget(QWidget):
         # Row 2: Only for right widgets in vertical mode
         self._row2 = QWidget(self)  # Explicitly parent to self
         self._row2.setWindowFlags(Qt.WindowType.Widget)  # Ensure it's a widget, not a window
-        self._row2.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)  # Fixed height
+        self._row2.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self._row2_layout = QHBoxLayout(self._row2)
+        self._row2_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self._row2_layout.setContentsMargins(*margins)
         self._row2_layout.setSpacing(spacing)
         self._main_layout.addWidget(self._row2)
         self._row2.hide()  # Start hidden in horizontal mode
         
-        # Storage
-        self._left_widgets = []
-        self._right_widgets = []
-        self._h_stretches = 0
+        self._left_widgets: list[tuple[QWidget, int]] = []
+        self._right_widgets: list[tuple[QWidget, int]] = []
         
         # Debounce timer
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._check_switch)
         
-        if parent:
-            parent.installEventFilter(self)
-    
-    def add_left_widget(self, widget, stretch=0):
+    def add_left_widget(self, widget: QWidget, stretch: int = 0) -> None:
         """Add widget to left side (stays in row1)."""
         self._left_widgets.append((widget, stretch))
-        self._row1_layout.addWidget(widget, stretch)
-    
-    def add_right_widget(self, widget, stretch=0):
+        self._do_switch()
+        self._timer.start(0)
+
+    def add_right_widget(self, widget: QWidget, stretch: int = 0) -> None:
         """Add widget to right side (moves between row1 and row2)."""
         self._right_widgets.append((widget, stretch))
-        self._row1_layout.addWidget(widget, stretch)  # Start in row1
-    
-    def _check_switch(self):
+        self._do_switch()
+        self._timer.start(0)
+
+    def _check_switch(self) -> None:
         """Check if we need to switch layouts based on content width."""
-        # Skip if wrapping is globally disabled
-        if not _wrapping_enabled:
-            return
-        
-        parent_widget = self.parent()
-        if parent_widget:
-            available_width = parent_widget.width()
-        else:
-            available_width = self.width()
+        available_width = self.contentsRect().width()
         content_width = self._calculate_content_width()
-        
-        if self._layout_mode.should_switch(available_width, content_width):
-            self._layout_mode = self._layout_mode.next_mode()
+        target_mode = (
+            ResponsiveRowLayoutMode.HORIZONTAL
+            if available_width <= 0 or content_width <= available_width
+            else ResponsiveRowLayoutMode.VERTICAL
+        )
+        if target_mode is not self._layout_mode:
+            self._layout_mode = target_mode
             self._do_switch()
-    
+
     def _calculate_content_width(self) -> int:
-        """Calculate the actual width needed for all widgets in a single row.
-        
-        Uses font metrics for text widgets to get actual text width, not just sizeHint.
-        """
-        from PyQt6.QtWidgets import QLabel, QLineEdit, QComboBox
-        from PyQt6.QtGui import QFontMetrics
-        
-        total = 0
-        spacing = self._row1_layout.spacing()
-        
-        def get_preferred_width(widget):
-            """Get preferred width accounting for text content."""
-            if isinstance(widget, QLabel) and widget.text():
-                # Use font metrics to calculate actual text width
-                fm = QFontMetrics(widget.font())
-                text_width = fm.horizontalAdvance(widget.text())
-                # Add padding for icon/margins (typical QLabel has ~8px padding)
-                return text_width + 16
+        """Return the minimum width required to keep every widget on one row."""
+
+        return _required_row_width(
+            [widget for widget, _ in (*self._left_widgets, *self._right_widgets)],
+            spacing=self._row1_layout.spacing(),
+            margins=self._row1_layout.contentsMargins(),
+        )
+
+    @staticmethod
+    def _clear_layout(layout: QHBoxLayout) -> None:
+        while layout.count():
+            layout.takeAt(0)
+
+    def _add_right_widgets(self, layout: QHBoxLayout) -> None:
+        has_expanding_widget = any(stretch > 0 for _, stretch in self._right_widgets)
+        if self._right_widgets and not has_expanding_widget:
+            layout.addStretch(1)
+        for widget, stretch in self._right_widgets:
+            if stretch > 0:
+                layout.addWidget(widget, stretch)
             else:
-                # For other widgets, use sizeHint
-                return widget.sizeHint().width()
-        
-        # Left widgets width
-        for widget, _ in self._left_widgets:
-            total += get_preferred_width(widget)
-        
-        # Add spacing between left and right
-        if self._left_widgets and self._right_widgets:
-            total += spacing
-        
-        # Right widgets width
-        for widget, _ in self._right_widgets:
-            total += get_preferred_width(widget)
-        
-        # Add margins
-        margins = self._row1_layout.contentsMargins()
-        total += margins.left() + margins.right()
-        
-        return total  # No minimum threshold - purely content-based
-    
-    def _do_switch(self):
+                layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignRight)
+
+    def _do_switch(self) -> None:
         """Actually perform the layout switch."""
+        self._clear_layout(self._row1_layout)
+        self._clear_layout(self._row2_layout)
+        for widget, stretch in self._left_widgets:
+            self._row1_layout.addWidget(widget, stretch)
+
         if not self._layout_mode.uses_second_row:
-            # Switching to horizontal: hide row2 first, then move widgets
             self._row2.setVisible(False)
-            # Rebuild row1: left widgets + stretch + right widgets
-            while self._row1_layout.count():
-                item = self._row1_layout.takeAt(0)
-                if item:
-                    del item
-            for widget, stretch in self._left_widgets:
-                self._row1_layout.addWidget(widget, stretch)
-            # Add stretch to push right widgets to the right
-            self._row1_layout.addStretch(1)
-            for widget, stretch in self._right_widgets:
-                self._row2_layout.removeWidget(widget)
-                self._row1_layout.addWidget(widget, stretch, Qt.AlignmentFlag.AlignRight)
+            self._add_right_widgets(self._row1_layout)
         else:
-            # Switching to vertical: rebuild layouts first, then show row2
-            # Rebuild row1 with only left widgets (no stretch)
-            while self._row1_layout.count():
-                item = self._row1_layout.takeAt(0)
-                if item:
-                    del item
-            for widget, stretch in self._left_widgets:
-                self._row1_layout.addWidget(widget, stretch)
-            # Row2: right widgets with trailing stretch to push them right
-            while self._row2_layout.count():
-                item = self._row2_layout.takeAt(0)
-                if item:
-                    del item
-            # Add stretch first to push everything to the right
-            self._row2_layout.addStretch(1)
-            for widget, stretch in self._right_widgets:
-                self._row1_layout.removeWidget(widget)
-                self._row2_layout.addWidget(widget, stretch, Qt.AlignmentFlag.AlignRight)
-            # Now safe to show row2 (after all widgets are reparented)
+            self._add_right_widgets(self._row2_layout)
             self._row2.setVisible(True)
-    
-    def eventFilter(self, watched, event):
-        """Monitor parent resize events."""
-        if event.type() == event.Type.Resize:
-            self._timer.start(100)
-        return super().eventFilter(watched, event)
-    
-    def minimumSizeHint(self):
+
+        self.updateGeometry()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._timer.start(0)
+
+    def minimumSizeHint(self) -> QSize:
         """Return minimum size for layout calculations."""
-        from PyQt6.QtCore import QSize
-        
-        # Width: sum of left + right widgets in single row (conservative minimum)
-        min_width = 0
         spacing = self._row1_layout.spacing()
-        
-        # Add left widgets
-        for widget, _ in self._left_widgets:
-            min_width += widget.minimumSizeHint().width()
-        
-        if len(self._left_widgets) > 1:
-            min_width += spacing * (len(self._left_widgets) - 1)
-        
-        # Add right widgets (they need space too even in horizontal mode)
-        for widget, _ in self._right_widgets:
-            min_width += widget.minimumSizeHint().width()
-        
-        if len(self._right_widgets) > 0 and len(self._left_widgets) > 0:
-            min_width += spacing  # Space between left and right
-        
-        if len(self._right_widgets) > 1:
-            min_width += spacing * (len(self._right_widgets) - 1)
-        
         margins = self._row1_layout.contentsMargins()
-        min_width += margins.left() + margins.right()
-        
-        # Height: ONLY include visible rows
+        left_width = _required_row_width(
+            [widget for widget, _ in self._left_widgets],
+            spacing=spacing,
+            margins=margins,
+        )
+        right_width = _required_row_width(
+            [widget for widget, _ in self._right_widgets],
+            spacing=spacing,
+            margins=margins,
+        )
+        min_width = max(left_width, right_width)
         row1_height = self._row1.minimumSizeHint().height()
-        
         if not self._layout_mode.uses_second_row:
             min_height = row1_height
         else:
@@ -248,25 +194,14 @@ class ResponsiveTwoRowWidget(QWidget):
             main_spacing = self._main_layout.spacing()
             min_height = row1_height + main_spacing + row2_height
         
-        size = QSize(min_width, min_height)
-        logger = logging.getLogger(__name__)
-        logger.debug(f"[ResponsiveTwoRowWidget] minimumSizeHint: {min_width}x{min_height}, "
-                    f"layout_mode={self._layout_mode.value}, left_widgets={len(self._left_widgets)}, "
-                    f"right_widgets={len(self._right_widgets)}")
-        return size
-    
-    def sizeHint(self):
+        return QSize(min_width, min_height)
+
+    def sizeHint(self) -> QSize:
         """Return preferred size - only include visible content."""
-        from PyQt6.QtCore import QSize
-        
-        # Width: max of row 1 or row 2 content
         row1_width = self._row1.sizeHint().width()
         row2_width = self._row2.sizeHint().width() if self._layout_mode.uses_second_row else 0
         width = max(row1_width, row2_width)
-        
-        # Height: only visible rows
         row1_height = self._row1.sizeHint().height()
-        
         if not self._layout_mode.uses_second_row:
             height = row1_height
         else:
@@ -280,11 +215,7 @@ class ResponsiveTwoRowWidget(QWidget):
 class ResponsiveParameterRow(ResponsiveTwoRowWidget):
     """Row for PFM parameters."""
     
-    def __init__(self, width_threshold=350, parent=None, layout_config=None):
-        super().__init__(width_threshold=width_threshold, parent=parent, layout_config=layout_config)
-    
     def set_label(self, widget):
-        from PyQt6.QtWidgets import QSizePolicy
         widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         if isinstance(widget, QLabel):
             # Allow root-level field labels to wrap for better readability
@@ -292,7 +223,6 @@ class ResponsiveParameterRow(ResponsiveTwoRowWidget):
         self.add_left_widget(widget, 0)
     
     def set_input(self, widget):
-        from PyQt6.QtWidgets import QSizePolicy
         widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.add_right_widget(widget, 1)
     
@@ -301,102 +231,6 @@ class ResponsiveParameterRow(ResponsiveTwoRowWidget):
     
     def set_help_button(self, widget):
         self.add_right_widget(widget, 0)
-
-
-class ResponsiveConfigHeader(QWidget):
-    """Header widget for config windows that dynamically switches between 1-row and 2-row layout.
-    
-    Title stays on row 1. Buttons start on row 1 (single row mode) or move to row 2 (narrow mode).
-    Threshold is dynamically calculated based on actual content width.
-    
-    Usage:
-        header = ResponsiveConfigHeader(parent=self)
-        header.set_title("Configure PipelineConfig")
-        header.add_button(save_button)
-        header.add_button(cancel_button)
-        layout.addWidget(header)
-    """
-    
-    def __init__(self, parent=None, color_scheme=None):
-        super().__init__(parent)
-        self._color_scheme = color_scheme
-        self._buttons = []
-        
-        # Main vertical layout
-        self._main_layout = QVBoxLayout(self)
-        self._main_layout.setContentsMargins(0, 0, 0, 0)
-        self._main_layout.setSpacing(4)
-        
-        # Row 1: Title (always visible)
-        self._title_widget = QWidget()
-        self._title_layout = QHBoxLayout(self._title_widget)
-        self._title_layout.setContentsMargins(0, 0, 0, 0)
-        self._title_layout.setSpacing(4)
-        
-        self._title_label = QLabel()
-        self._title_label.setStyleSheet(
-            f"font-weight: bold; font-size: 14px;"
-            f"color: {color_scheme.to_hex(color_scheme.text_accent) if color_scheme else '#ffffff'};"
-        )
-        self._title_layout.addWidget(self._title_label)
-        self._title_layout.addStretch()
-        self._main_layout.addWidget(self._title_widget)
-        
-        # Row 2: Responsive buttons container
-        self._buttons_container = ResponsiveTwoRowWidget(width_threshold=0, parent=self)
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self._buttons_container.add_left_widget(spacer, stretch=1)
-        self._main_layout.addWidget(self._buttons_container)
-        
-        # Note: Wrapping should be enabled by application, not by individual widgets
-        
-        # Monitor size changes to update threshold
-        if parent:
-            parent.installEventFilter(self)
-    
-    def set_title(self, text: str):
-        """Set the header title text."""
-        self._title_label.setText(text)
-    
-    def add_button(self, button: QWidget):
-        """Add a button to the right side (will wrap to second row when narrow)."""
-        self._buttons.append(button)
-        self._buttons_container.add_right_widget(button)
-        # Update threshold after adding button
-        self._update_threshold()
-    
-    def add_help_button(self, button: QWidget):
-        """Add a help button next to the title (doesn't participate in wrapping)."""
-        # Insert before the stretch
-        self._title_layout.insertWidget(1, button)
-    
-    def _update_threshold(self):
-        """Calculate optimal threshold based on current content width."""
-        # Get current content width when laid out horizontally
-        total_width = 0
-        
-        # Title width
-        fm = self._title_label.fontMetrics()
-        total_width += fm.horizontalAdvance(self._title_label.text()) + 16
-        
-        # All button widths + spacing
-        spacing = 4  # Typical button spacing
-        for button in self._buttons:
-            total_width += button.sizeHint().width() + spacing
-        
-        # Add margins and padding
-        total_width += 32  # Generous padding
-        
-        # Set threshold (add buffer to prevent too-eager wrapping)
-        self._buttons_container._threshold = total_width + 40
-    
-    def eventFilter(self, watched, event):
-        """Update threshold when buttons are added or window resizes."""
-        if event.type() == event.Type.Resize:
-            self._update_threshold()
-        return super().eventFilter(watched, event)
-
 
 class StagedWrapLayout(QWidget):
     def __init__(self, parent=None, spacing=4):
@@ -414,13 +248,23 @@ class StagedWrapLayout(QWidget):
         self._main_layout.setSpacing(spacing)
 
         self._row1_widget = QWidget(self)
+        self._row1_widget.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed,
+        )
         self._row1_layout = QHBoxLayout(self._row1_widget)
+        self._row1_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self._row1_layout.setContentsMargins(0, 0, 0, 0)
         self._row1_layout.setSpacing(spacing)
         self._main_layout.addWidget(self._row1_widget)
 
         self._row2_widget = QWidget(self)
+        self._row2_widget.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed,
+        )
         self._row2_layout = QHBoxLayout(self._row2_widget)
+        self._row2_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self._row2_layout.setContentsMargins(0, 0, 0, 0)
         self._row2_layout.setSpacing(spacing)
         self._main_layout.addWidget(self._row2_widget)
@@ -442,9 +286,7 @@ class StagedWrapLayout(QWidget):
 
     def _clear_row(self, layout):
         while layout.count():
-            item = layout.takeAt(0)
-            if item and item.widget():
-                item.widget().setParent(None)
+            layout.takeAt(0)
 
     def _row_width(self, names, widths):
         if not names:
@@ -459,14 +301,20 @@ class StagedWrapLayout(QWidget):
         if not self._groups:
             return
 
-        available = self.width()
+        available = self.contentsRect().width()
         visual_order = [name for name, _ in self._groups]
-        widths = {name: widget.sizeHint().width() for name, widget in self._groups}
+        widths = {
+            name: _widget_required_width(widget) for name, widget in self._groups
+        }
 
         keep_names = []
         for name in self._stay_priority:
             candidate = keep_names + [name]
-            if available <= 0 or self._row_width(candidate, widths) <= available:
+            if (
+                not keep_names
+                or available <= 0
+                or self._row_width(candidate, widths) <= available
+            ):
                 keep_names.append(name)
 
         row1_names = [name for name in visual_order if name in keep_names]

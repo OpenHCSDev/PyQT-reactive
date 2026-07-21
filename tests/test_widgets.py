@@ -467,6 +467,106 @@ def test_action_tabbed_window_body_shows_tabs_only_for_multiple_pages(qapp):
     assert not body.tab_bar.isHidden()
 
 
+def test_responsive_parameter_row_wraps_only_below_minimum_capacity(qapp):
+    """Parameter rows use all available width without an empty editor column."""
+    from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        ResponsiveParameterRow,
+        ResponsiveRowLayoutMode,
+    )
+
+    row = ResponsiveParameterRow()
+    label = QLabel("Descriptor Directory Path:")
+    editor = QLineEdit("/tmp/pipeline-default")
+    reset = QPushButton("Reset")
+    row.set_label(label)
+    row.set_input(editor)
+    row.set_reset_button(reset)
+    row.show()
+
+    required_width = row._calculate_content_width()
+    row.resize(required_width, row.sizeHint().height())
+    qapp.processEvents()
+    row._check_switch()
+    qapp.processEvents()
+
+    assert row._layout_mode is ResponsiveRowLayoutMode.HORIZONTAL
+    assert row._row1_layout.count() == 3
+    assert row._row1_layout.itemAt(0).widget() is label
+    assert row._row1_layout.itemAt(1).widget() is editor
+    assert row._row1_layout.itemAt(2).widget() is reset
+    assert editor.geometry().left() <= label.geometry().right() + row._row1_layout.spacing() + 1
+    assert reset.geometry().right() >= row.contentsRect().right() - row._row1_layout.contentsMargins().right() - 1
+
+    row.resize(required_width - 1, row.sizeHint().height() * 2)
+    row._check_switch()
+    qapp.processEvents()
+
+    assert row._layout_mode is ResponsiveRowLayoutMode.VERTICAL
+    assert row._row2_layout.count() == 2
+    assert row._row2_layout.itemAt(0).widget() is editor
+    assert row._row2_layout.itemAt(1).widget() is reset
+    assert editor.geometry().left() <= row._row2_layout.contentsMargins().left() + 1
+    assert reset.geometry().right() >= row.contentsRect().right() - row._row2_layout.contentsMargins().right() - 1
+
+
+def test_action_tab_row_keeps_tabs_and_actions_on_one_row_when_they_fit(qapp):
+    """Top-level tabs and active actions wrap only under horizontal pressure."""
+    from PyQt6.QtWidgets import QLabel, QPushButton
+    from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
+        ActionTabSpec,
+        ActionTabbedWindowBody,
+    )
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        ResponsiveRowLayoutMode,
+    )
+
+    body = ActionTabbedWindowBody()
+    actions = QPushButton("Reset  View Code  Help")
+    body.add_tab(ActionTabSpec("Pipeline", QLabel("content"), actions))
+    body.add_tab(ActionTabSpec("UI", QLabel("ui content")))
+    body.show()
+
+    required_width = body.tab_row._calculate_content_width()
+    body.resize(required_width, 240)
+    qapp.processEvents()
+    body.tab_row._check_switch()
+    qapp.processEvents()
+
+    assert body.tab_row._layout_mode is ResponsiveRowLayoutMode.HORIZONTAL
+    assert body.tab_row._row1_layout.count() == 3
+    assert body.tab_row._row1_layout.itemAt(0).widget() is body.tab_bar
+    assert body.tab_row._row1_layout.itemAt(1).spacerItem() is not None
+    assert body.tab_row._row1_layout.itemAt(2).widget() is body._active_actions_container
+    assert body._active_actions_container.geometry().right() >= body.tab_row.contentsRect().right() - 1
+
+    body.resize(required_width - 1, 240)
+    body.tab_row._check_switch()
+    qapp.processEvents()
+
+    assert body.tab_row._layout_mode is ResponsiveRowLayoutMode.VERTICAL
+    assert body.tab_row._row2_layout.count() == 2
+    assert body.tab_row._row2_layout.itemAt(0).spacerItem() is not None
+    assert body.tab_row._row2_layout.itemAt(1).widget() is body._active_actions_container
+    assert body._active_actions_container.geometry().right() >= body.tab_row.contentsRect().right() - 1
+
+
+def test_action_tab_border_uses_top_level_foreground_color(qapp):
+    """Direct config tabs use the same visible foreground border on every tab."""
+    from pyqt_reactive.theming.color_scheme import ColorScheme
+    from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
+        ActionTabbedWindowBody,
+    )
+
+    color_scheme = ColorScheme()
+    body = ActionTabbedWindowBody(color_scheme=color_scheme)
+
+    assert (
+        f"border: 1px solid {color_scheme.to_hex(color_scheme.text_primary)};"
+        in body.tab_bar.styleSheet()
+    )
+
+
 def test_form_window_action_header_exposes_stable_actions(qapp):
     """Form headers keep title and actions behind stable IDs."""
     from PyQt6.QtWidgets import QPushButton
@@ -497,6 +597,114 @@ def test_form_window_action_header_exposes_stable_actions(qapp):
     assert header.header_label.text() == "Configure Example"
     assert header.action("save") is save_button
     assert header.action("cancel") is cancel_button
+
+
+def test_form_window_action_header_wraps_actions_only_under_pressure(qapp):
+    """Titles and right-aligned action groups share one row whenever they fit."""
+    from PyQt6.QtWidgets import QPushButton
+    from pyqt_reactive.widgets.shared.form_window_action_header import (
+        FormWindowActionHeader,
+        HeaderAction,
+        HeaderActionGroup,
+    )
+
+    buttons = [QPushButton(label) for label in ("Cancel", "Save")]
+    header = FormWindowActionHeader(
+        title_text="Configure Example",
+        action_groups=[
+            HeaderActionGroup(
+                "commands",
+                [
+                    HeaderAction("cancel", buttons[0]),
+                    HeaderAction("save", buttons[1]),
+                ],
+            )
+        ],
+        stay_priority=["commands"],
+        right_aligned_group_ids=["commands"],
+    )
+    layout = header._layout_widget
+    header.show()
+
+    widths = {
+        name: widget.minimumSizeHint().width()
+        for name, widget in layout._groups
+    }
+    required_width = layout._row_width(["title", "commands"], widths)
+    header.resize(required_width, header.sizeHint().height())
+    qapp.processEvents()
+    layout._update_layout()
+    qapp.processEvents()
+
+    assert layout._last_row1 == ["title", "commands"]
+    assert layout._last_row2 == []
+    command_group = dict(layout._groups)["commands"]
+    assert command_group.geometry().right() >= layout.contentsRect().right() - 1
+
+    header.resize(required_width - 1, header.sizeHint().height() * 2)
+    layout._update_layout()
+    qapp.processEvents()
+
+    assert layout._last_row1 == ["title"]
+    assert layout._last_row2 == ["commands"]
+    assert command_group.geometry().right() >= layout.contentsRect().right() - 1
+
+
+def test_groupbox_title_keeps_reset_all_on_one_row_at_capacity(qapp):
+    """Dataclass titles wrap their explicit Reset All action only under pressure."""
+    from PyQt6.QtWidgets import QPushButton
+    from pyqt_reactive.widgets.shared.clickable_help_components import (
+        GroupBoxWithHelp,
+    )
+
+    groupbox = GroupBoxWithHelp(title="Source Bindings Config")
+    reset_all = QPushButton("Reset All")
+    groupbox.addResetAllTitleWidget(reset_all)
+    title = groupbox.title_layout
+    groupbox.show()
+
+    widths = {
+        name: widget.minimumSizeHint().width()
+        for name, widget in title._staged_layout._groups
+    }
+    required_width = title._staged_layout._row_width(
+        [title.TITLE_GROUP, title.INLINE_GROUP, title.RIGHT_GROUP],
+        widths,
+    )
+    outer_width = groupbox.width() - title._staged_layout.width()
+    groupbox.resize(required_width + outer_width, groupbox.sizeHint().height())
+    qapp.processEvents()
+    title._staged_layout._update_layout()
+    qapp.processEvents()
+
+    assert title._staged_layout._last_row1 == [
+        title.TITLE_GROUP,
+        title.INLINE_GROUP,
+        title.RIGHT_GROUP,
+    ]
+    assert title._staged_layout._last_row2 == []
+    right_group = dict(title._staged_layout._groups)[title.RIGHT_GROUP]
+    assert (
+        right_group.geometry().right()
+        >= title._staged_layout.contentsRect().right() - 1
+    )
+
+    groupbox.resize(
+        required_width + outer_width - 1,
+        groupbox.sizeHint().height() * 2,
+    )
+    title._staged_layout._update_layout()
+    qapp.processEvents()
+
+    assert title._staged_layout._last_row1 == [
+        title.TITLE_GROUP,
+        title.INLINE_GROUP,
+    ]
+    assert title._staged_layout._last_row2 == [title.RIGHT_GROUP]
+    assert (
+        right_group.geometry().right()
+        >= title._staged_layout.contentsRect().right() - 1
+    )
 
 
 def test_manager_list_in_place_refresh_skips_unchanged_tooltip(qapp):

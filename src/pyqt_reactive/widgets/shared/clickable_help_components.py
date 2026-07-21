@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Union, Callable, Optional
 from objectstate import ObjectState
 from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox, QVBoxLayout, QSizePolicy, QAbstractButton
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtProperty, QRect, QRectF, QSize, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QRect, QRectF, QSize, QTimer
 from PyQt6.QtGui import QFont, QCursor, QColor, QPainter
 
 from pyqt_reactive.theming import ColorScheme
@@ -941,57 +941,30 @@ class GroupBoxWithHelp(FlashableGroupBox):
         # Reset All button reference (set via addTitleWidget when button is added)
         self._reset_all_button = None
 
-        # Check if responsive wrapping is enabled
-        from pyqt_reactive.widgets.shared.responsive_groupbox_title import is_wrapping_enabled as is_gb_wrapping_enabled
-        
-        if is_gb_wrapping_enabled():
-            # Use responsive title that wraps when narrow
-            from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
-            title_widget = ResponsiveGroupBoxTitle(parent=self, width_threshold=120)
-            
-            # Title label
-            self._title_label = QLabel(title)
-            self._title_label.setAutoFillBackground(False)  # Transparent so scope background shows through
-            self._base_title = title
-            title_font = QFont()
-            title_font.setBold(True)
-            self._title_label.setFont(title_font)
-            title_widget.set_title_widget(self._title_label)
-            
-            # Help button
-            help_btn = None
-            if help_target:
-                help_btn = HelpButtonFactory.create_title_icon(help_target, self.color_scheme, scope_accent_color, self)
-                title_widget.set_help_widget(help_btn)
-            
-            self.title_layout = title_widget
-        else:
-            # Use plain QHBoxLayout (old non-wrapping style)
-            title_widget = QWidget()
-            # Transparent background so scope-tinted background shows through
-            title_widget.setAutoFillBackground(False)
-            title_widget.setStyleSheet("background-color: transparent;")
-            title_layout = QHBoxLayout(title_widget)
-            title_layout.setContentsMargins(0, 0, 0, 0)
-            title_layout.setSpacing(5)
-            
-            # Title label
-            self._title_label = QLabel(title)
-            self._title_label.setAutoFillBackground(False)  # Transparent so scope background shows through
-            self._base_title = title
-            title_font = QFont()
-            title_font.setBold(True)
-            self._title_label.setFont(title_font)
-            title_layout.addWidget(self._title_label)
-            
-            # Help button
-            help_btn = None
-            if help_target:
-                help_btn = HelpButtonFactory.create_title_icon(help_target, self.color_scheme, scope_accent_color, self)
-                title_layout.addWidget(help_btn)
-            
-            title_layout.addStretch()
-            self.title_layout = title_layout
+        from pyqt_reactive.widgets.shared.responsive_groupbox_title import (
+            ResponsiveGroupBoxTitle,
+        )
+
+        title_widget = ResponsiveGroupBoxTitle(parent=self)
+        self._title_label = QLabel(title)
+        self._title_label.setAutoFillBackground(False)
+        self._base_title = title
+        title_font = QFont()
+        title_font.setBold(True)
+        self._title_label.setFont(title_font)
+        title_widget.set_title_widget(self._title_label)
+
+        help_btn = None
+        if help_target:
+            help_btn = HelpButtonFactory.create_title_icon(
+                help_target,
+                self.color_scheme,
+                scope_accent_color,
+                self,
+            )
+            title_widget.set_help_widget(help_btn)
+
+        self.title_layout = title_widget
 
         # Store reference to help button for later insertion
         self._help_button = help_btn
@@ -1234,42 +1207,25 @@ class GroupBoxWithHelp(FlashableGroupBox):
 
     def addTitleWidget(self, widget):
         """Add widget to the title area, right-aligned (moves to row2 when narrow).
-
-        Also detects Reset All buttons and stores reference for dirty marker styling.
         """
-        # Detect Reset All button by text pattern and store reference
-        if isinstance(widget, QAbstractButton):
-            widget_text = widget.text()
-            if widget_text and 'reset' in widget_text.lower() and 'all' in widget_text.lower():
-                self._reset_all_button = widget
+        self.title_layout.add_right_widget(widget)
 
-        # Add as right widget - will move to second row when narrow
-        from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
-        if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
-            self.title_layout.add_right_widget(widget)
-        else:
-            self.title_layout.addWidget(widget)
+    def addResetAllTitleWidget(self, widget: QAbstractButton) -> None:
+        """Register and add the title action that resets the whole group."""
+
+        self._reset_all_button = widget
+        self.title_layout.add_right_widget(widget)
 
     def addTitleInlineWidget(self, widget):
         """Add widget next to the title (stays in row1 always).
 
         This keeps the widget left-aligned with the title/help button.
         """
-        # For responsive title, add inline
-        from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
-        if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
-            self.title_layout.add_inline_widget(widget)
-        else:
-            self.title_layout.addWidget(widget)
+        self.title_layout.add_inline_widget(widget)
 
     def addTitleWidgetAfterLabel(self, widget):
         """Add widget immediately after the title label."""
-        # For responsive title, this adds inline
-        from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
-        if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
-            self.title_layout.add_inline_widget(widget)
-        else:
-            self.title_layout.addWidget(widget)
+        self.title_layout.add_inline_widget(widget)
 
     def addEnableableWidgets(self, enabled_checkbox, reset_button=None, provenance_button=None):
         """Add enableable widgets (checkbox + reset) right after help button.
@@ -1277,47 +1233,21 @@ class GroupBoxWithHelp(FlashableGroupBox):
         This is the clean API for adding enableable widgets in the correct position:
         Title → Help → [Enabled Checkbox] → [Reset Button] → [Provenance Button] → Other Controls
         """
-        from pyqt_reactive.widgets.shared.responsive_groupbox_title import ResponsiveGroupBoxTitle
-
-        insert_pos = 0
-        if self._help_button:
-            for i in range(self.title_layout.count()):
-                if self.title_layout.itemAt(i).widget() == self._help_button:
-                    insert_pos = i + 1
-                    break
-
-        if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
-            self.title_layout.add_inline_widget(enabled_checkbox)
-        else:
-            self.title_layout.insertWidget(insert_pos, enabled_checkbox)
+        self.title_layout.add_inline_widget(enabled_checkbox)
 
         if reset_button:
             if not reset_button.styleSheet():
                 reset_button.setStyleSheet(
                     f"background-color: {self.color_scheme.to_hex(self.color_scheme.button_normal_bg)};"
                 )
-            if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
-                self.title_layout.add_inline_widget(reset_button)
-            else:
-                insert_pos += 1
-                if self.title_layout.count() > 0 and self.title_layout.itemAt(self.title_layout.count() - 1).spacerItem():
-                    self.title_layout.insertWidget(self.title_layout.count() - 1, reset_button)
-                else:
-                    self.title_layout.insertWidget(insert_pos, reset_button)
+            self.title_layout.add_inline_widget(reset_button)
 
         if provenance_button:
             if not provenance_button.styleSheet():
                 provenance_button.setStyleSheet(
                     f"background-color: {self.color_scheme.to_hex(self.color_scheme.button_normal_bg)};"
                 )
-            if isinstance(self.title_layout, ResponsiveGroupBoxTitle):
-                self.title_layout.add_inline_widget(provenance_button)
-            else:
-                insert_pos += 1
-                if self.title_layout.count() > 0 and self.title_layout.itemAt(self.title_layout.count() - 1).spacerItem():
-                    self.title_layout.insertWidget(self.title_layout.count() - 1, provenance_button)
-                else:
-                    self.title_layout.insertWidget(insert_pos, provenance_button)
+            self.title_layout.add_inline_widget(provenance_button)
 
 
 class InlineDataclassGroupBox(

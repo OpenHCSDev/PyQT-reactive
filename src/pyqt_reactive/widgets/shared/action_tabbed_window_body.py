@@ -37,7 +37,6 @@ class ActionTabbedWindowBody(QWidget):
         self,
         *,
         color_scheme: Any | None = None,
-        width_threshold: int = 600,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -49,7 +48,6 @@ class ActionTabbedWindowBody(QWidget):
         layout.setSpacing(0)
 
         self.tab_row = ResponsiveTwoRowWidget(
-            width_threshold=width_threshold,
             parent=self,
         )
         self.tab_bar = QTabBar()
@@ -143,7 +141,7 @@ class ActionTabbedWindowBody(QWidget):
                 color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
                 padding: 0px 16px;
                 margin-right: 2px;
-                border: none;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.text_primary)};
                 border-radius: 4px 4px 0 0;
                 height: {CURRENT_LAYOUT.button_height}px;
             }}
