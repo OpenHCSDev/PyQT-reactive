@@ -34,9 +34,11 @@ def _widget_required_width(widget: QWidget) -> int:
 def _widget_expands_horizontally(widget: QWidget) -> bool:
     """Return whether Qt declares the widget able to claim surplus row width."""
 
-    return bool(
-        widget.sizePolicy().expandingDirections() & Qt.Orientation.Horizontal
-    )
+    return widget.sizePolicy().horizontalPolicy() in {
+        QSizePolicy.Policy.MinimumExpanding,
+        QSizePolicy.Policy.Expanding,
+        QSizePolicy.Policy.Ignored,
+    }
 
 
 def _required_row_width(
