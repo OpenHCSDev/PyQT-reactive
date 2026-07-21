@@ -50,7 +50,7 @@ def test_reflowing_vertical_scroll_area_tracks_viewport_width_across_bar_transit
     scroll_area.show()
 
     try:
-        for width, height, vertical_bar_visible in (
+        for width, height, vertical_scroll_required in (
             (500, 500, False),
             (220, 160, True),
             (500, 500, False),
@@ -63,12 +63,14 @@ def test_reflowing_vertical_scroll_area_tracks_viewport_width_across_bar_transit
             content_rect = _rect_in(content, scroll_area)
             vertical_bar = scroll_area.verticalScrollBar()
 
-            assert vertical_bar.isVisible() is vertical_bar_visible
+            assert (
+                vertical_bar.maximum() > vertical_bar.minimum()
+            ) is vertical_scroll_required
             assert content_rect.left() == viewport_rect.left()
             assert content_rect.width() == viewport_rect.width()
             representative_reset_rect = _rect_in(reset_buttons[0], scroll_area)
             assert viewport_rect.contains(representative_reset_rect)
-            if vertical_bar_visible:
+            if vertical_scroll_required:
                 vertical_bar_rect = _rect_in(vertical_bar, scroll_area)
                 assert not viewport_rect.intersects(vertical_bar_rect)
                 assert not representative_reset_rect.intersects(vertical_bar_rect)
@@ -99,7 +101,7 @@ def test_column_filter_scrollbars_preserve_outer_width_and_long_value_access(
     panel.show()
 
     try:
-        for width, height, vertical_bar_visible in (
+        for width, height, vertical_scroll_required in (
             (300, 900, False),
             (150, 600, True),
             (300, 900, False),
@@ -110,11 +112,14 @@ def test_column_filter_scrollbars_preserve_outer_width_and_long_value_access(
 
             outer = panel.scroll_area
             outer_viewport_rect = _rect_in(outer.viewport(), panel)
-            assert outer.verticalScrollBar().isVisible() is vertical_bar_visible
+            vertical_bar = outer.verticalScrollBar()
+            assert (
+                vertical_bar.maximum() > vertical_bar.minimum()
+            ) is vertical_scroll_required
             assert panel.splitter.width() == outer.viewport().width()
-            if vertical_bar_visible:
+            if vertical_scroll_required:
                 assert not outer_viewport_rect.intersects(
-                    _rect_in(outer.verticalScrollBar(), panel)
+                    _rect_in(vertical_bar, panel)
                 )
 
         long_value_filter = panel.column_filters["full_virtual"]

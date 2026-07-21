@@ -67,6 +67,7 @@ def test_scan_completion_is_suppressed_after_cleanup(qapp, monkeypatch) -> None:
     assert completions == []
     assert not browser._scan_in_flight
     browser.deleteLater()
+    QCoreApplication.sendPostedEvents(browser, QEvent.Type.DeferredDelete)
     qapp.processEvents()
 
 
@@ -93,7 +94,7 @@ def test_scan_completion_is_suppressed_after_qt_destroys_browser(
     browser.refresh_servers()
     lifecycle = browser._lifecycle_state
     browser.deleteLater()
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.sendPostedEvents(browser, QEvent.Type.DeferredDelete)
     qapp.processEvents()
     callback, name = callbacks.pop()
     callback()
