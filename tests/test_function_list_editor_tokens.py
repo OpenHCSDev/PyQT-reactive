@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from objectstate.object_state_registry import ObjectStateRegistry
 from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
 
@@ -18,6 +20,15 @@ def _reset_registry() -> None:
     ObjectStateRegistry._atomic_depth = 0
     ObjectStateRegistry._atomic_label = None
     ObjectStateRegistry._atomic_triggering_scope = None
+
+
+@pytest.fixture(autouse=True)
+def isolated_object_state_registry():
+    """Keep the direct registry test doubles local to each test."""
+
+    _reset_registry()
+    yield
+    _reset_registry()
 
 
 def sample_function(image, threshold: int = 1):

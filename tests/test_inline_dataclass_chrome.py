@@ -30,7 +30,36 @@ def _manager_for_holder():
         FormManagerConfig,
         ParameterFormManager,
     )
+    from pyqt_reactive.protocols import (
+        PyQtWidgetMeta,
+        RawResolvedValueSettable,
+        ValueSettable,
+    )
     from pyqt_reactive.theming import ColorScheme
+
+    class InlineOwnerWidget(
+        QWidget,
+        ValueSettable,
+        RawResolvedValueSettable,
+        metaclass=PyQtWidgetMeta,
+    ):
+        """Nominal owner-widget contract used by context-only tests."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.value = None
+            self.resolved_value = None
+
+        def set_value(self, value) -> None:
+            self.value = value
+
+        def set_raw_value_with_resolved_preview(
+            self,
+            raw_value,
+            resolved_value,
+        ) -> None:
+            self.value = raw_value
+            self.resolved_value = resolved_value
 
     set_base_config_type(InlineBaseConfig)
     state = ObjectState(InlineHolder(), scope_id="inline-dataclass-test")
@@ -42,6 +71,11 @@ def _manager_for_holder():
             use_scroll_area=False,
         ),
     )
+    # These tests construct InlineDataclassFormContext directly instead of
+    # going through the registered inline-widget creation pipeline. Install
+    # the same explicit value-setting contract that InlineDataclassGroupBox
+    # provides in production; a normal nested GroupBoxWithHelp is only chrome.
+    manager.widgets["config"] = InlineOwnerWidget()
     return manager
 
 
