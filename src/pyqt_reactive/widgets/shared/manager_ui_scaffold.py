@@ -87,9 +87,12 @@ def create_manager_header(
         )
 
         status_label = QLabel("Ready")
+        status_font = status_label.font()
+        status_font.setBold(True)
+        status_label.setFont(status_font)
         status_label.setStyleSheet(
             f"color: {color_scheme.to_hex(color_scheme.status_success)}; "
-            "font-weight: bold; padding: 0px; margin: 0px;"
+            "padding: 0px; margin: 0px;"
         )
         status_label.setTextFormat(Qt.TextFormat.PlainText)
         status_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
