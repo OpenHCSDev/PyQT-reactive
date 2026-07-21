@@ -602,21 +602,30 @@ def test_form_window_action_header_exposes_stable_actions(qapp):
 def test_form_window_action_header_wraps_actions_only_under_pressure(qapp):
     """Titles and right-aligned action groups share one row whenever they fit."""
     from PyQt6.QtWidgets import QPushButton
+
     from pyqt_reactive.widgets.shared.form_window_action_header import (
         FormWindowActionHeader,
         HeaderAction,
         HeaderActionGroup,
     )
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        _widget_required_width,
+    )
 
-    buttons = [QPushButton(label) for label in ("Cancel", "Save")]
+    button_labels = ("Cancel", "Save", "Reset", "View Code", "Help")
+    buttons = [QPushButton(label) for label in button_labels]
     header = FormWindowActionHeader(
-        title_text="Configure Example",
+        title_text="Config PipelineConfig",
         action_groups=[
             HeaderActionGroup(
                 "commands",
                 [
-                    HeaderAction("cancel", buttons[0]),
-                    HeaderAction("save", buttons[1]),
+                    HeaderAction(action_id, button)
+                    for action_id, button in zip(
+                        ("cancel", "save", "reset", "view_code", "help"),
+                        buttons,
+                        strict=True,
+                    )
                 ],
             )
         ],
@@ -627,7 +636,7 @@ def test_form_window_action_header_wraps_actions_only_under_pressure(qapp):
     header.show()
 
     widths = {
-        name: widget.minimumSizeHint().width()
+        name: _widget_required_width(widget)
         for name, widget in layout._groups
     }
     required_width = layout._row_width(["title", "commands"], widths)
@@ -638,6 +647,11 @@ def test_form_window_action_header_wraps_actions_only_under_pressure(qapp):
 
     assert layout._last_row1 == ["title", "commands"]
     assert layout._last_row2 == []
+    assert header.header_label.wordWrap()
+    assert header.header_label.height() <= header.header_label.sizeHint().height() + 1
+    assert header.header_label.width() >= header.header_label.fontMetrics().horizontalAdvance(
+        header.header_label.text()
+    )
     command_group = dict(layout._groups)["commands"]
     assert command_group.geometry().right() >= layout.contentsRect().right() - 1
 
@@ -648,6 +662,14 @@ def test_form_window_action_header_wraps_actions_only_under_pressure(qapp):
     assert layout._last_row1 == ["title"]
     assert layout._last_row2 == ["commands"]
     assert command_group.geometry().right() >= layout.contentsRect().right() - 1
+
+    compact_width = header.header_label.minimumSizeHint().width()
+    header.resize(compact_width, header.sizeHint().height() * 3)
+    layout._update_layout()
+    qapp.processEvents()
+
+    assert header.header_label.width() == compact_width
+    assert header.header_label.height() > header.header_label.sizeHint().height()
 
 
 def test_groupbox_title_keeps_reset_all_on_one_row_at_capacity(qapp):

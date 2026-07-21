@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
+from PyQt6.QtCore import QSize
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -14,6 +15,18 @@ from PyQt6.QtWidgets import (
 )
 
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import StagedWrapLayout
+
+
+class _WrappingHeaderLabel(QLabel):
+    """Expose one-line preferred width while retaining compact word wrapping."""
+
+    def sizeHint(self) -> QSize:
+        metrics = self.fontMetrics()
+        margin = self.margin()
+        return QSize(
+            metrics.horizontalAdvance(self.text()) + (2 * margin),
+            metrics.height() + (2 * margin),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +93,11 @@ class FormWindowActionHeader(QWidget):
         """Return a stable action widget by ID."""
         return self.actions[action_id]
 
+    def refresh_layout(self) -> None:
+        """Recompute wrapping after caller-owned action visibility changes."""
+
+        self._layout_widget.refresh_layout()
+
     @staticmethod
     def _build_title_label(
         *,
@@ -87,7 +105,7 @@ class FormWindowActionHeader(QWidget):
         title_color: str | None,
         title_background: str,
     ) -> QLabel:
-        label = QLabel(title_text)
+        label = _WrappingHeaderLabel(title_text)
         label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         label.setWordWrap(True)
         label.setMinimumWidth(0)

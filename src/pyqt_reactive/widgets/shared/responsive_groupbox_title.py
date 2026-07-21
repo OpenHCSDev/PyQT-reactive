@@ -1,10 +1,11 @@
 """Responsive title layout for GroupBoxWithHelp."""
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
+from typing import List, Optional, Tuple
+
 from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import StagedWrapLayout
-from typing import Optional, List, Tuple
 
 
 class ResponsiveGroupBoxTitle(QWidget):
@@ -88,6 +89,14 @@ class ResponsiveGroupBoxTitle(QWidget):
     def add_right_widget(self, widget, stretch=0):
         self._right_widgets.append((widget, stretch))
         self._right_layout.addWidget(widget, stretch)
+        if (
+            stretch > 0
+            or widget.sizePolicy().expandingDirections()
+            & Qt.Orientation.Horizontal
+        ):
+            group_policy = self._right_group.sizePolicy()
+            group_policy.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            self._right_group.setSizePolicy(group_policy)
         self._refresh_groups()
     
     def add_inline_widget(self, widget, stretch=0):

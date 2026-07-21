@@ -12,16 +12,31 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT, ParameterFormLayoutConfig
+from pyqt_reactive.forms.layout_constants import (
+    CURRENT_LAYOUT,
+    ParameterFormLayoutConfig,
+)
 
 
 def _widget_required_width(widget: QWidget) -> int:
     """Return the minimum width at which a widget remains usable."""
 
-    hint_width = widget.minimumSizeHint().width()
-    if hint_width < 0:
-        hint_width = widget.sizeHint().width()
+    minimum_hint_width = max(0, widget.minimumSizeHint().width())
+    if widget.sizePolicy().horizontalPolicy() is QSizePolicy.Policy.Preferred:
+        hint_width = max(minimum_hint_width, widget.sizeHint().width())
+    else:
+        hint_width = minimum_hint_width
+        if hint_width <= 0:
+            hint_width = widget.sizeHint().width()
     return max(0, widget.minimumWidth(), hint_width)
+
+
+def _widget_expands_horizontally(widget: QWidget) -> bool:
+    """Return whether Qt declares the widget able to claim surplus row width."""
+
+    return bool(
+        widget.sizePolicy().expandingDirections() & Qt.Orientation.Horizontal
+    )
 
 
 def _required_row_width(
@@ -280,6 +295,13 @@ class StagedWrapLayout(QWidget):
         self._right_align_names = set(right_align_names or [])
         self._update_layout()
 
+    def refresh_layout(self):
+        """Recompute capacity after a group's visible children change."""
+
+        self._last_width = -1
+        self._update_layout()
+        self.updateGeometry()
+
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
         self._resize_timer.start(50)
@@ -336,21 +358,40 @@ class StagedWrapLayout(QWidget):
         self._clear_row(self._row1_layout)
         row1_left = [name for name in row1_names if name not in self._right_align_names]
         row1_right = [name for name in row1_names if name in self._right_align_names]
-        for name in row1_left:
-            self._row1_layout.addWidget(group_map[name])
-        if row1_right:
-            self._row1_layout.addStretch(1)
-            for name in row1_right:
-                self._row1_layout.addWidget(group_map[name])
+        self._add_row_groups(
+            self._row1_layout,
+            row1_left,
+            row1_right,
+            group_map,
+        )
 
         self._clear_row(self._row2_layout)
         row2_left = [name for name in row2_names if name not in self._right_align_names]
         row2_right = [name for name in row2_names if name in self._right_align_names]
-        for name in row2_left:
-            self._row2_layout.addWidget(group_map[name])
-        if row2_right:
-            self._row2_layout.addStretch(1)
-            for name in row2_right:
-                self._row2_layout.addWidget(group_map[name])
+        self._add_row_groups(
+            self._row2_layout,
+            row2_left,
+            row2_right,
+            group_map,
+        )
 
         self._row2_widget.setVisible(bool(row2_names))
+
+    @staticmethod
+    def _add_row_groups(layout, left_names, right_names, group_map):
+        for name in left_names:
+            layout.addWidget(group_map[name])
+
+        expanding_right_names = {
+            name
+            for name in right_names
+            if _widget_expands_horizontally(group_map[name])
+        }
+        if right_names and not expanding_right_names:
+            layout.addStretch(1)
+        for name in right_names:
+            widget = group_map[name]
+            if name in expanding_right_names:
+                layout.addWidget(widget, 1)
+            else:
+                layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignRight)

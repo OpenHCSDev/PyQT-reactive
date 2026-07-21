@@ -12,7 +12,7 @@ from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
 
 
 @pytest.mark.parametrize("title", ("Plate Manager", "Pipeline Editor"))
-@pytest.mark.parametrize("header_width", (320, 500))
+@pytest.mark.parametrize("header_width", (320, 500, 800))
 def test_scrolling_manager_header_preserves_usable_status_viewport(
     qapp,
     title: str,
@@ -40,5 +40,33 @@ def test_scrolling_manager_header_preserves_usable_status_viewport(
         )
         assert parts.status_scroll.minimumWidth() == minimum_viewport_width
         assert parts.status_scroll.viewport().width() >= minimum_viewport_width
+
+        staged_layout = parts.title_layout._staged_layout
+        right_group = parts.title_layout._right_group
+        if parts.title_layout.RIGHT_GROUP in staged_layout._last_row1:
+            row_widget = staged_layout._row1_widget
+            row_layout = staged_layout._row1_layout
+        else:
+            row_widget = staged_layout._row2_widget
+            row_layout = staged_layout._row2_layout
+
+        right_item_index = next(
+            index
+            for index in range(row_layout.count())
+            if row_layout.itemAt(index).widget() is right_group
+        )
+        assert row_layout.stretch(right_item_index) > 0
+        assert all(
+            row_layout.itemAt(index).spacerItem() is None
+            for index in range(right_item_index)
+        )
+        assert right_group.geometry().right() == row_widget.contentsRect().right()
+        assert parts.status_scroll.width() == right_group.contentsRect().width()
+        assert parts.status_scroll.width() > minimum_viewport_width
+
+        if staged_layout._last_row2 == [parts.title_layout.RIGHT_GROUP]:
+            assert right_group.geometry().left() == row_widget.contentsRect().left()
+        if header_width == 800:
+            assert parts.status_scroll.horizontalScrollBar().maximum() == 0
     finally:
         parts.header.close()
