@@ -6,13 +6,14 @@ Used as the table portion of ImageBrowserWidget.
 """
 
 from collections.abc import Mapping
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
-    AbstractTableBrowser, ColumnDef, TableSelectionMode
+    AbstractTableBrowser,
+    ColumnDef,
+    TableSelectionMode,
 )
-
 
 ImageTableValue = str | int | float | bool | None
 ImageTableRow = Mapping[str, ImageTableValue]
@@ -26,9 +27,15 @@ class ImageTableBrowser(AbstractTableBrowser[ImageTableRow]):
     Multi-select mode for batch streaming operations.
     """
     
-    def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
+    def __init__(
+        self,
+        color_scheme: Optional[ColorScheme] = None,
+        metadata_value_formatter: Callable[[str, ImageTableValue], str] | None = None,
+        parent=None,
+    ):
         # Columns are dynamic - start with just Filename
         self._metadata_keys: List[str] = []
+        self._metadata_value_formatter = metadata_value_formatter
         super().__init__(
             color_scheme=color_scheme,
             selection_mode=TableSelectionMode.MULTI,
@@ -56,7 +63,14 @@ class ImageTableBrowser(AbstractTableBrowser[ImageTableRow]):
 
         for key in self._metadata_keys:
             width = self._COLUMN_WIDTHS.get(key.lower())
-            columns.append(ColumnDef(name=key.replace('_', ' ').title(), key=key, width=width))
+            columns.append(
+                ColumnDef(
+                    name=key.replace('_', ' ').title(),
+                    key=key,
+                    width=width,
+                    filterable=True,
+                )
+            )
 
         return columns
     
@@ -74,6 +88,8 @@ class ImageTableBrowser(AbstractTableBrowser[ImageTableRow]):
 
     def _format_value(self, key: str, value: ImageTableValue) -> str:
         """Format a metadata value for display."""
+        if self._metadata_value_formatter is not None:
+            return self._metadata_value_formatter(key, value)
         if value is None:
             return 'N/A'
         return str(value)

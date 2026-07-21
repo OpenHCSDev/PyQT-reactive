@@ -6,11 +6,13 @@ Used as the table portion of FunctionSelectorDialog.
 """
 
 from enum import Enum
-from typing import ClassVar, List, Optional, Protocol, Sequence
+from typing import ClassVar, List, Optional, Protocol, Sequence, cast
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
-    AbstractTableBrowser, ColumnDef, TableSelectionMode
+    AbstractTableBrowser,
+    ColumnDef,
+    TableSelectionMode,
 )
 
 
@@ -29,6 +31,11 @@ class FunctionTableRow(Protocol):
     def get_registry_name(self) -> str: ...
 
 
+def _function_tags(item: object) -> Sequence[str]:
+    """Return the multivalued tag projection declared by the Tags column."""
+    return cast(FunctionTableRow, item).tags
+
+
 class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
     """
     Table browser for function metadata.
@@ -40,14 +47,14 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
     # Column widths
     MODULE_WIDTH = 250
     DESCRIPTION_WIDTH = 300
-    COLUMN_SPECS: ClassVar[tuple[tuple[str, str, int], ...]] = (
-        ("Name", "name", 150),
-        ("Module", "module", MODULE_WIDTH),
-        ("Backend", "backend", 80),
-        ("Registry", "registry", 80),
-        ("Contract", "contract", 100),
-        ("Tags", "tags", 100),
-        ("Description", "doc", DESCRIPTION_WIDTH),
+    COLUMNS: ClassVar[tuple[ColumnDef, ...]] = (
+        ColumnDef("Name", "name", 150),
+        ColumnDef("Module", "module", MODULE_WIDTH),
+        ColumnDef("Backend", "backend", 80, filterable=True),
+        ColumnDef("Registry", "registry", 80, filterable=True),
+        ColumnDef("Contract", "contract", 100, filterable=True),
+        ColumnDef("Tags", "tags", 100, filterable=True, filter_values=_function_tags),
+        ColumnDef("Description", "doc", DESCRIPTION_WIDTH),
     )
 
     def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
@@ -67,10 +74,7 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
     
     def get_columns(self) -> List[ColumnDef]:
         """Static column definitions for function table."""
-        return [
-            ColumnDef(name=name, key=key, width=width)
-            for name, key, width in self.COLUMN_SPECS
-        ]
+        return list(self.COLUMNS)
     
     def extract_row_data(self, item: FunctionTableRow) -> List[str]:
         """Extract display values from function metadata."""

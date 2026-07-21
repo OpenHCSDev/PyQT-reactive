@@ -6,22 +6,186 @@ Multiple columns can be filtered simultaneously with AND logic across columns.
 """
 
 import logging
-from typing import Dict, Set, List, Optional, Callable
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set
 
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton,
-    QScrollArea, QLabel, QFrame, QSplitter
+    QAbstractItemView,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QSize
 
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.forms.layout_constants import COMPACT_LAYOUT
+from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.widgets.shared.abstract_table_browser import (
+    ColumnDef,
+    ColumnPresentation,
+    ColumnPresentationState,
+)
 from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
     ReflowingVerticalScrollArea,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ColumnFilterDef:
+    """Filter values owned by one declared semantic column."""
+
+    column: ColumnDef
+    unique_values: tuple[str, ...]
+
+
+class ColumnPresentationDialog(QDialog):
+    """Keyboard-accessible visibility/order editor for declared columns."""
+
+    def __init__(
+        self,
+        column_presentation: ColumnPresentationState,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.column_presentation = column_presentation
+        self.setWindowTitle("Configure Columns")
+
+        layout = QVBoxLayout(self)
+        self.column_list = QListWidget(self)
+        self.column_list.setAccessibleName("Table columns")
+        self.column_list.setDragDropMode(
+            QAbstractItemView.DragDropMode.InternalMove
+        )
+        layout.addWidget(self.column_list)
+
+        move_layout = QHBoxLayout()
+        self.move_up_button = QPushButton("Move Up", self)
+        self.move_up_button.setAccessibleName("Move selected column up")
+        self.move_up_button.clicked.connect(lambda: self._move_current(-1))
+        move_layout.addWidget(self.move_up_button)
+        self.move_down_button = QPushButton("Move Down", self)
+        self.move_down_button.setAccessibleName("Move selected column down")
+        self.move_down_button.clicked.connect(lambda: self._move_current(1))
+        move_layout.addWidget(self.move_down_button)
+        self.reset_button = QPushButton("Reset", self)
+        self.reset_button.setAccessibleName(
+            "Reset column visibility and declaration order"
+        )
+        self.reset_button.clicked.connect(self.reset_to_declaration)
+        move_layout.addWidget(self.reset_button)
+        layout.addLayout(move_layout)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._populate(self.column_presentation.resolved_columns())
+
+    def _populate(
+        self,
+        columns: Sequence[ColumnDef],
+        *,
+        show_all: bool = False,
+    ) -> None:
+        self.column_list.clear()
+        preference = self.column_presentation.preference
+        for column in columns:
+            item = QListWidgetItem(column.name, self.column_list)
+            item.setData(Qt.ItemDataRole.UserRole, column.key)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if show_all or preference.is_visible(column.key)
+                else Qt.CheckState.Unchecked
+            )
+        if self.column_list.count():
+            self.column_list.setCurrentRow(0)
+
+    def _move_current(self, offset: int) -> None:
+        current_row = self.column_list.currentRow()
+        target_row = current_row + offset
+        if current_row < 0 or not 0 <= target_row < self.column_list.count():
+            return
+        item = self.column_list.takeItem(current_row)
+        self.column_list.insertItem(target_row, item)
+        self.column_list.setCurrentRow(target_row)
+
+    def reset_to_declaration(self) -> None:
+        """Restore declared order and make every declared column visible."""
+        self._populate(self.column_presentation.columns, show_all=True)
+
+    def preference(self) -> ColumnPresentation:
+        """Build an immutable preference from the editor contents."""
+        current_order: list[str] = []
+        current_hidden_keys: set[str] = set()
+        for row in range(self.column_list.count()):
+            item = self.column_list.item(row)
+            key = item.data(Qt.ItemDataRole.UserRole)
+            current_order.append(key)
+            if item.checkState() != Qt.CheckState.Checked:
+                current_hidden_keys.add(key)
+
+        current_keys = set(current_order)
+        reordered = self.column_presentation.preference.with_resolved_order(
+            current_order,
+            self.column_presentation.columns,
+        )
+
+        stale_hidden_keys = (
+            self.column_presentation.preference.hidden_keys - current_keys
+        )
+        return ColumnPresentation(
+            reordered.ordered_keys,
+            frozenset(stale_hidden_keys | current_hidden_keys),
+        )
+
+
+class ColumnPresentationControl(QPushButton):
+    """Open the generic column presentation editor."""
+
+    def __init__(
+        self,
+        column_presentation: ColumnPresentationState,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__("Columns…", parent)
+        self.column_presentation = column_presentation
+        self.setAccessibleName("Configure table columns")
+        self.clicked.connect(self.open_editor)
+        self.column_presentation.changed.connect(self._sync_enabled)
+        self._sync_enabled()
+
+    def _sync_enabled(self) -> None:
+        self.setEnabled(bool(self.column_presentation.columns))
+
+    def create_editor(self) -> ColumnPresentationDialog:
+        """Create an editor for the current declared columns."""
+        return ColumnPresentationDialog(self.column_presentation, self)
+
+    def open_editor(self) -> None:
+        """Apply accepted presentation choices to the shared state."""
+        editor = self.create_editor()
+        try:
+            if editor.exec() == QDialog.DialogCode.Accepted:
+                self.column_presentation.set_preference(editor.preference())
+        finally:
+            editor.deleteLater()
 
 
 class NonCompressingSplitter(QSplitter):
@@ -99,19 +263,26 @@ class ColumnFilterWidget(QFrame):
 
     filter_changed = pyqtSignal()
 
-    def __init__(self, column_name: str, unique_values: List[str],
-                 color_scheme: Optional[ColorScheme] = None, parent=None):
+    def __init__(
+        self,
+        column: ColumnDef,
+        unique_values: Sequence[str],
+        color_scheme: Optional[ColorScheme] = None,
+        parent=None,
+    ):
         """
         Initialize column filter widget.
 
         Args:
-            column_name: Name of the column being filtered
+            column: Declared column identity and display projection
             unique_values: List of unique values in this column
             color_scheme: Color scheme for styling
             parent: Parent widget
         """
         super().__init__(parent)
-        self.column_name = column_name
+        self.column = column
+        self.column_key = column.key
+        self.column_name = column.name
         self.unique_values = sorted(unique_values)  # Sort for consistent display
         self.checkboxes: Dict[str, QCheckBox] = {}
         self.color_scheme = color_scheme or ColorScheme()
@@ -300,12 +471,24 @@ class MultiColumnFilterPanel(QWidget):
     """
 
     filters_changed = pyqtSignal()
+    filter_selection_changed = pyqtSignal(str, object)
 
-    def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
+    def __init__(
+        self,
+        color_scheme: Optional[ColorScheme] = None,
+        column_presentation: ColumnPresentationState | None = None,
+        parent=None,
+    ):
         """Initialize multi-column filter panel."""
         super().__init__(parent)
         self.column_filters: Dict[str, ColumnFilterWidget] = {}
+        self._retained_selections: Dict[str, tuple[frozenset[str], bool]] = {}
         self.color_scheme = color_scheme or ColorScheme()
+        self.style_gen = StyleSheetGenerator(self.color_scheme)
+        self.column_presentation = column_presentation or ColumnPresentationState(
+            parent=self
+        )
+        self.column_presentation.changed.connect(self._apply_column_presentation)
         self._init_ui()
 
     def _init_ui(self):
@@ -323,7 +506,28 @@ class MultiColumnFilterPanel(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+
+        settings_layout = QHBoxLayout()
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        self.presentation_control = ColumnPresentationControl(
+            self.column_presentation,
+            self,
+        )
+        self.presentation_control.setStyleSheet(
+            self.style_gen.generate_button_style()
+        )
+        settings_layout.addWidget(self.presentation_control)
+        self.hidden_active_label = QLabel(self)
+        self.hidden_active_label.setAccessibleName("Hidden active column filters")
+        self.hidden_active_label.setStyleSheet(
+            f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)};"
+        )
+        self.hidden_active_label.setVisible(False)
+        settings_layout.addWidget(self.hidden_active_label)
+        settings_layout.addStretch()
+        main_layout.addLayout(settings_layout)
         main_layout.addWidget(self.scroll_area)
+        self._sync_filter_body_visibility()
 
     def showEvent(self, event):
         """Handle show event to recalculate initial splitter heights."""
@@ -331,36 +535,130 @@ class MultiColumnFilterPanel(QWidget):
         if self.column_filters:
             self._update_splitter_sizes()
     
-    def add_column_filter(self, column_name: str, unique_values: List[str]):
+    def add_column_filter(
+        self,
+        column: ColumnDef,
+        unique_values: Sequence[str],
+    ) -> None:
         """
         Add a filter for a column.
 
         Args:
-            column_name: Name of the column
+            column: Declared column identity and display projection
             unique_values: List of unique values in this column
         """
-        if column_name in self.column_filters:
+        declared_keys = {item.key for item in self.column_presentation.columns}
+        if column.key not in declared_keys:
+            raise ValueError(
+                f"Filter column {column.key!r} is not declared by the table owner"
+            )
+        if column.key in self.column_filters:
             # Remove existing filter
-            self.remove_column_filter(column_name)
+            self.remove_column_filter(column.key)
 
+        self._install_column_filter(column, unique_values)
+        self._apply_column_presentation()
+
+    def _install_column_filter(
+        self,
+        column: ColumnDef,
+        unique_values: Sequence[str],
+    ) -> None:
         # Create filter widget with color scheme
-        filter_widget = ColumnFilterWidget(column_name, unique_values, self.color_scheme)
-        filter_widget.filter_changed.connect(self._on_filter_changed)
+        filter_widget = ColumnFilterWidget(column, unique_values, self.color_scheme)
+        filter_widget.filter_changed.connect(
+            lambda column_key=column.key: self._on_filter_changed(column_key)
+        )
+
+        retained = self._retained_selections.get(column.key)
+        if retained is not None:
+            selected_values, was_all_selected = retained
+            if not was_all_selected:
+                filter_widget.set_selected_values(
+                    set(selected_values) & set(filter_widget.unique_values),
+                    block_signals=True,
+                )
 
         # Add to splitter (each filter is independently resizable)
         self.splitter.addWidget(filter_widget)
 
-        self.column_filters[column_name] = filter_widget
+        self.column_filters[column.key] = filter_widget
+        self._sync_filter_body_visibility()
 
-        # Update sizes after adding widget
+    def set_column_filters(self, filters: Sequence[ColumnFilterDef]) -> None:
+        """Replace filter declarations while retaining keyed selections."""
+        filter_keys = tuple(filter_def.column.key for filter_def in filters)
+        if len(filter_keys) != len(set(filter_keys)):
+            raise ValueError("Column filter keys must be unique")
+        declared_keys = {item.key for item in self.column_presentation.columns}
+        undeclared_keys = set(filter_keys) - declared_keys
+        if undeclared_keys:
+            raise ValueError(
+                "Filter columns are not declared by the table owner: "
+                f"{sorted(undeclared_keys)!r}"
+            )
+
+        self._remember_current_selections()
+        for widget in self.column_filters.values():
+            widget.setParent(None)
+            widget.deleteLater()
+        self.column_filters.clear()
+
+        for filter_def in filters:
+            self._install_column_filter(
+                filter_def.column,
+                filter_def.unique_values,
+            )
+        self._apply_column_presentation()
+        self._sync_filter_body_visibility()
+
+    def _sync_filter_body_visibility(self) -> None:
+        """Collapse only the empty filter list, retaining column settings."""
+        self.scroll_area.setVisible(bool(self.column_filters))
+
+    def _remember_current_selections(self) -> None:
+        for key, filter_widget in self.column_filters.items():
+            selected = frozenset(filter_widget.get_selected_values())
+            self._retained_selections[key] = (
+                selected,
+                len(selected) == len(filter_widget.unique_values),
+            )
+
+    def _apply_column_presentation(self) -> None:
+        """Project shared declaration order/visibility onto filter panels."""
+        preference = self.column_presentation.preference
+        ordered_keys = tuple(
+            key
+            for key in self.column_presentation.resolved_keys()
+            if key in self.column_filters
+        )
+        for index, key in enumerate(ordered_keys):
+            widget = self.column_filters[key]
+            self.splitter.insertWidget(index, widget)
+            widget.setVisible(preference.is_visible(key))
+        stale_keys = tuple(
+            key for key in self.column_filters if key not in ordered_keys
+        )
+        for key in stale_keys:
+            self.column_filters[key].setVisible(False)
+        self.column_filters = {
+            key: self.column_filters[key]
+            for key in ordered_keys + stale_keys
+        }
+        self._update_hidden_active_label()
         self._update_splitter_sizes()
     
     def _update_splitter_sizes(self):
         """Update splitter sizes based on each filter's content."""
-        num_filters = len(self.column_filters)
+        visible_filters = [
+            filter_widget
+            for filter_widget in self.column_filters.values()
+            if not filter_widget.isHidden()
+        ]
+        num_filters = len(visible_filters)
         if num_filters > 0:
             # Force layout update first to get accurate size hints
-            for filter_widget in self.column_filters.values():
+            for filter_widget in visible_filters:
                 filter_widget.updateGeometry()
 
             # Size each filter based on its actual content (sizeHint)
@@ -369,7 +667,9 @@ class MultiColumnFilterPanel(QWidget):
                 # Get the widget's preferred size
                 hint = filter_widget.sizeHint()
                 # Use the height hint, with a minimum of 100px
-                sizes.append(max(100, hint.height()))
+                sizes.append(
+                    max(100, hint.height()) if not filter_widget.isHidden() else 0
+                )
 
             self.splitter.setSizes(sizes)
 
@@ -385,10 +685,18 @@ class MultiColumnFilterPanel(QWidget):
             # Schedule a deferred update to fix layout after widgets are fully rendered
             from PyQt6.QtCore import QTimer
             QTimer.singleShot(0, self._deferred_size_update)
+        else:
+            self.splitter.setMinimumHeight(0)
+            self.splitter.setFixedHeight(0)
 
     def _deferred_size_update(self):
         """Deferred size update after widgets are fully rendered."""
-        num_filters = len(self.column_filters)
+        visible_filters = [
+            filter_widget
+            for filter_widget in self.column_filters.values()
+            if not filter_widget.isHidden()
+        ]
+        num_filters = len(visible_filters)
         if num_filters > 0:
             # Force synchronous event processing to ensure layout is complete
             from PyQt6.QtWidgets import QApplication
@@ -407,7 +715,9 @@ class MultiColumnFilterPanel(QWidget):
             sizes = []
             for filter_widget in self.column_filters.values():
                 hint = filter_widget.sizeHint()
-                sizes.append(max(100, hint.height()))
+                sizes.append(
+                    max(100, hint.height()) if not filter_widget.isHidden() else 0
+                )
 
             self.splitter.setSizes(sizes)
 
@@ -420,51 +730,115 @@ class MultiColumnFilterPanel(QWidget):
             # Force a repaint to ensure proper rendering
             self.splitter.update()
 
-    def remove_column_filter(self, column_name: str):
+    def remove_column_filter(self, column_key: str):
         """Remove a column filter."""
-        if column_name in self.column_filters:
-            widget = self.column_filters[column_name]
+        if column_key in self.column_filters:
+            widget = self.column_filters[column_key]
+            selected = frozenset(widget.get_selected_values())
+            self._retained_selections[column_key] = (
+                selected,
+                len(selected) == len(widget.unique_values),
+            )
             # Remove from splitter
             widget.setParent(None)
             widget.deleteLater()
-            del self.column_filters[column_name]
+            del self.column_filters[column_key]
             # Update sizes after removing
+            self._update_hidden_active_label()
             self._update_splitter_sizes()
+            self._sync_filter_body_visibility()
     
     def clear_all_filters(self):
         """Remove all column filters."""
-        for column_name in list(self.column_filters.keys()):
-            self.remove_column_filter(column_name)
+        for column_key in list(self.column_filters.keys()):
+            self.remove_column_filter(column_key)
     
-    def _on_filter_changed(self):
+    def _on_filter_changed(self, column_key: str):
         """Handle filter change from any column."""
+        self._remember_current_selections()
+        self._update_hidden_active_label()
         self.filters_changed.emit()
+        self.filter_selection_changed.emit(
+            column_key,
+            frozenset(self.column_filters[column_key].get_selected_values()),
+        )
+
+    def set_filter_selection(
+        self,
+        column_key: str,
+        selected_values: Sequence[str] | None,
+    ) -> bool:
+        """Set one filter selection, or select all when values are ``None``."""
+        filter_widget = self.column_filters.get(column_key)
+        if filter_widget is None:
+            return False
+        values = (
+            set(filter_widget.unique_values)
+            if selected_values is None
+            else set(selected_values)
+        )
+        filter_widget.set_selected_values(values, block_signals=True)
+        self._on_filter_changed(column_key)
+        return True
+
+    def filter_selection(self, column_key: str) -> frozenset[str] | None:
+        """Return one current selection, or ``None`` for an unknown key."""
+        filter_widget = self.column_filters.get(column_key)
+        if filter_widget is None:
+            return None
+        return frozenset(filter_widget.get_selected_values())
+
+    def is_filter_active(self, column_key: str) -> bool:
+        """Return whether one declared filter excludes any available value."""
+        return column_key in self.get_active_filters()
+
+    def _update_hidden_active_label(self) -> None:
+        active_keys = set(self.get_active_filters())
+        hidden_active_keys = [
+            key
+            for key in self.column_presentation.resolved_keys()
+            if key in active_keys
+            and not self.column_presentation.preference.is_visible(key)
+        ]
+        count = len(hidden_active_keys)
+        self.hidden_active_label.setText(
+            f"{count} hidden active filter{'s' if count != 1 else ''}"
+        )
+        columns_by_key = {
+            column.key: column for column in self.column_presentation.columns
+        }
+        self.hidden_active_label.setToolTip(
+            ", ".join(columns_by_key[key].name for key in hidden_active_keys)
+        )
+        self.hidden_active_label.setVisible(bool(hidden_active_keys))
     
     def get_active_filters(self) -> Dict[str, Set[str]]:
         """
         Get active filters for all columns.
         
         Returns:
-            Dictionary mapping column name to set of selected values.
+            Dictionary mapping stable column key to selected values.
             Only includes columns where not all values are selected.
         """
         active_filters = {}
-        for column_name, filter_widget in self.column_filters.items():
+        declared_keys = {
+            column.key for column in self.column_presentation.columns
+        }
+        for column_key, filter_widget in self.column_filters.items():
+            if column_key not in declared_keys:
+                continue
             selected = filter_widget.get_selected_values()
             # Only include if not all values are selected (i.e., actually filtering)
             if len(selected) < len(filter_widget.unique_values):
-                active_filters[column_name] = selected
+                active_filters[column_key] = selected
         return active_filters
     
-    def apply_filters(self, data: List[Dict], column_key_map: Optional[Dict[str, str]] = None) -> List[Dict]:
+    def apply_filters(self, data: List[Dict]) -> List[Dict]:
         """
         Apply filters to a list of data dictionaries.
         
         Args:
             data: List of dictionaries to filter
-            column_key_map: Optional mapping from display column names to data keys
-                           (e.g., {"Well": "well", "Channel": "channel"})
-        
         Returns:
             Filtered list of dictionaries
         """
@@ -473,17 +847,12 @@ class MultiColumnFilterPanel(QWidget):
         if not active_filters:
             return data  # No filters active
         
-        # Map column names to data keys
-        if column_key_map is None:
-            column_key_map = {name: name.lower().replace(' ', '_') for name in active_filters.keys()}
-        
         # Filter data with AND logic across columns
         filtered_data = []
         for item in data:
             matches = True
-            for column_name, selected_values in active_filters.items():
-                data_key = column_key_map.get(column_name, column_name)
-                item_value = str(item.get(data_key, ''))
+            for column_key, selected_values in active_filters.items():
+                item_value = str(item.get(column_key, ''))
                 if item_value not in selected_values:
                     matches = False
                     break

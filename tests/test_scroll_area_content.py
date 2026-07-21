@@ -11,6 +11,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pyqt_reactive.widgets.shared.abstract_table_browser import (
+    ColumnDef,
+    ColumnPresentationState,
+)
 from pyqt_reactive.widgets.shared.column_filter_widget import MultiColumnFilterPanel
 from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
     ReflowingVerticalScrollArea,
@@ -75,11 +79,18 @@ def test_reflowing_vertical_scroll_area_tracks_viewport_width_across_bar_transit
 def test_column_filter_scrollbars_preserve_outer_width_and_long_value_access(
     qapp,
 ) -> None:
-    panel = MultiColumnFilterPanel()
-    panel.add_column_filter("Extension", [".tif"])
-    panel.add_column_filter("Channel", ["1 | W1", "2 | W2"])
+    presentation = ColumnPresentationState()
+    columns = (
+        ColumnDef("Extension", "extension"),
+        ColumnDef("Channel", "channel"),
+        ColumnDef("Full Virtual", "full_virtual"),
+    )
+    presentation.set_columns(columns)
+    panel = MultiColumnFilterPanel(column_presentation=presentation)
+    panel.add_column_filter(columns[0], [".tif"])
+    panel.add_column_filter(columns[1], ["1 | W1", "2 | W2"])
     panel.add_column_filter(
-        "Full Virtual",
+        columns[2],
         [
             f"/tmp/openhcs_synthetic/plate/very-long-file-name-{index}.tif"
             for index in range(100)
@@ -106,7 +117,7 @@ def test_column_filter_scrollbars_preserve_outer_width_and_long_value_access(
                     _rect_in(outer.verticalScrollBar(), panel)
                 )
 
-        long_value_filter = panel.column_filters["Full Virtual"]
+        long_value_filter = panel.column_filters["full_virtual"]
         inner = long_value_filter.findChild(QScrollArea)
         assert inner is not None
         assert inner.horizontalScrollBar().isVisible()
