@@ -26,7 +26,7 @@ keywords = ["pyqt6", "forms", "reactive", "gui", "widgets", "dataclass"]
 dependencies = [
     "PyQt6>=6.4.0",
     "objectstate>=1.0.18",
-    "python-introspect>=0.1.0",
+    "python-introspect>=0.1.5",
 ]
 
 [project.optional-dependencies]
