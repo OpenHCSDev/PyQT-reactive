@@ -31,6 +31,7 @@ FIX 3: Unified geometry cache
 import logging
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Dict, Iterable, List, Optional, Set, Callable, Any, Tuple, TYPE_CHECKING
 from weakref import WeakValueDictionary
 import re
@@ -3289,17 +3290,12 @@ class VisualUpdateMixin:
                 continue
             self._flash_registration_lifecycle_keys.add(lifecycle_key)
             lifecycle_widget.destroyed.connect(
-                lambda _obj=None,
-                cleanup_key=lifecycle_key,
-                registration_records=registrations,
-                registration_lifecycle_keys=lifecycle_keys,
-                registered_scoped_key=scoped_key: (
-                    VisualUpdateMixin._cleanup_flash_registration(
-                        registration_records,
-                        registration_lifecycle_keys,
-                        cleanup_key,
-                        registered_scoped_key,
-                    )
+                partial(
+                    VisualUpdateMixin._cleanup_flash_registration,
+                    registrations,
+                    lifecycle_keys,
+                    lifecycle_key,
+                    scoped_key,
                 )
             )
 
@@ -3317,6 +3313,7 @@ class VisualUpdateMixin:
         lifecycle_keys: Set[Tuple[int, str, int, str | None]],
         lifecycle_key: Tuple[int, str, int, str | None],
         scoped_key: str,
+        _destroyed_object: object | None = None,
     ) -> None:
         """Drop recorded and overlay flash elements for a destroyed dependency."""
         lifecycle_keys.discard(lifecycle_key)
