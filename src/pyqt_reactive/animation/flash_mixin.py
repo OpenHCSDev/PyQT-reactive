@@ -3316,7 +3316,6 @@ class VisualUpdateMixin:
         lifecycle_keys: Set[Tuple[int, str, int, str | None]],
         lifecycle_key: Tuple[int, str, int, str | None],
         scoped_key: str,
-        _destroyed_object: object | None = None,
     ) -> None:
         """Drop recorded and overlay flash elements for a destroyed dependency."""
         lifecycle_keys.discard(lifecycle_key)
