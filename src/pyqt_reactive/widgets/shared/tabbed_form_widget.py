@@ -8,13 +8,16 @@ shows one or more ParameterFormManagers, all sharing the same ObjectState.
 from dataclasses import dataclass, field, fields, is_dataclass
 from types import SimpleNamespace
 from typing import List, Optional, Any
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from pyqt_reactive.widgets.shared.tear_off_tab_widget import TearOffTabWidget
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QIcon
 
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 from pyqt_reactive.theming import StyleSheetGenerator
+from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
+    ReflowingVerticalScrollArea,
+)
 
 
 @dataclass
@@ -153,10 +156,7 @@ class TabbedFormWidget(QWidget):
 
         # Wrap in scroll area if configured
         if self.config.use_scroll_area:
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll = ReflowingVerticalScrollArea()
             scroll.setWidget(form)
             layout.addWidget(scroll, 1)
         else:

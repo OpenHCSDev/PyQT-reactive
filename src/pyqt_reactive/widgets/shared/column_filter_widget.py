@@ -17,6 +17,9 @@ from PyQt6.QtCore import pyqtSignal, Qt, QSize
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.forms.layout_constants import COMPACT_LAYOUT
+from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
+    ReflowingVerticalScrollArea,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +36,6 @@ class NonCompressingSplitter(QSplitter):
         super().__init__(*args, **kwargs)
         # Remove maximum height constraint
         self.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
-        # Set a reasonable width
-        self.setMinimumWidth(200)
         # Flag to prevent resize event from interfering
         self._in_move = False
 
@@ -170,11 +171,10 @@ class ColumnFilterWidget(QFrame):
         layout.addLayout(header_layout)
 
         # Scrollable checkbox list - each filter has its own scroll area
-        from PyQt6.QtWidgets import QSizePolicy
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setMinimumHeight(60)  # Minimum to show a few items
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setStyleSheet(f"""
             QScrollArea {{
@@ -310,20 +310,14 @@ class MultiColumnFilterPanel(QWidget):
 
     def _init_ui(self):
         """Initialize the UI with vertical splitter for resizable filters in a scroll area."""
-        from PyQt6.QtWidgets import QSizePolicy, QScrollArea
-
         # Use custom non-compressing splitter so each filter can be resized
         self.splitter = NonCompressingSplitter(Qt.Orientation.Vertical)
         self.splitter.setChildrenCollapsible(False)  # Prevent filters from collapsing
         self.splitter.setHandleWidth(5)  # Make handle more visible and easier to grab
 
         # Wrap splitter in scroll area so the whole group can scroll
-        self.scroll_area = QScrollArea()
-        # CRITICAL: setWidgetResizable(False) prevents scroll area from forcing splitter to fit
-        self.scroll_area.setWidgetResizable(False)
+        self.scroll_area = ReflowingVerticalScrollArea()
         self.scroll_area.setWidget(self.splitter)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
 
         main_layout = QVBoxLayout(self)
@@ -331,24 +325,11 @@ class MultiColumnFilterPanel(QWidget):
         main_layout.setSpacing(0)
         main_layout.addWidget(self.scroll_area)
 
-    def resizeEvent(self, event):
-        """Handle resize to update splitter width."""
-        super().resizeEvent(event)
-        # Update splitter width to match scroll area viewport width
-        viewport_width = self.scroll_area.viewport().width()
-        if viewport_width > 0:
-            self.splitter.setFixedWidth(viewport_width)
-
     def showEvent(self, event):
-        """Handle show event to ensure proper initial sizing."""
+        """Handle show event to recalculate initial splitter heights."""
         super().showEvent(event)
-        # When first shown, ensure splitter has correct width and recalculate sizes
-        viewport_width = self.scroll_area.viewport().width()
-        if viewport_width > 0:
-            self.splitter.setFixedWidth(viewport_width)
-            # Recalculate sizes now that we have proper dimensions
-            if self.column_filters:
-                self._update_splitter_sizes()
+        if self.column_filters:
+            self._update_splitter_sizes()
     
     def add_column_filter(self, column_name: str, unique_values: List[str]):
         """

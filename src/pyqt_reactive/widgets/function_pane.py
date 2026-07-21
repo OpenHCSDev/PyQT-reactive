@@ -12,7 +12,7 @@ from typing import Any, ClassVar, Dict, Callable, Optional, Tuple, List, Set
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QScrollArea, QSizePolicy, QLayout
+    QSizePolicy, QLayout
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
@@ -22,6 +22,9 @@ from python_introspect import Enableable, SignatureAnalyzer, is_enableable
 # Import PyQt6 help components (using same pattern as Textual TUI)
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
+from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
+    ReflowingVerticalScrollArea,
+)
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
@@ -762,10 +765,7 @@ class FunctionListWidget(QWidget):
         layout = QVBoxLayout(self)
         
         # Scroll area for function panes
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area = ReflowingVerticalScrollArea()
         
         # Container widget for function panes
         self.container_widget = QWidget()

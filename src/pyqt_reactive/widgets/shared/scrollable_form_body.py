@@ -8,6 +8,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QScrollArea, QSplitter, QWidget
 
 from pyqt_reactive.core.collapsible_splitter_helper import CollapsibleSplitterHelper
+from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
+    ReflowingVerticalScrollArea,
+)
 
 
 @dataclass(frozen=True)
@@ -30,10 +33,7 @@ def create_scrollable_form_body(
     parent: QWidget | None = None,
 ) -> ScrollableFormBodyParts:
     """Create a scrollable form with an optional collapsible navigation tree."""
-    scroll_area = QScrollArea(parent)
-    scroll_area.setWidgetResizable(True)
-    scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll_area = ReflowingVerticalScrollArea(parent)
     scroll_area.setWidget(form_widget)
 
     if tree_widget is None:
