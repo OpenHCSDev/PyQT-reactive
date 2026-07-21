@@ -2511,9 +2511,8 @@ def test_dynamic_flash_registration_rebuilds_valid_geometry_cache(qapp) -> None:
     dialog.close()
 
 
-def test_local_widget_rect_queue_paints_after_timer_tick(qapp) -> None:
+def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
     """The real local queue path must produce visible overlay pixels."""
-    from PyQt6.QtTest import QTest
     from PyQt6.QtWidgets import QDialog, QGroupBox, QVBoxLayout, QWidget
 
     from pyqt_reactive.animation.flash_mixin import (
@@ -2562,8 +2561,15 @@ def test_local_widget_rect_queue_paints_after_timer_tick(qapp) -> None:
     sample_point = section.mapTo(dialog, section.rect().center())
     baseline = overlay.grab().toImage().pixelColor(sample_point)
 
+    expected_key = manager._get_scoped_flash_key("section")
     manager.queue_flash_local("section")
-    QTest.qWait(80)
+    coordinator._flush_pending_flash_keys()
+    assert expected_key in coordinator._flash_start_times
+    if coordinator._timer is not None:
+        coordinator._timer.stop()
+    coordinator._flash_start_times[expected_key] -= coordinator._config.fade_in_s
+    coordinator._on_global_tick()
+    overlay.repaint()
     qapp.processEvents()
 
     painted = overlay.grab().toImage().pixelColor(sample_point)
