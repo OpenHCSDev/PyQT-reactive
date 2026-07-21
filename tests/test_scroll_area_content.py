@@ -51,9 +51,9 @@ def test_reflowing_vertical_scroll_area_tracks_viewport_width_across_bar_transit
 
     try:
         for width, height, vertical_scroll_required in (
-            (500, 500, False),
+            (500, 2000, False),
             (220, 160, True),
-            (500, 500, False),
+            (500, 2000, False),
             (100, 160, True),
         ):
             scroll_area.resize(width, height)
@@ -102,9 +102,9 @@ def test_column_filter_scrollbars_preserve_outer_width_and_long_value_access(
 
     try:
         for width, height, vertical_scroll_required in (
-            (300, 900, False),
+            (300, 2000, False),
             (150, 600, True),
-            (300, 900, False),
+            (300, 2000, False),
             (130, 300, True),
         ):
             panel.resize(width, height)
