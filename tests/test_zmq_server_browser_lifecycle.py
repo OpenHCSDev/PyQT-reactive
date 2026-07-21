@@ -1,5 +1,7 @@
 """Lifecycle coverage for the generic ZMQ server browser."""
 
+from PyQt6.QtCore import QCoreApplication, QEvent
+
 from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
 from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
     KillOperationPlan,
@@ -66,3 +68,36 @@ def test_scan_completion_is_suppressed_after_cleanup(qapp, monkeypatch) -> None:
     assert not browser._scan_in_flight
     browser.deleteLater()
     qapp.processEvents()
+
+
+def test_scan_completion_is_suppressed_after_qt_destroys_browser(
+    qapp, monkeypatch
+) -> None:
+    """QObject destruction must close the lifecycle before a scan completes."""
+
+    callbacks = []
+    monkeypatch.setattr(
+        "pyqt_reactive.widgets.shared.zmq_server_browser_widget."
+        "spawn_thread_with_context",
+        lambda callback, *, name: callbacks.append((callback, name)),
+    )
+    browser = _Browser(
+        ports_to_scan=[5000],
+        title="Servers",
+        style_generator=StyleSheetGenerator(ColorScheme()),
+        scan_service=_ScanService(),
+    )
+    completions = []
+    browser._scan_complete.connect(completions.append)
+
+    browser.refresh_servers()
+    lifecycle = browser._lifecycle_state
+    browser.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
+    callback, name = callbacks.pop()
+    callback()
+
+    assert name == "scan_servers"
+    assert lifecycle.is_cleaning_up()
+    assert completions == []
