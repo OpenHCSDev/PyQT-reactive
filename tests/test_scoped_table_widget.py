@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QRect
-from PyQt6.QtGui import QColor, QImage, QPainter, QPaintEvent, QPen
-from PyQt6.QtWidgets import QWidget
+import pytest
+from PyQt6.QtCore import QPoint, QRect, Qt
+from PyQt6.QtGui import QColor, QImage, QPaintEvent, QPalette
+from PyQt6.QtWidgets import QTableWidgetItem, QWidget
 
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
 from pyqt_reactive.protocols import (
@@ -59,24 +60,66 @@ def test_scoped_table_widget_accepts_scope_scheme_and_paints(qapp) -> None:
     assert not table._border_overlay.isVisible()
 
 
-def test_scoped_table_overlay_clears_retained_pixels_before_repaint(qapp) -> None:
-    table = ScopedTableWidget(1, 1)
+@pytest.mark.parametrize(
+    "row_values",
+    [
+        (),
+        (("row", "value"),),
+    ],
+    ids=("empty", "populated"),
+)
+def test_scoped_table_overlay_preserves_declared_table_surface(
+    qapp,
+    row_values: tuple[tuple[str, str], ...],
+) -> None:
+    table = ScopedTableWidget(len(row_values), 2)
+    surface_color = QColor(44, 64, 84)
+    palette = table.palette()
+    palette.setColor(QPalette.ColorRole.Base, surface_color)
+    table.setPalette(palette)
+    for row_index, row in enumerate(row_values):
+        for column_index, value in enumerate(row):
+            table.setItem(row_index, column_index, QTableWidgetItem(value))
     table.set_scope_color_scheme(_scope_scheme())
-    table.resize(80, 40)
+    table.resize(180, 80)
     table.show()
     qapp.processEvents()
 
-    image = QImage(table._border_overlay.size(), QImage.Format.Format_ARGB32)
-    image.fill(0)
-    retained_line_y = image.height() // 2
-    painter = QPainter(image)
-    painter.setPen(QPen(QColor(40, 90, 120), 3))
-    painter.drawLine(0, retained_line_y, image.width() - 1, retained_line_y)
-    painter.end()
+    image = table.grab().toImage()
+    viewport = table.viewport()
+    surface_position = viewport.mapTo(
+        table,
+        QPoint(viewport.width() - 8, viewport.height() - 8),
+    )
 
-    table._border_overlay.render(image)
+    assert image.pixelColor(surface_position) == surface_color
 
-    assert image.pixelColor(image.width() // 2, retained_line_y).alpha() == 0
+
+def test_scoped_table_overlay_uses_parent_surface_repainting(qapp) -> None:
+    table = ScopedTableWidget(0, 2)
+    surface_color = QColor(44, 64, 84)
+    palette = table.palette()
+    palette.setColor(QPalette.ColorRole.Base, surface_color)
+    table.setPalette(palette)
+    table.set_scope_color_scheme(_scope_scheme())
+    table.resize(120, 80)
+    table.show()
+    qapp.processEvents()
+
+    old_right_border_x = table.width() - 3
+    sample_y = table.height() // 2
+    before_resize = table.grab().toImage()
+    assert before_resize.pixelColor(old_right_border_x, sample_y) != surface_color
+
+    table.resize(200, 80)
+    qapp.processEvents()
+    after_resize = table.grab().toImage()
+
+    assert after_resize.pixelColor(old_right_border_x, sample_y) == surface_color
+
+    overlay = table._border_overlay
+    assert not overlay.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+    assert not overlay.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
 
 def test_inline_dataclass_groupbox_propagates_scope_to_inline_widget(qapp) -> None:
