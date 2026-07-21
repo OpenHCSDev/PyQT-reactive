@@ -1,134 +1,149 @@
-AbstractTableBrowser ABC
-========================
+Abstract table browser ownership
+================================
 
-**Generic searchable table widget pattern for consistent browser UIs.**
+``AbstractTableBrowser`` owns the generic table, search, presentation, and
+declared-column filtering pipeline for browser-style widgets. A consumer
+declares row semantics and may contribute domain context, but it does not
+rebuild generic filter or column-configuration UI.
 
-*Module: pyqt_reactive.widgets.shared.abstract_table_browser*
+Authoritative columns
+---------------------
 
-Overview
---------
+``ColumnDef`` is the column declaration. Its ``key`` is the stable semantic
+identity used by presentation and filter state; the visible ``name`` is only a
+label.
 
-``AbstractTableBrowser`` is an abstract base class for table-based browser widgets.
-It provides common infrastructure for displaying searchable, filterable table views
-of item collections. Subclasses implement abstract methods to customize column layout,
-row population, and event handling.
+.. code-block:: python
 
-Each subclass requires <100 lines of code to implement a fully-functional browser.
+   from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnDef
 
-Core Components
----------------
+   columns = [
+       ColumnDef("Name", "name", width=220),
+       ColumnDef("Category", "category", filterable=True),
+       ColumnDef(
+           "Tags",
+           "tags",
+           filterable=True,
+           filter_values=lambda item: item.tags,
+       ),
+   ]
+
+``filter_values`` is optional. Without it, the generic filter reads the value
+at the column's row-data index. With it, one row may expose several normalized
+values. Consumers should not duplicate this declaration in a separate filter
+schema.
+
+Column presentation
+-------------------
+
+``ColumnPresentation`` stores ordered and hidden column keys.
+``ColumnPresentationState`` is the shared runtime owner that resolves those
+preferences against the current ``ColumnDef`` declarations and projects them
+onto both the table header and the filter panel.
+
+Presentation preferences deliberately survive dynamic schemas:
+
+* absent keys remain in the preference so a temporarily missing column can
+  recover its prior position;
+* newly declared keys append in declaration order;
+* every current ``ColumnDef.key`` must be unique; and
+* persistence remains outside the generic widget. A host can initialize the
+  state and persist ``preference_changed`` through its typed settings owner.
+
+Users edit order and visibility through ``ColumnPresentationDialog``. Moving a
+Qt header section updates the same presentation owner; it is not a second order
+model.
+
+Filtering pipeline
+------------------
+
+The browser composes filters in one direction:
 
 .. code-block:: text
 
-   AbstractTableBrowser[T]
-   ├── search_input: QLineEdit       # Search box
-   ├── table_widget: QTableWidget    # Main table
-   ├── status_label: QLabel          # "Showing N/M items"
-   ├── _search_service: SearchService # Filter logic
-   └── Signals:
-       ├── item_selected(key, item)
-       ├── item_double_clicked(key, item)
-       └── items_selected(keys)        # Multi-select mode
+   all_items
+       -> external/base projection
+       -> active declared-column filters
+       -> filtered_items and rendered rows
 
-ColumnDef Configuration
------------------------
+``set_items()`` replaces the authoritative item collection and rebuilds the
+declared filter choices. ``set_filtered_items()`` supplies a search, tree,
+folder, or other domain-owned base projection. Generic column filters then
+apply to that projection.
 
-Columns are declaratively defined using ``ColumnDef``:
+Programmatic consumers use ``set_column_filter_selection()``,
+``column_filter_selection()``, and ``is_column_filter_active()`` by semantic
+column key. They do not reach into checkbox widgets.
+
+Visibility and filtering are independent. Hiding a column does not clear its
+active filter. The filter panel retains that semantic selection and reports
+hidden active filters so a presentation edit cannot silently change the item
+set.
+
+Context, filters, and table layout
+----------------------------------
+
+The content area is a horizontal split between the filter side and the table.
+Within the filter side, ``set_column_filter_context_widget()`` places an
+optional domain-owned context widget above the generic filter panel in a
+vertical splitter:
+
+.. code-block:: text
+
+   content_splitter (horizontal)
+   +-- column_filter_splitter (vertical)
+   |   +-- optional domain context
+   |   +-- generic column filters
+   +-- table
+
+This hook is for spatial context such as a navigation tree. The consumer still
+does not own filter construction, presentation state, or the table/filter
+composition.
+
+Subclass contract
+-----------------
+
+A concrete browser supplies row semantics:
 
 .. code-block:: python
 
-   @dataclass
-   class ColumnDef:
-       name: str                       # Header text
-       key: str                        # Internal key
-       width: Optional[int] = None     # Fixed width (None = stretch)
-       sortable: bool = True           # Enable column sorting
-       resizable: bool = True          # Enable resize handle
+   class ItemBrowser(AbstractTableBrowser[Item]):
+       def get_columns(self):
+           return columns
 
-Abstract Methods
-----------------
+       def extract_row_data(self, item):
+           return [item.name, item.category, ", ".join(item.tags)]
 
-Subclasses must implement three methods:
+       def get_searchable_text(self, item):
+           return f"{item.name} {item.category} {' '.join(item.tags)}"
 
-.. code-block:: python
+Use ``reconfigure_columns()`` when a dynamic declaration changes. The browser
+publishes the new declarations to ``ColumnPresentationState``, reapplies order
+and visibility, rebuilds filter choices, and repopulates the current items.
 
-   class MyBrowser(AbstractTableBrowser[MyItemType]):
+Selection ownership
+-------------------
 
-       def get_columns(self) -> List[ColumnDef]:
-           """Return column definitions for the table."""
-           return [
-               ColumnDef("Name", "name", width=200),
-               ColumnDef("Status", "status", width=100),
-           ]
+``TableSelectionMode.SINGLE`` and ``TableSelectionMode.MULTI`` map to Qt row
+selection modes. Selection signals carry semantic item keys, and
+``select_key()`` or ``select_keys()`` restores selection without consumers
+depending on the current row order.
 
-       def extract_row_data(self, item: MyItemType) -> List[str]:
-           """Extract display values for a table row."""
-           return [item.name, item.status]
-
-       def get_searchable_text(self, item: MyItemType) -> str:
-           """Return searchable text for an item."""
-           return f"{item.name} {item.status}"
-
-Implementations
+Extension rules
 ---------------
 
-.. list-table::
-   :header-rows: 1
+* Treat ``ColumnDef.key`` as stable application data.
+* Declare filter semantics on ``ColumnDef`` rather than building parallel
+  checkbox lists in a consumer.
+* Feed domain filters through ``set_filtered_items()`` and let the browser
+  compose the generic column filters.
+* Persist only the immutable ``ColumnPresentation`` through a typed host-owned
+  setting; do not make pyqt-reactive aware of a domain settings type.
+* Contribute domain context with ``set_column_filter_context_widget()`` rather
+  than reparenting the generic filter panel.
 
-   * - Browser
-     - Columns
-     - Used By
-   * - ``FunctionTableBrowser``
-     - Name, Module, Backend, Contract, Tags
-     - FunctionSelectorDialog
-   * - ``ImageTableBrowser``
-     - Filename + dynamic metadata keys
-     - ImageBrowserWidget
-   * - ``SnapshotTableBrowser``
-     - Index, Time, Label, States
-     - SnapshotBrowserWindow
-
-Dynamic Columns
----------------
-
-``ImageTableBrowser`` demonstrates dynamic column configuration:
-
-.. code-block:: python
-
-   browser = ImageTableBrowser()
-   browser.set_metadata_keys(['well', 'channel', 'z_slice'])  # Add columns
-   browser.set_items(file_metadata_dict)
-
-The ``set_metadata_keys()`` method calls ``reconfigure_columns()`` to rebuild
-the table header before populating items.
-
-Selection Modes
----------------
-
-Two modes are supported:
-
-- **single** (default): One item at a time, emits ``item_selected``
-- **multi**: Multiple items, emits ``items_selected`` with list of keys
-
-.. code-block:: python
-
-   # Multi-select for batch operations
-   browser = ImageTableBrowser(selection_mode='multi')
-   browser.items_selected.connect(self._on_files_selected)
-
-SearchService Integration
--------------------------
-
-The ``SearchService`` (from ``pyqt_reactive.services.search_service``) provides
-framework-agnostic search with:
-
-- Minimum character threshold (default: 2)
-- Case-insensitive substring matching
-- Performance optimization for short queries
-
-See Also
+See also
 --------
 
-- :doc:`list_item_preview_system` - List widget styling patterns
-- :doc:`widget_protocol_system` - ABC contracts for widgets
-
+* :doc:`form_scroll_containment` for scrollbar and viewport ownership.
+* :doc:`widget_protocol_system` for generated-widget protocol boundaries.

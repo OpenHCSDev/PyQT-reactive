@@ -90,6 +90,62 @@ package-wide table of button labels.
 actions remain one right-aligned row whenever their real minimum widths fit and
 wrap only under actual pressure.
 
+``FormWindowActionHeader``
+--------------------------
+
+``FormWindowActionHeader`` gives action groups semantic placement through
+``HeaderActionGroupRole``:
+
+* ``TITLE_COMPANION`` keeps controls such as Help beside the title;
+* ``COMMIT`` keeps the commit group, such as Cancel and Save, at the top-right;
+* ``AUXILIARY`` places actions such as Reset and View Code at the right while
+  space permits and moves them together to the second row under pressure.
+
+The roles are the authority for stay priority and right alignment. When any
+group uses a role, every group must use one and callers must not also supply
+manual ``stay_priority`` or ``right_aligned_group_ids``. The older explicit
+placement arguments remain available only for role-free compositions.
+
+.. code-block:: python
+
+   from PyQt6.QtWidgets import QPushButton
+   from pyqt_reactive.widgets.shared.form_window_action_header import (
+       FormWindowActionHeader,
+       HeaderAction,
+       HeaderActionGroup,
+       HeaderActionGroupRole,
+   )
+
+   header = FormWindowActionHeader(
+       title_text="Configure RenderSettings",
+       action_groups=[
+           HeaderActionGroup(
+               "help",
+               [HeaderAction("help", QPushButton("Help"))],
+               role=HeaderActionGroupRole.TITLE_COMPANION,
+           ),
+           HeaderActionGroup(
+               "auxiliary",
+               [HeaderAction("reset", QPushButton("Reset"))],
+               role=HeaderActionGroupRole.AUXILIARY,
+           ),
+           HeaderActionGroup(
+               "commit",
+               [HeaderAction("save", QPushButton("Save"))],
+               role=HeaderActionGroupRole.COMMIT,
+           ),
+       ],
+   )
+
+``HeaderAction.id`` provides stable lookup through ``header.action(id)``.
+Call ``refresh_layout()`` after changing caller-owned action visibility. The
+title label reports height-for-width, so genuine wrapping increases the header
+height instead of clipping a second title line.
+
+The header owns geometry only. Code-mode behavior belongs to the window's
+:doc:`architecture/window_code_documents` driver, while save/cancel behavior
+belongs to the composing form.
+
 ``ResponsiveGroupBoxTitle``
 ---------------------------
 

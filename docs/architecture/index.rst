@@ -13,6 +13,8 @@ Core Form System
    parameter_form_service_architecture
    parameter_form_lifecycle
    parametric_widget_creation
+   enableable_form_ownership
+   form_scroll_containment
    widget_protocol_system
    field_change_dispatcher
    tabbed_form_registry_pattern
@@ -28,6 +30,7 @@ Service Layer
    service_registry
    scope_window_factory
    server_scanning_and_polling
+   window_code_documents
 
 Widget Components
 -----------------
