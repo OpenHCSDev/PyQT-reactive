@@ -942,14 +942,12 @@ class QScintillaCodeEditorDialog(QDialog):
                 pipeline_data = namespace.get('pipeline_data', {})
                 global_config = namespace.get('global_config')
                 per_plate_configs = namespace.get('per_plate_configs')
-                pipeline_config = namespace.get('pipeline_config')
 
                 new_code = provider.generate_complete_orchestrator_code(
                     plate_paths=plate_paths,
                     pipeline_data=pipeline_data,
                     global_config=global_config,
                     per_plate_configs=per_plate_configs,
-                    pipeline_config=pipeline_config,
                     clean_mode=self.clean_mode
                 )
             elif 'pipeline_steps' in namespace:

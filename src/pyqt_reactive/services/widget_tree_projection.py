@@ -10,8 +10,8 @@ from typing import ClassVar, TypeAlias, TypeVar
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtCore import QAbstractItemModel, QModelIndex, QPoint, QRect, Qt
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QAbstractButton,
+    QAbstractItemView,
     QAbstractSpinBox,
     QComboBox,
     QGroupBox,
@@ -21,10 +21,12 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPlainTextEdit,
     QStackedWidget,
+    QTabBar,
     QTabWidget,
     QTextEdit,
     QWidget,
 )
+
 from pyqt_reactive.services.widget_tree_projection_config import (
     DEFAULT_WIDGET_TREE_PROJECTION_POLICY,
     WidgetNodeIdentity,
@@ -33,7 +35,6 @@ from pyqt_reactive.services.widget_tree_projection_config import (
     WidgetTreeProjectionPolicy,
 )
 from pyqt_reactive.widgets.shared.styled_text_layout import StyledText, StyledTextLayout
-
 
 TextMethodWidget: TypeAlias = QLineEdit | QAbstractSpinBox
 PlainTextMethodWidget: TypeAlias = QTextEdit | QPlainTextEdit
@@ -95,6 +96,7 @@ class WidgetProjectionFields:
     current_index: int | None = None
     current_text: str | None = None
     item_count: int | None = None
+    item_texts: tuple[str, ...] = ()
 
     @classmethod
     def text_action(
@@ -137,6 +139,7 @@ class WidgetDescriptor(WidgetNodeIdentity):
     current_text: str | None
     item_count: int | None
     children: tuple["WidgetDescriptor", ...]
+    item_texts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,6 +495,40 @@ class QTabWidgetDescriptorProjector(WidgetDescriptorProjector):
             current_index=current_index,
             current_text=current_text,
             item_count=tab_widget.count(),
+            item_texts=tuple(
+                tab_widget.tabText(index) for index in range(tab_widget.count())
+            ),
+        )
+
+
+class QTabBarDescriptorProjector(WidgetDescriptorProjector):
+    """Project current selection for standalone tab bars."""
+
+    widget_type = QTabBar
+
+    def project(
+        self,
+        widget: QWidget,
+        policy: WidgetTreeProjectionPolicy,
+    ) -> WidgetProjectionFields:
+        del policy
+        tab_bar = self._require_type(widget, QTabBar)
+        current_index = tab_bar.currentIndex()
+        current_text = None
+        if current_index >= 0:
+            current_text = tab_bar.tabText(current_index)
+
+        is_actionable = tab_bar.isEnabled() and tab_bar.count() > 1
+        return WidgetProjectionFields(
+            action_kinds=(WidgetActionKind.TAB_SELECTOR,),
+            clickable=is_actionable,
+            actionable=is_actionable,
+            current_index=current_index,
+            current_text=current_text,
+            item_count=tab_bar.count(),
+            item_texts=tuple(
+                tab_bar.tabText(index) for index in range(tab_bar.count())
+            ),
         )
 
 
@@ -655,6 +692,7 @@ class WidgetTreeProjectionService:
             current_index=fields.current_index,
             current_text=fields.current_text,
             item_count=fields.item_count,
+            item_texts=fields.item_texts,
             children=children,
         )
 

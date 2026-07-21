@@ -12,7 +12,6 @@ class CodegenProvider(Protocol):
         pipeline_data: dict,
         global_config: Optional[Any] = None,
         per_plate_configs: Optional[dict] = None,
-        pipeline_config: Optional[Any] = None,
         clean_mode: bool = True,
     ) -> str:
         ...

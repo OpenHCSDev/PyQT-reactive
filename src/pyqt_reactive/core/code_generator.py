@@ -20,7 +20,6 @@ def generate_complete_orchestrator_code(
     pipeline_data: dict,
     global_config: Optional[Any] = None,
     per_plate_configs: Optional[dict] = None,
-    pipeline_config: Optional[Any] = None,
     clean_mode: bool = True,
 ) -> str:
     provider = _require_provider()
@@ -29,7 +28,6 @@ def generate_complete_orchestrator_code(
         pipeline_data=pipeline_data,
         global_config=global_config,
         per_plate_configs=per_plate_configs,
-        pipeline_config=pipeline_config,
         clean_mode=clean_mode,
     )
 

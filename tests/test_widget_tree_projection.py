@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSpinBox,
+    QTabBar,
     QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
@@ -100,6 +101,14 @@ def test_widget_tree_projection_describes_known_widget_families(qapp) -> None:
     tab_widget.setCurrentIndex(1)
     layout.addWidget(tab_widget)
 
+    tab_bar = QTabBar()
+    tab_bar.setObjectName("editor_tab_bar")
+    tab_bar.addTab("Step Settings")
+    tab_bar.addTab("Function Pattern")
+    tab_bar.addTab("Artifacts")
+    tab_bar.setCurrentIndex(2)
+    layout.addWidget(tab_bar)
+
     root.show()
     qapp.processEvents()
 
@@ -154,7 +163,19 @@ def test_widget_tree_projection_describes_known_widget_families(qapp) -> None:
     assert editor_tabs.current_index == 1
     assert editor_tabs.current_text == "Code"
     assert editor_tabs.item_count == 2
+    assert editor_tabs.item_texts == ("Visual", "Code")
     assert editor_tabs.action_kinds == (WidgetActionKind.TAB_SELECTOR,)
+
+    editor_tab_bar = descriptors["editor_tab_bar"]
+    assert editor_tab_bar.current_index == 2
+    assert editor_tab_bar.current_text == "Artifacts"
+    assert editor_tab_bar.item_count == 3
+    assert editor_tab_bar.item_texts == (
+        "Step Settings",
+        "Function Pattern",
+        "Artifacts",
+    )
+    assert editor_tab_bar.action_kinds == (WidgetActionKind.TAB_SELECTOR,)
 
 
 def test_widget_projector_registry_resolves_qt_mro(qapp) -> None:
