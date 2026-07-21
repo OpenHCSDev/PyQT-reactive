@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QLabel
 
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
     AbstractTableBrowser,
@@ -126,6 +127,21 @@ def test_abstract_browser_composes_column_filters_with_external_projection(qapp)
         {"b": browser.all_items["b"], "c": browser.all_items["c"]}
     )
     assert tuple(browser.filtered_items) == ("c",)
+
+
+def test_abstract_browser_stacks_context_above_same_generic_filter_panel(qapp) -> None:
+    browser = _ExampleTableBrowser(_columns(), ColumnPresentationState())
+    context_widget = QLabel("Domain context")
+
+    browser.set_column_filter_context_widget(context_widget)
+
+    assert browser.column_filter_context_widget is context_widget
+    assert browser.column_filter_splitter.orientation() is Qt.Orientation.Vertical
+    assert browser.column_filter_splitter.widget(0) is context_widget
+    assert browser.column_filter_splitter.widget(1) is browser.column_filter_panel
+    assert browser.content_splitter.orientation() is Qt.Orientation.Horizontal
+    assert browser.content_splitter.widget(0) is browser.column_filter_splitter
+    assert browser.content_splitter.widget(1) is browser.table_widget
 
 
 def test_columns_control_remains_visible_when_filter_body_is_empty(qapp) -> None:

@@ -261,15 +261,47 @@ class AbstractTableBrowser(QWidget, Generic[T]):
             column_presentation=self.column_presentation,
             parent=self,
         )
-        content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        content_splitter.addWidget(self.column_filter_panel)
-        content_splitter.addWidget(self.table_widget)
-        content_splitter.setStretchFactor(0, 0)
-        content_splitter.setStretchFactor(1, 1)
-        layout.addWidget(content_splitter, 1)
+        self._column_filter_context_widget: QWidget | None = None
+        self.column_filter_splitter = QSplitter(Qt.Orientation.Vertical, self)
+        self.column_filter_splitter.addWidget(self.column_filter_panel)
+
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.content_splitter.addWidget(self.column_filter_splitter)
+        self.content_splitter.addWidget(self.table_widget)
+        self.content_splitter.setStretchFactor(0, 0)
+        self.content_splitter.setStretchFactor(1, 1)
+        layout.addWidget(self.content_splitter, 1)
         
         # Apply styling
         self.table_widget.setStyleSheet(self.style_gen.generate_table_widget_style())
+
+    @property
+    def column_filter_context_widget(self) -> QWidget | None:
+        """Return the optional widget stacked above the column-filter panel."""
+
+        return self._column_filter_context_widget
+
+    def set_column_filter_context_widget(self, widget: QWidget | None) -> None:
+        """Place a domain-owned context widget above the generic filter panel.
+
+        The table browser retains ownership of filter construction and state;
+        consumers can contribute spatial context without reparenting or
+        reconstructing :attr:`column_filter_panel` themselves.
+        """
+
+        current = self._column_filter_context_widget
+        if current is widget:
+            return
+        if current is not None:
+            current.setParent(None)
+
+        self._column_filter_context_widget = widget
+        if widget is None:
+            return
+
+        self.column_filter_splitter.insertWidget(0, widget)
+        self.column_filter_splitter.setStretchFactor(0, 1)
+        self.column_filter_splitter.setStretchFactor(1, 1)
 
     def _configure_table(self):
         """Configure table based on column definitions."""
