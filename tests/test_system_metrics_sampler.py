@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 
 import pytest
 
 from pyqt_reactive.services import system_metrics_sampler as sampler_module
+from pyqt_reactive.services.parameter_help_service import (
+    dataclass_parameter_descriptions,
+)
 from pyqt_reactive.services.system_metrics_sampler import (
     BackgroundMetricPoller,
     GpuMetrics,
@@ -14,6 +17,18 @@ from pyqt_reactive.services.system_metrics_sampler import (
     SystemMetricsSampler,
     SystemMetricsSamplerConfig,
 )
+
+
+def test_sampler_config_projects_complete_declaration_help() -> None:
+    descriptions = dataclass_parameter_descriptions(SystemMetricsSamplerConfig)
+    field_names = {field.name for field in fields(SystemMetricsSamplerConfig)}
+
+    assert set(descriptions) == field_names
+    assert all(descriptions[name].strip() for name in field_names)
+    assert "GPU utilization and memory metrics" in descriptions[
+        "enable_gpu_monitoring"
+    ]
+    assert "interval in seconds" in descriptions["cpu_frequency_refresh_seconds"]
 
 
 @dataclass(frozen=True, slots=True)

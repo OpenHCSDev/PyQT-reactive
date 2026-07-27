@@ -98,7 +98,19 @@ class BackgroundMetricPoller:
 
 @dataclass(frozen=True, slots=True)
 class SystemMetricsSamplerConfig:
-    """Typed policy for expensive system metric providers."""
+    """Typed policy for expensive system metric providers.
+
+    Args:
+        enable_gpu_monitoring: Sample GPU utilization and memory metrics when
+            enabled; disabling this avoids GPU provider and process discovery.
+        gpu_temperature_monitoring: Include GPU temperature in GPU samples when
+            GPU monitoring is enabled.
+        cpu_frequency_monitoring: Sample the current CPU frequency through a
+            cached background probe.
+        gpu_refresh_seconds: Positive interval in seconds between GPU samples.
+        cpu_frequency_refresh_seconds: Positive interval in seconds between CPU
+            frequency samples.
+    """
 
     enable_gpu_monitoring: bool = True
     gpu_temperature_monitoring: bool = True
