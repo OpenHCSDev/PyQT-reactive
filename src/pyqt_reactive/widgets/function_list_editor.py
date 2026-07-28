@@ -13,10 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Union, Dict, Optional, Any, Callable
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QScrollArea
-)
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QScrollArea
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from pyqt_reactive.protocols import (
@@ -63,6 +60,7 @@ class PatternMutation:
     mutate: Callable[[], None]
     refresh_ui: Callable[[], None] | None = None
     persist_selected_key: bool = True
+    requires_authorization: bool = True
 
     @classmethod
     def refreshed(
@@ -75,7 +73,10 @@ class PatternMutation:
 
     @classmethod
     def parameter_update(cls, mutate: Callable[[], None]) -> "PatternMutation":
-        return cls(None, mutate, None, False)
+        # ParameterFormManager authorizes before its ObjectState write. This
+        # callback only synchronizes the already-authorized value into the
+        # owning pattern and must not introduce a second, post-write check.
+        return cls(None, mutate, None, False, False)
 
 
 class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
@@ -109,12 +110,21 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     ) -> None:
         storage = object.__getattribute__(self, "__dict__")
         storage["_pattern_code_documents"] = service
-    
-    def __init__(self, initial_functions: Union[List, Dict, callable, None] = None,
-                  context_identifier: str = None, service_adapter=None, color_scheme: Optional[ColorScheme] = None,
-                  scope_id: Optional[str] = None, parent=None, render_header: bool = True,
-                  button_style: Optional[str] = None, scope_index: Optional[int] = None,
-                  invocation_badge_provider: Optional[Callable[[str, int, Callable], Optional[str]]] = None):
+
+    def __init__(
+        self,
+        initial_functions: Union[List, Dict, callable, None] = None,
+        context_identifier: str = None,
+        service_adapter=None,
+        color_scheme: Optional[ColorScheme] = None,
+        scope_id: Optional[str] = None,
+        parent=None,
+        render_header: bool = True,
+        button_style: Optional[str] = None,
+        scope_index: Optional[int] = None,
+        invocation_badge_provider: Optional[Callable[[str, int, Callable], Optional[str]]] = None,
+        before_mutation: Optional[Callable[[], None]] = None,
+    ):
         super().__init__(parent)
 
         # Initialize theme surface
@@ -122,6 +132,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         self._render_header = render_header
         self.header_label: Optional[QLabel] = None
         self._button_style = button_style  # Store centralized button style
+        self._before_mutation = before_mutation
 
         # Context configuration properties (mirrors Textual TUI)
         self.current_group_by = None  # Current GroupBy setting from context form
@@ -147,7 +158,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         self._action_buttons_container = DetachableActionBar(
             object_name="func_action_buttons_container"
         )
-        
+
         add_btn = QPushButton("Add")
         add_btn.setMaximumWidth(60)
         add_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
@@ -196,9 +207,13 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         self.component_selection_provider = get_component_selection_provider()
         self.function_selection_provider = get_function_selection_provider()
         if self.component_selection_provider is None:
-            raise RuntimeError("No component selection provider registered. Call register_component_selection_provider(...).")
+            raise RuntimeError(
+                "No component selection provider registered. Call register_component_selection_provider(...)."
+            )
         if self.function_selection_provider is None:
-            raise RuntimeError("No function selection provider registered. Call register_function_selection_provider(...).")
+            raise RuntimeError(
+                "No function selection provider registered. Call register_function_selection_provider(...)."
+            )
         self._groupby_enum = self.component_selection_provider.get_groupby_enum()
         self.data_manager = PatternDataManager()
         self.pattern_code_documents = FunctionPatternCodeDocumentService()
@@ -366,9 +381,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         state = self._get_context_state()
         if state is None:
             return
-        state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = copy.deepcopy(
-            self._pattern_tokens
-        )
+        state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = copy.deepcopy(self._pattern_tokens)
 
     @staticmethod
     def _sanitize_pattern_kwargs(kwargs: dict | None) -> FunctionKwargs:
@@ -498,9 +511,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             self.selected_pattern_key = prev_selected
             self.functions = self.pattern_data.get(prev_selected, [])
             if isinstance(self._pattern_tokens, dict):
-                self._current_function_tokens = list(
-                    self._pattern_tokens.get(prev_selected, [])
-                )
+                self._current_function_tokens = list(self._pattern_tokens.get(prev_selected, []))
 
         # Fast path: if this is only a reorder (same tokens/functions), move panes in-place.
         new_tokens: list[str] = list(self._current_function_tokens)
@@ -825,11 +836,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        
+
         # Header with controls (only if render_header=True)
         if self._render_header:
             header_layout = QHBoxLayout()
-            
+
             # Store as instance attribute for scope accent styling
             self.header_label = QLabel("Functions")
             self.header_label.setStyleSheet(
@@ -837,12 +848,12 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 "font-weight: bold; font-size: 14px;"
             )
             header_layout.addWidget(self.header_label)
-            
+
             header_layout.addStretch()
-            
+
             # Add action buttons to header
             header_layout.addWidget(self._action_buttons_container)
-            
+
             header_layout.addStretch()
             layout.addLayout(header_layout)
         else:
@@ -863,16 +874,16 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 border-radius: 4px;
             }}
         """)
-        
+
         # Function list container
         self.function_container = QWidget()
         self.function_layout = QVBoxLayout(self.function_container)
         self.function_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.function_layout.setSpacing(8)
-        
+
         # Populate function list
         self._populate_function_list()
-        
+
         self.scroll_area.setWidget(self.function_container)
         layout.addWidget(self.scroll_area)
 
@@ -920,7 +931,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         from pyqt_reactive.animation import WindowFlashOverlay
 
         WindowFlashOverlay.invalidate_cache_for_widget(self)  # type: ignore[arg-type]
-    
+
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
         if self._button_style:
@@ -957,7 +968,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             else "default"
         )
         return self.invocation_badge_provider(group_key, index, func)
-    
+
     def _populate_function_list(self):
         """Populate function list with panes (mirrors Textual TUI)."""
         # NOTE: We do NOT destroy function ObjectStates or clear scope tokens here.
@@ -986,7 +997,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 widget.form_manager.unregister_from_cross_window_updates()
 
             widget.deleteLater()  # Schedule for deletion instead of just orphaning
-        
+
         func_scope_prefix = self._get_current_function_state_parent_scope()
 
         if not self.functions:
@@ -1002,9 +1013,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             # Create function panes
             for i, func_item in enumerate(self.functions):
                 if i >= len(self._current_function_tokens):
-                    self._current_function_tokens.append(
-                        self.pattern_code_documents.ensure_token()
-                    )
+                    self._current_function_tokens.append(self.pattern_code_documents.ensure_token())
                     self._set_tokens_for_current_view(self._current_function_tokens)
                     self._persist_pattern_tokens_to_state()
                 pane = FunctionPaneWidget(
@@ -1017,13 +1026,16 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                     func_scope_token=self._current_function_tokens[i],
                     scope_index=self.scope_index,
                     invocation_badge_text=self._invocation_badge_text(i, func_item),
+                    before_mutation=self._before_mutation,
                 )
 
                 # Connect signals (using actual FunctionPaneWidget signal names)
                 pane.move_function.connect(self._move_function)
                 pane.add_function.connect(self._add_function_at_index)
                 pane.remove_function.connect(self._remove_function)
-                pane.parameter_changed.connect(self._on_parameter_changed, type=Qt.ConnectionType.DirectConnection)
+                pane.parameter_changed.connect(
+                    self._on_parameter_changed, type=Qt.ConnectionType.DirectConnection
+                )
 
                 self.function_panes.append(pane)
                 self.function_layout.addWidget(pane)
@@ -1038,7 +1050,10 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 if pane.form_manager is not None:
                     # Use QTimer to ensure this runs after the widget is fully constructed
                     from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda p=pane: self._apply_initial_enabled_styling_to_pane(p))
+
+                    QTimer.singleShot(
+                        0, lambda p=pane: self._apply_initial_enabled_styling_to_pane(p)
+                    )
 
         # Apply scope styling to all child widgets (GroupBoxWithHelp, HelpButton, etc.)
         # This must be done AFTER all panes are created so findChildren() finds them all
@@ -1070,12 +1085,15 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         try:
             if pane.form_manager is not None:
                 # Check if the form manager has an enabled field
-                if 'enabled' in pane.form_manager.parameters:
+                if "enabled" in pane.form_manager.parameters:
                     # CRITICAL FIX: Call the service method, not a non-existent manager method
-                    pane.form_manager._enabled_field_styling_service.apply_initial_enabled_styling(pane.form_manager)
+                    pane.form_manager._enabled_field_styling_service.apply_initial_enabled_styling(
+                        pane.form_manager
+                    )
         except Exception as e:
             # Log error but don't crash the UI
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to apply initial enabled styling to function pane: {e}")
 
@@ -1102,6 +1120,8 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         mutation: PatternMutation,
     ) -> None:
         """Apply one pattern mutation through a single synchronization path."""
+        if mutation.requires_authorization and self._before_mutation is not None:
+            self._before_mutation()
         ctx = (
             ObjectStateRegistry.atomic(mutation.label)
             if mutation.label is not None
@@ -1122,12 +1142,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         selected_function = self.function_selection_provider.select_function(parent=self)
 
         if selected_function:
+
             def mutate() -> None:
                 new_func_item = (selected_function, {})
                 self.functions.append(new_func_item)
-                self._current_function_tokens.append(
-                    self.pattern_code_documents.ensure_token()
-                )
+                self._current_function_tokens.append(self.pattern_code_documents.ensure_token())
 
             self._commit_pattern_mutation(
                 PatternMutation.refreshed(
@@ -1145,7 +1164,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         # Validation guard: Check for empty patterns
         if not self.functions and not self.pattern_data:
             if self.service_adapter:
-                self.service_adapter.show_info_dialog("No function pattern to edit. Add functions first.")
+                self.service_adapter.show_info_dialog(
+                    "No function pattern to edit. Add functions first."
+                )
             return
 
         try:
@@ -1157,10 +1178,15 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
             # Create simple code editor service
             from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
+
             editor_service = SimpleCodeEditorService(self)
 
             # Check if user wants external editor (check environment variable)
-            use_external = os.environ.get('OPENHCS_USE_EXTERNAL_EDITOR', '').lower() in ('1', 'true', 'yes')
+            use_external = os.environ.get("OPENHCS_USE_EXTERNAL_EDITOR", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
 
             # Launch editor with callback and code_type for clean mode toggle
             editor_service.edit_code(
@@ -1168,8 +1194,8 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 title="Edit Function Pattern",
                 callback=self._handle_edited_pattern,
                 use_external=use_external,
-                code_type='function',
-                code_data={'pattern_data': self.pattern_data, 'clean_mode': True}
+                code_type="function",
+                code_data={"pattern_data": self.pattern_data, "clean_mode": True},
             )
 
         except Exception as e:
@@ -1206,6 +1232,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         """Apply the edited pattern back to the UI."""
         from objectstate import ObjectStateRegistry
 
+        if self._before_mutation is not None:
+            self._before_mutation()
+
         # ATOMIC: Coalesce all register + edit snapshots into single "code edit" snapshot
         # Without this, code mode creates multiple snapshots (one per function register + edit func)
         with ObjectStateRegistry.atomic("code edit"):
@@ -1215,9 +1244,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         """Internal implementation of apply_edited_pattern (wrapped in atomic block)."""
         try:
             self._seed_func_token_generator()
-            old_entries = self._iter_tokenized_entries(
-                self.pattern_data, self._pattern_tokens
-            )
+            old_entries = self._iter_tokenized_entries(self.pattern_data, self._pattern_tokens)
 
             # Get the new function list BEFORE updating self.functions
             if self.is_dict_mode:
@@ -1259,9 +1286,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 else:
                     raise ValueError("Expected dict pattern for dict mode")
             else:
-                seed_tokens = (
-                    self._pattern_tokens if isinstance(self._pattern_tokens, list) else []
-                )
+                seed_tokens = self._pattern_tokens if isinstance(self._pattern_tokens, list) else []
                 if isinstance(new_pattern, list):
                     new_functions, new_current_tokens = self._normalize_function_list(
                         new_pattern,
@@ -1269,9 +1294,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                     )
                 elif callable(new_pattern):
                     new_functions = [(new_pattern, {})]
-                    new_current_tokens = [
-                        self.pattern_code_documents.ensure_token()
-                    ]
+                    new_current_tokens = [self.pattern_code_documents.ensure_token()]
                 elif (
                     isinstance(new_pattern, tuple)
                     and len(new_pattern) == 2
@@ -1280,11 +1303,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 ):
                     func, kwargs = new_pattern
                     new_functions = [(func, self._sanitize_pattern_kwargs(kwargs))]
-                    new_current_tokens = [
-                        self.pattern_code_documents.ensure_token()
-                    ]
+                    new_current_tokens = [self.pattern_code_documents.ensure_token()]
                 else:
-                    raise ValueError(f"Expected list, callable, or (callable, dict) tuple pattern for list mode, got {type(new_pattern)}")
+                    raise ValueError(
+                        f"Expected list, callable, or (callable, dict) tuple pattern for list mode, got {type(new_pattern)}"
+                    )
 
             # CRITICAL FIX: Update existing function ObjectStates with new kwargs BEFORE
             # creating new widgets. This preserves dirty detection - the ObjectState's
@@ -1349,6 +1372,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     def _patch_lazy_constructors(self):
         """Context manager that patches lazy dataclass constructors to preserve None vs concrete distinction."""
         from objectstate import patch_lazy_constructors
+
         return patch_lazy_constructors()
 
     def _move_function(self, index, direction):
@@ -1393,8 +1417,10 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             return
 
         # Swap panes in our tracking list
-        self.function_panes[old_index], self.function_panes[new_index] = \
-            self.function_panes[new_index], self.function_panes[old_index]
+        self.function_panes[old_index], self.function_panes[new_index] = (
+            self.function_panes[new_index],
+            self.function_panes[old_index],
+        )
 
         # Update indices on the panes
         for i, pane in enumerate(self.function_panes):
@@ -1410,13 +1436,14 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
         for i, pane in enumerate(self.function_panes):
             self.function_layout.insertWidget(i, pane)
-    
+
     def _add_function_at_index(self, index):
         """Add function at specific index (mirrors Textual TUI)."""
         # Show function selector dialog via provider
         selected_function = self.function_selection_provider.select_function(parent=self)
 
         if selected_function:
+
             def mutate() -> None:
                 new_func_item = (selected_function, {})
                 self.functions.insert(index, new_func_item)
@@ -1432,7 +1459,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 )
             )
             logger.debug(f"Added function at index {index}: {selected_function.__name__}")
-    
+
     def _remove_function(self, index: int) -> None:
         """Remove function at index."""
         if not (0 <= index < len(self.functions)):
@@ -1447,9 +1474,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 if index < len(self._current_function_tokens)
                 else None
             )
-            self._unregister_function_states_for_functions(
-                [func_item], channel_key, tokens=token
-            )
+            self._unregister_function_states_for_functions([func_item], channel_key, tokens=token)
             self.functions.pop(index)
             if index < len(self._current_function_tokens):
                 self._current_function_tokens.pop(index)
@@ -1461,7 +1486,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 self._populate_function_list,
             )
         )
-    
+
     def _on_parameter_changed(self, index, param_name, value):
         """Handle parameter change from function pane.
 
@@ -1474,6 +1499,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         if self._pattern_event_suppression_depth > 0:
             return
         if 0 <= index < len(self.function_panes):
+
             def mutate() -> None:
                 # Get the updated kwargs from the function pane (already reconstructed)
                 pane = self.function_panes[index]
@@ -1538,7 +1564,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             return normalized_list
 
         return self.pattern_data
-    
+
     def set_functions(self, functions):
         """Set function list and refresh display."""
         normalized, tokens = self._normalize_function_list(functions or [])
@@ -1582,7 +1608,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         if not scheme.step_border_layers:
             return
 
-        from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton, HelpIndicator, GroupBoxWithHelp
+        from pyqt_reactive.widgets.shared.clickable_help_components import (
+            HelpButton,
+            HelpIndicator,
+            GroupBoxWithHelp,
+        )
         from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
 
         # Compute accent color from scheme (same logic as ScopedBorderMixin.get_scope_accent_color)
@@ -1668,7 +1698,8 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         def cleanup_subscription():
             if self._resolved_change_callback is not None and self._subscribed_state is not None:
                 self._subscribed_state.off_resolved_changed(self._resolved_change_callback)
-                logger.debug(f"🔔 FUNC_EDITOR: Unsubscribed from ObjectState on destruction")
+                logger.debug("🔔 FUNC_EDITOR: Unsubscribed from ObjectState on destruction")
+
         self.destroyed.connect(cleanup_subscription)
 
     def set_effective_group_by(self, group_by: Enum | None) -> None:
@@ -1719,10 +1750,13 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     def _is_component_button_disabled(self) -> bool:
         """Check if component selection button should be disabled (mirrors Textual TUI)."""
         return (
-            self.current_group_by is None or
-            self.current_group_by == self._groupby_enum.NONE or
-            (self.current_variable_components and
-             self.current_group_by.value in [vc.value for vc in self.current_variable_components])
+            self.current_group_by is None
+            or self.current_group_by == self._groupby_enum.NONE
+            or (
+                self.current_variable_components
+                and self.current_group_by.value
+                in [vc.value for vc in self.current_variable_components]
+            )
         )
 
     def show_component_selection_dialog(self):
@@ -1764,6 +1798,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
     def _handle_component_selection(self, new_components):
         """Handle component selection result (mirrors Textual TUI)."""
+        if self._before_mutation is not None:
+            self._before_mutation()
+
         # Save selection to cache for current group_by
         if self.current_group_by is not None and self.current_group_by != self._groupby_enum.NONE:
             self.component_selections[self.current_group_by] = new_components
@@ -1796,12 +1833,8 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             if self.is_dict_mode:
                 # We're discarding dict-mode keys. Unregister function ObjectStates
                 # for all keys so we don't leak stale states.
-                old_pattern = (
-                    self.pattern_data if isinstance(self.pattern_data, dict) else {}
-                )
-                old_tokens = (
-                    self._pattern_tokens if isinstance(self._pattern_tokens, dict) else {}
-                )
+                old_pattern = self.pattern_data if isinstance(self.pattern_data, dict) else {}
+                old_tokens = self._pattern_tokens if isinstance(self._pattern_tokens, dict) else {}
                 for old_key, old_functions in old_pattern.items():
                     # Keep the currently selected channel's function states.
                     # Those functions become the new list-mode pattern.
@@ -1815,7 +1848,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
                 # Save current functions to list mode
                 self.pattern_data = self.functions
-                selected_key = str(self.selected_pattern_key) if self.selected_pattern_key is not None else ""
+                selected_key = (
+                    str(self.selected_pattern_key) if self.selected_pattern_key is not None else ""
+                )
                 self._pattern_tokens = (
                     list(old_tokens.get(selected_key, []))
                     if isinstance(old_tokens, dict)
@@ -1855,11 +1890,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                     self._pattern_tokens[component_key] = list(list_tokens)  # type: ignore[index]
             else:
                 # Already in dict mode - update components
-                old_pattern = self.pattern_data.copy() if isinstance(self.pattern_data, dict) else {}
+                old_pattern = (
+                    self.pattern_data.copy() if isinstance(self.pattern_data, dict) else {}
+                )
                 old_tokens = (
-                    self._pattern_tokens.copy()
-                    if isinstance(self._pattern_tokens, dict)
-                    else {}
+                    self._pattern_tokens.copy() if isinstance(self._pattern_tokens, dict) else {}
                 )
 
                 # Create a persistent storage for deselected components (mirrors Textual TUI)
@@ -1875,7 +1910,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                             str(old_key),
                             tokens=list(old_tokens.get(str(old_key), [])),
                         )
-                        logger.debug(f"Saved {len(old_functions)} functions for deselected component {old_key}")
+                        logger.debug(
+                            f"Saved {len(old_functions)} functions for deselected component {old_key}"
+                        )
 
                 new_pattern = {}
                 new_tokens: Dict[str, List[str]] = {}
@@ -1894,22 +1931,26 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                     if component_key in old_pattern:
                         # Component was already selected - keep its functions
                         new_pattern[component_key] = old_pattern[component_key]
-                        new_tokens[component_key] = list(
-                            old_tokens.get(str(component_key), [])
-                        )
+                        new_tokens[component_key] = list(old_tokens.get(str(component_key), []))
                     elif component_key in self._deselected_components_storage:
                         # Component was previously deselected - restore its functions
-                        new_pattern[component_key] = self._deselected_components_storage[component_key]
-                        new_tokens[component_key] = list(
-                            old_tokens.get(str(component_key), [])
+                        new_pattern[component_key] = self._deselected_components_storage[
+                            component_key
+                        ]
+                        new_tokens[component_key] = list(old_tokens.get(str(component_key), []))
+                        logger.debug(
+                            f"Restored {len(new_pattern[component_key])} functions for reselected component {component_key}"
                         )
-                        logger.debug(f"Restored {len(new_pattern[component_key])} functions for reselected component {component_key}")
                     else:
                         # New component - copy from reference pattern if available
                         if reference_functions is not None:
                             new_pattern[component_key] = list(reference_functions)
-                            new_tokens[component_key] = list(reference_tokens) if reference_tokens else []
-                            logger.debug(f"Copied {len(reference_functions)} functions to new component {component_key}")
+                            new_tokens[component_key] = (
+                                list(reference_tokens) if reference_tokens else []
+                            )
+                            logger.debug(
+                                f"Copied {len(reference_functions)} functions to new component {component_key}"
+                            )
                         else:
                             # No reference available - start with empty functions
                             new_pattern[component_key] = []
@@ -1958,23 +1999,21 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         # Buttons exist regardless of render_header; DualEditorWindow embeds
         # the action button container when render_header=False.
         show_nav = (
-            self.is_dict_mode
-            and isinstance(self.pattern_data, dict)
-            and len(self.pattern_data) > 1
+            self.is_dict_mode and isinstance(self.pattern_data, dict) and len(self.pattern_data) > 1
         )
 
         self.prev_key_btn.setVisible(show_nav)
         self.next_key_btn.setVisible(show_nav)
-    
+
     def _navigate_pattern_key(self, direction: int):
         """Navigate to next/previous pattern key (with looping)."""
         if not self.is_dict_mode or not isinstance(self.pattern_data, dict):
             return
-        
+
         keys = sorted(self.pattern_data.keys())
         if len(keys) <= 1:
             return
-        
+
         try:
             current_index = keys.index(self.selected_pattern_key)
             new_index = (current_index + direction) % len(keys)
@@ -2043,9 +2082,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
             if func is None:
                 continue
-            clean_kwargs = self._sanitize_pattern_kwargs(
-                kwargs if isinstance(kwargs, dict) else {}
-            )
+            clean_kwargs = self._sanitize_pattern_kwargs(kwargs if isinstance(kwargs, dict) else {})
             sanitized_functions.append((func, clean_kwargs))
         self.functions = sanitized_functions
         if len(self._current_function_tokens) < len(self.functions):
@@ -2054,9 +2091,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 self.pattern_code_documents.ensure_token() for _ in range(missing)
             )
         elif len(self._current_function_tokens) > len(self.functions):
-            self._current_function_tokens = self._current_function_tokens[
-                : len(self.functions)
-            ]
+            self._current_function_tokens = self._current_function_tokens[: len(self.functions)]
 
         if self.is_dict_mode and self.selected_pattern_key is not None:
             # Save current functions to the selected channel
@@ -2067,7 +2102,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             new_pattern[self.selected_pattern_key] = self.functions.copy()
             self.pattern_data = new_pattern
             self._set_tokens_for_current_view(self._current_function_tokens)
-            logger.debug(f"Saving {len(self.functions)} functions to key {self.selected_pattern_key}")
+            logger.debug(
+                f"Saving {len(self.functions)} functions to key {self.selected_pattern_key}"
+            )
         else:
             # List mode - pattern_data is a COPY of functions list
             # CRITICAL: Must be a copy so ObjectState equality check detects changes

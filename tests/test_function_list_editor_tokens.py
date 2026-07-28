@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
 from objectstate.object_state_registry import ObjectStateRegistry
-from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
+from pyqt_reactive.widgets.function_list_editor import (
+    FunctionListEditorWidget,
+    PatternMutation,
+)
 
 
 def _reset_registry() -> None:
@@ -80,3 +84,52 @@ def test_function_editor_replaces_stale_sidecar_scope_token() -> None:
     )
 
     assert tokens == ["cellprofilerruntimecallable_0"]
+
+
+def test_pattern_mutation_authorization_runs_before_local_write() -> None:
+    editor = FunctionListEditorWidget.__new__(FunctionListEditorWidget)
+    values = ["original"]
+    editor._before_mutation = lambda: (_ for _ in ()).throw(RuntimeError("mutation rejected"))
+
+    with pytest.raises(RuntimeError, match="mutation rejected"):
+        editor._commit_pattern_mutation(
+            PatternMutation.refreshed(
+                "replace value",
+                lambda: values.__setitem__(0, "mutated"),
+                lambda: None,
+            )
+        )
+
+    assert values == ["original"]
+
+
+def test_parameter_synchronization_does_not_reauthorize_after_form_write() -> None:
+    values = ["before"]
+    editor = SimpleNamespace(
+        _before_mutation=lambda: (_ for _ in ()).throw(
+            AssertionError("post-write authorization must not run")
+        ),
+        _update_pattern_data=lambda: None,
+        _emit_pattern_changed=lambda: None,
+    )
+
+    FunctionListEditorWidget._commit_pattern_mutation(
+        editor,
+        PatternMutation.parameter_update(
+            lambda: values.__setitem__(0, "after"),
+        ),
+    )
+
+    assert values == ["after"]
+
+
+def test_code_pattern_authorization_precedes_atomic_edit() -> None:
+    editor = FunctionListEditorWidget.__new__(FunctionListEditorWidget)
+    applied: list[object] = []
+    editor._before_mutation = lambda: (_ for _ in ()).throw(RuntimeError("mutation rejected"))
+    editor._apply_edited_pattern_internal = applied.append
+
+    with pytest.raises(RuntimeError, match="mutation rejected"):
+        editor._apply_edited_pattern([(sample_function, {})])
+
+    assert applied == []

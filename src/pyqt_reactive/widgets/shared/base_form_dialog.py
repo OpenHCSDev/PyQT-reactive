@@ -12,7 +12,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QDialog, QLabel, QPushButton
+from PyQt6.QtWidgets import QDialog, QLabel, QMessageBox, QPushButton
 
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.window_navigation import (
@@ -135,13 +135,40 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
     def agent_save_managed_window(self, *, close_window: bool) -> None:
         """Save this managed window through its domain save workflow."""
-        raise NotImplementedError(
-            f"{type(self).__name__} does not expose managed-window save."
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not expose managed-window save.")
 
     def agent_discard_and_close_managed_window(self) -> None:
         """Discard unsaved edits and close through the normal cancel path."""
         self.reject()
+
+    def require_managed_state_mutation_allowed(self) -> None:
+        """Application hook authorizing save/discard state mutations."""
+
+    def managed_state_mutation_allowed(self, action: str) -> bool:
+        """Project failed mutation authorization through one window boundary."""
+
+        try:
+            self.require_managed_state_mutation_allowed()
+        except Exception as error:
+            QMessageBox.warning(self, f"{action} Rejected", str(error))
+            return False
+        return True
+
+    def restore_managed_state(self) -> None:
+        """Restore state owned by this managed window."""
+
+        state = self.state
+        if state:
+            self.state_restore_policy.restore(state)
+
+    def before_managed_reject(self) -> None:
+        """Subclass hook before an authorized reject."""
+
+    def after_managed_reject(self) -> None:
+        """Subclass hook after an authorized reject."""
+
+    def before_managed_close(self) -> None:
+        """Subclass hook before an authorized close event."""
 
     def apply_dirty_window_presentation(self) -> None:
         """Apply this window's current dirty presentation to its widgets."""
@@ -165,7 +192,6 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         """React to managed dirty-state changes."""
         del has_changes
         self.apply_dirty_window_presentation()
-
 
     def show(self) -> None:
         """Override show to enforce singleton-per-scope behavior."""
@@ -242,22 +268,26 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
     def reject(self):
         """Restore the managed ObjectState before rejecting the dialog."""
-        state = self.state
-        if state:
-            logger.debug("[BASE_FORM_DIALOG] Restoring ObjectState to saved state")
-            self.state_restore_policy.restore(state)
+        if not self.managed_state_mutation_allowed("Cancel"):
+            return
+        self.before_managed_reject()
+        logger.debug("[BASE_FORM_DIALOG] Restoring ObjectState to saved state")
+        self.restore_managed_state()
 
         super().reject()
         self._unregister_managed_window()
         self._cleanup_window_flash_overlay()
         self._cleanup_managed_listeners()
+        self.after_managed_reject()
 
     def closeEvent(self, event):
         """Restore managed state and unregister the window on close."""
-        state = self.state
-        if state:
-            logger.debug("[BASE_FORM_DIALOG] Restoring ObjectState on closeEvent")
-            self.state_restore_policy.restore(state)
+        if not self.managed_state_mutation_allowed("Close"):
+            event.ignore()
+            return
+        self.before_managed_close()
+        logger.debug("[BASE_FORM_DIALOG] Restoring ObjectState on closeEvent")
+        self.restore_managed_state()
 
         self._unregister_managed_window()
         self._cleanup_window_flash_overlay()
@@ -307,9 +337,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
             return
 
         for form_manager in form_managers:
-            form_manager.parameter_changed.connect(
-                self._on_parameter_changed_for_change_detection
-            )
+            form_manager.parameter_changed.connect(self._on_parameter_changed_for_change_detection)
             logger.debug(
                 "[CHANGE_DETECTION] Connected to %s parameter_changed",
                 form_manager.field_id,

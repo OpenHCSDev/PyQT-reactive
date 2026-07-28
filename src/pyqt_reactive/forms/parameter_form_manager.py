@@ -9,6 +9,7 @@ from PyQt6.QtGui import QColor
 
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.animation.flash_trace import flash_trace
+
 # FlashableGroupBox not extracted - OpenHCS specific
 from objectstate import (
     DataclassFieldAccess,
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     from pyqt_reactive.widgets.structural_table import StructuralFlashTarget
 
 from .widget_creation_types import ParameterFormManager as ParameterFormManagerABC, _CombinedMeta
+
 # timer decorator made optional
 from .widget_operations import WidgetOperations
 from .widget_strategies import create_pyqt6_widget
@@ -32,6 +34,7 @@ from .parameter_form_tree_index import ParameterFormTreeIndex
 from pyqt_reactive.services.value_collection_service import ValueCollectionService
 from pyqt_reactive.services.signal_service import SignalService
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
+
 # LiveContextService deleted - functionality moved to ObjectStateRegistry
 from pyqt_reactive.services.flag_context_manager import FlagContextManager
 from .form_init_service import FormBuildOrchestrator
@@ -51,12 +54,16 @@ from contextlib import contextmanager
 try:
     from pyqt_reactive.core.performance_monitor import timer
 except Exception:  # pragma: no cover - optional performance monitoring
+
     @contextmanager
     def timer(*args, **kwargs):
         yield
 
+
 logger = logging.getLogger(__name__)
 _PFM_SEQ = 0
+
+
 @dataclass
 class FormManagerConfig:
     """
@@ -67,22 +74,30 @@ class FormManagerConfig:
 
     Follows OpenHCS dataclass-based configuration patterns.
     """
+
     parent: Optional[QWidget] = None
     context_obj: Optional[FormContext] = None
     exclude_params: Optional[List[str]] = None
     initial_values: Optional[ParameterDefaultsByName] = None
-    parent_manager: Optional['ParameterFormManager'] = None
+    parent_manager: Optional["ParameterFormManager"] = None
     read_only: bool = False
     scope_id: Optional[str] = None
     color_scheme: Optional[ColorScheme] = None
     # Windows that manage scrolling must set this explicitly.
     use_scroll_area: bool = False
-    state: Optional['ObjectState'] = None  # ObjectState instance - if provided, PFM delegates to it
-    field_id: str = ''  # Canonical dotted path id for this form (e.g., 'well_filter_config')
-    render_enabled_in_header: bool = False  # If True, 'enabled' checkbox is rendered in container header, not as a form row
+    state: Optional["ObjectState"] = None  # ObjectState instance - if provided, PFM delegates to it
+    field_id: str = ""  # Canonical dotted path id for this form (e.g., 'well_filter_config')
+    render_enabled_in_header: bool = (
+        False  # If True, 'enabled' checkbox is rendered in container header, not as a form row
+    )
     scope_accent_color: Optional[QColor] = None  # Scope accent color for help buttons
-    scope_step_index: Optional[int] = None  # Optional step index to align scope styling with pipeline order
-    function_target: Optional[Callable | type] = None  # Callable/class documentation owner for parameter help
+    scope_step_index: Optional[int] = (
+        None  # Optional step index to align scope styling with pipeline order
+    )
+    function_target: Optional[Callable | type] = (
+        None  # Callable/class documentation owner for parameter help
+    )
+    before_mutation: Optional[Callable[[], None]] = None
 
 
 class FormTargetPathAccess:
@@ -101,9 +116,7 @@ class FormTargetPathAccess:
             return DataclassFieldAccess.raw_value(instance, field_name)
 
         if type(instance).__dictoffset__ == 0:
-            raise FieldAccessError(
-                f"{type(instance).__name__} has no addressable instance fields."
-            )
+            raise FieldAccessError(f"{type(instance).__name__} has no addressable instance fields.")
 
         storage = vars(instance)
         if field_name not in storage:
@@ -130,11 +143,7 @@ class ParameterFormTypeResolver:
     @staticmethod
     def path_has_children(parameters: Dict[str, Any], dotted_path: str) -> bool:
         owner_path = DottedFieldPath(dotted_path)
-        return any(
-            owner_path.contains_path(path)
-            for path in parameters
-            if path != dotted_path
-        )
+        return any(owner_path.contains_path(path) for path in parameters if path != dotted_path)
 
     @staticmethod
     def scoped_parameters(state, field_id: str) -> ParameterDefaultsByName:
@@ -148,7 +157,7 @@ class ParameterFormTypeResolver:
         result = ParameterDefaultsByName()
         for path, value in state.parameters.items():
             if owner_path.contains_path(path) and path != field_id:
-                suffix = path[len(field_id):]
+                suffix = path[len(field_id) :]
                 if not suffix.startswith("."):
                     continue
                 remainder = suffix[1:]
@@ -251,6 +260,7 @@ class ParameterFormManager(
         Filters by self.parameters keys (already scoped/stripped for nested PFMs).
         """
         from python_introspect import UnifiedParameterAnalyzer
+
         param_info_dict = UnifiedParameterAnalyzer.analyze(self.object_instance)
         return ParameterTypesByName(
             (name, info.param_type)
@@ -279,7 +289,7 @@ class ParameterFormManager(
         """Delegate to ObjectState._parameter_descriptions."""
         return self.state.parameter_descriptions
 
-    def __init__(self, state: 'ObjectState', config: Optional[FormManagerConfig] = None):
+    def __init__(self, state: "ObjectState", config: Optional[FormManagerConfig] = None):
         """
         Initialize PyQt parameter form manager with ObjectState (MODEL).
 
@@ -300,12 +310,11 @@ class ParameterFormManager(
 
         # The state scope owns data and notifications; an explicit config scope owns
         # presentation when a top-level window renders that state in another scope.
-        visual_scope_id = (
-            config.scope_id if config.scope_id is not None else state.scope_id
-        )
+        visual_scope_id = config.scope_id if config.scope_id is not None else state.scope_id
         if config.scope_accent_color is None and visual_scope_id is not None:
             try:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
+
                 svc = ScopeColorService.instance()
                 accent = svc.get_accent_color(
                     visual_scope_id,
@@ -340,6 +349,7 @@ class ParameterFormManager(
         # If target_obj is enableable and this is a nested form, render enabled in header
         try:
             from python_introspect import is_enableable
+
             if config.parent_manager is not None and is_enableable(target_obj):
                 config = FormManagerConfig(
                     parent=config.parent,
@@ -357,6 +367,7 @@ class ParameterFormManager(
                     scope_accent_color=config.scope_accent_color,
                     scope_step_index=config.scope_step_index,
                     function_target=config.function_target,
+                    before_mutation=config.before_mutation,
                 )
         except ImportError:
             pass
@@ -380,6 +391,7 @@ class ParameterFormManager(
             self.context_obj = state.context_obj
             self.scope_id = state.scope_id
             self.read_only = config.read_only
+            self.before_mutation = config.before_mutation
             self._parent_manager = config.parent_manager
             self.render_enabled_in_header = config.render_enabled_in_header
             self._scope_accent_color = config.scope_accent_color  # Store for widget creation
@@ -390,6 +402,7 @@ class ParameterFormManager(
             self._scope_color_scheme = None
             if self._visual_scope_id is not None:
                 from pyqt_reactive.services.scope_color_service import ScopeColorService
+
                 self._scope_color_scheme = ScopeColorService.instance().get_color_scheme(
                     self._visual_scope_id,
                     step_index=config.scope_step_index,
@@ -416,7 +429,8 @@ class ParameterFormManager(
             with timer("  Build config", threshold_ms=5.0):
                 from pyqt_reactive.forms.parameter_form_service import ParameterFormService
                 from pyqt_reactive.forms.form_init_service import (
-                    ExtractedParameters, ConfigBuilderService
+                    ExtractedParameters,
+                    ConfigBuilderService,
                 )
 
                 self.service = ParameterFormService()
@@ -430,8 +444,12 @@ class ParameterFormManager(
                     )
                 from python_introspect import UnifiedParameterAnalyzer
 
-                param_info_dict = UnifiedParameterAnalyzer.analyze(target_obj, exclude_params=config.exclude_params)
-                scoped_parameters = ParameterFormTypeResolver.scoped_parameters(state, self.field_id)
+                param_info_dict = UnifiedParameterAnalyzer.analyze(
+                    target_obj, exclude_params=config.exclude_params
+                )
+                scoped_parameters = ParameterFormTypeResolver.scoped_parameters(
+                    state, self.field_id
+                )
                 derived_param_types = {
                     name: ParameterFormTypeResolver.field_type(self, name, info.param_type)
                     for name, info in param_info_dict.items()
@@ -453,7 +471,13 @@ class ParameterFormManager(
                     object_instance=target_obj,  # Use nested object for nested PFMs
                 )
                 form_config = ConfigBuilderService.build(
-                    self.field_id, extracted, state.context_obj, config.color_scheme, config.parent_manager, self.service, config
+                    self.field_id,
+                    extracted,
+                    state.context_obj,
+                    config.color_scheme,
+                    config.parent_manager,
+                    self.service,
+                    config,
                 )
                 # METAPROGRAMMING: Auto-unpack all fields to self
                 ValueCollectionService.unpack_to_self(self, form_config)
@@ -462,15 +486,21 @@ class ParameterFormManager(
             self.widgets, self.reset_buttons, self.nested_managers = {}, {}, {}
             self.labels = {}  # Track LabelWithHelp widgets for bold styling
             self._field_flash_targets: Dict[str, "StructuralFlashTarget"] = {}
-            self._pending_nested_managers: Dict[str, 'ParameterFormManager'] = {}
+            self._pending_nested_managers: Dict[str, "ParameterFormManager"] = {}
             self.form_tree = ParameterFormTreeIndex(self)
             self.chrome_sync = ParameterFormChromeSync(self)
 
             # STEP 4: VIEW-only flags (state tracking is in ObjectState)
-            self._initial_load_complete, self._block_cross_window_updates, self._in_reset = False, False, False
+            self._initial_load_complete, self._block_cross_window_updates, self._in_reset = (
+                False,
+                False,
+                False,
+            )
             self._dispatching = False
             self._cross_window_refresh_timer: Optional[QTimer] = None
-            self.shared_reset_fields = set()  # VIEW-only: tracks field paths for cross-window reset styling
+            self.shared_reset_fields = (
+                set()
+            )  # VIEW-only: tracks field paths for cross-window reset styling
             self._locally_applied_model_paths: Set[str] = set()
 
             # CROSS-WINDOW: Connect to change notifications (only root managers)
@@ -479,16 +509,23 @@ class ParameterFormManager(
             # registry-wide listener remains for non-form preview/list consumers that do not own an ObjectState.
             if self._parent_manager is None:
                 from objectstate import ObjectStateRegistry
+
                 # Invalidate cache so newly opened windows build fresh snapshots
                 ObjectStateRegistry.increment_token(notify=False)
-            
+
             # Register hierarchy relationship for cross-window placeholder resolution
             if self.context_obj is not None and not self._parent_manager:
                 register_hierarchy_relationship(type(self.context_obj), type(self.object_instance))
-            elif self._parent_manager is not None and self._parent_manager.object_instance and self.object_instance:
+            elif (
+                self._parent_manager is not None
+                and self._parent_manager.object_instance
+                and self.object_instance
+            ):
                 # Nested manager: register relationship from parent to this nested object
                 # Needed so is_ancestor_in_context recognizes parent → child when filtering live context
-                register_hierarchy_relationship(type(self._parent_manager.object_instance), type(self.object_instance))
+                register_hierarchy_relationship(
+                    type(self._parent_manager.object_instance), type(self.object_instance)
+                )
 
             # Store backward compatibility attributes
             self.parameter_info = self.config.parameter_info
@@ -499,6 +536,7 @@ class ParameterFormManager(
             # STEP 5: Initialize services (metaprogrammed service + auto-unpack)
             with timer("  Initialize services", threshold_ms=1.0):
                 from pyqt_reactive.forms.form_init_service import ServiceFactoryService
+
                 services = ServiceFactoryService.build()
                 # METAPROGRAMMING: Auto-unpack all services to self with _ prefix
                 ValueCollectionService.unpack_to_self(self, services, prefix="_")
@@ -537,9 +575,11 @@ class ParameterFormManager(
             # NOTE: _init_visual_update_mixin() is called earlier (before setup_ui)
             if self._parent_manager is None:
                 self.state.on_resolved_changed(self._on_resolved_values_changed)
-                logger.debug(f"🔔 CALLBACK_LEAK_DEBUG: Registered callback for {self.field_id} (PFM id={id(self)}), "
-                           f"total callbacks on ObjectState: {len(self.state._on_resolved_changed_callbacks)}, "
-                           f"scope_id={self.state.scope_id}")
+                logger.debug(
+                    f"🔔 CALLBACK_LEAK_DEBUG: Registered callback for {self.field_id} (PFM id={id(self)}), "
+                    f"total callbacks on ObjectState: {len(self.state._on_resolved_changed_callbacks)}, "
+                    f"scope_id={self.state.scope_id}"
+                )
 
             # Materialized state changes: Subscribe once (root only)
             if self._parent_manager is None:
@@ -606,6 +646,7 @@ class ParameterFormManager(
         # Always apply styling
         with timer("    Style generation", threshold_ms=1.0):
             from pyqt_reactive.theming.style_generator import StyleSheetGenerator
+
             style_gen = StyleSheetGenerator(self.color_scheme)
             self.setStyleSheet(style_gen.generate_config_window_style())
 
@@ -667,6 +708,7 @@ class ParameterFormManager(
     def _create_widget_for_param(self, param_info: ParameterInfo) -> QWidget:
         """Create widget for a parameter. Type auto-detected from param_info."""
         from pyqt_reactive.forms.widget_creation_config import WidgetCreationPipeline
+
         logger.debug(
             "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s widget_creation_type=%s",
             self._pfm_seq,
@@ -737,7 +779,9 @@ class ParameterFormManager(
             index = batch_end
 
             # Apply styling to this batch immediately
-            logger.debug(f"[ASYNC_CREATE] Batch complete: field_id={self.field_id}, batch_widgets={len(batch_widgets)}, on_batch_complete={'set' if on_batch_complete else None}")
+            logger.debug(
+                f"[ASYNC_CREATE] Batch complete: field_id={self.field_id}, batch_widgets={len(batch_widgets)}, on_batch_complete={'set' if on_batch_complete else None}"
+            )
             if on_batch_complete and batch_widgets:
                 try:
                     on_batch_complete(batch_widgets)
@@ -752,8 +796,7 @@ class ParameterFormManager(
             batch_timer.deleteLater()
             if on_complete:
                 logger.debug(
-                    "[ASYNC_CREATE] All widgets created for %s, running "
-                    "on_complete callback",
+                    "[ASYNC_CREATE] All widgets created for %s, running on_complete callback",
                     self.field_id,
                 )
                 on_complete()
@@ -767,7 +810,7 @@ class ParameterFormManager(
         param_name: str,
         unwrapped_type: type | None = None,
         current_value=None,
-    ) -> 'ParameterFormManager':
+    ) -> "ParameterFormManager":
         """Create nested PFM that shares root ObjectState with different field_id.
 
         With flat storage, nested PFMs share the same ObjectState instance as the parent,
@@ -779,7 +822,7 @@ class ParameterFormManager(
             current_value: Ignored (kept for ABC compatibility)
         """
         # Build nested field id (dotted path)
-        nested_id = f'{self.field_id}.{param_name}' if self.field_id else param_name
+        nested_id = f"{self.field_id}.{param_name}" if self.field_id else param_name
 
         # Create nested PFM (VIEW) that shares the same ObjectState (MODEL)
         nested_config = FormManagerConfig(
@@ -791,10 +834,11 @@ class ParameterFormManager(
             scope_accent_color=self._scope_accent_color,  # Inherit scope accent color
             scope_step_index=self._scope_step_index,  # Preserve step index for scope styling
             function_target=unwrapped_type,
+            before_mutation=self.before_mutation,
         )
         nested_manager = ParameterFormManager(
             state=self.state,  # CRITICAL: Share the same ObjectState instance
-            config=nested_config
+            config=nested_config,
         )
         logger.debug(
             "[PFM_NESTED_CREATE] parent_seq=%s parent_field_id=%s param=%s nested_seq=%s nested_field_id=%s",
@@ -848,7 +892,9 @@ class ParameterFormManager(
         converted_value = convert_widget_value_to_type(value, param_type)
 
         # Then apply service layer conversion (enums, basic types, Union handling, etc.)
-        converted_value = self.service.convert_value_to_type(converted_value, param_type, param_name, type(self.object_instance))
+        converted_value = self.service.convert_value_to_type(
+            converted_value, param_type, param_name, type(self.object_instance)
+        )
 
         return converted_value
 
@@ -895,7 +941,10 @@ class ParameterFormManager(
 
         # Convert value using service layer
         converted_value = self.service.convert_value_to_type(
-            value, self.parameter_types.get(param_name, type(value)), param_name, type(self.object_instance)
+            value,
+            self.parameter_types.get(param_name, type(value)),
+            param_name,
+            type(self.object_instance),
         )
 
         # Update corresponding widget if it exists
@@ -906,19 +955,25 @@ class ParameterFormManager(
                 RawResolvedValueSettable,
                 ValueSettable,
             )
+
             if isinstance(widget, ValueSettable) and not isinstance(
                 widget,
                 RawResolvedValueSettable,
             ):
-                self._widget_service.update_widget_value(widget, converted_value, param_name, False, self)
+                self._widget_service.update_widget_value(
+                    widget, converted_value, param_name, False, self
+                )
 
         # ATOMIC: If this state has a parent, wrap in atomic so forwarded parent
         # updates remain one undo step while preserving this state's scope as the
         # semantic edit owner.
         has_parent = self.state._parent_state is not None
-        logger.debug(f"[ATOMIC_CHECK] field_id={self.field_id}, has_parent={has_parent}, state={self.state}")
+        logger.debug(
+            f"[ATOMIC_CHECK] field_id={self.field_id}, has_parent={has_parent}, state={self.state}"
+        )
         if has_parent:
             from objectstate import ObjectStateRegistry
+
             logger.debug(f"[ATOMIC_CHECK] Entering atomic block for {param_name}")
             with ObjectStateRegistry.atomic("edit parameter", scope_id=self.scope_id):
                 # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
@@ -939,9 +994,6 @@ class ParameterFormManager(
         if param_name not in self.parameters:
             return
 
-        # Build full dotted path for state update
-        dotted_path = f'{self.field_id}.{param_name}' if self.field_id else param_name
-
         with FlagContextManager.reset_context(self, block_cross_window=False):
             self._parameter_ops_service.reset_parameter(self, param_name)
 
@@ -949,10 +1001,10 @@ class ParameterFormManager(
 
         # Update label styling after reset
         self.chrome_sync.update_label_styling(param_name)
-        
+
         # Update reset button styling
         self._update_reset_button_styling(param_name)
-        
+
         # Update provenance button visibility
         self.chrome_sync.update_provenance_button_visibility()
 
@@ -960,8 +1012,9 @@ class ParameterFormManager(
         """Update reset button styling: * and _ indicators."""
         if param_name not in self.reset_buttons:
             return
-        
+
         from pyqt_reactive.utils.styling_utils import update_reset_button_styling
+
         reset_button = self.reset_buttons[param_name]
         update_reset_button_styling(reset_button, self.state, self.field_id, param_name)
 
@@ -991,8 +1044,7 @@ class ParameterFormManager(
         refreshed_compound_owner_paths: set[str] = set()
         if changed_paths:
             refreshed_compound_owner_paths = (
-                self.chrome_sync.refresh_widgets_for_paths(changed_paths)
-                or set()
+                self.chrome_sync.refresh_widgets_for_paths(changed_paths) or set()
             )
         self._locally_applied_model_paths.add(full_path)
         self.chrome_sync.after_model_field_change(
@@ -1021,7 +1073,9 @@ class ParameterFormManager(
 
         return self._field_flash_targets.get(field_name)
 
-    def update_groupbox_dirty_markers(self, dirty_prefixes: set, sig_diff_prefixes: set = None) -> None:
+    def update_groupbox_dirty_markers(
+        self, dirty_prefixes: set, sig_diff_prefixes: set = None
+    ) -> None:
         """Update groupbox titles with dirty markers and signature diff underline.
 
         Called by ConfigHierarchyTreeHelper.update_dirty_styling() so tree items
@@ -1038,7 +1092,9 @@ class ParameterFormManager(
     # DELETED: MODEL DELEGATION - callers use self.state.get_*() directly
     # DELETED: _on_nested_parameter_changed - replaced by FieldChangeDispatcher
 
-    def _apply_to_nested_managers(self, callback: Callable[[str, 'ParameterFormManager'], None]) -> None:
+    def _apply_to_nested_managers(
+        self, callback: Callable[[str, "ParameterFormManager"], None]
+    ) -> None:
         """Apply operation to all nested managers."""
         for param_name, nested_manager in self.nested_managers.items():
             callback(param_name, nested_manager)
@@ -1110,6 +1166,7 @@ class ParameterFormManager(
         """Unregister from cross-window updates."""
         try:
             from objectstate import ObjectStateRegistry
+
             ObjectStateRegistry.disconnect_listener(self._on_live_context_changed)
 
             # CRITICAL: Unregister resolved value change callback to prevent memory leak
@@ -1118,8 +1175,10 @@ class ParameterFormManager(
                 callbacks_before = len(self.state._on_resolved_changed_callbacks)
                 self.state.off_resolved_changed(self._on_resolved_values_changed)
                 callbacks_after = len(self.state._on_resolved_changed_callbacks)
-                logger.debug(f"🔔 CALLBACK_LEAK_DEBUG: Unregistered callback for {self.field_id}, "
-                           f"callbacks: {callbacks_before} -> {callbacks_after}")
+                logger.debug(
+                    f"🔔 CALLBACK_LEAK_DEBUG: Unregistered callback for {self.field_id}, "
+                    f"callbacks: {callbacks_before} -> {callbacks_after}"
+                )
 
             # Unregister state change callback (root only)
             if self._parent_manager is None:
@@ -1198,8 +1257,10 @@ class ParameterFormManager(
         from objectstate import ObjectStateRegistry
         from objectstate.time_travel_profile import TimeTravelProfiler
 
-        logger.debug(f"🔔 CALLBACK_LEAK_DEBUG: _on_resolved_values_changed invoked for {self.field_id}, "
-                   f"changed_paths={changed_paths}")
+        logger.debug(
+            f"🔔 CALLBACK_LEAK_DEBUG: _on_resolved_values_changed invoked for {self.field_id}, "
+            f"changed_paths={changed_paths}"
+        )
         logger.debug(f"[FLASH] _on_resolved_values_changed: {changed_paths}")
 
         # Refresh widget display from the same canonical ObjectState paths that
@@ -1214,8 +1275,7 @@ class ParameterFormManager(
             refreshed_compound_owner_paths: set[str] = set()
             if widget_refresh_paths:
                 refreshed_compound_owner_paths.update(
-                    self.chrome_sync.refresh_widgets_for_paths(widget_refresh_paths)
-                    or set()
+                    self.chrome_sync.refresh_widgets_for_paths(widget_refresh_paths) or set()
                 )
             if state_refresh_paths:
                 self.chrome_sync.state_changed_for_paths(
@@ -1233,7 +1293,9 @@ class ParameterFormManager(
                 scope=self.state.scope_id,
             ):
                 self._apply_to_nested_managers(
-                    lambda _, manager: manager._enabled_field_styling_service.refresh_enabled_styling(manager)
+                    lambda _, manager: (
+                        manager._enabled_field_styling_service.refresh_enabled_styling(manager)
+                    )
                 )
 
         # For each changed path, register and queue a LEAF flash
@@ -1245,8 +1307,8 @@ class ParameterFormManager(
             flash_paths: list[str] = []
             for path in ParameterFormManager._flash_paths_for_changed_paths(changed_paths):
                 if self.field_id:
-                    if '.' in path:
-                        path_prefix = path.rsplit('.', 1)[0]
+                    if "." in path:
+                        path_prefix = path.rsplit(".", 1)[0]
                         if path_prefix != self.field_id:
                             continue
                     else:
@@ -1261,8 +1323,8 @@ class ParameterFormManager(
 
         if changed_paths:
             sample_path = next(iter(changed_paths))
-            sample_leaf = sample_path.split('.')[-1] if '.' in sample_path else sample_path
-            sample_prefix = sample_path.rsplit('.', 1)[0] if '.' in sample_path else None
+            sample_leaf = sample_path.split(".")[-1] if "." in sample_path else sample_path
+            sample_prefix = sample_path.rsplit(".", 1)[0] if "." in sample_path else None
             logger.debug(f"[FLASH TRAIL] prefix={sample_prefix}, leaf_field={sample_leaf}")
 
     @classmethod
@@ -1346,11 +1408,7 @@ class ParameterFormManager(
             if path in suppressed_paths:
                 continue
             path_owner = DottedFieldPath(path)
-            if any(
-                other != path
-                and path_owner.contains_path(other)
-                for other in selected_paths
-            ):
+            if any(other != path and path_owner.contains_path(other) for other in selected_paths):
                 continue
             selected_paths.add(path)
         return tuple(sorted(selected_paths))
@@ -1388,7 +1446,7 @@ class ParameterFormManager(
 
         # Find the prefix (groupbox) and leaf field name
         prefix = self.form_tree.matching_prefix(path)
-        leaf_field = path.split('.')[-1] if '.' in path else path
+        leaf_field = path.split(".")[-1] if "." in path else path
 
         if prefix:
             # Nested dataclass case: find groupbox and nested manager
@@ -1429,6 +1487,7 @@ class ParameterFormManager(
             flash_path = path
 
             from pyqt_reactive.widgets.shared.clickable_help_components import FlashableGroupBox
+
             if isinstance(leaf_widget, FlashableGroupBox):
                 flash_trace(
                     "form.leaf_flash.flash_groupbox_widget",

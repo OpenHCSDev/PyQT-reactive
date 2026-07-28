@@ -4,6 +4,7 @@ Unified Field Change Dispatcher.
 Centralizes all field change handling into a single event-driven dispatcher.
 Replaces callback spaghetti with a clean architecture.
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,10 +25,11 @@ DEBUG_DISPATCHER = False
 @dataclass
 class FieldChangeEvent:
     """Immutable event representing a field change."""
-    field_name: str                        # Leaf field name
-    value: Any                             # New value
-    source_manager: 'ParameterFormManager' # Where change originated
-    is_reset: bool = False                 # True if this is a reset operation (don't track as user-set)
+
+    field_name: str  # Leaf field name
+    value: Any  # New value
+    source_manager: "ParameterFormManager"  # Where change originated
+    is_reset: bool = False  # True if this is a reset operation (don't track as user-set)
 
 
 @dataclass(frozen=True)
@@ -35,8 +37,8 @@ class FieldDispatchContext:
     """Resolved dispatch facts shared by field-change stages."""
 
     event: FieldChangeEvent
-    source: 'ParameterFormManager'
-    root: 'ParameterFormManager'
+    source: "ParameterFormManager"
+    root: "ParameterFormManager"
     source_path: str
     root_path: str
 
@@ -57,7 +59,7 @@ class DispatchReentrancyGuard:
             repr(event.value)[:50],
         )
 
-    def enter(self, source: 'ParameterFormManager') -> bool:
+    def enter(self, source: "ParameterFormManager") -> bool:
         if source._dispatching:
             if DEBUG_DISPATCHER:
                 logger.warning(
@@ -68,7 +70,7 @@ class DispatchReentrancyGuard:
         source._dispatching = True
         return True
 
-    def is_reset_blocked(self, source: 'ParameterFormManager') -> bool:
+    def is_reset_blocked(self, source: "ParameterFormManager") -> bool:
         if not source._in_reset:
             return False
         if DEBUG_DISPATCHER:
@@ -78,7 +80,7 @@ class DispatchReentrancyGuard:
             )
         return True
 
-    def exit(self, source: 'ParameterFormManager') -> None:
+    def exit(self, source: "ParameterFormManager") -> None:
         source._dispatching = False
 
 
@@ -95,18 +97,18 @@ class FieldDispatchContextFactory:
             root_path=self._get_full_path(source, event.field_name),
         )
 
-    def _get_root_manager(self, manager: 'ParameterFormManager') -> 'ParameterFormManager':
+    def _get_root_manager(self, manager: "ParameterFormManager") -> "ParameterFormManager":
         current = manager
         while current._parent_manager is not None:
             current = current._parent_manager
         return current
 
-    def _field_path(self, manager: 'ParameterFormManager', field_name: str) -> str:
+    def _field_path(self, manager: "ParameterFormManager", field_name: str) -> str:
         if manager.field_id:
             return f"{manager.field_id}.{field_name}"
         return field_name
 
-    def _get_full_path(self, source: 'ParameterFormManager', field_name: str) -> str:
+    def _get_full_path(self, source: "ParameterFormManager", field_name: str) -> str:
         parts = [field_name]
         current = source
         while current is not None:
@@ -124,6 +126,8 @@ class SourceStateUpdateStage:
         # state mutation -> global cache invalidation.
         from objectstate import ObjectStateRegistry
 
+        if context.source.before_mutation is not None:
+            context.source.before_mutation()
         if context.event.is_reset:
             changed_paths = context.source.state.update_parameter(
                 context.source_path,
@@ -184,7 +188,7 @@ class SiblingPlaceholderRefreshStage:
         self,
         context: FieldDispatchContext,
         name: str,
-        sibling: 'ParameterFormManager',
+        sibling: "ParameterFormManager",
     ) -> bool:
         if sibling is context.source:
             if DEBUG_DISPATCHER:
@@ -204,7 +208,7 @@ class SiblingPlaceholderRefreshStage:
     def _log_sibling_match(
         self,
         name: str,
-        sibling: 'ParameterFormManager',
+        sibling: "ParameterFormManager",
         has_field: bool,
     ) -> None:
         if sibling.object_instance is None:
@@ -218,7 +222,7 @@ class SiblingPlaceholderRefreshStage:
             has_field,
         )
 
-    def _refresh_single_field(self, manager: 'ParameterFormManager', field_name: str) -> None:
+    def _refresh_single_field(self, manager: "ParameterFormManager", field_name: str) -> None:
         if DEBUG_DISPATCHER:
             logger.info(f"      🔄 _refresh_single_field: {manager.field_id}.{field_name}")
 
@@ -235,7 +239,9 @@ class SiblingPlaceholderRefreshStage:
         current_value = manager.parameters.get(field_name)
         if current_value is not None:
             if DEBUG_DISPATCHER:
-                logger.info(f"      ⏭️  Field {field_name} has concrete value ({type(current_value).__name__}), skipping placeholder refresh")
+                logger.info(
+                    f"      ⏭️  Field {field_name} has concrete value ({type(current_value).__name__}), skipping placeholder refresh"
+                )
             return
 
         if DEBUG_DISPATCHER:
@@ -281,6 +287,7 @@ class LiveContextNotificationStage:
 
     def flush(self) -> None:
         from objectstate import ObjectStateRegistry
+
         ObjectStateRegistry.flush_deferred_invalidations()
         ObjectStateRegistry._notify_change()
         if DEBUG_DISPATCHER:
@@ -294,7 +301,7 @@ class EnabledFieldStyleStage:
     """Keeps the special enabled field's visuals in sync with model changes."""
 
     def run(self, context: FieldDispatchContext) -> None:
-        if context.event.field_name != 'enabled':
+        if context.event.field_name != "enabled":
             return
         context.source.sync_enabled_field_visuals(context.event.value)
         if DEBUG_DISPATCHER:
@@ -323,19 +330,27 @@ class RootSignalStage:
     def _emit_cross_window(self, context: FieldDispatchContext) -> None:
         root_manager = context.root
         full_path = context.root_path
-        logger.debug(f"  🔍 _emit_cross_window: checking should_skip_updates() for {root_manager.field_id}")
-        logger.debug(f"    state._in_reset={root_manager.state._in_reset}, state._block_cross_window_updates={root_manager.state._block_cross_window_updates}")
+        logger.debug(
+            f"  🔍 _emit_cross_window: checking should_skip_updates() for {root_manager.field_id}"
+        )
+        logger.debug(
+            f"    state._in_reset={root_manager.state._in_reset}, state._block_cross_window_updates={root_manager.state._block_cross_window_updates}"
+        )
         if root_manager.state.should_skip_updates():
-            logger.warning(f"  🚫 Cross-window BLOCKED: _should_skip_updates()=True for {root_manager.field_id}")
+            logger.warning(
+                f"  🚫 Cross-window BLOCKED: _should_skip_updates()=True for {root_manager.field_id}"
+            )
             return
 
         # REMOVED: update_thread_local_global_config() call
         # Thread-local should ONLY be updated on SAVE, not on every keystroke!
         # Descendants (plates, steps) should see the SAVED global config, not unsaved edits.
 
-        logger.debug(f"  📡 Emitting context_changed: scope={root_manager.scope_id}, path={full_path}")
+        logger.debug(
+            f"  📡 Emitting context_changed: scope={root_manager.scope_id}, path={full_path}"
+        )
         root_manager.context_changed.emit(root_manager.scope_id or "", full_path)
-        logger.debug(f"  ✅ context_changed emitted")
+        logger.debug("  ✅ context_changed emitted")
 
 
 class FieldChangeDispatcher:
@@ -353,7 +368,7 @@ class FieldChangeDispatcher:
         self._root_signals = RootSignalStage()
 
     @classmethod
-    def instance(cls) -> 'FieldChangeDispatcher':
+    def instance(cls) -> "FieldChangeDispatcher":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -402,6 +417,7 @@ class FieldChangeDispatcher:
         """Do not let a failed dispatch leak deferred cache invalidations."""
         try:
             from objectstate import ObjectStateRegistry
+
             if not ObjectStateRegistry.has_deferred_invalidations():
                 return
             ObjectStateRegistry.flush_deferred_invalidations()

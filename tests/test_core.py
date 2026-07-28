@@ -4,14 +4,15 @@
 def test_debounce_timer_basic(qapp):
     """Test DebounceTimer basic functionality."""
     from pyqt_reactive.core import DebounceTimer
-    
+
     called = []
+
     def handler():
         called.append(1)
-    
+
     timer = DebounceTimer(delay_ms=50, handler=handler)
     assert len(called) == 0
-    
+
     # Basic test - timer exists
     assert timer is not None
 
@@ -19,7 +20,7 @@ def test_debounce_timer_basic(qapp):
 def test_reorderable_list_widget(qapp):
     """Test ReorderableListWidget creation."""
     from pyqt_reactive.core import ReorderableListWidget
-    
+
     widget = ReorderableListWidget()
     assert widget is not None
 
@@ -155,9 +156,7 @@ def test_deferred_live_context_refresh_obeys_manager_qobject_lifetime(qapp):
 
     class FormManager(QWidget):
         field_id = "root"
-        schedule_lifecycle_callback = (
-            ParameterFormManager.schedule_lifecycle_callback
-        )
+        schedule_lifecycle_callback = ParameterFormManager.schedule_lifecycle_callback
 
     service = ParameterOpsService()
     refreshed = []
@@ -236,3 +235,34 @@ def test_managed_window_cleanup_unregisters_form_managers_once(qapp):
     window._cleanup_managed_listeners()
 
     assert form_manager.unregister_count == 1
+
+
+def test_managed_window_reject_authorizes_before_restore(qapp, monkeypatch):
+    """Inherited reject lifecycle prevents a partial state restore."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    from pyqt_reactive.widgets.shared.base_form_dialog import BaseManagedWindow
+
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+
+    class ManagedWindow(BaseManagedWindow):
+        def __init__(self) -> None:
+            super().__init__()
+            self.restore_count = 0
+
+        def require_managed_state_mutation_allowed(self) -> None:
+            raise RuntimeError("mutation rejected")
+
+        def restore_managed_state(self) -> None:
+            self.restore_count += 1
+
+    window = ManagedWindow()
+    window.reject()
+
+    assert window.restore_count == 0
+    assert warnings == [("Cancel Rejected", "mutation rejected")]

@@ -8,11 +8,15 @@ and enableable support.
 
 from abc import ABC, abstractmethod
 import logging
-from typing import Any, ClassVar, Dict, Callable, Optional, Tuple, List, Set
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Callable, Optional, Tuple, List
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QSizePolicy, QLayout
+    QWidget,
+    QVBoxLayout,
+    QPushButton,
+    QLabel,
+    QSizePolicy,
+    QLayout,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
@@ -29,7 +33,6 @@ from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
-from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.services.function_pattern_code_document import (
     FunctionPatternCodeDocumentService,
 )
@@ -37,6 +40,9 @@ from pyqt_reactive.services.function_navigation import FunctionPatternField
 from metaclass_registry import AutoRegisterMeta
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from objectstate import ObjectState
 
 
 class FunctionPaneButtonCommand(ABC, metaclass=AutoRegisterMeta):
@@ -95,12 +101,12 @@ class ResetParametersButtonCommand(FunctionPaneButtonCommand):
 class FunctionPaneWidget(GroupBoxWithHelp):
     """
     PyQt6 Function Pane Widget.
-    
+
     Displays individual function with editable parameters and control buttons.
     Uses GroupBoxWithHelp as the main container for consistent formatting
     and enableable support.
     """
-    
+
     # Signals
     parameter_changed = pyqtSignal(int, str, object)  # index, param_name, value
     function_changed = pyqtSignal(int)  # index
@@ -108,7 +114,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
     remove_function = pyqtSignal(int)  # index
     move_function = pyqtSignal(int, int)  # index, direction
     reset_parameters = pyqtSignal(int)  # index
-    
+
     def __init__(
         self,
         func_item: Tuple[Callable, Dict],
@@ -121,6 +127,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         func_scope_token: Optional[str] = None,
         scope_index: Optional[int] = None,
         invocation_badge_text: Optional[str] = None,
+        before_mutation: Optional[Callable[[], None]] = None,
         parent=None,
     ):
         """
@@ -139,7 +146,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         func, kwargs = func_item
         self.func = func
         self.kwargs = kwargs
-        
+
         # Determine title and help target
         if func:
             title = f"🔧 {func.__name__}"
@@ -147,13 +154,10 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         else:
             title = "No Function Selected"
             help_target = None  # type: ignore
-        
+
         # Initialize GroupBoxWithHelp
         super().__init__(
-            title=title,
-            help_target=help_target,
-            color_scheme=color_scheme,
-            parent=parent
+            title=title, help_target=help_target, color_scheme=color_scheme, parent=parent
         )
 
         self._func_state = None
@@ -189,11 +193,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         self.func_scope_prefix = func_scope_prefix
         # Stable per-occurrence token supplied by the owning list editor.
         self.func_scope_token = str(func_scope_token) if func_scope_token else None
+        self._before_mutation = before_mutation
 
         # Business logic state
         self.index = index
         self.show_parameters = True
-        
+
         # Parameter management
         if self.func:
             param_info = SignatureAnalyzer.analyze(self.func)
@@ -204,10 +209,10 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Form manager will be created in create_parameter_form() when UI is built
         self.form_manager: Optional[ParameterFormManager] = None
-        
+
         # Internal kwargs tracking
         self._internal_kwargs = self.kwargs.copy()
-        
+
         # UI components
         self.parameter_widgets: Dict[str, QWidget] = {}
         self._enabled_checkbox: Optional[Any] = None
@@ -222,7 +227,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         self.setup_ui()
         self.set_invocation_badge_text(invocation_badge_text)
         self.setup_connections()
-        
+
         logger.debug(f"Function pane widget initialized for index {index}")
 
     def set_invocation_badge_text(self, badge_text: Optional[str]) -> None:
@@ -250,13 +255,13 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             self.addTitleInlineWidget(self._invocation_badge_label)
         self._invocation_badge_label.setText(text)
         self._invocation_badge_label.show()
-    
+
     def setup_ui(self):
         """Setup the user interface."""
         # Add module path above the title if function exists
         if self.func and self.func.__module__:
             self._add_module_path_above_title()
-        
+
         # Add control buttons to title area
         self._add_control_buttons_to_title()
 
@@ -264,18 +269,22 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         if self.func and self.show_parameters:
             parameter_frame = self.create_parameter_form()
             self.content_layout.addWidget(parameter_frame)
-            
+
             # For enableable functions: move enabled widget to title after form is built
             # CRITICAL: Must use callback because form manager builds widgets asynchronously
             if is_enableable(self.func) and self.form_manager is not None:
                 enabled_field = Enableable.require_parameter_name()
                 # Check if form is already built (sync path) - move immediately
-                if len(self.form_manager.widgets) > 0 and enabled_field in self.form_manager.widgets:
+                if (
+                    len(self.form_manager.widgets) > 0
+                    and enabled_field in self.form_manager.widgets
+                ):
                     # Form already built, move enabled widget now
                     self._move_enabled_widget_to_title()
                 else:
                     # Form not built yet (async path) - register callback
                     callbacks: list = self.form_manager._on_build_complete_callbacks
+
                     def _move_enabled_safe() -> None:
                         self._move_enabled_widget_to_title()
 
@@ -299,9 +308,11 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             module_label = QLabel(func_module)
             self._module_path_label = module_label
             module_label.setFont(QFont("Arial", 8))
-            module_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; padding: 2px 0;")
+            module_label.setStyleSheet(
+                f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; padding: 2px 0;"
+            )
             self._flash_mask_excluded_widgets.add(module_label)
-            
+
             # Find the main layout and insert module path at index 0 (before title)
             main_layout = self.layout()
             if main_layout and isinstance(main_layout, QVBoxLayout):
@@ -333,9 +344,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             button.setMaximumWidth(40 if len(command.label) <= 2 else 50)
             button.setFixedHeight(CURRENT_LAYOUT.button_height)
 
-            button.clicked.connect(
-                lambda checked, command=command: command.invoke(self)
-            )
+            button.clicked.connect(lambda checked, command=command: command.invoke(self))
 
             self.addTitleWidget(button)
             self._flash_mask_excluded_widgets.add(button)
@@ -343,9 +352,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
     def flash_unmasked_widgets(self) -> tuple[QWidget, ...]:
         """Return function-pane title widgets excluded from descendant masks."""
         return tuple(
-            widget
-            for widget in self._flash_mask_excluded_widgets
-            if not widget.isHidden()
+            widget for widget in self._flash_mask_excluded_widgets if not widget.isHidden()
         )
 
     def flash_title_mask_widgets(self) -> tuple[QWidget, ...]:
@@ -369,7 +376,9 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             return
         enabled_field = Enableable.require_parameter_name()
         if enabled_field not in self.form_manager.widgets:
-            logger.debug(f"No enabled field found in form_manager.widgets for {self.func.__name__ if self.func else 'unknown'}")
+            logger.debug(
+                f"No enabled field found in form_manager.widgets for {self.func.__name__ if self.func else 'unknown'}"
+            )
             return
 
         self._enabled_widget_moved = True
@@ -385,11 +394,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         """Set scope color scheme for title color styling."""
         logger.info(f"🎨 FunctionPaneWidget.set_scope_color_scheme: scheme={scheme is not None}")
         self._scope_color_scheme = scheme
-        
+
         # Call parent class method to handle border/background
         super().set_scope_color_scheme(scheme)
         # Apply scheme to nested groupboxes inside the pane
         from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
+
         for groupbox in self.findChildren(GroupBoxWithHelp):
             if groupbox is self:
                 continue
@@ -397,14 +407,15 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         # Update title label color
         if scheme:
             from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
+
             accent_color = tint_color_perceptual(scheme.base_color_rgb, 1)
             logger.info(f"🎨 FunctionPaneWidget: Setting title color to {accent_color.name()}")
             self._title_label.setStyleSheet(f"color: {accent_color.name()};")
-    
+
     def create_parameter_form(self) -> QWidget:
         """
         Create the parameter form using extracted business logic.
-        
+
         Returns:
             Widget containing parameter form
         """
@@ -416,7 +427,10 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Create the ParameterFormManager with help and reset functionality
         # Import the enhanced PyQt6 ParameterFormManager
-        from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager as PyQtParameterFormManager, FormManagerConfig
+        from pyqt_reactive.forms.parameter_form_manager import (
+            ParameterFormManager as PyQtParameterFormManager,
+            FormManagerConfig,
+        )
 
         # Create form manager with initial_values to load saved kwargs.
         # scope_id is the parent context scope used for function state inheritance.
@@ -479,13 +493,14 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         self.form_manager = PyQtParameterFormManager(
             state=func_state,
             config=FormManagerConfig(
-                parent=self,                      # Pass self as parent widget
-                color_scheme=self.color_scheme,   # Pass color_scheme for consistent theming
-                use_scroll_area=False,            # Let outer FunctionListWidget manage scrolling
+                parent=self,  # Pass self as parent widget
+                color_scheme=self.color_scheme,  # Pass color_scheme for consistent theming
+                use_scroll_area=False,  # Let outer FunctionListWidget manage scrolling
                 exclude_params=exclude_params,
                 scope_step_index=self.scope_index,  # Align scope styling with pipeline order
                 function_target=self.func,
-            )
+                before_mutation=self._before_mutation,
+            ),
         )
 
         # Forward function parameter changes to parent step state for list item flash.
@@ -504,9 +519,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             def forward_to_step(_changed_paths) -> None:
                 if suppress["value"]:
                     return
-                func_state.forward_to_parent_state(
-                    FunctionPatternField.parameter_name()
-                )
+                func_state.forward_to_parent_state(FunctionPatternField.parameter_name())
 
             func_state.on_resolved_changed(forward_to_step)
 
@@ -524,7 +537,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         # Connect parameter changes
         self.form_manager.parameter_changed.connect(
             lambda param_name, value: self.handle_parameter_change(param_name, value),
-            type=Qt.ConnectionType.DirectConnection
+            type=Qt.ConnectionType.DirectConnection,
         )
 
         layout.addWidget(self.form_manager)
@@ -535,13 +548,16 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         """Unregister ObjectState on widget destruction."""
         try:
             from objectstate import ObjectStateRegistry
+
             if self._func_state is not None:
                 ObjectStateRegistry.unregister(self._func_state)
                 self._func_state = None
         except ImportError:
             raise
 
-    def create_parameter_widget(self, param_name: str, param_type: type, current_value: Any) -> Optional[QWidget]:
+    def create_parameter_widget(
+        self, param_name: str, param_type: type, current_value: Any
+    ) -> Optional[QWidget]:
         """
         Create parameter widget based on type.
 
@@ -554,16 +570,17 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             Widget for parameter editing or None
         """
         from PyQt6.QtWidgets import QLineEdit
-        from pyqt_reactive.widgets import (
-            NoScrollSpinBox, NoScrollDoubleSpinBox
-        )
+        from pyqt_reactive.widgets import NoScrollSpinBox, NoScrollDoubleSpinBox
 
         # Boolean parameters
         if param_type == bool:
             from pyqt_reactive.widgets import NoneAwareCheckBox
+
             widget = NoneAwareCheckBox()
             widget.set_value(current_value)  # Use set_value to handle None properly
-            widget.toggled.connect(lambda checked: self.handle_parameter_change(param_name, checked))
+            widget.toggled.connect(
+                lambda checked: self.handle_parameter_change(param_name, checked)
+            )
             return widget
 
         # Integer parameters
@@ -571,21 +588,26 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             widget = NoScrollSpinBox()
             widget.setRange(-999999, 999999)
             widget.setValue(int(current_value) if current_value is not None else 0)
-            widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
+            widget.valueChanged.connect(
+                lambda value: self.handle_parameter_change(param_name, value)
+            )
             return widget
 
         # Float parameters
         elif param_type == float:
             from pyqt_reactive.forms.widget_strategies import WidgetConfig
+
             widget = NoScrollDoubleSpinBox()
             widget.setRange(-999999.0, 999999.0)
             widget.setDecimals(WidgetConfig.FLOAT_PRECISION)
             widget.setValue(float(current_value) if current_value is not None else 0.0)
-            widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
+            widget.valueChanged.connect(
+                lambda value: self.handle_parameter_change(param_name, value)
+            )
             return widget
 
         # Enum parameters
-        elif any(base.__name__ == 'Enum' for base in param_type.__bases__):
+        elif any(base.__name__ == "Enum" for base in param_type.__bases__):
             from pyqt_reactive.forms.widget_strategies import create_enum_widget_unified
 
             # Use the single source of truth for enum widget creation
@@ -602,11 +624,11 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             widget.setText(str(current_value) if current_value is not None else "")
             widget.textChanged.connect(lambda text: self.handle_parameter_change(param_name, text))
             return widget
-    
+
     def setup_connections(self):
         """Setup signal/slot connections."""
         return
-    
+
     def handle_parameter_change(self, param_name: str, value: Any):
         """
         Handle parameter value changes (extracted from Textual version).
@@ -628,7 +650,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         self.parameter_changed.emit(self.index, param_name, value)
 
         logger.debug(f"Parameter changed: {param_name} = {value}")
-    
+
     def reset_all_parameters(self):
         """Reset all parameters to default values using PyQt6 form manager."""
         if not self.form_manager:
@@ -648,27 +670,27 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             self.parameter_changed.emit(self.index, param_name, default_value)
 
         self.reset_parameters.emit(self.index)
-    
+
     def update_widget_value(self, widget: QWidget, value: ParameterValue | None) -> None:
         """
         Update widget value without triggering signals.
-        
+
         Args:
             widget: Widget to update
             value: New value
         """
         PyQt6WidgetEnhancer.set_widget_value(widget, value)
-    
+
     def get_current_kwargs(self) -> Dict[str, Any]:
         """
         Get current kwargs values (extracted from Textual version).
-        
+
         Returns:
             Current parameter values
         """
         return self._internal_kwargs.copy()
-    
-    def _reconstruct_kwargs_from_state(self, state: 'ObjectState') -> dict:
+
+    def _reconstruct_kwargs_from_state(self, state: "ObjectState") -> dict:
         """
         Reconstruct kwargs dict from ObjectState's flat storage.
 
@@ -702,17 +724,17 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         if self._flash_key == "":
             raise RuntimeError("Function pane flash key was not registered")
         self.queue_flash_local(self._flash_key)
-    
+
     def update_function(self, func_item: Tuple[Callable, Dict]):
         """
         Update the function and parameters.
-        
+
         Args:
             func_item: New function item tuple
         """
         self.func, self.kwargs = func_item
         self._internal_kwargs = self.kwargs.copy()
-        
+
         # Update parameter defaults
         if self.func:
             param_info = SignatureAnalyzer.analyze(self.func)
@@ -726,24 +748,24 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Rebuild UI (this will create the form manager in create_parameter_form())
         self.setup_ui()
-        
+
         logger.debug(f"Updated function for index {self.index}")
 
 
 class FunctionListWidget(QWidget):
     """
     PyQt6 Function List Widget.
-    
+
     Container for multiple FunctionPaneWidgets with list management.
     """
-    
+
     # Signals
     functions_changed = pyqtSignal(list)  # List of function items
-    
+
     def __init__(self, service_adapter, color_scheme: Optional[ColorScheme] = None, parent=None):
         """
         Initialize the function list widget.
-        
+
         Args:
             service_adapter: PyQt service adapter
             parent: Parent widget
@@ -752,35 +774,35 @@ class FunctionListWidget(QWidget):
 
         # Initialize color scheme
         self.color_scheme = color_scheme or ColorScheme()
-        
+
         self.service_adapter = service_adapter
         self.functions: List[Tuple[Callable, Dict]] = []
         self.function_panes: List[FunctionPaneWidget] = []
-        
+
         # Setup UI
         self.setup_ui()
-    
+
     def setup_ui(self):
         """Setup the user interface."""
         layout = QVBoxLayout(self)
-        
+
         # Scroll area for function panes
         scroll_area = ReflowingVerticalScrollArea()
-        
+
         # Container widget for function panes
         self.container_widget = QWidget()
         self.container_layout = QVBoxLayout(self.container_widget)
         self.container_layout.setSpacing(5)
-        
+
         scroll_area.setWidget(self.container_widget)
         layout.addWidget(scroll_area)
-        
+
         # Add function button
         add_button = QPushButton("Add Function")
         add_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         add_button.clicked.connect(lambda: self.add_function_at_index(len(self.functions)))
         layout.addWidget(add_button)
-    
+
     def update_function_list(self):
         """Update the function list display."""
         # Clear existing panes - CRITICAL: Manually unregister form managers BEFORE deleteLater()
@@ -793,22 +815,26 @@ class FunctionListWidget(QWidget):
                 pane.form_manager.unregister_from_cross_window_updates()
             pane.deleteLater()  # Schedule for deletion - triggers destroyed signal
         self.function_panes.clear()
-        
+
         # Create new panes
         for i, func_item in enumerate(self.functions):
-            pane = FunctionPaneWidget(func_item, i, self.service_adapter, color_scheme=self.color_scheme)
-            
+            pane = FunctionPaneWidget(
+                func_item, i, self.service_adapter, color_scheme=self.color_scheme
+            )
+
             # Connect signals
-            pane.parameter_changed.connect(self.on_parameter_changed, type=Qt.ConnectionType.DirectConnection)
+            pane.parameter_changed.connect(
+                self.on_parameter_changed, type=Qt.ConnectionType.DirectConnection
+            )
             pane.add_function.connect(self.add_function_at_index)
             pane.remove_function.connect(self.remove_function_at_index)
             pane.move_function.connect(self.move_function)
-            
+
             self.function_panes.append(pane)
             self.container_layout.addWidget(pane)
-        
+
         self.container_layout.addStretch()
-    
+
     def add_function_at_index(self, index: int):
         """Add function at specific index."""
         # Placeholder function
@@ -816,22 +842,25 @@ class FunctionListWidget(QWidget):
         self.functions.insert(index, new_func_item)
         self.update_function_list()
         self.functions_changed.emit(self.functions)
-    
+
     def remove_function_at_index(self, index: int):
         """Remove function at specific index."""
         if 0 <= index < len(self.functions):
             self.functions.pop(index)
             self.update_function_list()
             self.functions_changed.emit(self.functions)
-    
+
     def move_function(self, index: int, direction: int):
         """Move function up or down."""
         new_index = index + direction
         if 0 <= new_index < len(self.functions):
-            self.functions[index], self.functions[new_index] = self.functions[new_index], self.functions[index]
+            self.functions[index], self.functions[new_index] = (
+                self.functions[new_index],
+                self.functions[index],
+            )
             self.update_function_list()
             self.functions_changed.emit(self.functions)
-    
+
     def on_parameter_changed(self, index: int, param_name: str, value: Any):
         """Handle parameter changes."""
         if 0 <= index < len(self.functions):
