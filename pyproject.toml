@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyqt-reactive"
-version = "0.1.23"
+version = "0.1.24"
 description = "React-quality reactive form generation framework for PyQt6"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
 license = {text = "MIT"}
@@ -24,6 +24,7 @@ classifiers = [
 keywords = ["pyqt6", "forms", "reactive", "gui", "widgets", "dataclass"]
 
 dependencies = [
+    "docutils>=0.20",
     "magicgui>=0.7.0",
     "metaclass-registry>=0.1.5",
     "PyQt6>=6.4.0",

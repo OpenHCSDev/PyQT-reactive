@@ -500,29 +500,14 @@ class HelpButton(QPushButton):
 
     def set_scope_accent_color(self, color) -> None:
         """Set scope accent color (QColor). Called by parent window for scope styling."""
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"[HELP_BUTTON] set_scope_accent_color CALLED with color={color}")
         self._apply_color(color)
 
     def show_help(self):
-        """Show help using the unified help manager - reuses Textual TUI logic."""
+        """Show help through the shared context and renderer."""
         try:
-            import logging
-            logger = logging.getLogger(__name__)
-
-            logger.info(f"HelpButton.show_help() CALLED - help_target={self.help_context.help_target}, param_name={self.help_context.param_name}")
-            logger.info(f"🔍 HelpButton parent class: {type(self.parent()).__name__ if self.parent() else 'None'}")
-            logger.info(f"🔍 HelpButton parent widget: {self.parent()}")
-
-            if self.help_context.help_target:
-                logger.info(f"Calling show_docstring_help with target={self.help_context.help_target}")
-            elif self.help_context.param_name:
-                logger.info(f"Calling show_parameter_help with param_name={self.help_context.param_name}")
             self.help_context.show_help(self)
-
-        except Exception as e:
-            logger.error(f"Failed to show help: {e}")
+        except Exception:
+            logger.exception("Failed to show help")
             raise
 
 

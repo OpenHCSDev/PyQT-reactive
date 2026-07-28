@@ -2,14 +2,64 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TypeAlias
-
+from collections.abc import Callable
+from dataclasses import dataclass, field, fields, is_dataclass
+from typing import Any, TypeAlias
 
 DEFAULT_MAXIMUM_WIDGET_TEXT_LENGTH = 4096
 DEFAULT_MAXIMUM_ITEM_MODEL_NODES = 512
 DEFAULT_TEXT_TRUNCATION_SUFFIX = "...<truncated>"
 WidgetPath: TypeAlias = tuple[int, ...]
+CompactFieldPredicate: TypeAlias = Callable[[object, object], bool]
+COMPACT_FIELD_PROJECTION_METADATA_KEY = "compact_field_projection"
+
+
+@dataclass(frozen=True, slots=True)
+class CompactFieldProjection:
+    """Declaration-owned rules for one field in a compact dataclass projection."""
+
+    includes: CompactFieldPredicate
+
+
+def always_project_compact_field(_owner: object, _value: object) -> bool:
+    """Retain a field even when its current value is otherwise empty."""
+
+    return True
+
+
+def _compact_value_carries_information(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (str, bytes, tuple, list, dict, set, frozenset)):
+        return bool(value)
+    return True
+
+
+def compact_dataclass_projection(value: object) -> dict[str, Any]:
+    """Project one dataclass through its field-owned compactness declarations."""
+
+    if isinstance(value, type) or not is_dataclass(value):
+        raise TypeError(
+            f"Compact projection requires a dataclass instance, got {value!r}."
+        )
+    projected: dict[str, Any] = {}
+    for declared_field in fields(value):
+        field_value = getattr(value, declared_field.name)
+        policy = declared_field.metadata.get(COMPACT_FIELD_PROJECTION_METADATA_KEY)
+        if policy is None:
+            includes = _compact_value_carries_information(field_value)
+        elif isinstance(policy, CompactFieldProjection):
+            includes = policy.includes(value, field_value)
+        else:
+            raise TypeError(
+                f"{type(value).__name__}.{declared_field.name} declares an invalid "
+                "compact field projection."
+            )
+        if includes:
+            projected[declared_field.name] = field_value
+    return projected
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,10 +74,34 @@ class WidgetTextProjection:
 class WidgetNodeIdentity:
     """Stable widget identity fields shared by projector and transport DTOs."""
 
-    path: WidgetPath
-    path_id: str
-    child_index: int | None
-    class_name: str
+    path: WidgetPath = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    path_id: str = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    child_index: int | None = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
+    class_name: str = field(
+        metadata={
+            COMPACT_FIELD_PROJECTION_METADATA_KEY: CompactFieldProjection(
+                includes=always_project_compact_field
+            )
+        }
+    )
     object_name: str
     accessible_name: str
     accessible_description: str
