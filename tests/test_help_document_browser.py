@@ -148,9 +148,7 @@ def test_each_render_branch_preserves_explicit_base_url(
     browser = HelpDocumentBrowser()
     base_path = tmp_path / markup.value
 
-    browser.set_help_document(
-        HelpDocument(content, markup, base_url=str(base_path))
-    )
+    browser.set_help_document(HelpDocument(content, markup, base_url=str(base_path)))
     qapp.processEvents()
 
     assert browser.document().baseUrl() == QUrl.fromLocalFile(str(base_path.resolve()))
@@ -179,6 +177,12 @@ def test_reused_browser_resets_base_url_and_scroll_position(qapp, tmp_path) -> N
 
     assert browser.verticalScrollBar().value() == 0
     assert browser.document().baseUrl().isEmpty()
+
+
+def test_windows_drive_path_is_a_local_base_url() -> None:
+    document = HelpDocument("Help", base_url=r"C:\Users\scientist\OpenHCS")
+
+    assert HelpDocumentBrowser._base_url(document) == QUrl("file:///C:/Users/scientist/OpenHCS")
 
 
 def test_long_prose_and_code_wrap_without_horizontal_overlay(qapp) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from math import ceil
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QBrush, QTextCharFormat, QTextCursor, QTextDocument, QTextOption
@@ -58,23 +58,19 @@ class HelpDocumentBrowser(QTextBrowser):
         """Return the document's Qt-laid-out outer height at one widget width."""
         available_width = max(
             1,
-            widget_width
-            - (self.frameWidth() * 2)
-            - (HELP_DOCUMENT_PADDING * 2),
+            widget_width - (self.frameWidth() * 2) - (HELP_DOCUMENT_PADDING * 2),
         )
         layout_document = self.document().clone()
         layout_document.setTextWidth(available_width)
         document_height = layout_document.documentLayout().documentSize().height()
-        return ceil(
-            document_height
-            + (self.frameWidth() * 2)
-            + (HELP_DOCUMENT_PADDING * 2)
-        )
+        return ceil(document_height + (self.frameWidth() * 2) + (HELP_DOCUMENT_PADDING * 2))
 
     @staticmethod
     def _base_url(document: HelpDocument) -> QUrl:
         if not document.base_url:
             return QUrl()
+        if PureWindowsPath(document.base_url).drive:
+            return QUrl.fromLocalFile(document.base_url.replace("\\", "/"))
         base_url = QUrl(document.base_url)
         if base_url.scheme() == "":
             return QUrl.fromLocalFile(str(Path(document.base_url).resolve()))
