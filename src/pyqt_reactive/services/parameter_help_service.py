@@ -12,7 +12,12 @@ from types import UnionType
 from typing import Annotated, Callable, Optional, Union, get_args, get_origin
 
 from objectstate.lazy_factory import get_base_type_for_lazy, is_lazy_dataclass
-from python_introspect import DocstringExtractor, DocstringInfo, UnifiedParameterAnalyzer
+from python_introspect import (
+    DocstringExtractor,
+    DocstringInfo,
+    UnifiedParameterAnalyzer,
+    resolve_annotated,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -310,9 +315,10 @@ def parameter_type_display(param_type: type | None) -> str:
     """Return the compact type label used by parameter help."""
     if param_type is None:
         return ""
-    if isinstance(param_type, type):
-        return f" ({param_type.__name__})"
-    return f" ({param_type})"
+    display_type = resolve_annotated(param_type)
+    if isinstance(display_type, type):
+        return f" ({display_type.__name__})"
+    return f" ({display_type})"
 
 
 def split_default_prefix(text: str) -> tuple[str, str]:
