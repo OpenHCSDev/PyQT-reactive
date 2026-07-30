@@ -354,10 +354,9 @@ class ParameterOpsService(ParameterServiceABC):
                 if not PyQt6WidgetEnhancer.supports_placeholder(widget):
                     continue
 
-                # Use manager.parameters (scoped) not state.parameters (full paths)
-                current_value = manager.parameters.get(param_name)
-                should_apply_placeholder = (current_value is None)
                 full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+                current_value = manager.state.parameters.get(full_path)
+                should_apply_placeholder = current_value is None
                 resolved_value = manager.state.get_resolved_value(full_path)
 
                 if should_apply_placeholder:

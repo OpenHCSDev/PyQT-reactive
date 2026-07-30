@@ -1,8 +1,9 @@
 """Capacity-based responsive layout widgets for PyQt6."""
 
+from contextlib import contextmanager
 from enum import Enum
 
-from PyQt6.QtCore import QSize, QTimer, Qt
+from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -113,6 +114,8 @@ class ResponsiveTwoRowWidget(QWidget):
         
         self._left_widgets: list[tuple[QWidget, int]] = []
         self._right_widgets: list[tuple[QWidget, int]] = []
+        self._layout_update_depth = 0
+        self._layout_update_pending = False
         
         # Debounce timer
         self._timer = QTimer(self)
@@ -122,14 +125,12 @@ class ResponsiveTwoRowWidget(QWidget):
     def add_left_widget(self, widget: QWidget, stretch: int = 0) -> None:
         """Add widget to left side (stays in row1)."""
         self._left_widgets.append((widget, stretch))
-        self._do_switch()
-        self._timer.start(0)
+        self._request_layout_update()
 
     def add_right_widget(self, widget: QWidget, stretch: int = 0) -> None:
         """Add widget to right side (moves between row1 and row2)."""
         self._right_widgets.append((widget, stretch))
-        self._do_switch()
-        self._timer.start(0)
+        self._request_layout_update()
 
     def release_widgets(self, *widgets: QWidget) -> bool:
         """Release widget ownership so later reflows cannot reinsert them."""
@@ -154,9 +155,29 @@ class ResponsiveTwoRowWidget(QWidget):
 
         self._left_widgets = left_widgets
         self._right_widgets = right_widgets
+        self._request_layout_update()
+        return True
+
+    @contextmanager
+    def layout_update(self):
+        """Coalesce one logical content update into one responsive reflow."""
+
+        self._layout_update_depth += 1
+        try:
+            yield self
+        finally:
+            self._layout_update_depth -= 1
+            if self._layout_update_depth == 0 and self._layout_update_pending:
+                self._layout_update_pending = False
+                self._do_switch()
+                self._timer.start(0)
+
+    def _request_layout_update(self) -> None:
+        if self._layout_update_depth:
+            self._layout_update_pending = True
+            return
         self._do_switch()
         self._timer.start(0)
-        return True
 
     def is_empty(self) -> bool:
         """Return whether this row owns no remaining presentation widgets."""
@@ -291,6 +312,10 @@ class StagedWrapLayout(QWidget):
         self._last_row1 = []
         self._last_row2 = []
         self._last_width = -1
+        self._last_group_layout_signature: tuple[
+            tuple[str, int, int, bool, bool],
+            ...,
+        ] = ()
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
@@ -327,9 +352,6 @@ class StagedWrapLayout(QWidget):
         self._groups = groups
         self._stay_priority = stay_priority
         self._right_align_names = set(right_align_names or [])
-        # Group contents and size policies can change while names and available
-        # width remain stable. Rebuild instead of reusing that stale row cache.
-        self._last_width = -1
         self._update_layout()
 
     def refresh_layout(self):
@@ -378,17 +400,29 @@ class StagedWrapLayout(QWidget):
 
         row1_names = [name for name in visual_order if name in keep_names]
         row2_names = [name for name in visual_order if name not in keep_names]
+        group_layout_signature = tuple(
+            (
+                name,
+                id(widget),
+                widths[name],
+                _widget_expands_horizontally(widget),
+                name in self._right_align_names,
+            )
+            for name, widget in self._groups
+        )
 
         if (
-            available == self._last_width
-            and row1_names == self._last_row1
+            row1_names == self._last_row1
             and row2_names == self._last_row2
+            and group_layout_signature == self._last_group_layout_signature
         ):
+            self._last_width = available
             return
 
         self._last_row1 = list(row1_names)
         self._last_row2 = list(row2_names)
         self._last_width = available
+        self._last_group_layout_signature = group_layout_signature
 
         group_map = {name: widget for name, widget in self._groups}
 

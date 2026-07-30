@@ -268,6 +268,9 @@ def test_placeholder_refresh_preserves_concrete_checkbox_group_default(qapp):
         parameters={"variable_components": [Component.SITE]},
         config=SimpleNamespace(placeholder_prefix="Default"),
         state=SimpleNamespace(
+            parameters={
+                "processing_config.variable_components": [Component.SITE],
+            },
             get_resolved_value=lambda path: [Component.SITE],
         ),
     )
@@ -517,6 +520,104 @@ def test_responsive_parameter_row_wraps_only_below_minimum_capacity(qapp):
     assert row._row2_layout.itemAt(1).widget() is reset
     assert editor.geometry().left() <= row._row2_layout.contentsMargins().left() + 1
     assert reset.geometry().right() >= row.contentsRect().right() - row._row2_layout.contentsMargins().right() - 1
+
+
+def test_responsive_parameter_row_coalesces_logical_content_construction(
+    qapp,
+    monkeypatch,
+):
+    """One row pipeline update performs one layout ownership transfer."""
+    from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton
+
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        ResponsiveParameterRow,
+    )
+
+    row = ResponsiveParameterRow()
+    switch_calls = 0
+    original_switch = row._do_switch
+
+    def counted_switch() -> None:
+        nonlocal switch_calls
+        switch_calls += 1
+        original_switch()
+
+    monkeypatch.setattr(row, "_do_switch", counted_switch)
+    label = QLabel("Threshold")
+    editor = QLineEdit("1")
+    reset = QPushButton("Reset")
+
+    with row.layout_update():
+        row.set_label(label)
+        row.set_input(editor)
+        row.set_reset_button(reset)
+
+    assert switch_calls == 1
+    assert row._row1_layout.count() == 3
+    assert row._row1_layout.itemAt(0).widget() is label
+    assert row._row1_layout.itemAt(1).widget() is editor
+    assert row._row1_layout.itemAt(2).widget() is reset
+
+
+def test_staged_wrap_layout_keeps_unchanged_group_ownership(monkeypatch):
+    """Content growth does not repeatedly remove and reinsert stable groups."""
+    from PyQt6.QtWidgets import QLabel, QWidget
+
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        StagedWrapLayout,
+    )
+
+    layout = StagedWrapLayout()
+    title_group = QWidget()
+    right_group = QWidget()
+    groups = [("title", title_group), ("right", right_group)]
+    layout.set_groups(groups, ["title", "right"])
+    clear_calls = 0
+    original_clear = layout._clear_row
+
+    def counted_clear(row_layout) -> None:
+        nonlocal clear_calls
+        clear_calls += 1
+        original_clear(row_layout)
+
+    monkeypatch.setattr(layout, "_clear_row", counted_clear)
+    QLabel("new child", parent=right_group)
+
+    layout.set_groups(groups, ["title", "right"])
+
+    assert clear_calls == 0
+    assert layout._row1_layout.itemAt(0).widget() is title_group
+    assert layout._row1_layout.itemAt(1).widget() is right_group
+
+
+def test_staged_wrap_layout_reclassifies_same_widget_after_intrinsic_growth():
+    """A stable group identity still wraps when its required width changes."""
+    from PyQt6.QtWidgets import QWidget
+
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        StagedWrapLayout,
+    )
+
+    layout = StagedWrapLayout()
+    layout.resize(200, 100)
+    title_group = QWidget()
+    title_group.setMinimumWidth(80)
+    right_group = QWidget()
+    right_group.setMinimumWidth(80)
+    groups = [("title", title_group), ("right", right_group)]
+    layout.set_groups(groups, ["title", "right"])
+
+    assert layout._row1_layout.itemAt(0).widget() is title_group
+    assert layout._row1_layout.itemAt(1).widget() is right_group
+    assert layout._row2_layout.count() == 0
+
+    right_group.setMinimumWidth(180)
+    layout.set_groups(groups, ["title", "right"])
+
+    assert layout._row1_layout.count() == 1
+    assert layout._row1_layout.itemAt(0).widget() is title_group
+    assert layout._row2_layout.count() == 1
+    assert layout._row2_layout.itemAt(0).widget() is right_group
 
 
 def test_action_tab_row_keeps_tabs_and_actions_on_one_row_when_they_fit(qapp):

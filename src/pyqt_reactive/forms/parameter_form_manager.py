@@ -132,7 +132,7 @@ class ParameterFormTypeResolver:
     @staticmethod
     def field_type(manager: "ParameterFormManager", field_name: str, signature_type: Type) -> Type:
         dotted_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
-        if not ParameterFormTypeResolver.path_has_children(manager.state.parameters, dotted_path):
+        if not manager.state.has_parameter_descendants(dotted_path):
             return signature_type
 
         state_type = manager.state.type_for_path(dotted_path)
@@ -141,29 +141,15 @@ class ParameterFormTypeResolver:
         return signature_type
 
     @staticmethod
-    def path_has_children(parameters: Dict[str, Any], dotted_path: str) -> bool:
-        owner_path = DottedFieldPath(dotted_path)
-        return any(owner_path.contains_path(path) for path in parameters if path != dotted_path)
-
-    @staticmethod
     def scoped_parameters(state, field_id: str) -> ParameterDefaultsByName:
         """Project ObjectState's flat parameters into one form manager scope."""
-        if not field_id:
-            return ParameterDefaultsByName(
-                (key, value) for key, value in state.parameters.items() if "." not in key
+        return ParameterDefaultsByName(
+            (
+                parameter_path.field_name,
+                state.parameters[parameter_path.value],
             )
-
-        owner_path = DottedFieldPath(field_id)
-        result = ParameterDefaultsByName()
-        for path, value in state.parameters.items():
-            if owner_path.contains_path(path) and path != field_id:
-                suffix = path[len(field_id) :]
-                if not suffix.startswith("."):
-                    continue
-                remainder = suffix[1:]
-                if "." not in remainder:
-                    result[remainder] = value
-        return result
+            for parameter_path in state.direct_parameter_paths(field_id)
+        )
 
 
 class ParameterFormManager(
