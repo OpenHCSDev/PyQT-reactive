@@ -1,6 +1,5 @@
 """
 System Monitor Widget for PyQt6
-
 Real-time system monitoring with CPU, RAM, GPU, and VRAM usage graphs.
 Migrated from Textual TUI with full feature parity.
 """
@@ -8,12 +7,11 @@ Migrated from Textual TUI with full feature parity.
 import logging
 import time
 from typing import Optional
-from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout, QSizePolicy, QPushButton, QSplitter
 )
-from PyQt6.QtCore import QTimer, pyqtSignal, QMetaObject, Qt
+from PyQt6.QtCore import QTimer, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QResizeEvent
 
 # Lazy import of PyQtGraph to avoid blocking startup
@@ -30,6 +28,7 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.services.persistent_system_monitor import PersistentSystemMonitor
 from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
+from pyqt_reactive.services.system_metrics_sampler import SystemMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +51,7 @@ class SystemMonitorWidget(QWidget):
     BUTTON_GRID_COLUMNS = 0  # Single row (all buttons next to each other)
     
     # Signals
-    metrics_updated = pyqtSignal(dict)  # Emitted when metrics are updated
+    metrics_updated = pyqtSignal(object)  # Emits SystemMetrics.
     _pyqtgraph_loaded = pyqtSignal()  # Internal signal for async pyqtgraph loading
     _pyqtgraph_failed = pyqtSignal()  # Internal signal for async pyqtgraph loading failure
     
@@ -530,16 +529,28 @@ class SystemMonitorWidget(QWidget):
         self.ram_vram_plot.setMenuEnabled(False)
 
         # Store plot data items for efficient updates using configured colors and line width
-        colors = self.monitor_config.chart_colors
+        colors = self.monitor_config.colors
         line_width = self.monitor_config.line_width
 
         # CPU/GPU plot curves
-        self.cpu_curve = self.cpu_gpu_plot.plot(pen=pg.mkPen(colors['cpu'], width=line_width), name='CPU')
-        self.gpu_curve = self.cpu_gpu_plot.plot(pen=pg.mkPen(colors['gpu'], width=line_width), name='GPU')
+        self.cpu_curve = self.cpu_gpu_plot.plot(
+            pen=pg.mkPen(colors.cpu, width=line_width),
+            name='CPU',
+        )
+        self.gpu_curve = self.cpu_gpu_plot.plot(
+            pen=pg.mkPen(colors.gpu, width=line_width),
+            name='GPU',
+        )
 
         # RAM/VRAM plot curves
-        self.ram_curve = self.ram_vram_plot.plot(pen=pg.mkPen(colors['ram'], width=line_width), name='RAM')
-        self.vram_curve = self.ram_vram_plot.plot(pen=pg.mkPen(colors['vram'], width=line_width), name='VRAM')
+        self.ram_curve = self.ram_vram_plot.plot(
+            pen=pg.mkPen(colors.ram, width=line_width),
+            name='RAM',
+        )
+        self.vram_curve = self.ram_vram_plot.plot(
+            pen=pg.mkPen(colors.vram, width=line_width),
+            name='VRAM',
+        )
         for curve in (
             self.cpu_curve,
             self.gpu_curve,
@@ -790,19 +801,15 @@ class SystemMonitorWidget(QWidget):
         except Exception as e:
             logger.warning(f"Error during SystemMonitorWidget cleanup: {e}")
     
-    def on_metrics_updated(self, metrics: dict):
+    def on_metrics_updated(self, metrics: SystemMetrics):
         """Handle metrics update from persistent monitor thread."""
         try:
-            # Update the sync monitor's history for compatibility with existing plotting code
-            if metrics:
-                self.monitor.cpu_history.append(metrics.get('cpu_percent', 0))
-                self.monitor.ram_history.append(metrics.get('ram_percent', 0))
-                self.monitor.gpu_history.append(metrics.get('gpu_percent', 0))
-                self.monitor.vram_history.append(metrics.get('vram_percent', 0))
-                self.monitor.time_stamps.append(time.time())
-
-                # Update cached metrics
-                self.monitor._current_metrics = metrics.copy()
+            self.monitor.cpu_history.append(metrics.cpu_percent)
+            self.monitor.ram_history.append(metrics.ram_percent)
+            self.monitor.gpu_history.append(metrics.gpu_percent)
+            self.monitor.vram_history.append(metrics.vram_percent)
+            self.monitor.time_stamps.append(time.time())
+            self.monitor._current_metrics = metrics
 
             self.metrics_updated.emit(metrics)
 
@@ -814,12 +821,12 @@ class SystemMonitorWidget(QWidget):
         logger.warning(f"Metrics collection failed: {error_message}")
         # Continue with cached/default metrics to keep UI responsive
 
-    def update_display(self, metrics: dict):
+    def update_display(self, metrics: SystemMetrics):
         """
         Update the display with new metrics.
 
         Args:
-            metrics: Dictionary of system metrics
+            metrics: Typed system metrics snapshot.
         """
         try:
             # Update system info
@@ -833,13 +840,13 @@ class SystemMonitorWidget(QWidget):
         except Exception as e:
             logger.warning(f"Failed to update display: {e}")
 
-    def _queue_pyqtgraph_plot_update(self, metrics: dict) -> None:
+    def _queue_pyqtgraph_plot_update(self, metrics: SystemMetrics) -> None:
         """Coalesce plot rendering with the shared visual-frame coordinator."""
 
-        metrics_snapshot = metrics.copy()
+        del metrics
         queue_visual_frame_callback(
             self,
-            lambda: self.update_pyqtgraph_plots(metrics_snapshot),
+            self.update_pyqtgraph_plots,
         )
 
     def _reset_plot_buffers(self):
@@ -860,7 +867,7 @@ class SystemMonitorWidget(QWidget):
         except AttributeError:
             pass
 
-    def update_pyqtgraph_plots(self, metrics: Optional[dict] = None):
+    def update_pyqtgraph_plots(self):
         """Update consolidated PyQtGraph plot data at metrics cadence."""
         try:
             data_length = len(self.monitor.cpu_history)
@@ -974,20 +981,20 @@ class SystemMonitorWidget(QWidget):
         except TypeError:
             curve.setData([], [])
     
-    def update_fallback_display(self, metrics: dict):
+    def update_fallback_display(self, metrics: SystemMetrics):
         """
         Update fallback text display.
         
         Args:
-            metrics: Dictionary of system metrics
+            metrics: Typed system metrics snapshot.
         """
         try:
             display_text = f"""
 ┌─────────────────────────────────────────────────────────────────┐
-│ CPU:  {self.create_text_bar(metrics.get('cpu_percent', 0))} {metrics.get('cpu_percent', 0):5.1f}%
-│ RAM:  {self.create_text_bar(metrics.get('ram_percent', 0))} {metrics.get('ram_percent', 0):5.1f}% ({metrics.get('ram_used_gb', 0):.1f}/{metrics.get('ram_total_gb', 0):.1f}GB)
-│ GPU:  {self.create_text_bar(metrics.get('gpu_percent', 0))} {metrics.get('gpu_percent', 0):5.1f}%
-│ VRAM: {self.create_text_bar(metrics.get('vram_percent', 0))} {metrics.get('vram_percent', 0):5.1f}%
+│ CPU:  {self.create_text_bar(metrics.cpu_percent)} {metrics.cpu_percent:5.1f}%
+│ RAM:  {self.create_text_bar(metrics.ram_percent)} {metrics.ram_percent:5.1f}% ({metrics.ram_used_gb:.1f}/{metrics.ram_total_gb:.1f}GB)
+│ GPU:  {self.create_text_bar(metrics.gpu_percent)} {metrics.gpu_percent:5.1f}%
+│ VRAM: {self.create_text_bar(metrics.vram_percent)} {metrics.vram_percent:5.1f}%
 └─────────────────────────────────────────────────────────────────┘
 """
             self.fallback_label.setText(display_text)
@@ -995,48 +1002,38 @@ class SystemMonitorWidget(QWidget):
         except Exception as e:
             logger.warning(f"Failed to update fallback display: {e}")
     
-    def update_system_info(self, metrics: dict):
+    def update_system_info(self, metrics: SystemMetrics):
         """
         Update system information display.
 
         Args:
-            metrics: Dictionary of system metrics
+            metrics: Typed system metrics snapshot.
         """
         try:
-            self.cpu_cores_label[1].setText(str(metrics.get('cpu_cores', 'N/A')))
-            self.cpu_freq_label[1].setText(f"{metrics.get('cpu_freq_mhz', 0):.0f} MHz")
+            self.cpu_cores_label[1].setText(str(metrics.cpu_cores))
+            self.cpu_freq_label[1].setText(f"{metrics.cpu_freq_mhz:.0f} MHz")
 
             # Update RAM info
-            self.ram_total_label[1].setText(f"{metrics.get('ram_total_gb', 0):.1f} GB")
-            self.ram_used_label[1].setText(f"{metrics.get('ram_used_gb', 0):.1f} GB")
+            self.ram_total_label[1].setText(f"{metrics.ram_total_gb:.1f} GB")
+            self.ram_used_label[1].setText(f"{metrics.ram_used_gb:.1f} GB")
 
             # Update GPU info if available
-            if 'gpu_name' in metrics:
-                gpu_name = metrics.get('gpu_name', 'N/A')
-                if len(gpu_name) > 35:
-                    gpu_name = gpu_name[:32] + '...'
+            gpu_name = metrics.gpu_name
+            if len(gpu_name) > 35:
+                gpu_name = gpu_name[:32] + '...'
 
-                self.gpu_name_label[1].setText(gpu_name)
-                self.gpu_temp_label[1].setText(f"{metrics.get('gpu_temp', 'N/A')}°C")
-                self.vram_label[1].setText(
-                    f"{metrics.get('vram_used_mb', 0):.0f} / {metrics.get('vram_total_mb', 0):.0f} MB"
-                )
+            self.gpu_name_label[1].setText(gpu_name)
+            self.gpu_temp_label[1].setText(f"{metrics.gpu_temp}°C")
+            self.vram_label[1].setText(
+                f"{metrics.vram_used_mb:.0f} / {metrics.vram_total_mb:.0f} MB"
+            )
 
-                # Show GPU labels
-                self.gpu_name_label[0].show()
-                self.gpu_name_label[1].show()
-                self.gpu_temp_label[0].show()
-                self.gpu_temp_label[1].show()
-                self.vram_label[0].show()
-                self.vram_label[1].show()
-            else:
-                # Hide GPU labels if no GPU
-                self.gpu_name_label[0].hide()
-                self.gpu_name_label[1].hide()
-                self.gpu_temp_label[0].hide()
-                self.gpu_temp_label[1].hide()
-                self.vram_label[0].hide()
-                self.vram_label[1].hide()
+            self.gpu_name_label[0].show()
+            self.gpu_name_label[1].show()
+            self.gpu_temp_label[0].show()
+            self.gpu_temp_label[1].show()
+            self.vram_label[0].show()
+            self.vram_label[1].show()
 
         except Exception as e:
             logger.warning(f"Failed to update system info: {e}")
@@ -1162,17 +1159,17 @@ class SystemMonitorWidget(QWidget):
         ):
             return
 
-        colors = self.monitor_config.chart_colors
+        colors = self.monitor_config.colors
         line_width = self.monitor_config.line_width
 
         self._plot_opengl_enabled = self._configure_plot_acceleration()
         pg.setConfigOption("antialias", self._effective_plot_antialiasing())
 
         # Update curve pens
-        self.cpu_curve.setPen(pg.mkPen(colors['cpu'], width=line_width))
-        self.ram_curve.setPen(pg.mkPen(colors['ram'], width=line_width))
-        self.gpu_curve.setPen(pg.mkPen(colors['gpu'], width=line_width))
-        self.vram_curve.setPen(pg.mkPen(colors['vram'], width=line_width))
+        self.cpu_curve.setPen(pg.mkPen(colors.cpu, width=line_width))
+        self.ram_curve.setPen(pg.mkPen(colors.ram, width=line_width))
+        self.gpu_curve.setPen(pg.mkPen(colors.gpu, width=line_width))
+        self.vram_curve.setPen(pg.mkPen(colors.vram, width=line_width))
         for curve in (
             self.cpu_curve,
             self.gpu_curve,
@@ -1190,8 +1187,3 @@ class SystemMonitorWidget(QWidget):
                 alpha=0.3,
             )
         self._apply_fixed_plot_ranges()
-    
-    def closeEvent(self, event):
-        """Handle widget close event."""
-        self.stop_monitoring()
-        event.accept()

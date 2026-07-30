@@ -6,21 +6,18 @@ without creating/destroying threads repeatedly. This prevents UI hanging
 and provides smooth, responsive performance monitoring.
 """
 
-import time
 import logging
-from typing import Dict, Any
 from collections import deque
+import time
 
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker, Qt
 
 from pyqt_reactive.services.system_metrics_sampler import (
-    GPU_AVAILABLE,
-    SystemMetricsSampler,
     SystemMetrics,
+    SystemMetricsSampler,
     SystemMetricsSamplerConfig,
-    get_cpu_freq_mhz,
-    is_wsl,
 )
+from pyqt_reactive.services.system_monitor_core import SystemMetricsHistory
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +32,7 @@ class PersistentSystemMonitorThread(QThread):
     """
     
     # Signals
-    metrics_updated = pyqtSignal(dict)  # Emitted when new metrics are available
+    metrics_updated = pyqtSignal(object)  # Emits SystemMetrics.
     error_occurred = pyqtSignal(str)    # Emitted when an error occurs
     
     def __init__(
@@ -77,7 +74,7 @@ class PersistentSystemMonitorThread(QThread):
             self.time_stamps.append(0)
         
         # Cache for current metrics
-        self._current_metrics: Dict[str, Any] = {}
+        self._current_metrics = SystemMetrics()
     
     def run(self):
         """Main thread loop - continuously collect metrics."""
@@ -87,7 +84,6 @@ class PersistentSystemMonitorThread(QThread):
             try:
                 # Collect all metrics
                 metrics = self._collect_metrics()
-                metrics_payload = metrics.as_dict()
 
                 # Update history with thread safety
                 with QMutexLocker(self._mutex):
@@ -98,10 +94,10 @@ class PersistentSystemMonitorThread(QThread):
                     self.time_stamps.append(time.time())
 
                     # Cache current metrics
-                    self._current_metrics = metrics_payload
+                    self._current_metrics = metrics
 
                 # Emit signal with new metrics
-                self.metrics_updated.emit(metrics_payload)
+                self.metrics_updated.emit(metrics)
 
                 # Sleep for the update interval with frequent stop checks
                 sleep_ms = int(self.update_interval * 1000)
@@ -138,21 +134,21 @@ class PersistentSystemMonitorThread(QThread):
         self._stop_requested = True
         self._sampler.close()
     
-    def get_current_metrics(self) -> Dict[str, Any]:
+    def get_current_metrics(self) -> SystemMetrics:
         """Get the current cached metrics (thread-safe)."""
         with QMutexLocker(self._mutex):
-            return self._current_metrics.copy() if self._current_metrics else {}
-    
-    def get_history_data(self) -> Dict[str, Any]:
+            return self._current_metrics
+
+    def get_history_data(self) -> SystemMetricsHistory:
         """Get historical data (thread-safe)."""
         with QMutexLocker(self._mutex):
-            return {
-                'cpu_history': list(self.cpu_history),
-                'ram_history': list(self.ram_history),
-                'gpu_history': list(self.gpu_history),
-                'vram_history': list(self.vram_history),
-                'time_stamps': list(self.time_stamps)
-            }
+            return SystemMetricsHistory(
+                cpu=tuple(self.cpu_history),
+                ram=tuple(self.ram_history),
+                gpu=tuple(self.gpu_history),
+                vram=tuple(self.vram_history),
+                timestamps=tuple(self.time_stamps),
+            )
     
     def set_update_interval(self, interval: float):
         """Set the update interval in seconds."""
@@ -217,11 +213,11 @@ class PersistentSystemMonitor:
             self._is_running = False
             logger.debug("Persistent system monitor stopped")
     
-    def get_current_metrics(self) -> Dict[str, Any]:
+    def get_current_metrics(self) -> SystemMetrics:
         """Get current metrics without blocking."""
         return self.thread.get_current_metrics()
     
-    def get_history_data(self) -> Dict[str, Any]:
+    def get_history_data(self) -> SystemMetricsHistory:
         """Get historical data without blocking."""
         return self.thread.get_history_data()
     

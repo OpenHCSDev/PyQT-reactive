@@ -1,0 +1,407 @@
+"""Root-scoped progressive form construction regressions."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from time import monotonic
+from types import SimpleNamespace
+
+import pytest
+
+
+@dataclass
+class _TransactionLeaf:
+    value_1: int = 1
+    value_2: int = 2
+    value_3: int = 3
+    value_4: int = 4
+    value_5: int = 5
+    value_6: int = 6
+
+
+@dataclass
+class _TransactionRoot:
+    first: _TransactionLeaf = field(default_factory=_TransactionLeaf)
+    second: _TransactionLeaf = field(default_factory=_TransactionLeaf)
+
+
+@dataclass
+class _FlatRoot:
+    value_1: int = 1
+    value_2: int = 2
+    value_3: int = 3
+    value_4: int = 4
+    value_5: int = 5
+    value_6: int = 6
+
+
+@dataclass
+class _OptionalNestedRoot:
+    optional_leaf: _TransactionLeaf | None = None
+    value_1: int = 1
+    value_2: int = 2
+    value_3: int = 3
+    value_4: int = 4
+    value_5: int = 5
+    value_6: int = 6
+
+
+def _manager_tree(root):
+    yield root
+    for nested in root.nested_managers.values():
+        yield from _manager_tree(nested)
+
+
+def _created_row_count(root) -> int:
+    return sum(len(manager.widgets) for manager in _manager_tree(root))
+
+
+def _declared_row_count(root) -> int:
+    return sum(
+        len(manager.form_structure.parameters) for manager in _manager_tree(root)
+    )
+
+
+def _wait_until(qapp, predicate, timeout_s: float = 2.0) -> None:
+    deadline = monotonic() + timeout_s
+    while monotonic() < deadline:
+        qapp.processEvents()
+        if predicate():
+            return
+    raise AssertionError("Progressive form construction did not settle.")
+
+
+def test_nested_forms_share_one_sync_budget_and_finalize_once(qapp, monkeypatch):
+    """Nested forms spend one root quota and perform one semantic refresh."""
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+
+    from pyqt_reactive.forms.form_init_service import BuildConfig
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
+    from pyqt_reactive.theming import ColorScheme
+
+    set_base_config_type(_TransactionRoot)
+    ObjectStateRegistry.clear()
+    refresh_calls = []
+    original_refresh = ParameterOpsService.refresh_with_live_context
+
+    def counted_refresh(service, manager, defer=False):
+        refresh_calls.append((manager, defer))
+        return original_refresh(service, manager, defer=defer)
+
+    monkeypatch.setattr(
+        ParameterOpsService,
+        "refresh_with_live_context",
+        counted_refresh,
+    )
+    manager = ParameterFormManager(
+        ObjectState(_TransactionRoot()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    transaction = manager._form_build_transaction
+
+    try:
+        assert BuildConfig().initial_sync_widgets == 5
+        assert _created_row_count(manager) == 5
+
+        _wait_until(
+            qapp,
+            lambda: (
+                _created_row_count(manager) == _declared_row_count(manager)
+                and transaction.finalization_count == 1
+            ),
+        )
+
+        assert _created_row_count(manager) == 14
+        assert refresh_calls == [(manager, False)]
+        assert manager.styleSheet()
+        assert all(
+            not nested.styleSheet()
+            for nested in tuple(_manager_tree(manager))[1:]
+        )
+        for _ in range(10):
+            qapp.processEvents()
+        assert transaction.finalization_count == 1
+        assert refresh_calls == [(manager, False)]
+    finally:
+        manager.deleteLater()
+        qapp.processEvents()
+        ObjectStateRegistry.clear()
+
+
+def test_deleting_progressive_root_cancels_unfinished_generation(qapp):
+    """Manager-owned timers cannot finalize a deleted progressive form."""
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from PyQt6 import sip
+
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    set_base_config_type(_FlatRoot)
+    ObjectStateRegistry.clear()
+    manager = ParameterFormManager(
+        ObjectState(_FlatRoot()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    transaction = manager._form_build_transaction
+
+    sip.delete(manager)
+    for _ in range(10):
+        qapp.processEvents()
+
+    assert transaction.finalization_count == 0
+    ObjectStateRegistry.clear()
+
+
+def test_form_build_has_one_scheduling_and_finalization_authority():
+    """Deleted per-manager scheduling mirrors cannot silently return."""
+    import pyqt_reactive.forms.form_init_service as form_init_service
+    from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
+
+    assert not hasattr(ParameterFormManager, "should_use_async")
+    assert not hasattr(ParameterFormManager, "ASYNC_WIDGET_CREATION")
+    assert not hasattr(ParameterFormManager, "ASYNC_THRESHOLD")
+    assert not hasattr(ParameterFormManager, "INITIAL_SYNC_WIDGETS")
+    assert not hasattr(form_init_service, "InitialRefreshStrategy")
+    assert not hasattr(form_init_service, "BuildPhase")
+    assert not hasattr(form_init_service, "RefreshMode")
+
+
+def test_async_widget_failure_is_published_without_finalizing(qapp, monkeypatch):
+    """A later progressive-row failure is a form signal, not a Qt callback crash."""
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    original_create = ParameterFormManager._create_widget_for_param
+
+    def fail_sixth(manager, param_info):
+        if param_info.name == "value_6":
+            raise ValueError("deliberate progressive build failure")
+        return original_create(manager, param_info)
+
+    monkeypatch.setattr(
+        ParameterFormManager,
+        "_create_widget_for_param",
+        fail_sixth,
+    )
+    set_base_config_type(_FlatRoot)
+    ObjectStateRegistry.clear()
+    manager = ParameterFormManager(
+        ObjectState(_FlatRoot()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    failures = []
+    manager.form_build_failed.connect(failures.append)
+
+    try:
+        _wait_until(qapp, lambda: bool(failures))
+        assert str(failures[0]) == "deliberate progressive build failure"
+        assert manager._form_build_transaction.failure is failures[0]
+        assert manager._form_build_transaction.finalization_count == 0
+    finally:
+        manager.deleteLater()
+        qapp.processEvents()
+        ObjectStateRegistry.clear()
+
+
+def test_synchronous_widget_failure_balances_and_fails_root_transaction(qapp):
+    """Initial-row failures use the same root transaction boundary as later rows."""
+    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+
+    from pyqt_reactive.forms.form_init_service import (
+        BuildConfig,
+        FormBuildOrchestrator,
+        FormBuildTransaction,
+    )
+
+    manager = QWidget()
+    manager._parent_manager = None
+    manager._pfm_seq = 1
+    manager.field_id = "root"
+    failures: list[Exception] = []
+    manager.form_build_failed = SimpleNamespace(emit=failures.append)
+    manager._enabled_field_styling_service = SimpleNamespace(
+        invalidate_widget_cache=lambda _manager: None,
+    )
+
+    def fail_widget(_param_info):
+        raise ValueError("deliberate synchronous build failure")
+
+    manager._create_widget_for_param = fail_widget
+    transaction = FormBuildTransaction(
+        manager,
+        BuildConfig(initial_sync_widgets=1),
+    )
+    manager._form_build_transaction = transaction
+    layout = QVBoxLayout(manager)
+
+    try:
+        with pytest.raises(
+            ValueError,
+            match="deliberate synchronous build failure",
+        ):
+            FormBuildOrchestrator().build_widgets(
+                manager,
+                layout,
+                [SimpleNamespace(name="value")],
+            )
+
+        assert transaction._registration_depth == 0
+        assert transaction.failure is failures[0]
+        assert transaction.finalization_count == 0
+    finally:
+        manager.deleteLater()
+        qapp.processEvents()
+
+
+def test_batch_callback_failure_is_published_without_finalizing(qapp):
+    """Timer-owned batch callbacks cannot escape the transaction boundary."""
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    set_base_config_type(_FlatRoot)
+    ObjectStateRegistry.clear()
+    manager = ParameterFormManager(
+        ObjectState(_FlatRoot()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    failures = []
+    manager.form_build_failed.connect(failures.append)
+
+    def fail_batch(_manager):
+        raise ValueError("deliberate batch callback failure")
+
+    manager._enabled_field_styling_service.invalidate_widget_cache = fail_batch
+
+    try:
+        _wait_until(qapp, lambda: bool(failures))
+        assert str(failures[0]) == "deliberate batch callback failure"
+        assert manager._form_build_transaction.failure is failures[0]
+        assert manager._form_build_transaction.finalization_count == 0
+    finally:
+        manager.deleteLater()
+        qapp.processEvents()
+        ObjectStateRegistry.clear()
+
+
+def test_post_build_failure_is_published_without_finalizing(qapp, monkeypatch):
+    """Semantic finalization shares the transaction's Qt callback boundary."""
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+
+    from pyqt_reactive.forms.form_init_service import FormBuildOrchestrator
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    def fail_finalization(_orchestrator, _manager):
+        raise ValueError("deliberate post-build failure")
+
+    monkeypatch.setattr(
+        FormBuildOrchestrator,
+        "_execute_post_build_sequence",
+        fail_finalization,
+    )
+    set_base_config_type(_FlatRoot)
+    ObjectStateRegistry.clear()
+    manager = ParameterFormManager(
+        ObjectState(_FlatRoot()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    failures = []
+    manager.form_build_failed.connect(failures.append)
+
+    try:
+        _wait_until(qapp, lambda: bool(failures))
+        assert str(failures[0]) == "deliberate post-build failure"
+        assert manager._form_build_transaction.failure is failures[0]
+        assert manager._form_build_transaction.finalization_count == 0
+    finally:
+        manager.deleteLater()
+        qapp.processEvents()
+        ObjectStateRegistry.clear()
+
+
+def test_optional_nested_plain_groupbox_completes_dirty_chrome_finalization(qapp):
+    """Optional structural containers do not claim rich dirty-marker chrome."""
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from PyQt6.QtWidgets import QGroupBox
+
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+    from pyqt_reactive.widgets.shared.clickable_help_components import (
+        GroupBoxWithHelp,
+    )
+    from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
+        ConfigHierarchyTreeHelper,
+    )
+
+    set_base_config_type(_OptionalNestedRoot)
+    ObjectStateRegistry.clear()
+    state = ObjectState(_OptionalNestedRoot())
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    tree_helper = ConfigHierarchyTreeHelper()
+    tree_helper.create_tree_from_root_dataclass(
+        root_dataclass=_OptionalNestedRoot,
+        form_manager=manager,
+        state=state,
+        on_item_double_clicked=lambda _item, _column: None,
+    )
+
+    try:
+        optional_container = manager.widgets["optional_leaf"]
+        assert isinstance(optional_container, QGroupBox)
+        assert not isinstance(optional_container, GroupBoxWithHelp)
+
+        _wait_until(
+            qapp,
+            lambda: manager._form_build_transaction.finalization_count == 1,
+        )
+
+        assert manager._form_build_transaction.failure is None
+    finally:
+        tree_helper.cleanup_subscriptions()
+        manager.deleteLater()
+        qapp.processEvents()
+        ObjectStateRegistry.clear()

@@ -7,7 +7,7 @@ from abc import ABC, ABCMeta, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Callable
+from typing import Callable, Dict, List
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
@@ -20,10 +20,8 @@ from PyQt6.QtWidgets import (
 
 from objectstate import spawn_thread_with_context
 
-from pyqt_reactive.services.zmq_server_info_parser import (
+from pyqt_reactive.services.zmq_server_info import (
     BaseServerInfo,
-    DefaultServerInfoParser,
-    ServerInfoParserABC,
 )
 from pyqt_reactive.services.zmq_server_scan_service import (
     ZMQServerScanService,
@@ -36,6 +34,7 @@ from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
 )
 from pyqt_reactive.widgets.shared.tree_rebuild_coordinator import TreeRebuildCoordinator
 from pyqt_reactive.widgets.shared.tree_state_adapter import TreeStateAdapter
+from zmqruntime.messages import PongResponse
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +99,7 @@ class ServerKillAction:
     thread_name: str
 
     @classmethod
-    def from_kind(
-        cls, ports: List[int], kind: KillOperationKind
-    ) -> "ServerKillAction":
+    def from_kind(cls, ports: List[int], kind: KillOperationKind) -> "ServerKillAction":
         policy = KILL_OPERATION_POLICIES[kind]
         return cls(
             ports=ports,
@@ -150,7 +147,6 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         title: str,
         style_generator: StyleSheetGenerator,
         scan_service: ZMQServerScanService,
-        server_info_parser: ServerInfoParserABC | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -159,20 +155,13 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         self.title = title
         self.style_generator = style_generator
         self._scan_service = scan_service
-        self._server_info_parser = (
-            server_info_parser
-            if server_info_parser is not None
-            else DefaultServerInfoParser()
-        )
 
-        self.servers: List[Dict[str, Any]] = []
-        self._last_known_servers: Dict[int, Dict[str, Any]] = {}
+        self.servers: list[BaseServerInfo] = []
+        self._last_known_servers: dict[int, BaseServerInfo] = {}
         self._scan_in_flight = False
         self._lifecycle_state = BrowserLifecycleState()
         self.destroyed.connect(
-            lambda _object=None, lifecycle=self._lifecycle_state: (
-                lifecycle.begin_cleanup()
-            )
+            lambda _object=None, lifecycle=self._lifecycle_state: lifecycle.begin_cleanup()
         )
         self._tree_state_adapter = TreeStateAdapter.default()
         self._tree_rebuild_coordinator = TreeRebuildCoordinator(self._tree_state_adapter)
@@ -187,10 +176,10 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         self._kill_complete.connect(self._on_kill_complete)
         self.server_killed.connect(self._on_server_killed)
 
-        self.refresh_timer = QTimer()
+        self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.refresh_servers)
 
-        self._cleanup_timer = QTimer()
+        self._cleanup_timer = QTimer(self)
         self._cleanup_timer.timeout.connect(self._periodic_cleanup)
         self._cleanup_timer.start(10000)
 
@@ -231,9 +220,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         self.server_tree = QTreeWidget()
         self.server_tree.setHeaderLabels(["Server / Worker", "Status", "Info"])
-        self.server_tree.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
-        )
+        self.server_tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.server_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.server_tree.setColumnWidth(0, 250)
         self.server_tree.setColumnWidth(1, 100)
@@ -301,21 +288,18 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         spawn_thread_with_context(_scan_and_emit, name="scan_servers")
 
-    def _ping_server(self, port: int) -> Optional[Dict[str, Any]]:
+    def _ping_server(self, port: int) -> PongResponse | None:
         return self._scan_service.ping_server(port)
 
     @pyqtSlot(list)
-    def _update_server_list(self, servers: List[Dict[str, Any]]) -> None:
+    def _update_server_list(self, responses: list[PongResponse]) -> None:
+        servers = [BaseServerInfo.from_response(response) for response in responses]
         self.servers = servers
-        parsed_servers = [self._server_info_parser.parse(server) for server in servers]
-
         for server in servers:
-            port = server.get("port")
-            if port:
-                self._last_known_servers[port] = server
+            self._last_known_servers[server.port] = server
 
         def _rebuild_contents() -> None:
-            self.populate_tree(parsed_servers)
+            self.populate_tree(servers)
 
         self._tree_rebuild_coordinator.rebuild(self.server_tree, _rebuild_contents)
 
@@ -347,15 +331,11 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         ports_to_kill: List[int] = []
         for item in selected_items:
             data = item.data(0, Qt.ItemDataRole.UserRole)
-            if isinstance(data, dict) and data.get("type") == "worker":
-                continue
-            if isinstance(data, dict) and "port" in data:
-                ports_to_kill.append(data["port"])
+            if isinstance(data, BaseServerInfo):
+                ports_to_kill.append(data.port)
 
         if not ports_to_kill:
-            QMessageBox.warning(
-                self, "No Servers", "No servers selected (only workers selected)."
-            )
+            QMessageBox.warning(self, "No Servers", "No servers selected (only workers selected).")
             return []
         return ports_to_kill
 
@@ -377,19 +357,22 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
     def _spawn_server_kill_thread(self, action: ServerKillAction) -> None:
         def _kill_servers() -> None:
+            def _publish_server_killed(port: int) -> None:
+                if not self._lifecycle_state.is_cleaning_up():
+                    self.server_killed.emit(port)
+
             success, message = self.kill_ports_with_plan(
                 ports=action.ports,
                 plan=action.plan,
-                on_server_killed=lambda port: self.server_killed.emit(port),
+                on_server_killed=_publish_server_killed,
             )
-            self._kill_complete.emit(success, message)
+            if not self._lifecycle_state.is_cleaning_up():
+                self._kill_complete.emit(success, message)
 
         spawn_thread_with_context(_kill_servers, name=action.thread_name)
 
     def quit_selected_servers(self) -> None:
-        ports_to_kill = self._collect_selected_server_ports(
-            "Please select servers to quit."
-        )
+        ports_to_kill = self._collect_selected_server_ports("Please select servers to quit.")
         if not ports_to_kill:
             return
 
@@ -409,9 +392,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         )
 
     def force_kill_selected_servers(self) -> None:
-        ports_to_kill = self._collect_selected_server_ports(
-            "Please select servers to force kill."
-        )
+        ports_to_kill = self._collect_selected_server_ports("Please select servers to force kill.")
         if not ports_to_kill:
             return
 
@@ -433,10 +414,13 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
     def _on_item_double_clicked(self, item: QTreeWidgetItem) -> None:
         data = item.data(0, Qt.ItemDataRole.UserRole)
-        if data and data.get("type") == "worker":
-            data = data.get("server", {})
+        ancestor = item.parent()
+        while not isinstance(data, BaseServerInfo) and ancestor is not None:
+            data = ancestor.data(0, Qt.ItemDataRole.UserRole)
+            ancestor = ancestor.parent()
 
-        log_file = data.get("log_file_path") if data else None
+        server_info = data if isinstance(data, BaseServerInfo) else None
+        log_file = server_info.log_file_path if server_info is not None else None
         if log_file and Path(log_file).exists():
             self.log_file_opened.emit(log_file)
             return
@@ -445,7 +429,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             "No Log File",
             (
                 "No log file available for this item.\n\n"
-                f"Port: {data.get('port', 'unknown') if data else 'unknown'}"
+                f"Port: {server_info.port if server_info is not None else 'unknown'}"
             ),
         )
 

@@ -39,12 +39,13 @@ Architecture:
     - create_parameter_info(): Factory that auto-selects correct type
 """
 
-from typing import Callable, Type, Optional, List, Union, get_origin, get_args
+from typing import Callable, Type, Optional, List, Union
 from dataclasses import dataclass, is_dataclass
 from abc import ABC, ABCMeta
 import logging
 
 from objectstate.lazy_factory import get_base_type_for_lazy
+from python_introspect import optional_member_type
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 
 logger = logging.getLogger(__name__)
@@ -180,14 +181,8 @@ class OptionalDataclassInfo(ParameterInfoBase, metaclass=ParameterInfoMeta):
         - Type is Union[T, None] (i.e., Optional[T])
         - T is a dataclass
         """
-        # Check if Optional (Union with None)
-        is_optional = get_origin(param_type) is Union and type(None) in get_args(param_type)
-        if not is_optional:
-            return False
-
-        # Get inner type and check if dataclass
-        inner_type = next(arg for arg in get_args(param_type) if arg is not type(None))
-        return is_dataclass(inner_type)
+        inner_type = optional_member_type(param_type)
+        return inner_type is not None and is_dataclass(inner_type)
 
 
 @dataclass

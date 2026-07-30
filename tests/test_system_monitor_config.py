@@ -8,7 +8,10 @@ import pytest
 
 import pyqt_reactive.widgets.system_monitor as system_monitor_module
 from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
-from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
+from pyqt_reactive.services.system_monitor_config import (
+    PerformanceMonitorColors,
+    PerformanceMonitorConfig,
+)
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 
 
@@ -223,13 +226,13 @@ def test_each_sampler_leaf_rebuilds_monitor_with_exact_nominal_policy(
         ("use_opengl", False),
         ("line_width", 7.0),
         (
-            "chart_colors",
-            {
-                "cpu": "red",
-                "ram": "blue",
-                "gpu": "yellow",
-                "vram": "white",
-            },
+            "colors",
+            PerformanceMonitorColors(
+                cpu="red",
+                ram="blue",
+                gpu="yellow",
+                vram="white",
+            ),
         ),
     ),
 )
@@ -261,11 +264,11 @@ def test_each_plot_leaf_reconfigures_existing_plots(
     assert ("antialias", updated.antialiasing) in fake_pg.options
     assert widget.cpu_curve.data_calls[-1]["antialias"] is updated.antialiasing
     assert widget.cpu_curve.pens[-1] == (
-        updated.chart_colors["cpu"],
+        updated.colors.cpu,
         updated.line_width,
     )
     assert widget.ram_curve.pens[-1] == (
-        updated.chart_colors["ram"],
+        updated.colors.ram,
         updated.line_width,
     )
 
@@ -299,7 +302,7 @@ def test_retained_config_leaves_have_one_field_behavior_cases() -> None:
         "antialiasing",
         "use_opengl",
         "line_width",
-        "chart_colors",
+        "colors",
     }
     assert sampler_fields == {
         "enable_gpu_monitoring",
@@ -308,3 +311,27 @@ def test_retained_config_leaves_have_one_field_behavior_cases() -> None:
         "gpu_refresh_seconds",
         "cpu_frequency_refresh_seconds",
     }
+
+
+def test_monitor_colors_are_a_declared_nested_type() -> None:
+    colors = PerformanceMonitorColors(
+        cpu="red",
+        ram="blue",
+        gpu="yellow",
+        vram="white",
+    )
+
+    config = PerformanceMonitorConfig(colors=colors)
+
+    assert config.colors is colors
+    assert tuple(field.name for field in fields(PerformanceMonitorColors)) == (
+        "cpu",
+        "ram",
+        "gpu",
+        "vram",
+    )
+
+
+def test_monitor_colors_reject_values_qt_cannot_render() -> None:
+    with pytest.raises(ValueError):
+        PerformanceMonitorColors(cpu="not-a-qt-color")

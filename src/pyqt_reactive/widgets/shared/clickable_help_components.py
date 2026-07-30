@@ -21,6 +21,7 @@ from pyqt_reactive.protocols import (
     ChildFieldNavigationTargetProvider,
     ChildFieldSemanticChromeRefreshable,
     ChildSubfieldNavigationTargetProvider,
+    DirtyMarkerSettable,
     InlineDataclassGroupBoxChromeProvider,
     InlineDataclassRootResettable,
     ChangeSignalEmitter,
@@ -898,7 +899,11 @@ class FunctionTitleWithHelp(QWidget):
         layout.addStretch()
 
 
-class GroupBoxWithHelp(FlashableGroupBox):
+class GroupBoxWithHelp(
+    FlashableGroupBox,
+    DirtyMarkerSettable,
+    metaclass=PyQtWidgetMeta,
+):
     """PyQt6 group box with integrated help for dataclass titles - mirrors Textual TUI pattern.
 
     Inherits from FlashableGroupBox to support smooth flash animations.

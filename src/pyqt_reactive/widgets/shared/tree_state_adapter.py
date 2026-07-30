@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, Set
+from typing import Dict, Protocol, Set, runtime_checkable
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
@@ -17,18 +17,21 @@ class TreeItemKeyBuilderABC(ABC):
         """Return one path segment for an item."""
 
 
-class DictPayloadTreeItemKeyBuilder(TreeItemKeyBuilderABC):
-    """Default key builder for items with dict payload metadata."""
+@runtime_checkable
+class TreeItemKeyProvider(Protocol):
+    """Typed Qt item payload that owns its stable tree key."""
+
+    def tree_item_key(self) -> str:
+        """Return the stable key segment for this payload."""
+
+
+class TypedPayloadTreeItemKeyBuilder(TreeItemKeyBuilderABC):
+    """Default key builder for nominal item payloads."""
 
     def item_segment_key(self, item: QTreeWidgetItem) -> str:
         data = item.data(0, Qt.ItemDataRole.UserRole)
-        if isinstance(data, dict):
-            if "port" in data:
-                return f"port:{data['port']}"
-            item_type = data.get("type")
-            node_id = data.get("node_id")
-            if item_type is not None and node_id is not None:
-                return f"{item_type}:{node_id}"
+        if isinstance(data, TreeItemKeyProvider):
+            return data.tree_item_key()
         return f"text:{item.text(0)}"
 
 
@@ -40,8 +43,8 @@ class TreeStateAdapter:
 
     @classmethod
     def default(cls) -> "TreeStateAdapter":
-        """Build the default dict-payload tree state adapter."""
-        return cls(DictPayloadTreeItemKeyBuilder())
+        """Build the default typed-payload tree state adapter."""
+        return cls(TypedPayloadTreeItemKeyBuilder())
 
     def item_tree_key(self, item: QTreeWidgetItem) -> str:
         segments = [self._key_builder.item_segment_key(item)]

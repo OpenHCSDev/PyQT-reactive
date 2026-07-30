@@ -85,11 +85,11 @@ class ParameterFormChromeSync:
         )
 
     def update_owning_groupbox_dirty_marker(self) -> None:
-        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
+        from pyqt_reactive.protocols import DirtyMarkerSettable
 
         manager = self.manager
         groupbox = manager.form_tree.owning_groupbox(manager)
-        if not isinstance(groupbox, GroupBoxWithHelp):
+        if not isinstance(groupbox, DirtyMarkerSettable):
             return
 
         if manager.field_id:
@@ -268,9 +268,13 @@ class ParameterFormChromeSync:
         dirty_prefixes: set[str],
         sig_diff_prefixes: set[str] | None = None,
     ) -> None:
+        from pyqt_reactive.protocols import DirtyMarkerSettable
+
         sig_diff_prefixes = sig_diff_prefixes or set()
 
         for _, nested_manager, groupbox in self.manager.form_tree.direct_child_groupboxes():
+            if not isinstance(groupbox, DirtyMarkerSettable):
+                continue
             prefix = nested_manager.field_id
             groupbox.set_dirty_marker(
                 prefix in dirty_prefixes,

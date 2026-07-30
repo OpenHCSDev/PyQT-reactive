@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
@@ -20,18 +20,40 @@ from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveTwo
 
 
 @dataclass(frozen=True, slots=True)
-class ActionTabSpec:
-    """One tab plus its optional active-tab action widget."""
+class ActionTabMaterialization:
+    """Live content and actions constructed for one tab."""
 
-    label: str
     content: QWidget
     actions: QWidget | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActionTabSpec:
+    """One eager tab or one single-use tab materialization factory."""
+
+    label: str
+    content: QWidget | None = None
+    actions: QWidget | None = None
+    materialization_factory: Callable[[], ActionTabMaterialization] | None = None
+
+    def __post_init__(self) -> None:
+        if (self.content is None) == (self.materialization_factory is None):
+            raise ValueError(
+                "ActionTabSpec requires exactly one of content or "
+                "materialization_factory."
+            )
+        if self.materialization_factory is not None and self.actions is not None:
+            raise ValueError(
+                "Lazy tab actions belong to ActionTabMaterialization, not ActionTabSpec."
+            )
 
 
 class ActionTabbedWindowBody(QWidget):
     """Render tabs on the left and the active tab's actions on the right."""
 
     current_changed = pyqtSignal(int)
+    tab_materialized = pyqtSignal(int, object)
+    tab_materialization_failed = pyqtSignal(int, object)
 
     def __init__(
         self,
@@ -42,6 +64,10 @@ class ActionTabbedWindowBody(QWidget):
         super().__init__(parent)
         self.color_scheme = color_scheme
         self._action_widgets: list[QWidget | None] = []
+        self._materializations: list[ActionTabMaterialization | None] = []
+        self._materialization_factories: list[
+            Callable[[], ActionTabMaterialization] | None
+        ] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -78,18 +104,22 @@ class ActionTabbedWindowBody(QWidget):
 
     def add_tab(self, spec: ActionTabSpec) -> int:
         """Add a tab and its optional action widget."""
-        index = self.content_stack.addWidget(spec.content)
+        stack_widget = spec.content if spec.content is not None else QWidget()
+        index = self.content_stack.addWidget(stack_widget)
+        materialization = (
+            ActionTabMaterialization(spec.content, spec.actions)
+            if spec.content is not None
+            else None
+        )
+        self._materializations.append(materialization)
+        self._materialization_factories.append(spec.materialization_factory)
+        self._action_widgets.append(None)
+        if materialization is not None:
+            self._install_actions(index, materialization.actions)
         self.tab_bar.addTab(spec.label)
-        self._action_widgets.append(spec.actions)
-        if spec.actions is not None:
-            spec.actions.setSizePolicy(
-                QSizePolicy.Policy.Maximum,
-                QSizePolicy.Policy.Fixed,
-            )
-            spec.actions.setVisible(False)
-            self._active_actions_layout.addWidget(spec.actions)
         if self.tab_bar.currentIndex() != self.content_stack.currentIndex():
             self.content_stack.setCurrentIndex(self.tab_bar.currentIndex())
+        self._materialize(self.tab_bar.currentIndex())
         self.tab_bar.setVisible(self.content_stack.count() > 1)
         self._show_current_actions()
         return index
@@ -98,7 +128,16 @@ class ActionTabbedWindowBody(QWidget):
         self.setCurrentIndex(index)
 
     def setCurrentIndex(self, index: int) -> None:
-        self.tab_bar.setCurrentIndex(index)
+        if self.tab_bar.currentIndex() != index:
+            # QTabBar emits currentChanged synchronously. That signal route is
+            # the sole activation and failure-publication authority.
+            self.tab_bar.setCurrentIndex(index)
+            return
+
+        # Re-selecting the current tab does not emit currentChanged.
+        # Preserve the existing no-op synchronization behavior without
+        # creating a second lazy-factory invocation path.
+        self._materialize(index)
         self.content_stack.setCurrentIndex(index)
         self._show_current_actions()
 
@@ -112,19 +151,112 @@ class ActionTabbedWindowBody(QWidget):
         return self.currentWidget()
 
     def currentWidget(self) -> QWidget | None:
-        return self.content_stack.currentWidget()
+        index = self.currentIndex()
+        self._materialize(index)
+        return self.widget(index)
 
     def widget(self, index: int) -> QWidget | None:
-        return self.content_stack.widget(index)
+        if not 0 <= index < len(self._materializations):
+            return None
+        materialization = self._materializations[index]
+        return materialization.content if materialization is not None else None
+
+    def is_materialized(self, index: int) -> bool:
+        """Return whether a tab's live content widget has been constructed."""
+        return (
+            0 <= index < len(self._materializations)
+            and self._materializations[index] is not None
+        )
+
+    def materialize(self, index: int) -> ActionTabMaterialization:
+        """Construct and return a lazy tab's live content and actions once."""
+        self._materialize(index)
+        if not 0 <= index < len(self._materializations):
+            raise IndexError(f"Tab index is out of range: {index}")
+        materialization = self._materializations[index]
+        if materialization is None:
+            raise RuntimeError(f"Tab {index} did not materialize.")
+        return materialization
 
     def count(self) -> int:
         return self.content_stack.count()
 
     def _on_current_changed(self, index: int) -> None:
         if 0 <= index < self.content_stack.count():
+            previous_index = self.content_stack.currentIndex()
+            try:
+                self._materialize(index)
+            except Exception as error:
+                with QSignalBlocker(self.tab_bar):
+                    self.tab_bar.setCurrentIndex(previous_index)
+                self._show_current_actions()
+                self.tab_materialization_failed.emit(index, error)
+                return
             self.content_stack.setCurrentIndex(index)
         self._show_current_actions()
         self.current_changed.emit(index)
+
+    def _materialize(self, index: int) -> None:
+        if not 0 <= index < len(self._materializations):
+            return
+        if self._materializations[index] is not None:
+            return
+
+        factory = self._materialization_factories[index]
+        if factory is None:
+            raise RuntimeError(
+                f"Unmaterialized tab {index} has no materialization factory."
+            )
+        materialization = factory()
+        if not isinstance(materialization, ActionTabMaterialization):
+            raise TypeError(
+                "ActionTabSpec.materialization_factory must return "
+                "ActionTabMaterialization, "
+                f"got {type(materialization).__name__}."
+            )
+        self._validate_materialization(materialization)
+
+        placeholder = self.content_stack.widget(index)
+        was_current = self.content_stack.currentIndex() == index
+        self.content_stack.removeWidget(placeholder)
+        self.content_stack.insertWidget(index, materialization.content)
+        if was_current:
+            self.content_stack.setCurrentIndex(index)
+        placeholder.deleteLater()
+        self._materializations[index] = materialization
+        self._materialization_factories[index] = None
+        self._install_actions(index, materialization.actions)
+        self._show_current_actions()
+        self.tab_materialized.emit(index, materialization)
+
+    @staticmethod
+    def _validate_materialization(
+        materialization: ActionTabMaterialization,
+    ) -> None:
+        if not isinstance(materialization.content, QWidget):
+            raise TypeError(
+                "ActionTabMaterialization.content must be QWidget, "
+                f"got {type(materialization.content).__name__}."
+            )
+        if materialization.actions is not None and not isinstance(
+            materialization.actions,
+            QWidget,
+        ):
+            raise TypeError(
+                "ActionTabMaterialization.actions must be QWidget or None, "
+                f"got {type(materialization.actions).__name__}."
+            )
+
+    def _install_actions(self, index: int, actions: QWidget | None) -> None:
+        self._action_widgets[index] = actions
+        if actions is None:
+            return
+        actions.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Fixed,
+        )
+        actions.setVisible(False)
+        self._active_actions_layout.addWidget(actions)
 
     def _show_current_actions(self) -> None:
         current_index = self.tab_bar.currentIndex()

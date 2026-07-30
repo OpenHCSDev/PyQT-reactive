@@ -280,10 +280,12 @@ def test_placeholder_refresh_preserves_concrete_checkbox_group_default(qapp):
         assert not checkbox.is_placeholder()
 
 
-def test_enum_union_uses_enum_widget(qapp):
-    """Enum unions retain the closed-domain enum widget."""
-    from PyQt6.QtWidgets import QComboBox
-    from pyqt_reactive.forms.widget_strategies import create_pyqt6_widget
+def test_enum_string_union_uses_union_widget(qapp):
+    """An enum/string union remains editable across both declared members."""
+    from pyqt_reactive.forms.widget_strategies import (
+        TypedLiteralUnionEdit,
+        create_pyqt6_widget,
+    )
 
     class Mode(str, Enum):
         A = "a"
@@ -296,9 +298,11 @@ def test_enum_union_uses_enum_widget(qapp):
         "mode_widget",
     )
 
-    assert isinstance(widget, QComboBox)
-    assert widget.count() == 2
-    assert widget.itemData(0) is Mode.A
+    assert isinstance(widget, TypedLiteralUnionEdit)
+    assert widget.get_value() is Mode.A
+
+    widget.setText("custom")
+    assert widget.get_value() == "custom"
 
 
 def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
@@ -309,6 +313,10 @@ def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
         FormManagerConfig,
         ParameterFormManager,
     )
+    from pyqt_reactive.services.function_pattern_code_document import (
+        FunctionPatternCodeDocumentService,
+    )
+    from pyqt_reactive.forms.widget_strategies import TypedLiteralUnionEdit
     from pyqt_reactive.theming import ColorScheme
 
     class Mode(Enum):
@@ -344,6 +352,9 @@ def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
         config=FormManagerConfig(
             color_scheme=ColorScheme(),
             function_target=process,
+            exclude_params=(
+                FunctionPatternCodeDocumentService.reserved_parameter_names(process)
+            ),
             use_scroll_area=False,
         ),
     )
@@ -352,8 +363,8 @@ def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
         qapp.processEvents()
 
         mode_widget = manager.widgets["mode"]
-        assert isinstance(mode_widget, QComboBox)
-        assert mode_widget.currentData() is Mode.B
+        assert isinstance(mode_widget, TypedLiteralUnionEdit)
+        assert mode_widget.get_value() is Mode.B
 
         assert "config" in manager.nested_managers
         nested = manager.nested_managers["config"]
@@ -367,7 +378,6 @@ def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
 
 def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
     """Editable function-pattern wrappers preserve resolved enum widget types."""
-    from PyQt6.QtWidgets import QComboBox
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.forms.parameter_form_manager import (
         FormManagerConfig,
@@ -375,7 +385,9 @@ def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
     )
     from pyqt_reactive.services.function_pattern_code_document import (
         EditableFunctionPatternCallable,
+        FunctionPatternCodeDocumentService,
     )
+    from pyqt_reactive.forms.widget_strategies import TypedLiteralUnionEdit
     from pyqt_reactive.theming import ColorScheme
 
     editable = EditableFunctionPatternCallable.for_entry(
@@ -399,6 +411,9 @@ def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
         config=FormManagerConfig(
             color_scheme=ColorScheme(),
             function_target=editable,
+            exclude_params=(
+                FunctionPatternCodeDocumentService.reserved_parameter_names(editable)
+            ),
             use_scroll_area=False,
         ),
     )
@@ -407,8 +422,8 @@ def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
         qapp.processEvents()
 
         mode_widget = manager.widgets["mode"]
-        assert isinstance(mode_widget, QComboBox)
-        assert mode_widget.currentData() is QuotedAnnotationMode.B
+        assert isinstance(mode_widget, TypedLiteralUnionEdit)
+        assert mode_widget.get_value() is QuotedAnnotationMode.B
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
@@ -1403,6 +1418,46 @@ def test_flash_delegate_update_targets_only_item_rect() -> None:
     _GlobalFlashCoordinator()._update_delegate_element(element)
 
     assert widget._viewport.updates == [QRect(10, 20, 30, 40)]
+
+
+def test_global_flash_coordinator_recreates_after_qt_owner_deletion(qapp) -> None:
+    """The shared coordinator follows the active Qt application's lifetime."""
+    from PyQt6 import sip
+    from pyqt_reactive.animation.flash_mixin import _GlobalFlashCoordinator
+
+    original = _GlobalFlashCoordinator.get()
+    assert original.parent() is qapp
+
+    sip.delete(original)
+    assert sip.isdeleted(original)
+
+    replacement = _GlobalFlashCoordinator.get()
+    assert replacement is not original
+    assert replacement.parent() is qapp
+    assert not sip.isdeleted(replacement)
+
+
+def test_window_flash_overlay_registry_discards_deleted_qt_wrapper(qapp) -> None:
+    """Overlay lookup never returns a wrapper whose Qt object was destroyed."""
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QDialog
+    from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
+
+    dialog = QDialog()
+    original = WindowFlashOverlay.get_for_window(dialog)
+    assert original is not None
+
+    sip.delete(original)
+    assert sip.isdeleted(original)
+    assert WindowFlashOverlay.live_for_window_id(id(dialog)) is None
+
+    replacement = WindowFlashOverlay.get_for_window(dialog)
+    assert replacement is not None
+    assert replacement is not original
+    assert not sip.isdeleted(replacement)
+
+    WindowFlashOverlay.cleanup_window(dialog)
+    dialog.close()
 
 
 def test_delegate_flash_tracks_descendant_objectstate_key() -> None:

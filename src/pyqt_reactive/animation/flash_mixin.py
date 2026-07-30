@@ -33,7 +33,6 @@ import time
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Dict, Iterable, List, Optional, Set, Callable, Any, Tuple, TYPE_CHECKING
-from weakref import WeakValueDictionary
 import re
 from objectstate import DottedFieldPath
 from PyQt6.QtCore import (
@@ -130,7 +129,7 @@ def queue_visual_frame_callback(owner: QObject, callback: Callable[[], None]) ->
 def active_visual_frame_work_count() -> int:
     """Return pending or active visual-frame work known to the shared coordinator."""
 
-    coordinator = _GlobalFlashCoordinator._instance
+    coordinator = _GlobalFlashCoordinator.current()
     if coordinator is None:
         return 0
     return coordinator.active_visual_frame_work_count()
@@ -1288,8 +1287,74 @@ class WindowFlashOverlay(QWidget):
     VIEWPORT CULLING: Elements outside visible scroll areas return None from
     their geometry callback and are skipped.
     """
-    # Class-level registry: window_id -> overlay (weak refs for cleanup)
+    # Class-level registry: window_id -> live overlay.
     _overlays: Dict[int, 'WindowFlashOverlay'] = {}
+
+    @classmethod
+    def _is_live(cls, overlay: 'WindowFlashOverlay') -> bool:
+        """Return whether both the overlay and its owning window still exist."""
+
+        return (
+            not sip.isdeleted(overlay)
+            and not sip.isdeleted(overlay._window)
+        )
+
+    @classmethod
+    def live_items(cls) -> tuple[tuple[int, 'WindowFlashOverlay'], ...]:
+        """Return the live registry contents and discard deleted Qt wrappers."""
+
+        live: list[tuple[int, 'WindowFlashOverlay']] = []
+        for window_id, overlay in tuple(cls._overlays.items()):
+            if cls._is_live(overlay):
+                live.append((window_id, overlay))
+            elif cls._overlays.get(window_id) is overlay:
+                cls._overlays.pop(window_id)
+        return tuple(live)
+
+    @classmethod
+    def live_for_window_id(cls, window_id: int) -> Optional['WindowFlashOverlay']:
+        """Return the live overlay registered for ``window_id``."""
+
+        overlay = cls._overlays.get(window_id)
+        if overlay is None:
+            return None
+        if cls._is_live(overlay):
+            return overlay
+        if cls._overlays.get(window_id) is overlay:
+            cls._overlays.pop(window_id)
+        return None
+
+    @classmethod
+    def live_count(cls) -> int:
+        """Return the number of live registered overlays."""
+
+        return len(cls.live_items())
+
+    @classmethod
+    def _register_overlay(
+        cls,
+        window_id: int,
+        overlay: 'WindowFlashOverlay',
+    ) -> None:
+        """Register one overlay for exactly the lifetime of its Qt object."""
+
+        cls._overlays[window_id] = overlay
+        overlay.destroyed.connect(
+            partial(cls._remove_destroyed_overlay, window_id, id(overlay))
+        )
+
+    @classmethod
+    def _remove_destroyed_overlay(
+        cls,
+        window_id: int,
+        overlay_id: int,
+        _destroyed: QObject,
+    ) -> None:
+        """Remove a destroyed overlay without evicting a later replacement."""
+
+        current = cls._overlays.get(window_id)
+        if current is not None and id(current) == overlay_id:
+            cls._overlays.pop(window_id)
 
     @classmethod
     def get_for_window(cls, widget: QWidget) -> Optional['WindowFlashOverlay']:
@@ -1312,7 +1377,7 @@ class WindowFlashOverlay(QWidget):
                 return None
 
             window_id = id(top_window)
-            overlay = cls._overlays.get(window_id)
+            overlay = cls.live_for_window_id(window_id)
             if overlay is not None:
                 if cls._overlay_belongs_to_window(overlay, top_window):
                     return overlay
@@ -1334,7 +1399,7 @@ class WindowFlashOverlay(QWidget):
                         from .flash_overlay_opengl import WindowFlashOverlayGL, can_use_opengl
                         if can_use_opengl():
                             overlay = WindowFlashOverlayGL(top_window)
-                            cls._overlays[window_id] = overlay
+                            cls._register_overlay(window_id, overlay)
                             flash_trace(
                                 "overlay.create_gl",
                                 window=window_id,
@@ -1349,7 +1414,7 @@ class WindowFlashOverlay(QWidget):
 
                 # Fallback to QPainter
                 overlay = cls(top_window)
-                cls._overlays[window_id] = overlay
+                cls._register_overlay(window_id, overlay)
                 flash_trace(
                     "overlay.create_qpainter",
                     window=window_id,
@@ -2302,15 +2367,45 @@ class _GlobalFlashCoordinator(QObject):
     _instance: Optional['_GlobalFlashCoordinator'] = None
 
     @classmethod
-    def get(cls) -> '_GlobalFlashCoordinator':
-        if cls._instance is None:
-            cls._instance = cls()
-        else:
-            cls._instance._bind_to_application_thread()
-        return cls._instance
+    def current(cls) -> Optional['_GlobalFlashCoordinator']:
+        """Return the live coordinator owned by the current Qt application."""
 
-    def __init__(self):
-        super().__init__()
+        instance = cls._instance
+        if instance is None:
+            return None
+        if sip.isdeleted(instance):
+            cls._instance = None
+            return None
+
+        application = QCoreApplication.instance()
+        if application is not None and instance.parent() is not application:
+            instance.deleteLater()
+            cls._instance = None
+            return None
+        return instance
+
+    @classmethod
+    def get(cls) -> '_GlobalFlashCoordinator':
+        instance = cls.current()
+        if instance is None:
+            application = QCoreApplication.instance()
+            instance = cls(application)
+            cls._instance = instance
+            instance.destroyed.connect(cls._clear_destroyed_instance)
+        else:
+            instance._bind_to_application_thread()
+        return instance
+
+    @classmethod
+    def _clear_destroyed_instance(cls, destroyed: QObject) -> None:
+        """Forget the singleton only when Qt destroyed the current instance."""
+
+        instance = cls._instance
+        if instance is not None and (sip.isdeleted(instance) or instance is destroyed):
+            cls._instance = None
+
+    def __init__(self, application: Optional[QCoreApplication] = None):
+        super().__init__(application)
         self._timer: Optional[QTimer] = None
         self._config = get_flash_config()
         # FIX 1: Single unified flash timing (all keys are scoped, no global/local split)
@@ -2671,7 +2766,7 @@ class _GlobalFlashCoordinator(QObject):
             self._flash_start_times[key] = timestamp
 
         keys_set = set(unique_keys)
-        for window_id, overlay in WindowFlashOverlay._overlays.items():
+        for window_id, overlay in WindowFlashOverlay.live_items():
             if self._overlay_flash_keys(overlay, keys_set):
                 self._active_windows.add(window_id)
 
@@ -2731,7 +2826,7 @@ class _GlobalFlashCoordinator(QObject):
             not self._flash_start_times and
             self._timer and self._timer.isActive()):
             self._timer.stop()
-            for overlay in WindowFlashOverlay._overlays.values():
+            for _window_id, overlay in WindowFlashOverlay.live_items():
                 overlay._last_flash_update_region = QRegion()
                 overlay._last_flash_mask_region = QRegion()
                 overlay.clearMask()
@@ -2963,7 +3058,7 @@ class _GlobalFlashCoordinator(QObject):
         expired_keys_by_window: Dict[int, Set[str]] = {}
         if expired_keys:
             expired_keys_set = set(expired_keys)
-            for window_id, overlay in WindowFlashOverlay._overlays.items():
+            for window_id, overlay in WindowFlashOverlay.live_items():
                 # PERFORMANCE FIX: Skip hidden windows in clear detection too
                 try:
                     if not overlay._window.isVisible():
@@ -2978,7 +3073,7 @@ class _GlobalFlashCoordinator(QObject):
                 if expired_window_keys:
                     expired_keys_by_window[window_id] = expired_window_keys
 
-        for window_id, overlay in WindowFlashOverlay._overlays.items():
+        for window_id, overlay in WindowFlashOverlay.live_items():
             # PERFORMANCE FIX: Skip hidden windows (don't waste CPU painting invisible windows)
             try:
                 if not overlay._window.isVisible():
@@ -3024,7 +3119,7 @@ class _GlobalFlashCoordinator(QObject):
                 computed=len(computed_keys),
                 expired=len(expired_keys),
                 active_windows=len(active_windows_this_frame),
-                overlays=len(WindowFlashOverlay._overlays),
+                overlays=WindowFlashOverlay.live_count(),
                 elapsed_ms=f"{(time.perf_counter() - tick_started) * 1000.0:.3f}",
                 keys=sorted(computed_keys),
             )
@@ -3034,7 +3129,7 @@ class _GlobalFlashCoordinator(QObject):
         # CRITICAL: Final clear repaint for windows where keys expired
         # Ensures flash is fully cleared even if no other animations active
         for window_id, expired_window_keys in expired_keys_by_window.items():
-            overlay = WindowFlashOverlay._overlays.get(window_id)
+            overlay = WindowFlashOverlay.live_for_window_id(window_id)
             if overlay:
                 # PERFORMANCE FIX: Skip hidden windows
                 try:
@@ -3079,7 +3174,7 @@ class _GlobalFlashCoordinator(QObject):
                 len(computed_keys),
                 len(expired_keys),
                 len(active_windows_this_frame),
-                len(WindowFlashOverlay._overlays),
+                WindowFlashOverlay.live_count(),
                 overlay_paint_count,
                 overlay_visible_key_count,
                 overlay_rect_count,
@@ -3095,7 +3190,7 @@ class _GlobalFlashCoordinator(QObject):
 
         # Diagnostic logging - show REAL work being done
         if self._tick_count % 30 == 0:
-            logger.debug(f"[FLASH PERF] tick={self._tick_count} colors={len(self._computed_colors)} overlays_painted={overlay_paint_count} total_overlays={len(WindowFlashOverlay._overlays)}")
+            logger.debug(f"[FLASH PERF] tick={self._tick_count} colors={len(self._computed_colors)} overlays_painted={overlay_paint_count} total_overlays={WindowFlashOverlay.live_count()}")
 
         # Stop timer if nothing active
         self._maybe_stop_timer()
@@ -3335,7 +3430,7 @@ class VisualUpdateMixin:
                 and registered_source_id == source_id
             )
         ]
-        for overlay in list(WindowFlashOverlay._overlays.values()):
+        for _window_id, overlay in WindowFlashOverlay.live_items():
             overlay.unregister_element_source(scoped_key, source_id)
 
     def register_flash_groupbox(self, key: str, groupbox: 'QWidget') -> None:
@@ -3514,14 +3609,14 @@ class VisualUpdateMixin:
         # Process pending registrations FIRST (elements may not be registered yet)
         coordinator._process_pending_registrations()
 
-        overlay = WindowFlashOverlay._overlays.get(window_id)
+        overlay = WindowFlashOverlay.live_for_window_id(window_id)
         if overlay is None:
             flash_trace(
                 "queue.local.skip_no_overlay",
                 key=key,
                 scoped=scoped_key,
                 window=window_id,
-                overlays=len(WindowFlashOverlay._overlays),
+                overlays=WindowFlashOverlay.live_count(),
             )
             logger.debug(
                 "[FLASH] queue_flash_local skipped: key=%s scoped=%s no overlay for window %s",
@@ -3602,13 +3697,13 @@ class VisualUpdateMixin:
         coordinator = _GlobalFlashCoordinator.get()
         coordinator._process_pending_registrations()
 
-        overlay = WindowFlashOverlay._overlays.get(window_id)
+        overlay = WindowFlashOverlay.live_for_window_id(window_id)
         if overlay is None:
             flash_trace(
                 "queue.local.batch_skip_no_overlay",
                 count=len(scoped_keys),
                 window=window_id,
-                overlays=len(WindowFlashOverlay._overlays),
+                overlays=WindowFlashOverlay.live_count(),
             )
             return
 

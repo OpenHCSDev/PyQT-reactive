@@ -1,6 +1,6 @@
 """PyQt parameter form manager - VIEW layer for ObjectState MODEL."""
 
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass, is_dataclass, replace
 import logging
 from typing import Any, Dict, Type, Optional, List, Set, Callable, TYPE_CHECKING
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
@@ -37,7 +37,7 @@ from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher
 
 # LiveContextService deleted - functionality moved to ObjectStateRegistry
 from pyqt_reactive.services.flag_context_manager import FlagContextManager
-from .form_init_service import FormBuildOrchestrator
+from .form_init_service import FormBuildOrchestrator, FormBuildTransaction
 from pyqt_reactive.forms.parameter_info_types import ParameterInfo
 from pyqt_reactive.forms.parameter_value_contracts import (
     FormContext,
@@ -196,6 +196,7 @@ class ParameterFormManager(
     """
 
     parameter_changed = pyqtSignal(str, object)  # param_name, value
+    form_build_failed = pyqtSignal(object)
 
     # Cross-window context change signal (simplified API)
     # Args: (scope_id, field_path) - field_path is None for bulk refresh
@@ -219,16 +220,7 @@ class ParameterFormManager(
     # Performance optimization: Skip expensive operations for nested configs
     OPTIMIZE_NESTED_WIDGETS = True
 
-    # Performance optimization: Async widget creation for large forms
-    ASYNC_WIDGET_CREATION = True  # Create widgets progressively to avoid UI blocking
-    ASYNC_THRESHOLD = 5  # Minimum number of parameters to trigger async widget creation
-    INITIAL_SYNC_WIDGETS = 10  # Number of widgets to create synchronously for fast initial render
     CROSS_WINDOW_PLACEHOLDER_REFRESH_MS = 20
-
-    @classmethod
-    def should_use_async(cls, param_count: int) -> bool:
-        """Determine if async widget creation should be used based on parameter count."""
-        return cls.ASYNC_WIDGET_CREATION and param_count > cls.ASYNC_THRESHOLD
 
     # ========== STATE DELEGATION PROPERTIES ==========
     # ObjectState is single source of truth - PFM delegates all state access
@@ -345,32 +337,13 @@ class ParameterFormManager(
             else:
                 target_obj = FormTargetPathAccess.raw_path(target_obj, self.field_id)
 
-        # Auto-set render_enabled_in_header for nested enableable objects
-        # If target_obj is enableable and this is a nested form, render enabled in header
-        try:
-            from python_introspect import is_enableable
+        from python_introspect import is_enableable
 
-            if config.parent_manager is not None and is_enableable(target_obj):
-                config = FormManagerConfig(
-                    parent=config.parent,
-                    context_obj=config.context_obj,
-                    exclude_params=config.exclude_params,
-                    initial_values=config.initial_values,
-                    parent_manager=config.parent_manager,
-                    read_only=config.read_only,
-                    scope_id=config.scope_id,
-                    color_scheme=config.color_scheme,
-                    use_scroll_area=config.use_scroll_area,
-                    state=config.state,
-                    field_id=config.field_id,
-                    render_enabled_in_header=True,
-                    scope_accent_color=config.scope_accent_color,
-                    scope_step_index=config.scope_step_index,
-                    function_target=config.function_target,
-                    before_mutation=config.before_mutation,
-                )
-        except ImportError:
-            pass
+        if config.parent_manager is not None and is_enableable(target_obj):
+            config = replace(
+                config,
+                render_enabled_in_header=True,
+            )
 
         # Keep canonical dotted `field_id` for scoping/identity; store the target
         # type name separately for logging/diagnostics.
@@ -393,6 +366,11 @@ class ParameterFormManager(
             self.read_only = config.read_only
             self.before_mutation = config.before_mutation
             self._parent_manager = config.parent_manager
+            self._form_build_transaction = (
+                FormBuildTransaction(self)
+                if self._parent_manager is None
+                else self._parent_manager._form_build_transaction
+            )
             self.render_enabled_in_header = config.render_enabled_in_header
             self._scope_accent_color = config.scope_accent_color  # Store for widget creation
             self._scope_step_index = config.scope_step_index
@@ -486,7 +464,6 @@ class ParameterFormManager(
             self.widgets, self.reset_buttons, self.nested_managers = {}, {}, {}
             self.labels = {}  # Track LabelWithHelp widgets for bold styling
             self._field_flash_targets: Dict[str, "StructuralFlashTarget"] = {}
-            self._pending_nested_managers: Dict[str, "ParameterFormManager"] = {}
             self.form_tree = ParameterFormTreeIndex(self)
             self.chrome_sync = ParameterFormChromeSync(self)
 
@@ -597,11 +574,8 @@ class ParameterFormManager(
                     lambda name, manager: manager.mark_initial_load_complete()
                 )
 
-            # STEP 10: Initial refresh - REMOVED (now done in _execute_post_build_sequence)
-            # The FormBuildOrchestrator already does ONE cascading refresh at the end of
-            # widget building. Calling InitialRefreshStrategy.execute here was redundant
-            # and caused every manager to be refreshed TWICE during init.
-            pass
+            # FormBuildTransaction performs the one root-wide semantic
+            # finalization after all progressively constructed rows exist.
 
     # ==================== WIDGET CREATION METHODS ====================
 
@@ -643,12 +617,15 @@ class ParameterFormManager(
             layout.setSpacing(CURRENT_LAYOUT.main_layout_spacing)
             layout.setContentsMargins(*CURRENT_LAYOUT.main_layout_margins)
 
-        # Always apply styling
-        with timer("    Style generation", threshold_ms=1.0):
-            from pyqt_reactive.theming.style_generator import StyleSheetGenerator
+        # The root stylesheet cascades through nested form managers. Reapplying
+        # the same stylesheet at every nested manager forces repeated subtree
+        # repolishing without adding any local semantics.
+        if not is_nested:
+            with timer("    Style generation", threshold_ms=1.0):
+                from pyqt_reactive.theming.style_generator import StyleSheetGenerator
 
-            style_gen = StyleSheetGenerator(self.color_scheme)
-            self.setStyleSheet(style_gen.generate_config_window_style())
+                style_gen = StyleSheetGenerator(self.color_scheme)
+                self.setStyleSheet(style_gen.generate_config_window_style())
 
         # Build form content
         with timer("    Build form", threshold_ms=5.0):
@@ -693,14 +670,11 @@ class ParameterFormManager(
 
         # PHASE 2A: Use orchestrator to eliminate async/sync duplication
         orchestrator = FormBuildOrchestrator()
-        use_async = orchestrator.should_use_async(len(self.form_structure.parameters))
-        logger.debug(
-            "[PFM_BUILD_WIDGETS] seq=%s field_id=%s use_async=%s",
-            self._pfm_seq,
-            self.field_id,
-            use_async,
+        orchestrator.build_widgets(
+            self,
+            content_layout,
+            self.form_structure.parameters,
         )
-        orchestrator.build_widgets(self, content_layout, self.form_structure.parameters, use_async)
 
         self._form_widget = content_widget
         return content_widget
@@ -717,93 +691,6 @@ class ParameterFormManager(
             param_info.widget_creation_type,
         )
         return WidgetCreationPipeline(self, param_info).run()
-
-    def _create_widgets_async(self, layout, param_infos, on_complete=None, on_batch_complete=None):
-        """Create widgets asynchronously to avoid blocking the UI.
-
-        Args:
-            layout: Layout to add widgets to
-            param_infos: List of parameter info objects
-            on_complete: Optional callback to run when all widgets are created
-            on_batch_complete: Optional callback to run after each batch (receives list of widgets)
-        """
-        logger.debug(
-            "[ASYNC_CREATE] seq=%s field_id=%s param_count=%s",
-            self._pfm_seq,
-            self.field_id,
-            len(param_infos),
-        )
-        # Create widgets in batches using QTimer to yield to event loop
-        batch_size = 3  # Create 3 widgets at a time
-        index = 0
-        batch_timer = QTimer(self)
-        batch_timer.setSingleShot(True)
-
-        def create_next_batch():
-            nonlocal index
-
-            batch_start = index
-            batch_end = min(index + batch_size, len(param_infos))
-            logger.debug(
-                "[ASYNC_CREATE] seq=%s field_id=%s batch=%s-%s of %s",
-                self._pfm_seq,
-                self.field_id,
-                batch_start,
-                batch_end,
-                len(param_infos),
-            )
-
-            # Guard: Check if layout's parent widget was deleted (window closed during async build)
-            try:
-                parent = layout.parentWidget()
-                if parent is None:
-                    logger.warning("Async widget creation aborted: layout parent is None")
-                    return
-            except RuntimeError:
-                # Layout itself was deleted
-                logger.warning("Async widget creation aborted: layout was deleted")
-                return
-
-            batch_widgets = []
-
-            for i in range(index, batch_end):
-                param_info = param_infos[i]
-                widget = self._create_widget_for_param(param_info)
-                try:
-                    layout.addWidget(widget)
-                    batch_widgets.append((param_info.name, widget))
-                except RuntimeError as e:
-                    logger.warning(f"Async widget creation aborted during addWidget: {e}")
-                    return
-
-            index = batch_end
-
-            # Apply styling to this batch immediately
-            logger.debug(
-                f"[ASYNC_CREATE] Batch complete: field_id={self.field_id}, batch_widgets={len(batch_widgets)}, on_batch_complete={'set' if on_batch_complete else None}"
-            )
-            if on_batch_complete and batch_widgets:
-                try:
-                    on_batch_complete(batch_widgets)
-                except Exception as e:
-                    logger.warning(f"Error in batch completion callback: {e}")
-
-            # Schedule next batch if there are more widgets
-            if index < len(param_infos):
-                batch_timer.start(0)
-                return
-
-            batch_timer.deleteLater()
-            if on_complete:
-                logger.debug(
-                    "[ASYNC_CREATE] All widgets created for %s, running on_complete callback",
-                    self.field_id,
-                )
-                on_complete()
-
-        # Start creating widgets
-        batch_timer.timeout.connect(create_next_batch)
-        batch_timer.start(0)
 
     def _create_nested_form_inline(
         self,
@@ -849,31 +736,8 @@ class ParameterFormManager(
             nested_manager.field_id,
         )
 
-        # Inherit lazy/global editing context from parent
-        try:
-            nested_manager.config.is_lazy_dataclass = self.config.is_lazy_dataclass
-            nested_manager.config.is_global_config_editing = self.config.is_global_config_editing
-        except Exception:
-            pass
-
         # Store nested manager
         self.nested_managers[param_name] = nested_manager
-
-        # Register with root manager for async completion tracking
-        # Count parameters with nested id
-        nested_path = DottedFieldPath(nested_id)
-        param_count = sum(
-            1
-            for path in self.state.parameters.keys()
-            if path != nested_id and nested_path.contains_path(path)
-        )
-        root_manager = self
-        while root_manager._parent_manager is not None:
-            root_manager = root_manager._parent_manager
-
-        if self.should_use_async(param_count):
-            unique_key = f"{self.field_id}.{param_name}"
-            root_manager._pending_nested_managers[unique_key] = nested_manager
 
         return nested_manager
 
@@ -881,8 +745,8 @@ class ParameterFormManager(
         """
         Convert widget value to proper type.
 
-        Applies both PyQt-specific conversions (Path, tuple/list parsing) and
-        service layer conversions (enums, basic types, Union handling).
+        Applies the PyQt boundary conversion followed by the shared semantic
+        conversion for enums, containers, and unions.
         """
         from pyqt_reactive.forms.widget_strategies import convert_widget_value_to_type
 
@@ -897,6 +761,12 @@ class ParameterFormManager(
         )
 
         return converted_value
+
+    def validate_current_values(self) -> None:
+        """Reject invalid writable editor state across this form tree."""
+        from pyqt_reactive.forms.form_value_validation import FORM_VALUE_VALIDATION
+
+        FORM_VALUE_VALIDATION.validate_current_values(self)
 
     def reset_all_parameters(self) -> None:
         """Reset all parameters - just call reset_parameter for each parameter."""
@@ -1098,28 +968,6 @@ class ParameterFormManager(
         """Apply operation to all nested managers."""
         for param_name, nested_manager in self.nested_managers.items():
             callback(param_name, nested_manager)
-
-    def _on_nested_manager_complete(self, nested_manager) -> None:
-        """
-        Called by nested managers when they complete async widget creation.
-
-        ANTI-DUCK-TYPING: _pending_nested_managers always exists (set in __init__).
-        """
-        # Find and remove this manager from pending dict
-        key_to_remove = None
-        for key, manager in self._pending_nested_managers.items():
-            if manager is nested_manager:
-                key_to_remove = key
-                break
-
-        if key_to_remove:
-            del self._pending_nested_managers[key_to_remove]
-
-        # If all nested managers are done, delegate to orchestrator
-        if len(self._pending_nested_managers) == 0:
-            # PHASE 2A: Use orchestrator for post-build sequence
-            orchestrator = FormBuildOrchestrator()
-            orchestrator._execute_post_build_sequence(self)
 
     # ==================== CROSS-WINDOW CONTEXT UPDATE METHODS ====================
 

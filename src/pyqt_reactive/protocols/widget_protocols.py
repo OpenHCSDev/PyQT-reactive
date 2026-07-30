@@ -97,6 +97,28 @@ class ValueSettable(ABC):
         pass
 
 
+class CurrentValueValidatable(ABC):
+    """ABC for writable widgets that can reject incomplete semantic values."""
+
+    @abstractmethod
+    def validate_current_value(self) -> None:
+        """Raise ``ValueError`` when the current editor value cannot be committed."""
+        pass
+
+
+class DirtyMarkerSettable(ABC):
+    """ABC for structural chrome that renders dirty/default state."""
+
+    @abstractmethod
+    def set_dirty_marker(
+        self,
+        is_dirty: bool,
+        has_sig_diff: bool = False,
+    ) -> None:
+        """Render aggregate dirty and signature-default state."""
+        pass
+
+
 class ResolvedValuePreviewSettable(ABC):
     """
     ABC for widgets that render inherited/resolved values separately from raw edits.

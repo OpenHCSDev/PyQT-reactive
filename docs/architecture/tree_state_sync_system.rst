@@ -27,13 +27,15 @@ Stable Item Identity
 --------------------
 
 ``TreeItemKeyBuilderABC`` provides stable keys per item. The default
-``DictPayloadTreeItemKeyBuilder`` keys by payload metadata (port/type/node_id)
-and falls back to text when metadata is absent.
+``TypedPayloadTreeItemKeyBuilder`` asks nominal payloads implementing
+``TreeItemKeyProvider`` for their stable key and falls back to visible text
+when no typed payload is present.
 
 Typed Node Model
 ----------------
 
-``TreeNode`` is a pure data representation for tree rows:
+``TreeNode`` is a pure data representation for tree rows. ``TreeSyncAdapter``
+stores the corresponding immutable ``TreeNodeIdentity`` in each Qt item:
 
 - ``node_id``
 - ``node_type``

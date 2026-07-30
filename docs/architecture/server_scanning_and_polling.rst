@@ -6,7 +6,7 @@ Modules
 
 - ``pyqt_reactive.services.zmq_server_scan_service``
 - ``pyqt_reactive.services.interval_snapshot_poller``
-- ``pyqt_reactive.services.zmq_server_info_parser``
+- ``pyqt_reactive.services.zmq_server_info``
 
 ZMQServerScanService
 --------------------
@@ -14,10 +14,11 @@ ZMQServerScanService
 ``ZMQServerScanService`` handles transport-level scanning:
 
 - parallel per-port ping with bounded thread pool
-- typed transport URL construction via ``zmqruntime.transport``
-- timeout-bounded REQ/REP ping round-trips
+- timeout-bounded REQ/REP ping through ``request_control_ping``
+- preservation of the canonical ``PongResponse`` type
 
-This keeps socket/network concerns outside widgets.
+This keeps socket/network concerns outside widgets and raw dictionaries at the
+wire boundary.
 
 IntervalSnapshotPoller
 ----------------------
@@ -31,23 +32,26 @@ IntervalSnapshotPoller
 
 The policy boundary is formalized by ``IntervalSnapshotPollerPolicyABC``.
 
-Typed Ping Parsing
+Typed Server Views
 ------------------
 
-``DefaultServerInfoParser`` converts raw ping payloads into nominal types:
+``BaseServerInfo.from_response`` selects a nominal view from the protocol-level
+``ServerRole`` declared by the PONG type:
 
 - ``ExecutionServerInfo``
 - ``ViewerServerInfo``
 - ``GenericServerInfo``
 
-Execution payloads include typed compile status and running/queued execution
-entries, enabling type-dispatched rendering in browser adapters.
+Execution views reuse ``WorkerState``, ``RunningExecutionInfo``, and
+``QueuedExecutionInfo`` from zmqruntime. They do not retain or reconstruct raw
+payload mappings.
 
 Design Outcome
 --------------
 
-Widget code consumes typed parsed snapshots and no longer owns low-level socket
-and parsing branches directly.
+Widget code consumes typed snapshots through scanning, Qt item storage, polling,
+and rendering. The declared classes are the schema; no parallel key table or
+parser strategy is maintained.
 
 See Also
 --------

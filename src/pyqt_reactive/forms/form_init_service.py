@@ -4,21 +4,22 @@ Consolidated Form Initialization Service.
 Merges:
 - InitializationServices: Metaprogrammed initialization services for ParameterFormManager
 - InitializationStepFactory: Factory for creating initialization step services
-- FormBuildOrchestrator: Async/sync widget creation orchestration
-- InitialRefreshStrategy: Enum-driven dispatch for initial placeholder refresh
+- FormBuildOrchestrator: root-scoped progressive widget construction
 
 Key features:
 1. Auto-generates service classes from builder functions using decorator-based registry
 2. Unified async/sync widget creation paths
 3. Ordered callback execution (styling → placeholders → enabled styling)
-4. Enum-driven dispatch for initial refresh strategy
+4. One semantic finalization after a complete root form generation
 """
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field, make_dataclass, fields as dataclass_fields
-from typing import Any, Dict, Optional, Type, Callable, List, TypeVar
-from enum import Enum, auto
+from time import perf_counter
+from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Callable, List, TypeVar
+from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 import inspect
 import sys
@@ -39,7 +40,10 @@ from pyqt_reactive.forms.parameter_value_contracts import (
     ParameterInfoSequence,
 )
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
-from objectstate import get_base_config_type
+from objectstate import get_base_config_type, has_lazy_resolution
+
+if TYPE_CHECKING:
+    from pyqt_reactive.forms.parameter_form_service import FormStructure
 
 try:
     from pyqt_reactive.core.performance_monitor import timer
@@ -110,37 +114,224 @@ class DerivationContext:
     @property
     def is_lazy_dataclass(self) -> bool:
         obj_type = type(self.extracted.object_instance) if self.extracted.object_instance else None
-        return obj_type and LazyDefaultPlaceholderService.has_lazy_resolution(obj_type)
+        return bool(obj_type and has_lazy_resolution(obj_type))
 
     @property
     def is_global_config_editing(self) -> bool:
         return not self.is_lazy_dataclass
 
 
-# ============================================================================
-# Build Configuration
-# ============================================================================
-
-class BuildPhase(Enum):
-    """Phases of form building process."""
-    WIDGET_CREATION = "widget_creation"
-    STYLING_CALLBACKS = "styling_callbacks"
-    PLACEHOLDER_REFRESH = "placeholder_refresh"
-    POST_PLACEHOLDER_CALLBACKS = "post_placeholder_callbacks"
-    ENABLED_STYLING = "enabled_styling"
-
-
-class RefreshMode(Enum):
-    """Refresh modes for initial placeholder refresh."""
-    ROOT_GLOBAL_CONFIG = auto()
-    OTHER_WINDOW = auto()
-
-
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BuildConfig:
-    """Configuration for form building."""
+    """Root-scoped progressive form construction policy."""
+
     initial_sync_widgets: int = 5
-    use_async_threshold: int = 5
+    max_widgets_per_slice: int = 3
+    max_slice_ms: float = 12.0
+
+    def __post_init__(self) -> None:
+        if self.initial_sync_widgets < 0:
+            raise ValueError("initial_sync_widgets must be non-negative.")
+        if self.max_widgets_per_slice < 1:
+            raise ValueError("max_widgets_per_slice must be positive.")
+        if self.max_slice_ms <= 0:
+            raise ValueError("max_slice_ms must be positive.")
+
+
+@dataclass(slots=True)
+class ProgressiveFormWork:
+    """Remaining row construction for one manager."""
+
+    manager: Any
+    content_layout: QVBoxLayout
+    param_infos: ParameterInfoSequence
+    on_batch_complete: Callable[[list[tuple[str, QWidget]]], None]
+    index: int = 0
+
+
+class FormBuildTransaction:
+    """Own one root form's progressive construction and finalization.
+
+    Nested managers share this transaction. The initial synchronous allowance
+    is therefore spent once for the whole form tree instead of once per nested
+    manager. A generation is finalized only after the root has registered all
+    construction work and every asynchronous manager has completed.
+    """
+
+    def __init__(self, root_manager, config: BuildConfig | None = None) -> None:
+        self.root_manager = root_manager
+        self.config = config or BuildConfig()
+        self._remaining_sync_widgets = self.config.initial_sync_widgets
+        self._registration_depth = 0
+        self._pending_managers: dict[int, Any] = {}
+        self._work_queue: deque[ProgressiveFormWork] = deque()
+        self._root_registered = False
+        self._finalization_scheduled = False
+        self._finalized = False
+        self.failure: Exception | None = None
+        self.finalization_count = 0
+        self.max_slice_elapsed_s = 0.0
+        self._work_timer = QTimer(root_manager)
+        self._work_timer.setSingleShot(True)
+        self._work_timer.timeout.connect(self._run_next_slice)
+
+    def begin_registration(self) -> None:
+        if self._finalized or self.failure is not None:
+            raise RuntimeError("Cannot register form work after finalization.")
+        self._registration_depth += 1
+
+    def claim_initial_sync_widgets(self, requested: int) -> int:
+        claimed = min(max(requested, 0), self._remaining_sync_widgets)
+        self._remaining_sync_widgets -= claimed
+        return claimed
+
+    def enqueue_async_manager(
+        self,
+        manager,
+        content_layout: QVBoxLayout,
+        param_infos: ParameterInfoSequence,
+        on_batch_complete: Callable[[list[tuple[str, QWidget]]], None],
+    ) -> None:
+        """Register one manager and queue its remaining rows."""
+        self._pending_managers[id(manager)] = manager
+        self._work_queue.append(
+            ProgressiveFormWork(
+                manager=manager,
+                content_layout=content_layout,
+                param_infos=param_infos,
+                on_batch_complete=on_batch_complete,
+            )
+        )
+        self._schedule_work()
+
+    def finish_registration(self, manager) -> None:
+        if self._registration_depth <= 0:
+            raise RuntimeError("Unbalanced form build registration.")
+        self._registration_depth -= 1
+        if manager is self.root_manager:
+            self._root_registered = True
+        self._schedule_finalization_if_complete()
+
+    def complete_async_manager(self, manager) -> None:
+        manager_id = id(manager)
+        if manager_id not in self._pending_managers:
+            raise RuntimeError(
+                f"Form manager completed without pending work: {manager.field_id!r}"
+            )
+        del self._pending_managers[manager_id]
+        self._schedule_finalization_if_complete()
+
+    def fail(self, error: Exception) -> None:
+        """Stop this generation and publish its construction failure once."""
+        if self.failure is not None:
+            return
+        self.failure = error
+        self._work_timer.stop()
+        self._work_queue.clear()
+        self._pending_managers.clear()
+        self.root_manager.form_build_failed.emit(error)
+
+    def _schedule_work(self) -> None:
+        if (
+            self.failure is None
+            and self._work_queue
+            and not self._work_timer.isActive()
+        ):
+            self._work_timer.start(0)
+
+    def _run_next_slice(self) -> None:
+        if self.failure is not None:
+            return
+        slice_started = perf_counter()
+        widgets_created = 0
+        batch_widgets: dict[int, tuple[ProgressiveFormWork, list]] = {}
+
+        while self._work_queue:
+            work = self._work_queue.popleft()
+            try:
+                parent = work.content_layout.parentWidget()
+            except RuntimeError:
+                return
+            if parent is None:
+                return
+
+            param_info = work.param_infos[work.index]
+            try:
+                widget = work.manager._create_widget_for_param(param_info)
+                work.content_layout.addWidget(widget)
+            except Exception as error:
+                logger.exception(
+                    "Progressive form construction failed for %s",
+                    work.manager.field_id,
+                )
+                self.fail(error)
+                return
+
+            work.index += 1
+            widgets_created += 1
+            entry = batch_widgets.setdefault(id(work), (work, []))
+            entry[1].append((param_info.name, widget))
+
+            if work.index < len(work.param_infos):
+                self._work_queue.append(work)
+            else:
+                self.complete_async_manager(work.manager)
+
+            elapsed_ms = (perf_counter() - slice_started) * 1000
+            if (
+                widgets_created >= self.config.max_widgets_per_slice
+                or elapsed_ms >= self.config.max_slice_ms
+            ):
+                break
+
+        for work, widgets in batch_widgets.values():
+            try:
+                work.on_batch_complete(widgets)
+            except Exception as error:
+                logger.exception(
+                    "Progressive form batch callback failed for %s",
+                    work.manager.field_id,
+                )
+                self.fail(error)
+                return
+
+        self.max_slice_elapsed_s = max(
+            self.max_slice_elapsed_s,
+            perf_counter() - slice_started,
+        )
+        self._schedule_work()
+
+    def _schedule_finalization_if_complete(self) -> None:
+        if (
+            not self._root_registered
+            or self._registration_depth
+            or self._pending_managers
+            or self._finalization_scheduled
+            or self._finalized
+            or self.failure is not None
+        ):
+            return
+        self._finalization_scheduled = True
+        self.root_manager.schedule_lifecycle_callback(0, self._finalize)
+
+    def _finalize(self) -> None:
+        self._finalization_scheduled = False
+        if (
+            self._registration_depth
+            or self._pending_managers
+            or self._finalized
+            or self.failure is not None
+        ):
+            self._schedule_finalization_if_complete()
+            return
+        try:
+            FormBuildOrchestrator()._execute_post_build_sequence(self.root_manager)
+        except Exception as error:
+            logger.exception("Form generation finalization failed.")
+            self.fail(error)
+            return
+        self._finalized = True
+        self.finalization_count += 1
 
 
 # ============================================================================
@@ -374,10 +565,7 @@ INITIALIZATION_SERVICES.install_generated_services(globals())
 # ============================================================================
 
 class FormBuildOrchestrator:
-    """Orchestrates form building with unified async/sync paths."""
-
-    def __init__(self, config: BuildConfig = None):
-        self.config = config or BuildConfig()
+    """Orchestrate a root transaction's progressive widget construction."""
 
     @staticmethod
     def is_root_manager(manager) -> bool:
@@ -387,172 +575,112 @@ class FormBuildOrchestrator:
     def is_nested_manager(manager) -> bool:
         return manager._parent_manager is not None
 
-    def build_widgets(self, manager, content_layout: QVBoxLayout, param_infos: ParameterInfoSequence, use_async: bool) -> None:
-        """Build widgets using unified async/sync path."""
+    def build_widgets(
+        self,
+        manager,
+        content_layout: QVBoxLayout,
+        param_infos: ParameterInfoSequence,
+    ) -> None:
+        """Register and build one manager within its root transaction."""
         pass  # timer decorator - optional
 
-        logger.debug(
-            "[BUILD_WIDGETS] field_id=%s use_async=%s param_count=%s manager_seq=%s",
-            manager.field_id,
-            use_async,
-            len(param_infos),
-            manager._pfm_seq,
-        )
-        if use_async:
-            self._build_widgets_async(manager, content_layout, param_infos)
-        else:
-            self._build_widgets_sync(manager, content_layout, param_infos)
-
-    def _build_widgets_sync(self, manager, content_layout: QVBoxLayout, param_infos: ParameterInfoSequence) -> None:
-        """Synchronous widget creation path."""
-        pass  # timer decorator - optional
-        from .parameter_info_types import DirectDataclassInfo, OptionalDataclassInfo
-
-        with timer(f"      Create {len(param_infos)} parameter widgets", threshold_ms=5.0):
-            for param_info in param_infos:
-                is_nested = isinstance(param_info, (DirectDataclassInfo, OptionalDataclassInfo))
-                with timer(f"        Create widget for {param_info.name}", threshold_ms=2.0):
-                    logger.debug(
-                        "[BUILD_WIDGETS_SYNC] field_id=%s param=%s is_nested=%s manager_seq=%s",
-                        manager.field_id,
-                        param_info.name,
-                        is_nested,
-                        manager._pfm_seq,
-                    )
-                    widget = manager._create_widget_for_param(param_info)
-                    content_layout.addWidget(widget)
-                    manager._enabled_field_styling_service.invalidate_widget_cache(manager)
-
-        self._execute_post_build_sequence(manager)
-
-    def _build_widgets_async(self, manager, content_layout: QVBoxLayout, param_infos: ParameterInfoSequence) -> None:
-        """Asynchronous widget creation path."""
-        pass  # timer decorator - optional
-
-        if self.is_root_manager(manager):
-            manager._pending_nested_managers = {}
-
-        sync_params = param_infos[:self.config.initial_sync_widgets]
-        async_params = param_infos[self.config.initial_sync_widgets:]
-
-        if sync_params:
-            with timer(f"        Create {len(sync_params)} initial widgets (sync)", threshold_ms=5.0):
-                for param_info in sync_params:
-                    logger.debug(
-                        "[BUILD_WIDGETS_ASYNC] phase=sync field_id=%s param=%s manager_seq=%s",
-                        manager.field_id,
-                        param_info.name,
-                        manager._pfm_seq,
-                    )
-                    widget = manager._create_widget_for_param(param_info)
-                    content_layout.addWidget(widget)
-
-        def on_batch_complete(batch_widgets):
+        transaction = manager._form_build_transaction
+        transaction.begin_registration()
+        try:
+            sync_count = transaction.claim_initial_sync_widgets(len(param_infos))
+            sync_params = param_infos[:sync_count]
+            async_params = param_infos[sync_count:]
             logger.debug(
-                "[BATCH_COMPLETE] field_id=%s batch_widgets=%s manager_seq=%s",
+                "[BUILD_WIDGETS] field_id=%s sync_count=%s async_count=%s "
+                "param_count=%s manager_seq=%s",
                 manager.field_id,
-                len(batch_widgets),
-                manager._pfm_seq,
-            )
-            manager._enabled_field_styling_service.invalidate_widget_cache(manager)
-            manager._enabled_field_styling_service.refresh_enabled_styling(manager)
-
-        def on_async_complete():
-            logger.debug(
-                "[ASYNC_COMPLETE] field_id=%s widgets=%s is_nested=%s manager_seq=%s",
-                manager.field_id,
-                len(manager.widgets),
-                self.is_nested_manager(manager),
+                len(sync_params),
+                len(async_params),
+                len(param_infos),
                 manager._pfm_seq,
             )
 
-            # Then notify parent (if this is nested) to track completion
-            if self.is_nested_manager(manager):
-                self._notify_root_of_completion(manager)
-            else:
-                # Root manager: trigger final refresh after all widgets complete
-                # This is the single source of truth for when ALL async widget creation is done
-                # Use 500ms delay to ensure all async batches have completed
-                manager.schedule_lifecycle_callback(
-                    500,
-                    lambda: manager._parameter_ops_service.refresh_with_live_context(
-                        manager
-                    ),
+            if sync_params:
+                with timer(
+                    f"        Create {len(sync_params)} initial widgets (sync)",
+                    threshold_ms=5.0,
+                ):
+                    for param_info in sync_params:
+                        logger.debug(
+                            "[BUILD_WIDGETS_ASYNC] phase=sync field_id=%s "
+                            "param=%s manager_seq=%s",
+                            manager.field_id,
+                            param_info.name,
+                            manager._pfm_seq,
+                        )
+                        widget = manager._create_widget_for_param(param_info)
+                        content_layout.addWidget(widget)
+                manager._enabled_field_styling_service.invalidate_widget_cache(
+                    manager
                 )
 
-            # Also refresh this manager immediately for progressive display
-            self._execute_post_build_sequence(manager)
+            def on_batch_complete(batch_widgets):
+                logger.debug(
+                    "[BATCH_COMPLETE] field_id=%s batch_widgets=%s manager_seq=%s",
+                    manager.field_id,
+                    len(batch_widgets),
+                    manager._pfm_seq,
+                )
+                manager._enabled_field_styling_service.invalidate_widget_cache(
+                    manager
+                )
 
-        if async_params:
-            manager._create_widgets_async(
-                content_layout, async_params,
-                on_complete=on_async_complete,
-                on_batch_complete=on_batch_complete
-            )
-        else:
-            on_async_complete()
-
-    def _notify_root_of_completion(self, nested_manager) -> None:
-        """Notify root manager that nested manager completed async build."""
-        root_manager = nested_manager._parent_manager
-        while root_manager._parent_manager is not None:
-            root_manager = root_manager._parent_manager
-        root_manager._on_nested_manager_complete(nested_manager)
-        logger.debug(
-            "[NESTED_COMPLETE] nested_field_id=%s nested_seq=%s root_field_id=%s root_seq=%s",
-            nested_manager.field_id,
-            nested_manager._pfm_seq,
-            root_manager.field_id,
-            root_manager._pfm_seq,
-        )
+            if async_params:
+                transaction.enqueue_async_manager(
+                    manager,
+                    content_layout,
+                    async_params,
+                    on_batch_complete=on_batch_complete,
+                )
+        except Exception as error:
+            transaction.fail(error)
+            raise
+        finally:
+            transaction.finish_registration(manager)
 
     def _execute_post_build_sequence(self, manager) -> None:
-        """Execute standard post-build callback sequence."""
+        """Finalize one complete root form generation exactly once."""
         pass  # timer decorator - optional
 
         if self.is_nested_manager(manager):
-            logger.debug(
-                "[POST_BUILD] NESTED field_id=%s widgets=%s callback_count=%s manager_seq=%s",
-                manager.field_id,
-                len(manager.widgets),
-                len(manager._on_build_complete_callbacks),
-                manager._pfm_seq,
-            )
-            for callback in manager._on_build_complete_callbacks:
-                callback()
-            manager._on_build_complete_callbacks.clear()
-            return
+            raise ValueError("Form generation finalization requires the root manager.")
+
+        managers = tuple(self._walk_managers(manager))
 
         with timer("  Apply styling callbacks", threshold_ms=5.0):
-            self._apply_callbacks(manager._on_build_complete_callbacks)
+            for form_manager in managers:
+                self._apply_callbacks(form_manager._on_build_complete_callbacks)
 
         with timer("  Complete placeholder refresh", threshold_ms=10.0):
-            # CRITICAL: Use defer=True to give async widget batches time to finish
-            # This ensures placeholders are applied to all widgets, including those
-            # created in final async batches
             logger.debug(
                 "[POST_BUILD] ROOT refresh_with_live_context field_id=%s manager_seq=%s",
                 manager.field_id,
                 manager._pfm_seq,
             )
-            manager._parameter_ops_service.refresh_with_live_context(manager, defer=True)
+            manager._parameter_ops_service.refresh_with_live_context(manager)
 
         with timer("  Apply post-placeholder callbacks", threshold_ms=5.0):
-            self._apply_callbacks(manager._on_placeholder_refresh_complete_callbacks)
-            for nested_manager in manager.nested_managers.values():
-                self._apply_callbacks(nested_manager._on_placeholder_refresh_complete_callbacks)
-
-        with timer("  Apply initial enabled styling", threshold_ms=5.0):
-            # CRITICAL: Initial enabled styling is now handled by showEvent in the widget
-            # (e.g., StepParameterEditorWidget.showEvent)
-            # This ensures styling is applied AFTER the widget is visible and painted
-            pass
+            for form_manager in managers:
+                self._apply_callbacks(
+                    form_manager._on_placeholder_refresh_complete_callbacks
+                )
 
         # Initialize semantic indicators for all labels and compound widgets
         # based on current state. This handles forms that open with pre-existing
         # dirty fields or signature-default overrides.
         with timer("  Initialize semantic indicators", threshold_ms=5.0):
             self._initialize_semantic_indicators(manager)
+
+    @classmethod
+    def _walk_managers(cls, manager):
+        yield manager
+        for nested_manager in manager.nested_managers.values():
+            yield from cls._walk_managers(nested_manager)
 
     def _initialize_semantic_indicators(self, manager) -> None:
         """Initialize dirty/default chrome in manager and nested managers."""
@@ -570,33 +698,3 @@ class FormBuildOrchestrator:
         for callback in callback_list:
             callback()
         callback_list.clear()
-
-    def should_use_async(self, param_count: int) -> bool:
-        return param_count > self.config.use_async_threshold
-
-
-# ============================================================================
-# Initial Refresh Strategy
-# ============================================================================
-
-class InitialRefreshStrategy:
-    """Enum-driven dispatch for initial placeholder refresh."""
-
-    @staticmethod
-    def execute(manager) -> None:
-        """Execute the appropriate refresh strategy for the manager."""
-        pass  # timer decorator - optional
-
-        is_root_global_config = (
-            manager.config.is_global_config_editing and
-            manager.global_config_type is not None and
-            manager.context_obj is None
-        )
-
-        if is_root_global_config:
-            with timer("  Root global config sibling inheritance refresh", threshold_ms=10.0):
-                manager._parameter_ops_service.refresh_with_live_context(manager)
-        else:
-            with timer("  Initial live context refresh", threshold_ms=10.0):
-                service = parameter_ops_service.ParameterOpsService()
-                service.refresh_with_live_context(manager)

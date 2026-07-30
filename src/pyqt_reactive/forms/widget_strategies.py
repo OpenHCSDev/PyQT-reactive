@@ -1,16 +1,24 @@
 """Magicgui-based PyQt6 Widget Creation with OpenHCS Extensions"""
 
+import ast
 import dataclasses
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import ClassVar, Dict, Type, Callable, get_origin
+from typing import ClassVar, Dict, Type, Callable, get_args, get_origin
 
 from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QVBoxLayout, QSpinBox, QDoubleSpinBox, QWidget
 from PyQt6.QtGui import QIntValidator, QValidator
 from magicgui.widgets import Widget as MagicGuiWidget, create_widget
-from magicgui.type_map import register_type
 from objectstate import DataclassFieldAccess
+from python_introspect import (
+    enum_member_type,
+    get_enum_from_list,
+    is_enum_type,
+    is_list_of_enums,
+    is_union_type,
+    resolve_optional,
+)
 from pyqt_reactive.forms.parameter_info_types import ParameterInfo
 from pyqt_reactive.forms.parameter_value_contracts import (
     FormObject,
@@ -23,6 +31,7 @@ from pyqt_reactive.widgets import (
 )
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
+    CurrentValueValidatable,
     PlaceholderStateMixin,
     PlaceholderStateTrackable,
     PyQtWidgetMeta,
@@ -35,13 +44,6 @@ from pyqt_reactive.protocols import (
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
-from pyqt_reactive.forms.widget_creation_registry import (
-    enum_member_type,
-    resolve_optional,
-    is_enum,
-    is_list_of_enums,
-    get_enum_from_list,
-)
 from contextlib import contextmanager
 
 try:
@@ -187,6 +189,246 @@ class NoneAwareIntEdit(
         return True, int(text)
 
 
+class TypedLiteralContainerEdit(
+    NoneAwareTextValueMixin,
+    PlaceholderStateMixin,
+    QLineEdit,
+    ValueGettable,
+    ValueSettable,
+    ChangeSignalEmitter,
+    CurrentValueValidatable,
+    metaclass=PyQtWidgetMeta,
+):
+    """Literal editor that preserves a declared container's runtime identity."""
+
+    def __init__(self, container_type: type[list] | type[tuple] | type[dict], parent=None):
+        self._container_type = container_type
+        self._param_type = container_type
+        self._param_name = ""
+        super().__init__(parent)
+        self.setValidator(TypedLiteralValidator(self._parse_text, self))
+        self.setToolTip(self._syntax_help())
+
+    def configure_annotation(self, param_name: str, param_type: Type) -> None:
+        """Bind the semantic annotation used by the shared conversion authority."""
+        self._param_name = param_name
+        self._param_type = param_type
+
+    def set_value(self, value: ParameterValue | None) -> None:
+        self._validate_container(value)
+        super().set_value(project_literal_edit_value(value))
+
+    def get_value(self) -> ParameterValue | None:
+        """Parse the complete editor text or fail before it reaches ObjectState."""
+        return self._parse_current_text()
+
+    def validate_current_value(self) -> None:
+        """Validate the editor through the same parser used for value extraction."""
+        self._parse_current_text()
+
+    def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
+        """Emit only complete literals of the declared container kind."""
+        self.connect_debounced_text_signal(
+            callback,
+            self._parse_current_text,
+            is_committable=self._current_text_is_committable,
+        )
+
+    def _current_text_is_committable(self) -> bool:
+        try:
+            self._parse_current_text()
+        except ValueError:
+            return False
+        return True
+
+    def _parse_current_text(self) -> ParameterValue | None:
+        return self._parse_text(self.text())
+
+    def _parse_text(self, text: str) -> ParameterValue | None:
+        text = text.strip()
+        if text == "":
+            return None
+        value = parse_literal_container(text, self._container_type)
+        self._validate_container(value)
+        from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+
+        return ParameterFormService().convert_value_to_type(
+            value,
+            self._param_type,
+            self._param_name,
+        )
+
+    def _validate_container(self, value: ParameterValue | None) -> None:
+        if value is None or isinstance(value, self._container_type):
+            return
+        raise ValueError(
+            f"Expected {self._container_type.__name__}, "
+            f"got {type(value).__name__}."
+        )
+
+    def _syntax_help(self) -> str:
+        example = {
+            list: "['value']",
+            tuple: "(1, 2)",
+            dict: "{'key': 'value'}",
+        }[self._container_type]
+        return (
+            f"Enter a Python {self._container_type.__name__} literal, "
+            f"for example {example}."
+        )
+
+
+class LiteralContainerSyntaxError(ValueError):
+    """The editor text is not a complete Python literal."""
+
+
+class LiteralContainerKindError(ValueError):
+    """The parsed literal does not match the declared container kind."""
+
+
+def parse_literal_container(
+    text: str,
+    container_type: type[list] | type[tuple] | type[dict],
+) -> ParameterValue:
+    """Parse one complete Python literal for a declared container kind."""
+    try:
+        value = ast.literal_eval(text)
+    except (SyntaxError, ValueError) as exc:
+        raise LiteralContainerSyntaxError(
+            f"Expected a valid {container_type.__name__} literal, got {text!r}."
+        ) from exc
+    if not isinstance(value, container_type):
+        raise LiteralContainerKindError(
+            f"Expected {container_type.__name__}, got {type(value).__name__}."
+        )
+    return value
+
+
+def project_literal_edit_value(value: ParameterValue | None) -> ParameterValue | None:
+    """Project typed values to a literal-safe editable representation."""
+    if isinstance(value, Enum):
+        return project_literal_edit_value(value.value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, list):
+        return [project_literal_edit_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(project_literal_edit_value(item) for item in value)
+    if isinstance(value, dict):
+        return {
+            project_literal_edit_value(key): project_literal_edit_value(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+class TypedLiteralValidator(QValidator):
+    """Qt edit-state projection for an authoritative typed text parser."""
+
+    def __init__(
+        self,
+        value_parser: Callable[[str], ParameterValue | None],
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._value_parser = value_parser
+
+    def validate(self, text: str, position: int):
+        try:
+            self._value_parser(text)
+        except LiteralContainerSyntaxError:
+            return QValidator.State.Intermediate, text, position
+        except ValueError:
+            return QValidator.State.Invalid, text, position
+        return QValidator.State.Acceptable, text, position
+
+
+class TypedLiteralUnionEdit(
+    NoneAwareTextValueMixin,
+    PlaceholderStateMixin,
+    QLineEdit,
+    ValueGettable,
+    ValueSettable,
+    ChangeSignalEmitter,
+    CurrentValueValidatable,
+    metaclass=PyQtWidgetMeta,
+):
+    """Literal editor for unions whose declared members are safely editable."""
+
+    def __init__(self, param_name: str, param_type: Type, parent=None):
+        self._param_name = param_name
+        self._param_type = param_type
+        members = get_args(param_type)
+        self._accepts_none = type(None) in members
+        self._accepts_plain_string = str in members
+        super().__init__(parent)
+        self.setValidator(TypedLiteralValidator(self._parse_text, self))
+        member_labels = " | ".join(
+            WidgetTypeLabel.render(item) for item in members
+        )
+        string_help = (
+            " Plain unquoted text is accepted as str; quote strings that begin "
+            "with a Python literal delimiter."
+            if self._accepts_plain_string
+            else ""
+        )
+        self.setToolTip(
+            f"Enter a Python literal matching {member_labels}.{string_help}"
+        )
+
+    def set_value(self, value: ParameterValue | None) -> None:
+        projected = project_literal_edit_value(value)
+        super().set_value(projected)
+
+    def get_value(self) -> ParameterValue | None:
+        return self._parse_text(self.text())
+
+    def validate_current_value(self) -> None:
+        self._parse_text(self.text())
+
+    def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
+        self.connect_debounced_text_signal(
+            callback,
+            self.get_value,
+            is_committable=self._current_text_is_committable,
+        )
+
+    def _current_text_is_committable(self) -> bool:
+        try:
+            self.get_value()
+        except ValueError:
+            return False
+        return True
+
+    def _parse_text(self, text: str) -> ParameterValue | None:
+        text = text.strip()
+        if text == "":
+            if self._accepts_none:
+                return None
+            raise LiteralContainerSyntaxError(
+                f"A value matching {self._param_type} is required."
+            )
+        try:
+            value = ast.literal_eval(text)
+        except (SyntaxError, ValueError) as exc:
+            if (
+                not self._accepts_plain_string
+                or text.startswith(("[", "{", "(", "'", '"'))
+            ):
+                raise LiteralContainerSyntaxError(
+                    f"Expected a valid literal for {self._param_type}, got {text!r}."
+                ) from exc
+            value = text
+
+        from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+
+        return ParameterFormService().convert_value_to_type(
+            value,
+            self._param_type,
+            self._param_name,
+        )
+
+
 @dataclasses.dataclass(frozen=True)
 class WidgetConfig:
     """Immutable widget configuration constants."""
@@ -223,6 +465,10 @@ class WidgetTypeLabel:
         if isinstance(param_type, type):
             return param_type.__name__
         return str(param_type)
+
+
+class UnsupportedWidgetTypeError(TypeError):
+    """Raised when no typed writable projection exists for an annotation."""
 
 
 class DirectWidgetFactory:
@@ -289,6 +535,84 @@ class CheckboxGroupWidgetFactory:
 CHECKBOX_GROUP_WIDGET_FACTORY = CheckboxGroupWidgetFactory()
 
 
+class LiteralContainerWidgetFactory:
+    """Creates one type-preserving editor for Python literal containers."""
+
+    container_types: ClassVar[tuple[type[list], type[tuple], type[dict]]] = (
+        list,
+        tuple,
+        dict,
+    )
+
+    @classmethod
+    def container_type_for(
+        cls,
+        annotation: Type,
+    ) -> type[list] | type[tuple] | type[dict] | None:
+        """Return the supported container kind declared by ``annotation``."""
+
+        container_type = get_origin(annotation) or annotation
+        if container_type in cls.container_types:
+            return container_type
+        return None
+
+    @classmethod
+    def supports(cls, annotation: Type) -> bool:
+        """Return whether this authority can project ``annotation``."""
+
+        return cls.container_type_for(annotation) is not None
+
+    def create(self, request: ResolvedWidgetRequest) -> TypedLiteralContainerEdit | None:
+        container_type = self.container_type_for(request.resolved_type)
+        if container_type is None:
+            return None
+
+        widget = TypedLiteralContainerEdit(container_type)
+        widget.configure_annotation(
+            request.source.param_name,
+            request.resolved_type,
+        )
+        widget.set_value(request.current_value)
+        return widget
+
+
+LITERAL_CONTAINER_WIDGET_FACTORY = LiteralContainerWidgetFactory()
+
+
+class LiteralUnionWidgetFactory:
+    """Creates typed editors for unions composed only of literal-safe members."""
+
+    scalar_member_types: ClassVar[frozenset[type]] = frozenset(
+        {str, int, float, bool}
+    )
+
+    def create(self, request: ResolvedWidgetRequest) -> TypedLiteralUnionEdit | None:
+        if not is_union_type(request.resolved_type):
+            return None
+        members = tuple(
+            member
+            for member in get_args(request.resolved_type)
+            if member is not type(None)
+        )
+        if not members or not all(self._is_literal_safe(member) for member in members):
+            return None
+
+        widget = TypedLiteralUnionEdit(
+            request.source.param_name,
+            request.resolved_type,
+        )
+        widget.set_value(request.current_value)
+        return widget
+
+    def _is_literal_safe(self, member: Type) -> bool:
+        if member in self.scalar_member_types or is_enum_type(member):
+            return True
+        return LITERAL_CONTAINER_WIDGET_FACTORY.supports(member)
+
+
+LITERAL_UNION_WIDGET_FACTORY = LiteralUnionWidgetFactory()
+
+
 class CustomWidgetFactory:
     """Factory for pyqt-reactive widgets that are not owned by magicgui."""
 
@@ -320,10 +644,6 @@ class MagicGuiValueBoundary:
             return 0.0
         if resolved_type == bool:
             return False
-        if get_origin(resolved_type) is list:
-            return []
-        if get_origin(resolved_type) is tuple:
-            return ()
         return None
 
 
@@ -350,13 +670,11 @@ class MagicGuiWidgetFactory:
 
             return self._project_widget(request, created_widget)
         except Exception as exc:
-            logger.debug(
-                "Widget creation failed for %s (%s): %s",
-                request.source.param_name,
-                request.resolved_type,
-                exc,
-            )
-            return DIRECT_WIDGET_FACTORY.create_string(request.current_value)
+            raise UnsupportedWidgetTypeError(
+                "No typed writable widget projection exists for "
+                f"parameter {request.source.param_name!r} with annotation "
+                f"{WidgetTypeLabel.render(request.resolved_type)!r}."
+            ) from exc
 
     def _project_widget(
         self,
@@ -366,20 +684,18 @@ class MagicGuiWidgetFactory:
         with timer("            check magicgui result", threshold_ms=0.1):
             native_widget = self._native_widget(created_widget)
             if isinstance(native_widget, QWidget) and type(native_widget) is QWidget:
-                logger.warning(
-                    "magicgui returned basic QWidget for %s (%s), using fallback",
-                    request.source.param_name,
-                    request.resolved_type,
+                raise UnsupportedWidgetTypeError(
+                    "magicgui returned an untyped QWidget for "
+                    f"parameter {request.source.param_name!r} with annotation "
+                    f"{WidgetTypeLabel.render(request.resolved_type)!r}."
                 )
-                return DIRECT_WIDGET_FACTORY.create_string(request.current_value)
 
             if type(created_widget) is QWidget:
-                logger.warning(
-                    "magicgui returned basic QWidget for %s (%s), using fallback",
-                    request.source.param_name,
-                    request.resolved_type,
+                raise UnsupportedWidgetTypeError(
+                    "magicgui returned an untyped QWidget for "
+                    f"parameter {request.source.param_name!r} with annotation "
+                    f"{WidgetTypeLabel.render(request.resolved_type)!r}."
                 )
-                return DIRECT_WIDGET_FACTORY.create_string(request.current_value)
 
             if request.current_value is None and native_widget is not None:
                 self._clear_magicgui_none_preview(native_widget, request.resolved_type)
@@ -437,7 +753,7 @@ class PyQt6WidgetCreationAuthority:
                     resolved.current_value,
                 )
 
-        if is_enum(resolved.resolved_type):
+        if is_enum_type(resolved.resolved_type):
             with timer("            create enum widget", threshold_ms=0.5):
                 return create_enum_widget_unified(
                     resolved.resolved_type,
@@ -449,6 +765,14 @@ class PyQt6WidgetCreationAuthority:
             label = WidgetTypeLabel.render(resolved.resolved_type)
             with timer(f"            create {label} widget (fast path)", threshold_ms=0.5):
                 return direct_factory(resolved.current_value)
+
+        literal_container_widget = LITERAL_CONTAINER_WIDGET_FACTORY.create(resolved)
+        if literal_container_widget is not None:
+            return literal_container_widget
+
+        literal_union_widget = LITERAL_UNION_WIDGET_FACTORY.create(resolved)
+        if literal_union_widget is not None:
+            return literal_union_widget
 
         with timer("            registry lookup", threshold_ms=0.1):
             custom_widget = CUSTOM_WIDGET_FACTORY.create(resolved)
@@ -506,7 +830,7 @@ def convert_widget_value_to_type(value: WidgetValue | None, param_type: Type) ->
     PyQt-specific type conversions for widget values.
 
     Handles conversions that are specific to how PyQt widgets represent values
-    (e.g., Path widgets return strings, tuple/list fields are edited as string literals).
+    (for example, Path widgets return strings).
 
     Args:
         value: The raw value from the widget
@@ -515,59 +839,12 @@ def convert_widget_value_to_type(value: WidgetValue | None, param_type: Type) ->
     Returns:
         The converted value ready for the service layer
     """
-    # Handle Path widgets - they return strings that need conversion
-    try:
-        if param_type is Path and isinstance(value, str):
-            if value == "":
-                return None
-            return Path(value)
-    except Exception:
-        pass
-
-    # Handle tuple/list typed configs written as strings in UI
-    try:
-        from typing import get_origin, get_args
-        import ast
-        origin = get_origin(param_type)
-        args = get_args(param_type)
-        if origin in (tuple, list) and isinstance(value, str):
-            # Safely parse string literal into Python object
-            try:
-                parsed = ast.literal_eval(value)
-            except Exception:
-                return value  # Return original if parse fails
-            if parsed is not None:
-                # Coerce to the annotated container type
-                if origin is tuple:
-                    parsed = tuple(parsed if isinstance(parsed, (list, tuple)) else [parsed])
-                elif origin is list and not isinstance(parsed, list):
-                    parsed = [parsed]
-                # Optionally enforce inner type if annotated
-                if args:
-                    inner = args[0]
-                    try:
-                        parsed = tuple(inner(x) for x in parsed) if origin is tuple else [inner(x) for x in parsed]
-                    except Exception:
-                        pass
-                return parsed
-    except Exception:
-        pass
+    if param_type is Path and isinstance(value, str):
+        if value == "":
+            return None
+        return Path(value)
 
     return value
-
-
-def register_openhcs_widgets():
-    """Register OpenHCS custom widgets with magicgui type system."""
-    # Register using string widget types that magicgui recognizes
-    register_type(int, widget_type="SpinBox")
-    register_type(float, widget_type="FloatSpinBox")
-    register_type(Path, widget_type="FileEdit")
-
-
-# String fallback widget for any type magicgui cannot handle
-def create_string_fallback_widget(current_value: ParameterValue | None, **kwargs) -> QLineEdit:
-    """Create string fallback widget for unsupported types."""
-    return DIRECT_WIDGET_FACTORY.create_string(current_value)
 
 
 def create_enum_widget_unified(enum_type: Type, current_value: ParameterValue | None, **kwargs) -> QComboBox:
@@ -886,37 +1163,6 @@ def _tooltip_without_interaction_hints(current_tooltip: str) -> str:
     return current_tooltip
 
 
-# Declarative widget-to-strategy mapping
-WIDGET_PLACEHOLDER_STRATEGIES: Dict[Type, Callable[[QWidget, str], None]] = {
-    QCheckBox: PLACEHOLDER_RENDERER.apply_checkbox,
-    QComboBox: PLACEHOLDER_RENDERER.apply_combobox,
-    QSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
-    QDoubleSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
-    NoScrollSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
-    NoScrollDoubleSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
-    NoScrollComboBox: PLACEHOLDER_RENDERER.apply_combobox,
-    QLineEdit: PLACEHOLDER_RENDERER.apply_lineedit,
-    NoneAwareIntEdit: PLACEHOLDER_RENDERER.apply_lineedit,
-}
-
-# Add Path widget support dynamically to avoid import issues
-def _register_path_widget_strategy():
-    """Register Path widget strategy dynamically to avoid circular imports."""
-    try:
-        from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
-        WIDGET_PLACEHOLDER_STRATEGIES[EnhancedPathWidget] = PLACEHOLDER_RENDERER.apply_path_widget
-    except ImportError:
-        pass  # Path widget not available
-
-def _register_none_aware_lineedit_strategy():
-    """Register NoneAwareLineEdit strategy."""
-    WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareLineEdit] = PLACEHOLDER_RENDERER.apply_lineedit
-
-# Register widget strategies
-_register_path_widget_strategy()
-_register_none_aware_lineedit_strategy()
-
-
 @dataclasses.dataclass(frozen=True)
 class WidgetTypeEntryResolver:
     """MRO-aware lookup for raw widget boundary entries."""
@@ -929,6 +1175,20 @@ class WidgetTypeEntryResolver:
             if entry is not None:
                 return entry
         return None
+
+
+# Declarative widget-to-strategy mapping
+WIDGET_PLACEHOLDER_STRATEGIES: Dict[Type, Callable[[QWidget, str], None]] = {
+    QCheckBox: PLACEHOLDER_RENDERER.apply_checkbox,
+    QComboBox: PLACEHOLDER_RENDERER.apply_combobox,
+    QSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
+    QDoubleSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
+    QLineEdit: PLACEHOLDER_RENDERER.apply_lineedit,
+    EnhancedPathWidget: PLACEHOLDER_RENDERER.apply_path_widget,
+}
+WIDGET_PLACEHOLDER_RESOLVER = WidgetTypeEntryResolver(
+    WIDGET_PLACEHOLDER_STRATEGIES
+)
 
 
 class MagicguiWrapperFamilyAuthority:
@@ -1170,7 +1430,7 @@ class PyQt6WidgetEnhancer:
         """Return whether the registered widget authority can render a placeholder."""
         return (
             isinstance(widget, ResolvedValuePreviewSettable)
-            or WIDGET_PLACEHOLDER_STRATEGIES.get(type(widget)) is not None
+            or WIDGET_PLACEHOLDER_RESOLVER.entry_for(widget) is not None
         )
 
     @staticmethod
@@ -1196,9 +1456,8 @@ class PyQt6WidgetEnhancer:
         if cached_placeholder == placeholder_text:
             return  # No change needed
 
-        # Direct widget type mapping for enhanced placeholders
-        widget_strategy = WIDGET_PLACEHOLDER_STRATEGIES.get(type(widget))
-        if widget_strategy:
+        widget_strategy = WIDGET_PLACEHOLDER_RESOLVER.entry_for(widget)
+        if widget_strategy is not None:
             widget_strategy(widget, placeholder_text)
             _set_cached_placeholder_text(widget, placeholder_text)
             return

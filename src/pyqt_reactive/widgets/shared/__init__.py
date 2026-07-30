@@ -27,6 +27,10 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.action_tabbed_window_body",
         "ActionTabSpec",
     ),
+    "ActionTabMaterialization": (
+        "pyqt_reactive.widgets.shared.action_tabbed_window_body",
+        "ActionTabMaterialization",
+    ),
     "ActionTabbedWindowBody": (
         "pyqt_reactive.widgets.shared.action_tabbed_window_body",
         "ActionTabbedWindowBody",
@@ -127,6 +131,10 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.tree_sync_adapter",
         "TreeNode",
     ),
+    "TreeNodeIdentity": (
+        "pyqt_reactive.widgets.shared.tree_sync_adapter",
+        "TreeNodeIdentity",
+    ),
     "TreeSyncAdapter": (
         "pyqt_reactive.widgets.shared.tree_sync_adapter",
         "TreeSyncAdapter",
@@ -135,9 +143,13 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.tree_state_adapter",
         "TreeItemKeyBuilderABC",
     ),
-    "DictPayloadTreeItemKeyBuilder": (
+    "TypedPayloadTreeItemKeyBuilder": (
         "pyqt_reactive.widgets.shared.tree_state_adapter",
-        "DictPayloadTreeItemKeyBuilder",
+        "TypedPayloadTreeItemKeyBuilder",
+    ),
+    "TreeItemKeyProvider": (
+        "pyqt_reactive.widgets.shared.tree_state_adapter",
+        "TreeItemKeyProvider",
     ),
     "TreeStateAdapter": (
         "pyqt_reactive.widgets.shared.tree_state_adapter",
@@ -190,9 +202,7 @@ def __getattr__(name: str):
     module = importlib.import_module(module_name)
     module_attributes = vars(module)
     if attr_name not in module_attributes:
-        raise AttributeError(
-            f"module {module_name!r} has no exported attribute {attr_name!r}"
-        )
+        raise AttributeError(f"module {module_name!r} has no exported attribute {attr_name!r}")
     value = module_attributes[attr_name]
     globals()[name] = value
     return value

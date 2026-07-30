@@ -5,22 +5,43 @@ This module provides pure system metrics collection without any visualization de
 Can be used by any UI framework (PyQt, Textual, etc.) for system monitoring.
 """
 
-import platform
-import psutil
-import time
-from datetime import datetime
 from collections import deque
-from typing import Dict, Any, Optional
+from dataclasses import dataclass
+import platform
+import time
+
+import psutil
 
 from pyqt_reactive.services.system_metrics_sampler import (
     GPUtil,
     GPU_AVAILABLE,
-    SystemMetricsSampler,
     SystemMetrics,
+    SystemMetricsSampler,
     SystemMetricsSamplerConfig,
-    get_cpu_freq_mhz,
-    is_wsl,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SystemMetricsHistory:
+    """Immutable history snapshot from one monitor."""
+
+    cpu: tuple[float, ...]
+    ram: tuple[float, ...]
+    gpu: tuple[float, ...]
+    vram: tuple[float, ...]
+    timestamps: tuple[float, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SystemInformation:
+    """Static system information projected by the monitor."""
+
+    operating_system: str
+    operating_system_version: str
+    cpu_cores: int | None
+    ram_total_gb: float
+    gpu_name: str | None = None
+    vram_total_mb: float | None = None
 
 
 class SystemMonitorCore:
@@ -53,7 +74,7 @@ class SystemMonitorCore:
         self.time_stamps = deque(maxlen=history_length)
 
         # Cache current metrics to avoid duplicate system calls
-        self._current_metrics = {}
+        self._current_metrics = SystemMetrics()
         self.sampler_config = sampler_config or SystemMetricsSamplerConfig()
         self._sampler = SystemMetricsSampler(self.sampler_config)
         
@@ -70,60 +91,46 @@ class SystemMonitorCore:
         Update system metrics and cache current values.
         
         Collects CPU, RAM, GPU, and VRAM usage and appends to history.
-        Updates internal cache for efficient access via get_metrics_dict().
+        Updates the typed internal cache for efficient access.
         """
         metrics = self._sampler.collect_metrics()
         self.cpu_history.append(metrics.cpu_percent)
         self.ram_history.append(metrics.ram_percent)
         self.gpu_history.append(metrics.gpu_percent)
         self.vram_history.append(metrics.vram_percent)
-        self._current_metrics = metrics.as_dict()
+        self._current_metrics = metrics
 
         # Update timestamps
         self.time_stamps.append(time.time())
     
-    def get_metrics_dict(self) -> Dict[str, Any]:
-        """
-        Get current metrics as a dictionary.
-        
-        Uses cached data from update_metrics() to avoid duplicate system calls.
-        
-        Returns:
-            Dictionary containing current system metrics
-        """
-        # Return cached metrics to avoid duplicate system calls
-        # If no cached data exists (first call), return defaults
-        if not self._current_metrics:
-            return SystemMetrics().as_dict()
+    def get_metrics(self) -> SystemMetrics:
+        """Return the latest typed metrics snapshot without sampling again."""
 
-        return self._current_metrics.copy()
+        return self._current_metrics
     
-    def get_system_info(self) -> Dict[str, Any]:
-        """
-        Get static system information.
-        
-        Returns:
-            Dictionary containing system information (OS, CPU, RAM, GPU)
-        """
-        info = {
-            'os': platform.system(),
-            'os_version': platform.version(),
-            'cpu_cores': psutil.cpu_count(),
-            'ram_total_gb': psutil.virtual_memory().total / (1024**3),
-        }
-        
-        # Add GPU info if available
+    def get_system_info(self) -> SystemInformation:
+        """Return one typed static system-information snapshot."""
+
+        gpu_name = None
+        vram_total_mb = None
         if GPU_AVAILABLE:
             try:
                 gpus = GPUtil.getGPUs()
                 if gpus:
                     gpu = gpus[0]
-                    info['gpu_name'] = gpu.name
-                    info['vram_total_mb'] = gpu.memoryTotal
-            except:
+                    gpu_name = gpu.name
+                    vram_total_mb = gpu.memoryTotal
+            except Exception:
                 pass
-        
-        return info
+
+        return SystemInformation(
+            operating_system=platform.system(),
+            operating_system_version=platform.version(),
+            cpu_cores=psutil.cpu_count(),
+            ram_total_gb=psutil.virtual_memory().total / (1024**3),
+            gpu_name=gpu_name,
+            vram_total_mb=vram_total_mb,
+        )
     
     def reset_history(self) -> None:
         """Reset all historical data to zeros."""
@@ -141,7 +148,7 @@ class SystemMonitorCore:
             self.vram_history.append(0)
             self.time_stamps.append(0)
         
-        self._current_metrics = {}
+        self._current_metrics = SystemMetrics()
 
     def close(self) -> None:
         """Stop background metric providers owned by this monitor core."""

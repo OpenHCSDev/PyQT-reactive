@@ -2,7 +2,7 @@
 Metaprogrammed context manager factory for boolean flag management.
 
 This module provides a universal context manager for managing temporary boolean flags
-on objects, following the OpenHCS pattern from config_framework/context_manager.py.
+on objects, following ObjectState's context-manager pattern.
 
 Key features:
 1. Single implementation handles all flag patterns
@@ -226,4 +226,3 @@ class FlagContextManager:
             flag.value: getattr(obj, flag.value)  # No default - fail if missing
             for flag in ManagerFlag
         }
-

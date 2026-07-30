@@ -142,12 +142,9 @@ class ParameterOpsService(ParameterServiceABC):
                 with SignalService.block_signals(checkbox):
                     checkbox.setChecked(reset_value is not None and reset_value.enabled)
 
-            try:
-                group = WidgetService.find_group_box(container)
-                if group:
-                    group.setEnabled(reset_value is not None)
-            except Exception:
-                pass
+            group = WidgetService.find_group_box(container)
+            if group:
+                group.setEnabled(reset_value is not None)
 
         nested_manager = manager.nested_managers.get(param_name)
         if nested_manager:
@@ -233,6 +230,12 @@ class ParameterOpsService(ParameterServiceABC):
             logger.debug(f"🔬 RESET_TRACE: {field_name} not in widgets, skipping")
             return
 
+        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+
+        widget = manager.widgets[field_name]
+        if not PyQt6WidgetEnhancer.supports_placeholder(widget):
+            return
+
         # Compute full dotted path for nested PFMs
         full_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
 
@@ -246,7 +249,6 @@ class ParameterOpsService(ParameterServiceABC):
 
         logger.debug(f"🔬 RESET_TRACE: value is None, calling get_resolved_value...")
 
-        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
         from objectstate import LazyDefaultPlaceholderService
 
         # Get raw resolved value from ObjectState (handles context building internally)
@@ -261,7 +263,6 @@ class ParameterOpsService(ParameterServiceABC):
         logger.debug(f"        📝 Formatted placeholder: {repr(placeholder_text)[:50]}")
 
         if placeholder_text:
-            widget = manager.widgets[field_name]
             # Use type-safe method that passes actual value for checkbox groups
             PyQt6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
             logger.debug(f"        ✅ Applied placeholder to widget")
@@ -294,28 +295,30 @@ class ParameterOpsService(ParameterServiceABC):
                 lambda: self._deferred_refresh_with_live_context(manager),
             )
         else:
-            # Immediate refresh
-            self.refresh_all_placeholders(manager)
-            # CRITICAL: Also refresh enabled styling to ensure disabled fields show correctly
-            manager._apply_to_nested_managers(
-                lambda name, mgr: mgr._enabled_field_styling_service.refresh_enabled_styling(mgr)
-            )
-            manager._apply_to_nested_managers(
-                lambda _, nested_manager: self.refresh_with_live_context(nested_manager)
-            )
-            self._refresh_root_flash_registrations(manager)
+            self._refresh_form_tree(manager)
 
     def _deferred_refresh_with_live_context(self, manager) -> None:
         """Run a deferred refresh while its manager QObject is still alive."""
-        self.refresh_all_placeholders(manager)
-        # CRITICAL: Also refresh enabled styling to ensure disabled fields show correctly
+        self._refresh_form_tree(manager)
+
+    def _refresh_form_tree(self, manager) -> None:
+        """Refresh one manager subtree without overlapping recursive traversals."""
+        self._refresh_placeholder_tree(manager)
         manager._apply_to_nested_managers(
-            lambda name, mgr: mgr._enabled_field_styling_service.refresh_enabled_styling(mgr)
-        )
-        manager._apply_to_nested_managers(
-            lambda _, nested_manager: self.refresh_with_live_context(nested_manager)
+            lambda _name, nested_manager: (
+                nested_manager._enabled_field_styling_service.refresh_enabled_styling(
+                    nested_manager
+                )
+            )
         )
         self._refresh_root_flash_registrations(manager)
+
+    def _refresh_placeholder_tree(self, manager) -> None:
+        """Refresh placeholder values exactly once for each manager in a subtree."""
+        self.refresh_all_placeholders(manager)
+        manager._apply_to_nested_managers(
+            lambda _name, nested_manager: self._refresh_placeholder_tree(nested_manager)
+        )
 
     def _refresh_root_flash_registrations(self, manager) -> None:
         """Replay flash registrations after a root form refreshes live placeholders."""

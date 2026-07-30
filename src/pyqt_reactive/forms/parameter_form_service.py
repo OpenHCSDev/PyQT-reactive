@@ -12,16 +12,16 @@ import dataclasses
 
 from objectstate import (
     DataclassFieldAccess,
+    LazyDefaultPlaceholderService,
     UIParameterVisibilityRequest,
+    has_lazy_resolution,
     should_hide_ui_parameter,
 )
 from dataclasses import dataclass
 from enum import Enum
-from types import UnionType
-from typing import Dict, Type, Optional, List, Union, get_args, get_origin, get_type_hints
+from typing import Any, Dict, Type, Optional, List, get_args, get_origin, get_type_hints
 
-from objectstate import LazyDefaultPlaceholderService
-# Old field path detection removed - using simple field name matching
+from python_introspect import is_union_type
 from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 from .parameter_type_utils import ParameterTypeUtils
 from pyqt_reactive.forms.ui_utils import FieldDisplayText, debug_param
@@ -176,8 +176,9 @@ class ParameterFormService:
                 if input.parent_obj_type is None:
                     nested_field_id = param_name
                 else:
-                    nested_field_id = self.get_field_path_with_fail_loud(
+                    nested_field_id = self.resolve_declared_field_path(
                         input.parent_obj_type,
+                        param_name,
                         unwrapped_param_type,
                     )
 
@@ -302,31 +303,6 @@ class ParameterFormService:
             if enum_type:
                 return [enum_type(value)]
 
-        # Handle Union types (e.g., Union[List[str], str, int])
-        # Try to convert to the most specific type that matches
-        if get_origin(param_type) is Union:
-            union_args = get_args(param_type)
-            # Filter out NoneType
-            non_none_types = [t for t in union_args if t is not type(None)]
-
-            # If value is a string, try to convert to int first, then keep as str
-            if isinstance(value, str) and value != CONSTANTS.EMPTY_STRING:
-                # Try int conversion first
-                if int in non_none_types:
-                    try:
-                        return int(value)
-                    except (ValueError, TypeError):
-                        pass
-                # Try float conversion
-                if float in non_none_types:
-                    try:
-                        return float(value)
-                    except (ValueError, TypeError):
-                        pass
-                # Keep as string if str is in the union
-                if str in non_none_types:
-                    return value
-
         # Handle basic types
         if param_type == bool and isinstance(value, str):
             return self._type_utils.convert_string_to_bool(value)
@@ -349,11 +325,6 @@ class ParameterFormService:
         if param_type == str and isinstance(value, str) and value == CONSTANTS.EMPTY_STRING:
             return None
 
-        # Handle sibling-inheritable fields - allow None even for non-Optional types
-        if value is None and obj_type is not None:
-            if is_field_sibling_inheritable(obj_type, param_name):
-                return None
-
         return value
 
     def _convert_value_by_annotation(
@@ -365,7 +336,7 @@ class ParameterFormService:
         """Recursively rebuild structured values from JSON-like containers."""
         origin = get_origin(param_type)
 
-        if origin in (Union, UnionType):
+        if is_union_type(param_type):
             return self._convert_union_value(value, param_type, param_name)
 
         if self._type_utils.is_enum_type(param_type):
@@ -409,10 +380,17 @@ class ParameterFormService:
             if converted is not _NO_CONVERSION:
                 return converted
             if isinstance(candidate_type, type) and isinstance(value, candidate_type):
+                if candidate_type is int and type(value) is bool:
+                    continue
                 return value
+            if candidate_type is float and type(value) is int:
+                return float(value)
         if last_error is not None:
             raise last_error
-        return _NO_CONVERSION
+        raise ValueError(
+            f"Invalid value for parameter {param_name!r}: "
+            f"expected {_type_label(param_type)}, got {type(value).__name__}."
+        )
 
     def _convert_dataclass_value(
         self,
@@ -531,7 +509,27 @@ class ParameterFormService:
             item_type,
             param_name,
         )
-        return value if converted is _NO_CONVERSION else converted
+        if converted is not _NO_CONVERSION:
+            return converted
+
+        if item_type is Any:
+            return value
+
+        if item_type is float and type(value) is int:
+            return float(value)
+
+        if isinstance(item_type, type) and isinstance(value, item_type):
+            if item_type is int and type(value) is bool:
+                raise ValueError(
+                    f"Invalid item for parameter {param_name!r}: "
+                    "expected int, got bool."
+                )
+            return value
+
+        raise ValueError(
+            f"Invalid item for parameter {param_name!r}: "
+            f"expected {_type_label(item_type)}, got {type(value).__name__}."
+        )
 
     def get_parameter_display_info(self, param_name: str, param_type: Type,
                                  description: Optional[str] = None) -> Dict[str, str]:
@@ -556,23 +554,40 @@ class ParameterFormService:
             'tooltip': f"{text.display_name} ({_type_label(param_type)})"
         }
     
-    def format_widget_name(self, field_path: str, param_name: str) -> str:
-        """Convert field path to widget name - replaces generate_field_ids() complexity"""
-        return f"{field_path}_{param_name}"
+    def resolve_declared_field_path(
+        self,
+        parent_type: Type,
+        param_name: str,
+        param_type: Type,
+    ) -> str:
+        """Validate and return the already-declared nested field name."""
+        if not param_name:
+            raise ValueError("Nested form field name cannot be empty.")
 
-    def get_field_path_with_fail_loud(self, parent_type: Type, param_type: Type) -> str:
-        """Get field path using simple field name matching."""
-        import dataclasses
+        if not dataclasses.is_dataclass(parent_type):
+            return param_name
 
-        # Simple approach: find field by type matching
-        if dataclasses.is_dataclass(parent_type):
-            for field in dataclasses.fields(parent_type):
-                if field.type == param_type:
-                    return field.name
+        try:
+            field_types = get_type_hints(parent_type)
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot resolve declared fields for {parent_type!r}."
+            ) from exc
 
-        # Fallback: use class name as field name (common pattern)
-        field_name = param_type.__name__.lower().replace('config', '')
-        return field_name
+        if param_name not in field_types:
+            raise ValueError(
+                f"{parent_type.__name__} has no declared field {param_name!r}."
+            )
+
+        declared_type = self._unwrap_optional_dataclass_type(
+            field_types[param_name]
+        )
+        if declared_type is not param_type:
+            raise ValueError(
+                f"{parent_type.__name__}.{param_name} declares "
+                f"{_type_label(declared_type)}, not {_type_label(param_type)}."
+            )
+        return param_name
 
     def generate_field_ids_direct(self, base_field_id: str, param_name: str) -> Dict[str, str]:
         """Generate field IDs directly without artificial complexity."""
@@ -583,23 +598,6 @@ class ParameterFormService:
             'reset_button_id': f"reset_{widget_id}",
             'optional_checkbox_id': f"{base_field_id}_{param_name}_enabled"
         }
-
-    def validate_field_path_mapping(self):
-        """Ensure all form field_ids map correctly to context fields"""
-        import dataclasses
-
-        # Get all dataclass fields from GlobalPipelineConfig
-        context_fields = {f.name for f in dataclasses.fields(GlobalPipelineConfig)
-                         if dataclasses.is_dataclass(f.type)}
-
-        logger.debug("Context fields: %s", context_fields)
-        # Should include: well_filter_config, zarr_config, step_materialization_config, etc.
-
-        # Verify form managers use these exact field names (no "nested_" prefix)
-        assert "well_filter_config" in context_fields
-        assert "nested_well_filter_config" not in context_fields  # Should not exist
-
-        return True
     
     def should_use_concrete_values(self, current_value: ParameterValue | None, is_global_editing: bool = False) -> bool:
         """
@@ -795,8 +793,7 @@ class ParameterFormService:
         # Context-driven behavior: Use explicit context when provided
         # Auto-detect editing mode if not explicitly provided
         if is_global_config_editing is None:
-            # Fallback: Use existing lazy resolution detection for backward compatibility
-            is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(obj_type)
+            is_global_config_editing = not has_lazy_resolution(obj_type)
 
         # Context-driven behavior: Reset behavior depends on editing context
         if is_global_config_editing:

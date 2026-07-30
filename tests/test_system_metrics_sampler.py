@@ -116,7 +116,7 @@ def test_sampler_returns_typed_metrics_from_cached_background_providers(monkeypa
     assert metrics.ram_total_gb == 16
     assert metrics.gpu_name == "Test GPU"
     assert metrics.vram_percent == 25.0
-    assert metrics.as_dict()["gpu_percent"] == 12.5
+    assert metrics.gpu_percent == 12.5
     assert FakeCpuFrequencyPoller.created[0].refresh_seconds == 2.0
     assert FakeGpuMetricsPoller.created[0].refresh_seconds == 0.25
 

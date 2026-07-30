@@ -84,7 +84,6 @@ from pyqt_reactive.widgets.shared.manager_reorder_controller import (
     ManagerReorderOperations,
 )
 from pyqt_reactive.widgets.shared.manager_status_controller import ManagerStatusController
-from pyqt_reactive.widgets.shared.manager_config_resolution import ManagerGuiConfigResolution
 from pyqt_reactive.services.service_registry import AutoRegisterServiceMixin
 from pyqt_reactive.services.window_code_document import (
     WindowCodeDocument,
@@ -625,14 +624,13 @@ class AbstractManagerWidget(
             return None
         return AbstractManagerWidgetCodeDocumentDriver(self)
 
-    def __init__(self, service_adapter, color_scheme=None, gui_config=None, parent=None):
+    def __init__(self, service_adapter, color_scheme=None, parent=None):
         """
         Initialize base widget.
 
         Args:
             service_adapter: REQUIRED - provides async execution, dialogs, etc.
             color_scheme: Color scheme for styling (optional, uses service adapter if None)
-            gui_config: GUI configuration (optional, for DualEditorWindow in PipelineEditor)
             parent: Parent widget
 
         Subclass __init__ MUST follow this pattern:
@@ -642,7 +640,7 @@ class AbstractManagerWidget(
             # ...
 
             # 2. Initialize base class (auto-processes PREVIEW_FIELD_CONFIGS)
-            super().__init__(service_adapter, color_scheme, gui_config, parent)
+            super().__init__(service_adapter, color_scheme, parent)
 
             # 3. Setup UI (AFTER subclass state is ready)
             self.setup_ui()
@@ -666,7 +664,6 @@ class AbstractManagerWidget(
         # Core dependencies (REQUIRED)
         self.service_adapter = service_adapter
         self.color_scheme = color_scheme
-        self.gui_config = ManagerGuiConfigResolution.resolve(gui_config)
         self.style_generator = StyleSheetGenerator(self.color_scheme)  # Create internally
         self.event_bus = service_adapter.get_event_bus()
         self.code_execution_workflow: ManagerCodeExecutionWorkflow = (

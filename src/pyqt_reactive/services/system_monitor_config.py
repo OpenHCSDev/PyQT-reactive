@@ -4,25 +4,46 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from python_introspect import validate_annotated_dataclass
+from pyqt_reactive.qt_types import QtColorText
 from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
+from zmqruntime.config import PositiveFloat, PositiveInteger
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceMonitorColors:
+    """Colors for the declared system-monitor series."""
+
+    cpu: QtColorText = "cyan"
+    """Qt color name or literal used for the CPU utilization series."""
+
+    ram: QtColorText = "lime"
+    """Qt color name or literal used for the system-memory series."""
+
+    gpu: QtColorText = "orange"
+    """Qt color name or literal used for the GPU utilization series."""
+
+    vram: QtColorText = "magenta"
+    """Qt color name or literal used for the GPU-memory series."""
+
+    def __post_init__(self) -> None:
+        validate_annotated_dataclass(self)
 
 
 @dataclass(frozen=True)
 class PerformanceMonitorConfig:
     """Complete behavior configuration for :class:`SystemMonitorWidget`."""
 
-    update_fps: float = 10.0
+    update_fps: PositiveFloat = 10.0
     """Metric sampling and plot-update frequency in frames per second."""
 
-    history_duration_seconds: float = 60.0
+    history_duration_seconds: PositiveFloat = 60.0
     """Duration of historical data displayed by the plots."""
 
-    max_data_points: int | None = None
+    max_data_points: PositiveInteger | None = None
     """Explicit retained sample count, or ``None`` to derive it from time and FPS."""
 
-    sampler_config: SystemMetricsSamplerConfig = field(
-        default_factory=SystemMetricsSamplerConfig
-    )
+    sampler_config: SystemMetricsSamplerConfig = field(default_factory=SystemMetricsSamplerConfig)
     """Policy owned by the system metrics sampler."""
 
     show_grid: bool = True
@@ -34,28 +55,14 @@ class PerformanceMonitorConfig:
     use_opengl: bool = True
     """Whether plots request pyqtgraph's OpenGL rendering path."""
 
-    line_width: float = 2.0
+    line_width: PositiveFloat = 2.0
     """Width of all monitor plot curves in pixels."""
 
-    chart_colors: dict[str, str] = field(
-        default_factory=lambda: {
-            "cpu": "cyan",
-            "ram": "lime",
-            "gpu": "orange",
-            "vram": "magenta",
-        }
-    )
+    colors: PerformanceMonitorColors = field(default_factory=PerformanceMonitorColors)
     """Colors for the four declared monitor series."""
 
     def __post_init__(self) -> None:
-        if self.update_fps <= 0:
-            raise ValueError("update_fps must be positive")
-        if self.history_duration_seconds <= 0:
-            raise ValueError("history_duration_seconds must be positive")
-        if self.max_data_points is not None and self.max_data_points <= 0:
-            raise ValueError("max_data_points must be positive when provided")
-        if self.line_width <= 0:
-            raise ValueError("line_width must be positive")
+        validate_annotated_dataclass(self)
 
     @property
     def update_interval_seconds(self) -> float:

@@ -8,6 +8,8 @@ explicit, fail-loud inheritance-based architecture.
 from .widget_protocols import (
     ValueGettable,
     ValueSettable,
+    CurrentValueValidatable,
+    DirtyMarkerSettable,
     ResolvedValuePreviewSettable,
     RawResolvedValueSettable,
     ChildFieldChromeRefreshable,
@@ -62,6 +64,8 @@ from .component_selection import (
 __all__ = [
     "ValueGettable",
     "ValueSettable",
+    "CurrentValueValidatable",
+    "DirtyMarkerSettable",
     "ResolvedValuePreviewSettable",
     "RawResolvedValueSettable",
     "ChildFieldChromeRefreshable",

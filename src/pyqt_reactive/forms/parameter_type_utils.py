@@ -6,10 +6,16 @@ code duplication between PyQt and Textual parameter form implementations.
 """
 
 import dataclasses
-from typing import Dict, Optional, Type, Union, get_origin, get_args
+from typing import Optional, Type
 from enum import Enum
 
 from objectstate.lazy_factory import LazyDataclass
+from python_introspect import (
+    get_enum_from_list,
+    is_enum_type as annotation_is_enum_type,
+    is_list_of_enums as annotation_is_list_of_enums,
+    optional_member_type,
+)
 from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 
 
@@ -43,11 +49,7 @@ class ParameterTypeUtils:
             >>> ParameterTypeUtils.is_optional(str)
             False
         """
-        if get_origin(param_type) is Union:
-            args = get_args(param_type)
-            # Check if it's Optional (Union with None)
-            return len(args) == 2 and type(None) in args
-        return False
+        return optional_member_type(param_type) is not None
 
     @staticmethod
     def is_optional_dataclass(param_type: Type) -> bool:
@@ -72,13 +74,8 @@ class ParameterTypeUtils:
             >>> ParameterTypeUtils.is_optional_dataclass(Config)
             False
         """
-        if get_origin(param_type) is Union:
-            args = get_args(param_type)
-            # Check if it's Optional (Union with None)
-            if len(args) == 2 and type(None) in args:
-                non_none_type = next(arg for arg in args if arg is not type(None))
-                return dataclasses.is_dataclass(non_none_type)
-        return False
+        optional_type = optional_member_type(param_type)
+        return optional_type is not None and dataclasses.is_dataclass(optional_type)
     
     @staticmethod
     def get_optional_inner_type(param_type: Type) -> Type:
@@ -101,78 +98,10 @@ class ParameterTypeUtils:
             >>> ParameterTypeUtils.get_optional_inner_type(Optional[str])
             <class 'str'>
         """
-        if get_origin(param_type) is Union:
-            args = get_args(param_type)
-            if len(args) == 2 and type(None) in args:
-                return next(arg for arg in args if arg is not type(None))
-        
-        raise ValueError(f"Type {param_type} is not Optional")
-    
-    @staticmethod
-    def get_obj_type_for_param(param_name: str, parameter_types: Dict[str, Type]) -> Optional[Type]:
-        """
-        Get the dataclass type for a parameter, handling Optional types.
-        
-        This method retrieves the dataclass type for a parameter, automatically
-        unwrapping Optional types to get the underlying dataclass.
-        
-        Args:
-            param_name: The parameter name to look up
-            parameter_types: Dictionary mapping parameter names to types
-            
-        Returns:
-            The dataclass type, or None if parameter not found or not a dataclass
-            
-        Example:
-            >>> types = {"config": Optional[MyConfig]}
-            >>> ParameterTypeUtils.get_obj_type_for_param("config", types)
-            <class 'MyConfig'>
-        """
-        if param_name not in parameter_types:
-            return None
-        
-        param_type = parameter_types[param_name]
-        
-        # Handle Optional[dataclass] types
-        if ParameterTypeUtils.is_optional_dataclass(param_type):
-            return ParameterTypeUtils.get_optional_inner_type(param_type)
-        
-        # Handle direct dataclass types
-        if dataclasses.is_dataclass(param_type):
-            return param_type
-        
-        return None
-    
-    @staticmethod
-    def resolve_union_type(param_type: Type) -> Type:
-        """
-        Resolve Union types to their primary type.
-        
-        This method handles Union types by extracting the primary (non-None) type.
-        For Optional types, it returns the inner type. For other Union types,
-        it returns the first non-None type.
-        
-        Args:
-            param_type: The Union type to resolve
-            
-        Returns:
-            The resolved primary type
-            
-        Example:
-            >>> from typing import Union, Optional
-            >>> ParameterTypeUtils.resolve_union_type(Optional[str])
-            <class 'str'>
-            >>> ParameterTypeUtils.resolve_union_type(Union[int, str])
-            <class 'int'>
-        """
-        if get_origin(param_type) is Union:
-            args = get_args(param_type)
-            # Filter out None type and return the first remaining type
-            non_none_types = [arg for arg in args if arg is not type(None)]
-            if non_none_types:
-                return non_none_types[0]
-        
-        return param_type
+        optional_type = optional_member_type(param_type)
+        if optional_type is None:
+            raise ValueError(f"Type {param_type} is not Optional")
+        return optional_type
     
     @staticmethod
     def is_enum_type(param_type: Type) -> bool:
@@ -185,7 +114,7 @@ class ParameterTypeUtils:
         Returns:
             True if the type is an Enum, False otherwise
         """
-        return isinstance(param_type, type) and issubclass(param_type, Enum)
+        return annotation_is_enum_type(param_type)
     
     @staticmethod
     def is_list_of_enums(param_type: Type) -> bool:
@@ -198,8 +127,7 @@ class ParameterTypeUtils:
         Returns:
             True if the type is List[Enum], False otherwise
         """
-        args = get_args(param_type)
-        return get_origin(param_type) is list and bool(args) and ParameterTypeUtils.is_enum_type(args[0])
+        return annotation_is_list_of_enums(param_type)
     
     @staticmethod
     def get_enum_from_list_type(param_type: Type) -> Optional[Type]:
@@ -212,10 +140,7 @@ class ParameterTypeUtils:
         Returns:
             The Enum type, or None if not a List[Enum]
         """
-        args = get_args(param_type)
-        if get_origin(param_type) is list and args and ParameterTypeUtils.is_enum_type(args[0]):
-            return args[0]
-        return None
+        return get_enum_from_list(param_type)
     
     @staticmethod
     def has_dataclass_fields(obj: any) -> bool:

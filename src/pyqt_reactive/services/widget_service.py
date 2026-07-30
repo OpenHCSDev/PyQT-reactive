@@ -83,12 +83,11 @@ class WidgetService:
     def find_group_box(container: QWidget, group_box_type: Type = None) -> Optional[QWidget]:
         """Find group box within container."""
         if group_box_type is None:
-            try:
-                from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-                group_box_type = GroupBoxWithHelp
-            except ImportError:
-                logger.warning("Could not import GroupBoxWithHelp")
-                return None
+            from pyqt_reactive.widgets.shared.clickable_help_components import (
+                GroupBoxWithHelp,
+            )
+
+            group_box_type = GroupBoxWithHelp
         
         return container.findChild(group_box_type)
 

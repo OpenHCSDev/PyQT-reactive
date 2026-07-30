@@ -25,6 +25,7 @@ import itertools
 logger = logging.getLogger(__name__)
 from typing import Any, Callable, ClassVar, Optional, TYPE_CHECKING, Type, Tuple
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import resolve_optional
 
 from .widget_creation_types import (
     ParameterFormManager, ParameterInfo, DisplayInfo, FieldIds,
@@ -70,16 +71,6 @@ class WidgetCreationType(Enum):
 # ============================================================================
 # WIDGET CREATION HANDLERS - Special-case logic (like framework handlers)
 # ============================================================================
-
-def _unwrap_optional_type(param_type: Type) -> Type:
-    """Unwrap Optional[T] to get T."""
-    from .parameter_type_utils import ParameterTypeUtils
-    return (
-        ParameterTypeUtils.get_optional_inner_type(param_type)
-        if ParameterTypeUtils.is_optional_dataclass(param_type)
-        else param_type
-    )
-
 
 def _create_optimized_reset_button(field_id: str, param_name: str, reset_callback):
     """
@@ -1071,7 +1062,7 @@ class WidgetCreationPipeline:
         current_value = manager.parameters.get(param_info.name)
         unwrapped_type = None
         if config.needs_unwrap_type:
-            unwrapped_type = _unwrap_optional_type(param_info.type)
+            unwrapped_type = resolve_optional(param_info.type)
         ctx = WidgetBuildContext(
             manager=manager,
             param_info=param_info,

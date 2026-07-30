@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import psutil
+from python_introspect import validate_annotated_dataclass
+from zmqruntime.config import PositiveFloat
 
 try:
     import GPUtil
@@ -115,14 +117,11 @@ class SystemMetricsSamplerConfig:
     enable_gpu_monitoring: bool = True
     gpu_temperature_monitoring: bool = True
     cpu_frequency_monitoring: bool = True
-    gpu_refresh_seconds: float = 1.0
-    cpu_frequency_refresh_seconds: float = 5.0
+    gpu_refresh_seconds: PositiveFloat = 1.0
+    cpu_frequency_refresh_seconds: PositiveFloat = 5.0
 
     def __post_init__(self) -> None:
-        if self.gpu_refresh_seconds <= 0:
-            raise ValueError("gpu_refresh_seconds must be positive")
-        if self.cpu_frequency_refresh_seconds <= 0:
-            raise ValueError("cpu_frequency_refresh_seconds must be positive")
+        validate_annotated_dataclass(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,24 +187,6 @@ class SystemMetrics:
     @classmethod
     def error(cls) -> "SystemMetrics":
         return cls(gpu_name="Error")
-
-    def as_dict(self) -> dict[str, Any]:
-        """Convert to the legacy flat dict consumed by existing UI code."""
-        return {
-            "cpu_percent": self.cpu_percent,
-            "ram_percent": self.ram_percent,
-            "ram_used_gb": self.ram_used_gb,
-            "ram_total_gb": self.ram_total_gb,
-            "ram_available_gb": self.ram_available_gb,
-            "cpu_cores": self.cpu_cores,
-            "cpu_freq_mhz": self.cpu_freq_mhz,
-            "gpu_percent": self.gpu_percent,
-            "vram_percent": self.vram_percent,
-            "gpu_name": self.gpu_name,
-            "gpu_temp": self.gpu_temp,
-            "vram_used_mb": self.vram_used_mb,
-            "vram_total_mb": self.vram_total_mb,
-        }
 
 
 def _parse_number(value: str) -> float:
