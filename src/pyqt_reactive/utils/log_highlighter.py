@@ -45,6 +45,41 @@ def parse_line(text: str) -> list[dict]:
     return segments
 
 
+def _escape_html(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def build_log_line_html(text: str) -> str:
+    """Render one line from the authoritative parsed highlight segments."""
+    segments = sorted(parse_line(text), key=lambda segment: segment["start"])
+    cursor = 0
+    parts: list[str] = ['<span style="white-space: pre-wrap;">']
+    text_len = len(text)
+
+    for segment in segments:
+        start = max(0, segment["start"])
+        end = min(text_len, start + segment["length"])
+        if end <= start or start < cursor:
+            continue
+        if start > cursor:
+            parts.append(_escape_html(text[cursor:start]))
+
+        red, green, blue = segment["color"]
+        style = f"color: rgb({red},{green},{blue});"
+        if segment.get("bold"):
+            style += " font-weight: 700;"
+        parts.append(
+            f'<span style="{style}">{_escape_html(text[start:end])}</span>'
+        )
+        cursor = end
+
+    if cursor < text_len:
+        parts.append(_escape_html(text[cursor:]))
+
+    parts.append("</span>")
+    return "".join(parts)
+
+
 def main() -> int:
     for line in sys.stdin:
         try:
