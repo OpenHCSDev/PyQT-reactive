@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.30] - 2026-07-30
+
+### Fixed
+
+- Keep `Annotated` validation metadata available to form construction while
+  presenting the compact owning type in parameter help.
+
 ## [0.1.29] - 2026-07-30
 
 ### Changed
