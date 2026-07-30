@@ -1094,6 +1094,17 @@ class WidgetCreationPipeline:
     def run(self) -> QWidget:
         """Run the widget creation stages."""
         self.create_container()
+        rt = self.runtime
+        if isinstance(rt.container, ResponsiveParameterRow):
+            with rt.container.layout_update():
+                self._run_content_stages()
+        else:
+            self._run_content_stages()
+        return self.runtime.container
+
+    def _run_content_stages(self) -> None:
+        """Build one row's content within its owner's layout transaction."""
+
         self.configure_nested_container()
         self.setup_layout()
         self.add_optional_title()
@@ -1104,7 +1115,6 @@ class WidgetCreationPipeline:
         self.connect_optional_checkbox()
         self.store_and_connect_widget()
         self.initialize_widget_semantics()
-        return self.runtime.container
 
     def create_container(self) -> None:
         rt = self.runtime

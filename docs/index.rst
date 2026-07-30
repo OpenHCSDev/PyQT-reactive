@@ -72,7 +72,7 @@ Requirements
 
 * Python 3.11+
 * PyQt6 >= 6.4.0
-* ObjectState >= 1.0.20
+* ObjectState >= 1.0.21
 * python-introspect >= 0.1.6
 * zmqruntime >= 0.1.19
 
