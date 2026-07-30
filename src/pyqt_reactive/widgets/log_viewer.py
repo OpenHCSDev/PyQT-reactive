@@ -7,9 +7,8 @@ for native desktop integration.
 """
 
 import logging
-import sys
-import json
 import re
+from collections import deque
 from typing import Optional, List, Set, Tuple
 from pathlib import Path
 
@@ -23,7 +22,7 @@ from PyQt6.QtGui import QSyntaxHighlighter, QTextDocument
 from PyQt6.QtCore import (
     QObject, QTimer, QFileSystemWatcher, pyqtSignal, pyqtSlot,
     Qt, QRegularExpression, QThread, QAbstractListModel, QModelIndex, QSize,
-    QThreadPool, QRunnable, QPoint, QPointF, QProcess,
+    QThreadPool, QRunnable, QPoint, QPointF,
 )
 from PyQt6.QtGui import QTextCharFormat, QColor, QAction, QFont, QTextCursor, QPalette, QAbstractTextDocumentLayout, QKeySequence, QFontMetrics
 
@@ -44,6 +43,7 @@ from dataclasses import dataclass
 from typing import Dict, Tuple
 
 from pyqt_reactive.utils.log_highlight_client import LogHighlightClient, HighlightedSegmentDTO
+from pyqt_reactive.utils.log_highlighter import build_log_line_html
 
 logger = logging.getLogger(__name__)
 
@@ -1831,99 +1831,56 @@ class LogHighlighter(QSyntaxHighlighter):
 
 
 class LogFileLoader(QThread):
-    """Background process for loading large log files without blocking UI."""
+    """Interruptible worker thread for loading large log files."""
 
     # Signals
-    chunk_loaded = pyqtSignal(list)  # Emits list[str] chunks
-    load_finished = pyqtSignal()     # Emits when all chunks loaded
-    load_failed = pyqtSignal(str)    # Emits error message on failure
+    chunk_loaded = pyqtSignal(object, list)  # Emits (loader, list[str])
+    load_finished = pyqtSignal(object)  # Emits loader when all chunks loaded
+    load_failed = pyqtSignal(object, str)  # Emits (loader, error message)
 
-    def __init__(self, log_path: Path, tail_lines: int = 100_000, chunk_lines: int = 1000):
-        super().__init__()
+    def __init__(
+        self,
+        log_path: Path,
+        tail_lines: int = 100_000,
+        chunk_lines: int = 1000,
+        parent: Optional[QObject] = None,
+    ):
+        super().__init__(parent)
         self.log_path = log_path
         self.tail_lines = tail_lines
         self.chunk_lines = chunk_lines
-        self._process: Optional[QProcess] = None
-        self._buffer = ""
-        self._stderr_chunks: list[str] = []
 
-    def start(self):  # type: ignore[override]
-        """Spawn a worker process to load the file content."""
+    def run(self) -> None:
+        """Read and highlight the bounded tail without blocking the GUI thread."""
         try:
-            if self._process and self._process.state() != QProcess.ProcessState.NotRunning:
-                self._process.kill()
-                self._process = None
+            if self.tail_lines <= 0:
+                self.load_finished.emit(self)
+                return
 
-            self._buffer = ""
-            self._stderr_chunks = []
+            lines: deque[str] = deque(maxlen=self.tail_lines)
+            with open(self.log_path, "r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    if self.isInterruptionRequested():
+                        return
+                    lines.append(line.rstrip("\n"))
 
-            self._process = QProcess()
-            self._process.setProgram(sys.executable)
-            args = [
-                "-m",
-                "pyqt_reactive.utils.log_streamer",
-                str(self.log_path),
-                "--tail-lines",
-                str(self.tail_lines),
-                "--chunk-lines",
-                str(self.chunk_lines),
-                "--html",
-            ]
-            logger.debug("Spawning log_streamer subprocess: %s %s", sys.executable, args)
-            self._process.setArguments(args)
-            self._process.readyReadStandardOutput.connect(self._on_stdout)
-            self._process.readyReadStandardError.connect(self._on_stderr)
-            self._process.finished.connect(self._on_finished)
-            self._process.start()
-        except Exception as e:
-            self.load_failed.emit(str(e))
+            chunk: list[dict[str, str]] = []
+            for line in lines:
+                if self.isInterruptionRequested():
+                    return
+                chunk.append({"text": line, "html": build_log_line_html(line)})
+                if len(chunk) >= self.chunk_lines:
+                    self.chunk_loaded.emit(self, chunk)
+                    chunk = []
 
-    def isRunning(self) -> bool:
-        return bool(self._process and self._process.state() != QProcess.ProcessState.NotRunning)
+            if chunk and not self.isInterruptionRequested():
+                self.chunk_loaded.emit(self, chunk)
 
-    def wait(self, msecs: int = 0) -> None:
-        if self._process:
-            self._process.waitForFinished(msecs)
-
-    def _on_stdout(self) -> None:
-        if not self._process:
-            return
-        data = bytes(self._process.readAllStandardOutput())
-        text = data.decode("utf-8", errors="replace")
-        if not text:
-            return
-
-        self._buffer += text
-        while "\n" in self._buffer:
-            line, self._buffer = self._buffer.split("\n", 1)
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            if payload.get("type") == "chunk":
-                lines = payload.get("lines", [])
-                if lines:
-                    self.chunk_loaded.emit(lines)
-            elif payload.get("type") == "done":
-                self.load_finished.emit()
-
-    def _on_stderr(self) -> None:
-        if not self._process:
-            return
-        data = bytes(self._process.readAllStandardError())
-        text = data.decode("utf-8", errors="replace")
-        if text:
-            self._stderr_chunks.append(text)
-
-    def _on_finished(self) -> None:
-        stderr = "".join(self._stderr_chunks).strip()
-
-        if stderr:
-            self.load_failed.emit(stderr)
-            return
+            if not self.isInterruptionRequested():
+                self.load_finished.emit(self)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.load_failed.emit(self, str(exc))
 
 
 class LogTailer(QThread):
@@ -2018,7 +1975,7 @@ class LogViewerWindow(QMainWindow):
 
         # Update throttling to reduce UI load
         self._pending_lines: List[str] = []  # Buffer for pending log lines
-        self._update_timer = QTimer()
+        self._update_timer = QTimer(self)
         self._update_timer.setSingleShot(True)
         self._update_timer.timeout.connect(self._flush_pending_lines)
         self._update_throttle_ms = 50  # Minimum time between UI updates
@@ -2035,8 +1992,10 @@ class LogViewerWindow(QMainWindow):
         self.log_tailer: Optional[LogTailer] = None  # Async log tailer thread
         self.highlighter: Optional[LogHighlighter] = None
         self.file_loader: Optional[LogFileLoader] = None  # Async file loader
+        self._file_loaders: set[LogFileLoader] = set()
         self.server_scan_timer: QTimer = None  # Periodic ZMQ server scanning
         self._pending_log_to_load: Optional[Path] = None  # Log to load when window is shown
+        self._cleaned_up = False
 
         # Process tracking for alive/dead process indication
         self.process_tracker = ProcessTracker()
@@ -2476,9 +2435,10 @@ class LogViewerWindow(QMainWindow):
             # Stop current tailing
             self.stop_log_tailing()
 
-            # Stop any existing file loader
-            if self.file_loader and self.file_loader.isRunning():
-                self.file_loader.wait()
+            # Superseded workers are interrupted without blocking the GUI.
+            # Their identity remains owned until QThread.finished so queued
+            # signals cannot outlive the worker or mutate the new selection.
+            self._retire_file_loader(self.file_loader)
 
             # Reset streaming state
             self._pending_partial_line = ""
@@ -2501,18 +2461,44 @@ class LogViewerWindow(QMainWindow):
             self.log_model.append_lines([f"Loading log file ({file_size // 1024} KB)..."])
 
             # Create and start async loader
-            self.file_loader = LogFileLoader(log_path)
+            self.file_loader = LogFileLoader(log_path, parent=self)
+            self._file_loaders.add(self.file_loader)
             self.file_loader.chunk_loaded.connect(self._on_file_chunk_loaded)
             self.file_loader.load_finished.connect(self._on_file_load_finished)
             self.file_loader.load_failed.connect(self._on_file_load_failed)
+            self.file_loader.finished.connect(
+                lambda loader=self.file_loader: self._release_retired_file_loader(
+                    loader
+                )
+            )
             self.file_loader.start()
 
         except Exception as e:
             logger.error(f"Error switching to log {log_path}: {e}")
             raise
 
-    def _on_file_chunk_loaded(self, lines: list) -> None:
+    def _retire_file_loader(self, loader: Optional[LogFileLoader]) -> None:
+        """Interrupt a superseded loader while retaining its QObject lifetime."""
+        if loader is None:
+            return
+        if loader is self.file_loader:
+            self.file_loader = None
+        if loader.isRunning():
+            loader.requestInterruption()
+            return
+        self._release_retired_file_loader(loader)
+
+    def _release_retired_file_loader(self, loader: LogFileLoader) -> None:
+        """Release a finished loader once it is no longer the active selection."""
+        if loader is self.file_loader:
+            return
+        self._file_loaders.discard(loader)
+        loader.deleteLater()
+
+    def _on_file_chunk_loaded(self, loader: LogFileLoader, lines: list) -> None:
         """Handle a chunk of lines loaded from subprocess."""
+        if loader is not self.file_loader:
+            return
         try:
             if not lines:
                 return
@@ -2522,8 +2508,10 @@ class LogViewerWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Error displaying loaded chunk: {e}")
 
-    def _on_file_load_finished(self) -> None:
+    def _on_file_load_finished(self, loader: LogFileLoader) -> None:
         """Finalize after all chunks are loaded."""
+        if loader is not self.file_loader:
+            return
         try:
             # Update file position immediately
             if self.current_log_path and self.current_log_path.exists():
@@ -2577,8 +2565,14 @@ class LogViewerWindow(QMainWindow):
 
         logger.info(f"Loaded log file: {self.current_log_path}")
 
-    def _on_file_load_failed(self, error_msg: str) -> None:
+    def _on_file_load_failed(
+        self,
+        loader: LogFileLoader,
+        error_msg: str,
+    ) -> None:
         """Handle file load failure."""
+        if loader is not self.file_loader:
+            return
         self.clear_log_display()
         self.log_model.append_lines([f"Failed to load log file: {error_msg}"])
         logger.error(f"Failed to load log file: {error_msg}")
@@ -2765,9 +2759,10 @@ class LogViewerWindow(QMainWindow):
     def stop_log_tailing(self) -> None:
         """Stop current log tailing."""
         if self.log_tailer:
-            self.log_tailer.stop()
-            self.log_tailer.wait(1000)  # Wait up to 1 second for thread to finish
+            log_tailer = self.log_tailer
             self.log_tailer = None
+            log_tailer.stop()
+            log_tailer.wait()
         logger.debug("Stopped log tailing")
 
     def _on_new_content(self, new_content: str, new_file_position: int) -> None:
@@ -2927,7 +2922,7 @@ class LogViewerWindow(QMainWindow):
         self._update_tracked_processes()
 
         # Process status badges are informational; avoid rescanning constantly.
-        self.process_update_timer = QTimer()
+        self.process_update_timer = QTimer(self)
         self.process_update_timer.timeout.connect(self.update_process_status)
         self.process_update_timer.start(10000)
 
@@ -3049,47 +3044,37 @@ class LogViewerWindow(QMainWindow):
         logger.debug(f"Filter changed: show_alive_only={self.show_alive_only}")
 
     def cleanup(self) -> None:
-        """Cleanup all resources and background processes."""
-        try:
-            # Stop async log tailer thread
-            if hasattr(self, 'log_tailer') and self.log_tailer:
-                self.stop_log_tailing()
+        """Deterministically stop every worker and timer owned by the viewer."""
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
 
-            # Stop tailing timer (deprecated, kept for compatibility)
-            if hasattr(self, 'tail_timer') and self.tail_timer and self.tail_timer.isActive():
-                self.tail_timer.stop()
-                self.tail_timer.deleteLater()
-                self.tail_timer = None
+        self._update_timer.stop()
+        self.stop_log_tailing()
 
-            # Stop process tracking timer
-            if hasattr(self, 'process_update_timer') and self.process_update_timer and self.process_update_timer.isActive():
-                self.process_update_timer.stop()
-                self.process_update_timer.deleteLater()
-                self.process_update_timer = None
+        for loader in tuple(self._file_loaders):
+            if loader.isRunning():
+                loader.requestInterruption()
+        for loader in tuple(self._file_loaders):
+            if loader.isRunning():
+                loader.wait()
+        self.file_loader = None
+        self._file_loaders.clear()
 
-            # Stop file monitoring
-            self.stop_monitoring()
+        # Stop tailing timer (deprecated, kept for compatibility)
+        if self.tail_timer and self.tail_timer.isActive():
+            self.tail_timer.stop()
+        self.tail_timer = None
 
-            # Clean up file detector
-            if hasattr(self, 'file_detector') and self.file_detector:
-                self.file_detector.stop_watching()
-                self.file_detector = None
+        if self.process_update_timer and self.process_update_timer.isActive():
+            self.process_update_timer.stop()
+        self.process_update_timer = None
 
-        except Exception as e:
-            logger.warning(f"Error during log viewer cleanup: {e}")
+        self.stop_monitoring()
+        LogHighlightClient.shutdown()
 
     def closeEvent(self, event) -> None:
         """Handle window close event."""
-        # Stop async tailer
-        if hasattr(self, 'log_tailer') and self.log_tailer:
-            self.stop_log_tailing()
-
-        if self.file_detector:
-            self.file_detector.stop_watching()
-        if self.tail_timer:
-            self.tail_timer.stop()
-        if hasattr(self, 'process_update_timer') and self.process_update_timer:
-            self.process_update_timer.stop()
-        LogHighlightClient.shutdown()
+        self.cleanup()
         self.window_closed.emit()
         super().closeEvent(event)
