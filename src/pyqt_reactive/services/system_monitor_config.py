@@ -3,28 +3,52 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from python_introspect import validate_annotated_dataclass
-from pyqt_reactive.qt_types import QtColorText
 from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
 from zmqruntime.config import PositiveFloat, PositiveInteger
+
+
+class PerformanceGraphColor(StrEnum):
+    """Closed high-contrast palette offered for system-monitor graph series."""
+
+    BLACK = "black"
+    WHITE = "white"
+    LIGHT_GRAY = "lightgray"
+    GRAY = "gray"
+    DARK_GRAY = "darkgray"
+    RED = "red"
+    DARK_RED = "darkred"
+    ORANGE = "orange"
+    YELLOW = "yellow"
+    LIME = "lime"
+    GREEN = "green"
+    DARK_GREEN = "darkgreen"
+    CYAN = "cyan"
+    DARK_CYAN = "darkcyan"
+    BLUE = "blue"
+    DARK_BLUE = "darkblue"
+    MAGENTA = "magenta"
+    PURPLE = "purple"
+    PINK = "pink"
 
 
 @dataclass(frozen=True, slots=True)
 class PerformanceMonitorColors:
     """Colors for the declared system-monitor series."""
 
-    cpu: QtColorText = "cyan"
-    """Qt color name or literal used for the CPU utilization series."""
+    cpu: PerformanceGraphColor = PerformanceGraphColor.CYAN
+    """Color used for the CPU utilization series."""
 
-    ram: QtColorText = "lime"
-    """Qt color name or literal used for the system-memory series."""
+    ram: PerformanceGraphColor = PerformanceGraphColor.LIME
+    """Color used for the system-memory series."""
 
-    gpu: QtColorText = "orange"
-    """Qt color name or literal used for the GPU utilization series."""
+    gpu: PerformanceGraphColor = PerformanceGraphColor.ORANGE
+    """Color used for the GPU utilization series."""
 
-    vram: QtColorText = "magenta"
-    """Qt color name or literal used for the GPU-memory series."""
+    vram: PerformanceGraphColor = PerformanceGraphColor.MAGENTA
+    """Color used for the GPU-memory series."""
 
     def __post_init__(self) -> None:
         validate_annotated_dataclass(self)

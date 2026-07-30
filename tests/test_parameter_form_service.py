@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Annotated
 
 import pytest
 
@@ -109,6 +110,19 @@ def test_convert_value_to_type_rejects_bool_as_int_container_item() -> None:
             list[int],
             "worker_counts",
         )
+
+
+def test_convert_value_to_type_resolves_annotated_union_members() -> None:
+    annotation = Annotated[bool, "enabled-field"] | None
+
+    assert (
+        ParameterFormService().convert_value_to_type(
+            True,
+            annotation,
+            "enabled",
+        )
+        is True
+    )
 
 
 def test_pep604_optional_dataclass_uses_shared_optional_authority() -> None:

@@ -113,7 +113,7 @@ class ParameterOpsService(ParameterServiceABC):
                 widget = manager.widgets[param_name]
                 from .signal_service import SignalService
                 with SignalService.block_signals(widget):
-                    manager._widget_service.update_widget_value(
+                    manager._widget_service.overwrite_widget_value(
                         widget, reset_value, param_name, skip_context_behavior=False, manager=manager
                     )
             # Emit event for consistency
@@ -193,7 +193,7 @@ class ParameterOpsService(ParameterServiceABC):
         widget = manager.widgets[param_name]
         from .signal_service import SignalService
         with SignalService.block_signals(widget):
-            manager._widget_service.update_widget_value(
+            manager._widget_service.overwrite_widget_value(
                 widget,
                 reset_value,
                 param_name,

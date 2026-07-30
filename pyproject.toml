@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyqt-reactive"
-version = "0.1.28"
+version = "0.1.29"
 description = "React-quality reactive form generation framework for PyQt6"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
 license = {text = "MIT"}
@@ -33,7 +33,7 @@ dependencies = [
     "psutil>=5.9",
     "Pygments>=2.15",
     "pyzmq>=22.0",
-    "python-introspect>=0.1.6",
+    "python-introspect>=0.1.8",
     "zmqruntime>=0.1.19",
 ]
 

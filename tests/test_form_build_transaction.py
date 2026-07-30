@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, make_dataclass
 from time import monotonic
 from types import SimpleNamespace
 
 import pytest
+from python_introspect import Enableable
 
 
 @dataclass
@@ -27,6 +28,16 @@ class _TransactionRoot:
 
 @dataclass
 class _FlatRoot:
+    value_1: int = 1
+    value_2: int = 2
+    value_3: int = 3
+    value_4: int = 4
+    value_5: int = 5
+    value_6: int = 6
+
+
+@dataclass(frozen=True)
+class _ProgressiveChromeConfig(Enableable):
     value_1: int = 1
     value_2: int = 2
     value_3: int = 3
@@ -129,6 +140,92 @@ def test_nested_forms_share_one_sync_budget_and_finalize_once(qapp, monkeypatch)
             qapp.processEvents()
         assert transaction.finalization_count == 1
         assert refresh_calls == [(manager, False)]
+    finally:
+        manager.deleteLater()
+        qapp.processEvents()
+        ObjectStateRegistry.clear()
+
+
+def test_visible_progressive_rows_receive_chrome_before_finalization(qapp):
+    """Materialized lazy fields are styled before the form tree completes."""
+    from objectstate import (
+        LazyDataclassFactory,
+        ObjectState,
+        ObjectStateRegistry,
+        set_base_config_type,
+    )
+
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.protocols import PlaceholderStateTrackable
+    from pyqt_reactive.theming import ColorScheme
+
+    set_base_config_type(_ProgressiveChromeConfig)
+    ObjectStateRegistry.clear()
+    lazy_config_type = LazyDataclassFactory.make_lazy_simple(
+        _ProgressiveChromeConfig,
+    )
+    progressive_root_type = make_dataclass(
+        "_ProgressiveChromeRoot",
+        [
+            (
+                "config",
+                lazy_config_type,
+                field(
+                    default_factory=lambda: lazy_config_type(
+                        enabled=False,
+                        value_1=101,
+                    ),
+                ),
+            ),
+        ],
+        frozen=True,
+    )
+    set_base_config_type(progressive_root_type)
+    state = ObjectState(
+        progressive_root_type(),
+        scope_id="progressive-chrome-child",
+    )
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    transaction = manager._form_build_transaction
+
+    try:
+        assert transaction.finalization_count == 0
+        assert tuple(manager.widgets) == ("config",)
+        nested_manager = manager.nested_managers["config"]
+        assert tuple(nested_manager.widgets) == (
+            "enabled",
+            "value_1",
+            "value_2",
+            "value_3",
+        )
+
+        enabled_widget = nested_manager.widgets["enabled"]
+        inherited_value_widget = nested_manager.widgets["value_2"]
+        concrete_value_widget = nested_manager.widgets["value_1"]
+        assert isinstance(enabled_widget, PlaceholderStateTrackable)
+        assert isinstance(inherited_value_widget, PlaceholderStateTrackable)
+        assert not enabled_widget.has_placeholder_state()
+        assert enabled_widget.isChecked() is False
+        assert inherited_value_widget.has_placeholder_state()
+        assert concrete_value_widget.property("enabled_field_dimmed") is True
+        assert concrete_value_widget.graphicsEffect() is not None
+
+        _wait_until(
+            qapp,
+            lambda: transaction.finalization_count == 1,
+        )
+
+        assert manager._form_build_transaction.failure is None
+        assert nested_manager.widgets["value_6"].has_placeholder_state()
     finally:
         manager.deleteLater()
         qapp.processEvents()
@@ -296,10 +393,12 @@ def test_batch_callback_failure_is_published_without_finalizing(qapp):
     failures = []
     manager.form_build_failed.connect(failures.append)
 
-    def fail_batch(_manager):
+    def fail_batch(_manager, _materialized_widgets):
         raise ValueError("deliberate batch callback failure")
 
-    manager._enabled_field_styling_service.invalidate_widget_cache = fail_batch
+    manager._enabled_field_styling_service.apply_materialized_enabled_styling = (
+        fail_batch
+    )
 
     try:
         _wait_until(qapp, lambda: bool(failures))

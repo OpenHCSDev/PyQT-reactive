@@ -1,14 +1,15 @@
 """Enabled Field Styling Service - Visual styling for enabled/disabled states."""
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 from weakref import WeakKeyDictionary
 
 from objectstate.time_travel_profile import TimeTravelProfiler
 from PyQt6 import sip
-from PyQt6.QtWidgets import QCheckBox, QGraphicsOpacityEffect, QLabel
+from PyQt6.QtWidgets import QCheckBox, QGraphicsOpacityEffect, QLabel, QWidget
 
-from pyqt_reactive.protocols import PlaceholderStateTrackable
+from pyqt_reactive.protocols import PlaceholderStateTrackable, ValueGettable
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,31 @@ class EnabledFieldStylingService:
         group_box = manager.form_tree.owning_groupbox(manager)
         if group_box is not None:
             self._value_widgets_by_container.pop(group_box, None)
+
+    def apply_materialized_enabled_styling(
+        self,
+        manager,
+        materialized_widgets: Iterable[QWidget],
+    ) -> None:
+        """Style exact new value widgets before their form tree is attached."""
+        direct_widgets = list(self._direct_widgets_by_manager.get(manager, ()))
+        direct_widget_ids = {id(widget) for widget in direct_widgets}
+        for widget in materialized_widgets:
+            if (
+                not isinstance(widget, ValueGettable)
+                or sip.isdeleted(widget)
+                or id(widget) in direct_widget_ids
+            ):
+                continue
+            direct_widgets.append(widget)
+            direct_widget_ids.add(id(widget))
+
+        self._direct_widgets_by_manager[manager] = direct_widgets
+        group_box = manager.form_tree.owning_groupbox(manager)
+        if group_box is not None:
+            self._value_widgets_by_container.pop(group_box, None)
+        self._last_enabled_values.pop(manager, None)
+        self.apply_initial_enabled_styling(manager)
     
     def apply_initial_enabled_styling(self, manager) -> None:
         """

@@ -9,6 +9,7 @@ import pytest
 import pyqt_reactive.widgets.system_monitor as system_monitor_module
 from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
 from pyqt_reactive.services.system_monitor_config import (
+    PerformanceGraphColor,
     PerformanceMonitorColors,
     PerformanceMonitorConfig,
 )
@@ -228,10 +229,10 @@ def test_each_sampler_leaf_rebuilds_monitor_with_exact_nominal_policy(
         (
             "colors",
             PerformanceMonitorColors(
-                cpu="red",
-                ram="blue",
-                gpu="yellow",
-                vram="white",
+                cpu=PerformanceGraphColor.RED,
+                ram=PerformanceGraphColor.BLUE,
+                gpu=PerformanceGraphColor.YELLOW,
+                vram=PerformanceGraphColor.WHITE,
             ),
         ),
     ),
@@ -315,10 +316,10 @@ def test_retained_config_leaves_have_one_field_behavior_cases() -> None:
 
 def test_monitor_colors_are_a_declared_nested_type() -> None:
     colors = PerformanceMonitorColors(
-        cpu="red",
-        ram="blue",
-        gpu="yellow",
-        vram="white",
+        cpu=PerformanceGraphColor.RED,
+        ram=PerformanceGraphColor.BLUE,
+        gpu=PerformanceGraphColor.YELLOW,
+        vram=PerformanceGraphColor.WHITE,
     )
 
     config = PerformanceMonitorConfig(colors=colors)
@@ -332,6 +333,8 @@ def test_monitor_colors_are_a_declared_nested_type() -> None:
     )
 
 
-def test_monitor_colors_reject_values_qt_cannot_render() -> None:
-    with pytest.raises(ValueError):
+def test_monitor_colors_are_closed_nominal_choices() -> None:
+    with pytest.raises(TypeError):
         PerformanceMonitorColors(cpu="not-a-qt-color")
+
+    assert all(isinstance(color, str) for color in PerformanceGraphColor)

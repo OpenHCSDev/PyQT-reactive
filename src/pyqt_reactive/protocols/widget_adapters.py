@@ -20,9 +20,17 @@ from abc import ABCMeta
 
 try:
     from PyQt6.QtWidgets import (
-        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox, QWidget, QGroupBox
+        QLineEdit,
+        QSpinBox,
+        QDoubleSpinBox,
+        QComboBox,
+        QCheckBox,
+        QKeySequenceEdit,
+        QWidget,
+        QGroupBox,
     )
     from PyQt6.QtCore import Qt, QObject
+    from PyQt6.QtGui import QKeySequence
     PYQT6_AVAILABLE = True
     # PyQt-specific metaclass that combines ABCMeta with Qt's metaclass
     # Order matters: ABCMeta first (it's the "primary" metaclass for ABC functionality)
@@ -33,7 +41,8 @@ try:
 except ImportError:
     PYQT6_AVAILABLE = False
     # Create dummy base classes for type hints
-    QLineEdit = QSpinBox = QDoubleSpinBox = QComboBox = QCheckBox = QWidget = object
+    QLineEdit = QSpinBox = QDoubleSpinBox = QComboBox = object
+    QCheckBox = QKeySequenceEdit = QWidget = object
     PyQtWidgetMeta = ABCMeta
 
 from .widget_protocols import (
@@ -121,8 +130,60 @@ if PYQT6_AVAILABLE:
             except TypeError:
                 # Signal not connected - ignore
                 pass
-    
-    
+    class KeySequenceEditAdapter(
+        PlaceholderStateMixin,
+        QKeySequenceEdit,
+        ValueGettable,
+        ValueSettable,
+        ChangeSignalEmitter,
+        metaclass=PyQtWidgetMeta,
+    ):
+        """Capture complete portable Qt key sequences before committing them."""
+
+        _widget_id = "key_sequence_edit"
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._change_signal_wrappers: dict[
+                Callable[[Any], None],
+                Callable[[], None],
+            ] = {}
+
+        def get_value(self) -> str:
+            """Return the complete key sequence in portable text form."""
+
+            return self.keySequence().toString(
+                QKeySequence.SequenceFormat.PortableText
+            )
+
+        def set_value(self, value: Any) -> None:
+            """Assign a portable key sequence."""
+
+            self.setKeySequence(QKeySequence("" if value is None else str(value)))
+
+        def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
+            """Commit only after Qt has finished capturing the sequence."""
+
+            if callback in self._change_signal_wrappers:
+                return
+            def wrapper() -> None:
+                callback(self.get_value())
+
+            self._change_signal_wrappers[callback] = wrapper
+            self.editingFinished.connect(wrapper)
+
+        def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
+            """Disconnect callbacks registered at this semantic boundary."""
+
+            wrapper = self._change_signal_wrappers.pop(callback, None)
+            if wrapper is None:
+                return
+            try:
+                self.editingFinished.disconnect(wrapper)
+            except TypeError:
+                pass
+
+
     class SpinBoxAdapter(PlaceholderStateMixin, QSpinBox, ValueGettable, ValueSettable, PlaceholderCapable,
                          RangeConfigurable, ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """

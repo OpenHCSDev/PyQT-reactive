@@ -2869,6 +2869,59 @@ def test_widget_service_skips_equal_value_assignment(qapp):
     assert widget.set_calls == ["new"]
 
 
+def test_parameter_reset_overwrites_invalid_typed_literal_editor(qapp):
+    """Reset discards invalid transient text without weakening commit parsing."""
+    from types import SimpleNamespace
+
+    import pytest
+
+    from pyqt_reactive.forms.parameter_info_types import GenericInfo
+    from pyqt_reactive.forms.widget_strategies import TypedLiteralContainerEdit
+    from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
+    from pyqt_reactive.services.widget_service import WidgetService
+
+    reset_value = (10, 50, 90)
+    widget = TypedLiteralContainerEdit(tuple)
+    widget.configure_annotation("percentiles", tuple[int, ...])
+    widget.set_value(reset_value)
+    widget.setText("wwwwe21")
+
+    widget_service = WidgetService()
+    with pytest.raises(ValueError, match="valid tuple literal"):
+        widget_service.update_widget_value(widget, reset_value)
+
+    class ResetState:
+        parameters = {"percentiles": (1, 2, 3)}
+
+        def reset_parameter(self, dotted_path):
+            assert dotted_path == "percentiles"
+            self.parameters[dotted_path] = reset_value
+
+    info = GenericInfo(
+        name="percentiles",
+        type=tuple[int, ...],
+        current_value=(1, 2, 3),
+        default_value=reset_value,
+    )
+    manager = SimpleNamespace(
+        field_id="",
+        form_structure=SimpleNamespace(
+            get_parameter_info=lambda param_name: (
+                info if param_name == "percentiles" else None
+            ),
+        ),
+        state=ResetState(),
+        widgets={"percentiles": widget},
+        _widget_service=widget_service,
+        object_instance=None,
+    )
+
+    ParameterOpsService().reset_parameter(manager, "percentiles")
+
+    assert widget.text() == repr(reset_value)
+    assert widget.get_value() == reset_value
+
+
 def test_resolved_preview_placeholder_uses_cached_placeholder_text(qapp):
     """Inherited preview widgets are not repainted when placeholder text is unchanged."""
     from pyqt_reactive.forms.widget_strategies import (

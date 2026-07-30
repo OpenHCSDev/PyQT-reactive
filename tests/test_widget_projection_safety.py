@@ -6,7 +6,7 @@ import ast
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 
@@ -335,7 +335,7 @@ def test_enum_and_path_keep_their_authoritative_typed_projections(qapp):
     enum_widget = create_pyqt6_widget("mode", Mode, Mode.B, "mode")
     path_widget = create_pyqt6_widget(
         "output_path",
-        Path,
+        Annotated[Path | None, "environment-owned"],
         Path("/tmp/output"),
         "output_path",
     )
@@ -346,6 +346,35 @@ def test_enum_and_path_keep_their_authoritative_typed_projections(qapp):
     assert convert_widget_value_to_type(path_widget.get_value(), Path) == Path(
         "/tmp/output"
     )
+
+
+def test_qt_key_sequence_uses_complete_sequence_capture_widget(qapp):
+    """Shortcut edits commit complete portable sequences, never partial text."""
+
+    from PyQt6.QtGui import QKeySequence
+
+    from pyqt_reactive.forms.widget_strategies import create_pyqt6_widget
+    from pyqt_reactive.protocols import KeySequenceEditAdapter
+    from pyqt_reactive.qt_types import QtKeySequenceText
+
+    widget = create_pyqt6_widget(
+        "show_help",
+        QtKeySequenceText,
+        "F1",
+        "show_help",
+    )
+    committed: list[str] = []
+    widget.connect_change_signal(committed.append)
+
+    assert isinstance(widget, KeySequenceEditAdapter)
+    assert widget.get_value() == "F1"
+
+    widget.setKeySequence(QKeySequence("Ctrl+Shift+H"))
+    qapp.processEvents()
+    assert committed == []
+
+    widget.editingFinished.emit()
+    assert committed == ["Ctrl+Shift+H"]
 
 
 def test_unsupported_annotations_fail_loud_without_string_fallback(
