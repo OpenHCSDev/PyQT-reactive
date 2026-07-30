@@ -116,7 +116,7 @@ class HelpDocument:
             )
         parts = publish_parts(
             self.content,
-            writer="html5",
+            writer_name="html5",
             settings_overrides={
                 "raw_enabled": False,
                 "file_insertion_enabled": False,

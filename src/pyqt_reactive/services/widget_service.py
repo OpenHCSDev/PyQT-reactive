@@ -231,13 +231,36 @@ class WidgetService:
         self,
         widget: QWidget,
         value: Any,
-        param_name: Optional[str] = None,
+        param_name: str | None = None,
         skip_context_behavior: bool = False,
         manager=None
     ) -> None:
         """Update widget value with signal blocking and optional placeholder application."""
         if self._widget_value_needs_update(widget, value):
             self._execute_with_signal_blocking(widget, lambda: self._dispatch_widget_update(widget, value))
+
+        if not skip_context_behavior and manager:
+            self._apply_context_behavior(widget, value, param_name, manager)
+
+    def overwrite_widget_value(
+        self,
+        widget: QWidget,
+        value: Any,
+        param_name: str | None = None,
+        skip_context_behavior: bool = False,
+        manager=None,
+    ) -> None:
+        """Authoritatively replace a widget value without reading editor state.
+
+        Reset and restore operations discard any transient text in the editor,
+        including syntactically incomplete text that cannot be extracted
+        through ``ValueGettable``. Ordinary reactive refreshes should continue
+        to use :meth:`update_widget_value` so equal assignments are skipped.
+        """
+        self._execute_with_signal_blocking(
+            widget,
+            lambda: self._dispatch_widget_update(widget, value),
+        )
 
         if not skip_context_behavior and manager:
             self._apply_context_behavior(widget, value, param_name, manager)

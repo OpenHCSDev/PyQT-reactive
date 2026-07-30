@@ -615,8 +615,8 @@ class FormBuildOrchestrator:
                         )
                         widget = manager._create_widget_for_param(param_info)
                         content_layout.addWidget(widget)
-                manager._enabled_field_styling_service.invalidate_widget_cache(
-                    manager
+                manager.chrome_sync.fields_materialized(
+                    param_info.name for param_info in sync_params
                 )
 
             def on_batch_complete(batch_widgets):
@@ -626,8 +626,8 @@ class FormBuildOrchestrator:
                     len(batch_widgets),
                     manager._pfm_seq,
                 )
-                manager._enabled_field_styling_service.invalidate_widget_cache(
-                    manager
+                manager.chrome_sync.fields_materialized(
+                    param_name for param_name, _widget in batch_widgets
                 )
 
             if async_params:

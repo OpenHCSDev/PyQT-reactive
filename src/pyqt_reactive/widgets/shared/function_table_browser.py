@@ -5,8 +5,9 @@ Displays function metadata in a searchable table with static columns.
 Used as the table portion of FunctionSelectorDialog.
 """
 
+from collections.abc import Sequence
 from enum import Enum
-from typing import ClassVar, List, Optional, Protocol, Sequence, cast
+from typing import ClassVar, Protocol, cast
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
@@ -26,7 +27,7 @@ class FunctionTableRow(Protocol):
     doc: str
     display_name: str
 
-    def get_memory_type(self) -> str: ...
+    def get_memory_type(self) -> str | None: ...
 
     def get_registry_name(self) -> str: ...
 
@@ -39,11 +40,11 @@ def _function_tags(item: object) -> Sequence[str]:
 class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
     """
     Table browser for function metadata.
-    
+
     Static columns: Name, Module, Backend, Registry, Contract, Tags, Description
     Single-select mode.
     """
-    
+
     # Column widths
     MODULE_WIDTH = 250
     DESCRIPTION_WIDTH = 300
@@ -57,7 +58,7 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
         ColumnDef("Description", "doc", DESCRIPTION_WIDTH),
     )
 
-    def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
+    def __init__(self, color_scheme: ColorScheme | None = None, parent=None):
         super().__init__(
             color_scheme=color_scheme,
             selection_mode=TableSelectionMode.SINGLE,
@@ -71,15 +72,16 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
         if isinstance(contract, Enum):
             return contract.name
         return str(contract)
-    
-    def get_columns(self) -> List[ColumnDef]:
+
+    def get_columns(self) -> list[ColumnDef]:
         """Static column definitions for function table."""
         return list(self.COLUMNS)
-    
-    def extract_row_data(self, item: FunctionTableRow) -> List[str]:
+
+    def extract_row_data(self, item: FunctionTableRow) -> list[str]:
         """Extract display values from function metadata."""
         # Get contract name
         contract_name = self._contract_display_name(item.contract, unknown_label="unknown")
+        memory_type = item.get_memory_type()
 
         # Format tags
         tags_str = ", ".join(item.tags) if item.tags else ""
@@ -90,13 +92,13 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
         return [
             item.display_name,
             item.module,
-            item.get_memory_type().title(),
+            (memory_type or "").title(),
             item.get_registry_name().title(),
             contract_name,
             tags_str,
             description,
         ]
-    
+
     def get_searchable_text(self, item: FunctionTableRow) -> str:
         """Return searchable text for function metadata."""
         contract_name = self._contract_display_name(item.contract, unknown_label="")
@@ -109,6 +111,6 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
             " ".join(item.tags),
             item.doc,
         ])
-    
+
     def get_search_placeholder(self) -> str:
         return "Search functions by name, module, contract, or tags..."

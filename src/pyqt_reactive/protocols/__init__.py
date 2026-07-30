@@ -31,6 +31,7 @@ from .widget_protocols import (
 )
 from .widget_adapters import (
     LineEditAdapter,
+    KeySequenceEditAdapter,
     SpinBoxAdapter,
     DoubleSpinBoxAdapter,
     ComboBoxAdapter,
@@ -85,6 +86,7 @@ __all__ = [
     "EnumSelectable",
     "ChangeSignalEmitter",
     "LineEditAdapter",
+    "KeySequenceEditAdapter",
     "SpinBoxAdapter",
     "DoubleSpinBoxAdapter",
     "ComboBoxAdapter",

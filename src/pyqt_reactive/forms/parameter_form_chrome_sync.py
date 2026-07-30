@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Set
 
 from objectstate import DottedFieldPath
@@ -82,6 +83,28 @@ class ParameterFormChromeSync:
 
         self.manager._enabled_field_styling_service.on_enabled_field_changed(
             self.manager, Enableable.require_parameter_name(), value
+        )
+
+    def fields_materialized(self, field_names: Iterable[str]) -> None:
+        """Apply existing chrome authorities to newly visible form fields."""
+        manager = self.manager
+        materialized_names = tuple(
+            field_name
+            for field_name in field_names
+            if field_name in manager.widgets
+        )
+        if not materialized_names:
+            return
+
+        for field_name in materialized_names:
+            manager._parameter_ops_service.refresh_single_placeholder(
+                manager,
+                field_name,
+            )
+
+        manager._enabled_field_styling_service.apply_materialized_enabled_styling(
+            manager,
+            (manager.widgets[field_name] for field_name in materialized_names),
         )
 
     def update_owning_groupbox_dirty_marker(self) -> None:

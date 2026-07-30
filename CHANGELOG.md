@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.29] - 2026-07-30
+
+### Changed
+
+- Apply placeholder and enabled-state chrome as form fields materialize.
+- Preserve and project annotated dataclass widget types, including dedicated
+  key-sequence capture and finite system-monitor color choices.
+- Make reset operations discard invalid transient editor text safely.
+- Support functions without an image-memory backend in generic selectors.
+
+### Dependencies
+
+- python-introspect >= 0.1.8
+
 ## [0.1.28] - 2026-07-30
 
 ### Changed

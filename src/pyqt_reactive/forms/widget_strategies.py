@@ -17,6 +17,7 @@ from python_introspect import (
     is_enum_type,
     is_list_of_enums,
     is_union_type,
+    resolve_annotated,
     resolve_optional,
 )
 from pyqt_reactive.forms.parameter_info_types import ParameterInfo
@@ -32,6 +33,7 @@ from pyqt_reactive.widgets import (
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
     CurrentValueValidatable,
+    KeySequenceEditAdapter,
     PlaceholderStateMixin,
     PlaceholderStateTrackable,
     PyQtWidgetMeta,
@@ -41,6 +43,7 @@ from pyqt_reactive.protocols import (
     WidgetCapability,
     widget_supports_capability,
 )
+from pyqt_reactive.qt_types import QtKeySequenceText
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
@@ -501,6 +504,14 @@ class DirectWidgetFactory:
         widget.set_value(current_value)
         return widget
 
+    def create_key_sequence(
+        self,
+        current_value: ParameterValue | None = None,
+    ) -> KeySequenceEditAdapter:
+        widget = KeySequenceEditAdapter()
+        widget.set_value(current_value)
+        return widget
+
 
 DIRECT_WIDGET_FACTORY = DirectWidgetFactory()
 
@@ -739,6 +750,7 @@ class PyQt6WidgetCreationAuthority:
         float: DIRECT_WIDGET_FACTORY.create_float,
         bool: DIRECT_WIDGET_FACTORY.create_bool,
         str: DIRECT_WIDGET_FACTORY.create_string,
+        QtKeySequenceText: DIRECT_WIDGET_FACTORY.create_key_sequence,
     }
 
     def create(self, request: WidgetCreationRequest) -> QWidget:
@@ -782,7 +794,17 @@ class PyQt6WidgetCreationAuthority:
         return MAGICGUI_WIDGET_FACTORY.create(resolved)
 
     def _resolve_request(self, request: WidgetCreationRequest) -> ResolvedWidgetRequest:
-        resolved_type = resolve_optional(request.param_type)
+        resolved_type = request.param_type
+        while resolved_type not in self.direct_factories:
+            owned_type = resolve_annotated(resolved_type)
+            if owned_type != resolved_type:
+                resolved_type = owned_type
+                continue
+            required_type = resolve_optional(resolved_type)
+            if required_type == resolved_type:
+                break
+            resolved_type = required_type
+
         enum_type = enum_member_type(resolved_type)
         current_value = request.current_value
         if enum_type is not None:

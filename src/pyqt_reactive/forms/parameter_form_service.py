@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Type, Optional, List, get_args, get_origin, get_type_hints
 
-from python_introspect import is_union_type
+from python_introspect import is_union_type, resolve_annotated
 from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 from .parameter_type_utils import ParameterTypeUtils
 from pyqt_reactive.forms.ui_utils import FieldDisplayText, debug_param
@@ -282,38 +282,40 @@ class ParameterFormService:
         if isinstance(value, str) and value == CONSTANTS.NONE_STRING_LITERAL:
             return None
 
+        resolved_type = resolve_annotated(param_type)
         structured_value = self._convert_value_by_annotation(
             value,
-            param_type,
+            resolved_type,
             param_name,
         )
         if structured_value is not _NO_CONVERSION:
             return structured_value
 
         # Handle enum types
-        if self._type_utils.is_enum_type(param_type):
-            return param_type(value)
+        if self._type_utils.is_enum_type(resolved_type):
+            return resolved_type(value)
 
         # Handle list of enums
-        if self._type_utils.is_list_of_enums(param_type):
+        if self._type_utils.is_list_of_enums(resolved_type):
             # If value is already a list (from checkbox group widget), return as-is
             if isinstance(value, list):
                 return value
-            enum_type = self._type_utils.get_enum_from_list_type(param_type)
+            enum_type = self._type_utils.get_enum_from_list_type(resolved_type)
             if enum_type:
                 return [enum_type(value)]
 
         # Handle basic types
-        if param_type == bool and isinstance(value, str):
+        if resolved_type is bool and isinstance(value, str):
             return self._type_utils.convert_string_to_bool(value)
-        if param_type in (int, float) and isinstance(value, str):
+        if resolved_type in (int, float) and isinstance(value, str):
             if value == CONSTANTS.EMPTY_STRING:
                 return None
             try:
-                return param_type(value)
+                return resolved_type(value)
             except (ValueError, TypeError) as exc:
                 raise ValueError(
-                    f"Invalid {param_type.__name__} value for parameter {param_name!r}: {value!r}"
+                    f"Invalid {resolved_type.__name__} value for parameter "
+                    f"{param_name!r}: {value!r}"
                 ) from exc
 
         # Handle empty strings in lazy context - convert to None for all parameter types
@@ -322,7 +324,11 @@ class ParameterFormService:
             return None
 
         # Handle string types - also convert empty strings to None for consistency
-        if param_type == str and isinstance(value, str) and value == CONSTANTS.EMPTY_STRING:
+        if (
+            resolved_type is str
+            and isinstance(value, str)
+            and value == CONSTANTS.EMPTY_STRING
+        ):
             return None
 
         return value
@@ -334,6 +340,7 @@ class ParameterFormService:
         param_name: str,
     ) -> ParameterValue | object:
         """Recursively rebuild structured values from JSON-like containers."""
+        param_type = resolve_annotated(param_type)
         origin = get_origin(param_type)
 
         if is_union_type(param_type):
@@ -368,6 +375,7 @@ class ParameterFormService:
         for candidate_type in get_args(param_type):
             if candidate_type is type(None):
                 continue
+            candidate_type = resolve_annotated(candidate_type)
             try:
                 converted = self._convert_value_by_annotation(
                     value,
@@ -404,7 +412,7 @@ class ParameterFormService:
             return _NO_CONVERSION
 
         try:
-            type_hints = get_type_hints(dataclass_type)
+            type_hints = get_type_hints(dataclass_type, include_extras=True)
         except Exception:
             type_hints = {}
 
@@ -504,6 +512,7 @@ class ParameterFormService:
         item_type: Type,
         param_name: str,
     ) -> ParameterValue:
+        item_type = resolve_annotated(item_type)
         converted = self._convert_value_by_annotation(
             value,
             item_type,
