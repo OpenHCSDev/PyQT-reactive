@@ -7,7 +7,9 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
+
+from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 
 @dataclass
@@ -34,6 +36,7 @@ class LogHighlightClient:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            **BackgroundProcessLaunchPolicy.current().popen_arguments(),
         )
         return cls._proc
 

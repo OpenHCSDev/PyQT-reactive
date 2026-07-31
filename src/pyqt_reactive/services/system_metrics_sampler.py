@@ -13,6 +13,8 @@ import psutil
 from python_introspect import validate_annotated_dataclass
 from zmqruntime.config import PositiveFloat
 
+from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
+
 try:
     import GPUtil
     GPU_AVAILABLE = True
@@ -38,6 +40,7 @@ def get_cpu_freq_mhz() -> int:
                 ],
                 stderr=subprocess.DEVNULL,
                 timeout=2,
+                **BackgroundProcessLaunchPolicy.current().popen_arguments(),
             )
             return int(output.strip())
         except Exception:
@@ -249,6 +252,7 @@ class PersistentNvidiaSmiPoller:
                 stderr=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,
+                **BackgroundProcessLaunchPolicy.current().popen_arguments(),
             )
         except Exception:
             self._process = None
