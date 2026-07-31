@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QLabel,
     QMenuBar,
+    QMessageBox,
+    QPushButton,
     QScrollBar,
     QVBoxLayout,
     QWidget,
@@ -105,10 +107,15 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
         menu_bar.show()
         qapp.processEvents()
 
-        assert qapp.styleSheet() == theme_manager.get_native_control_style_sheet()
+        assert (
+            qapp.styleSheet()
+            == theme_manager.get_application_control_style_sheet()
+        )
+        assert theme_manager.get_native_control_style_sheet() in qapp.styleSheet()
+        assert "QPushButton {" in qapp.styleSheet()
+        assert "border: none;" in qapp.styleSheet()
         assert "QGroupBox" not in qapp.styleSheet()
         assert "QDialog" not in qapp.styleSheet()
-        assert "padding:" not in qapp.styleSheet()
         assert "margin:" not in qapp.styleSheet()
         assert "min-height:" not in qapp.styleSheet()
         assert "min-width:" not in qapp.styleSheet()
@@ -121,6 +128,94 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
         assert scheme.to_hex(scheme.panel_bg) in rendered_colors
     finally:
         menu_bar.close()
+        qapp.setStyleSheet(original_stylesheet)
+        qapp.setPalette(original_palette)
+
+
+def test_theme_manager_renders_message_box_buttons_from_shared_style(qapp):
+    """Updater-style message boxes inherit the borderless button authority."""
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
+
+    original_palette = QPalette(qapp.palette())
+    original_stylesheet = qapp.styleSheet()
+    message_box = QMessageBox()
+    try:
+        scheme = ColorScheme()
+        ThemeManager(scheme).apply_color_scheme(scheme)
+        message_box.setWindowTitle("OpenHCS Update Available")
+        message_box.setText("Install the update now?")
+        message_box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        )
+        message_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+        message_box.show()
+        qapp.processEvents()
+
+        yes_button = message_box.button(QMessageBox.StandardButton.Yes)
+        cancel_button = message_box.button(QMessageBox.StandardButton.Cancel)
+        assert isinstance(yes_button, QPushButton)
+        assert isinstance(cancel_button, QPushButton)
+        assert yes_button.styleSheet() == ""
+        assert cancel_button.styleSheet() == ""
+
+        rendered_colors = {
+            yes_button.grab().toImage().pixelColor(x, y).name()
+            for x in range(yes_button.width())
+            for y in range(yes_button.height())
+        }
+        assert scheme.to_hex(scheme.button_normal_bg) in rendered_colors
+    finally:
+        message_box.close()
+        qapp.setStyleSheet(original_stylesheet)
+        qapp.setPalette(original_palette)
+
+
+def test_qscintilla_editor_uses_shared_borderless_button_style(qapp, monkeypatch):
+    """The code editor must not restore its former outlined button mirror."""
+    from types import SimpleNamespace
+
+    from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator, ThemeManager
+    from pyqt_reactive.widgets import llm_chat_panel
+    from pyqt_reactive.widgets.editors.simple_code_editor import (
+        QSCINTILLA_AVAILABLE,
+        QScintillaCodeEditorDialog,
+    )
+
+    if not QSCINTILLA_AVAILABLE:
+        pytest.skip("QScintilla is not installed")
+
+    original_palette = QPalette(qapp.palette())
+    original_stylesheet = qapp.styleSheet()
+    monkeypatch.setattr(
+        llm_chat_panel,
+        "get_llm_service",
+        lambda: SimpleNamespace(test_connection=lambda: True),
+    )
+    dialog = None
+    try:
+        scheme = ColorScheme()
+        ThemeManager(scheme).apply_color_scheme(scheme)
+        dialog = QScintillaCodeEditorDialog(None, "x = 1", "Edit Pipeline")
+        dialog.show()
+        qapp.processEvents()
+
+        shared_button_style = StyleSheetGenerator(scheme).generate_button_style()
+        assert shared_button_style in dialog.styleSheet()
+        former_outline = (
+            f"border: 1px solid {scheme.to_hex(scheme.border_light)}"
+        )
+        assert former_outline not in dialog.styleSheet()
+        for button in (dialog.llm_assist_btn, dialog.save_btn, dialog.cancel_btn):
+            assert button.styleSheet() == ""
+            rendered_colors = {
+                button.grab().toImage().pixelColor(x, y).name()
+                for x in range(button.width())
+                for y in range(button.height())
+            }
+            assert scheme.to_hex(scheme.button_normal_bg) in rendered_colors
+    finally:
+        if dialog is not None:
+            dialog.close()
         qapp.setStyleSheet(original_stylesheet)
         qapp.setPalette(original_palette)
 

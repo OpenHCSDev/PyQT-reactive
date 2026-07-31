@@ -175,6 +175,15 @@ class StyleSheetGenerator:
 
         return self.generate_menu_style() + "\n" + self.generate_scrollbar_style()
 
+    def generate_application_control_style(self) -> str:
+        """Style application controls without restyling form containers."""
+
+        return (
+            self.generate_native_control_style()
+            + "\n"
+            + self.generate_button_style()
+        )
+
     def generate_tree_widget_style(self) -> str:
         """
         Generate QStyleSheet for tree widgets and list widgets.
@@ -451,9 +460,8 @@ class StyleSheetGenerator:
         """
         return (
             self.generate_dialog_style() + "\n" +
-            self.generate_native_control_style() + "\n" +
+            self.generate_application_control_style() + "\n" +
             self.generate_tree_widget_style() + "\n" +
-            self.generate_button_style() + "\n" +
             self.generate_combobox_style() + "\n" +
             self.generate_progress_bar_style() + "\n" +
             self.generate_frame_style() + "\n" +

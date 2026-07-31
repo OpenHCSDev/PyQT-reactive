@@ -734,28 +734,19 @@ class QScintillaCodeEditorDialog(QDialog):
     def _apply_theme(self):
         """Apply ColorScheme theming to QScintilla editor."""
         cs = self.color_scheme
+        from pyqt_reactive.theming.style_generator import StyleSheetGenerator
 
-        # Apply dialog styling
-        self.setStyleSheet(f"""
+        # Keep the editor-specific dialog surface local while sharing the
+        # application button authority with every other dialog.
+        dialog_style = f"""
             QDialog {{
                 background-color: {cs.to_hex(cs.window_bg)};
                 color: {cs.to_hex(cs.text_primary)};
             }}
-            QPushButton {{
-                background-color: {cs.to_hex(cs.button_normal_bg)};
-                color: {cs.to_hex(cs.button_text)};
-                border: 1px solid {cs.to_hex(cs.border_light)};
-                border-radius: 3px;
-                padding: 5px;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {cs.to_hex(cs.button_hover_bg)};
-            }}
-            QPushButton:pressed {{
-                background-color: {cs.to_hex(cs.button_pressed_bg)};
-            }}
-        """)
+        """
+        self.setStyleSheet(
+            dialog_style + StyleSheetGenerator(cs).generate_button_style()
+        )
 
         # Apply QScintilla-specific theming
         self._apply_qscintilla_theme()
