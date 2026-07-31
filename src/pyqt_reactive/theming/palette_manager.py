@@ -199,6 +199,9 @@ class ThemeManager:
         
         # Apply to application
         self.palette_manager.apply_palette_to_application()
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(self.get_current_style_sheet())
         
         # Notify callbacks
         for callback in self._theme_change_callbacks:
@@ -207,7 +210,7 @@ class ThemeManager:
             except Exception as e:
                 logger.warning(f"Theme change callback failed: {e}")
         
-        logger.info("Applied new color scheme to application")
+        logger.info("Applied new color scheme to application palette and stylesheet")
     
     def register_theme_change_callback(self, callback):
         """

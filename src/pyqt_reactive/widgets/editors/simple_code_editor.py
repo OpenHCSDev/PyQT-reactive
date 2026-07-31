@@ -755,29 +755,6 @@ class QScintillaCodeEditorDialog(QDialog):
             QPushButton:pressed {{
                 background-color: {cs.to_hex(cs.button_pressed_bg)};
             }}
-            QMenuBar {{
-                background-color: {cs.to_hex(cs.panel_bg)};
-                color: {cs.to_hex(cs.text_primary)};
-                border-bottom: 1px solid {cs.to_hex(cs.border_color)};
-            }}
-            QMenuBar::item {{
-                background-color: transparent;
-                padding: 4px 8px;
-            }}
-            QMenuBar::item:selected {{
-                background-color: {cs.to_hex(cs.button_hover_bg)};
-            }}
-            QMenu {{
-                background-color: {cs.to_hex(cs.panel_bg)};
-                color: {cs.to_hex(cs.text_primary)};
-                border: 1px solid {cs.to_hex(cs.border_color)};
-            }}
-            QMenu::item {{
-                padding: 4px 20px;
-            }}
-            QMenu::item:selected {{
-                background-color: {cs.to_hex(cs.button_hover_bg)};
-            }}
         """)
 
         # Apply QScintilla-specific theming
