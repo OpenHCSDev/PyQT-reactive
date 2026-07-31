@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-
 
 PYTHON_MIME_TYPE = "text/x-python"
 
@@ -25,9 +25,10 @@ class WindowCodeDocument:
 class WindowCodeDocumentDriver(ABC):
     """Read/apply code-mode content for one WindowManager scope."""
 
-    def current_revision_token(self) -> str | None:
-        """Return a document-local revision token when ObjectState is not authoritative."""
-        return None
+    def current_revision_token(self) -> str:
+        """Return the revision of the authoritative clean document content."""
+        source = self.read_document(clean=True).source
+        return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
     def records_object_state_snapshot_on_apply(self) -> bool:
         """Return whether applying this document must advance ObjectState history."""
