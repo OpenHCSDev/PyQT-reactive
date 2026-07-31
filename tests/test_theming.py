@@ -3,7 +3,14 @@
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette
-from PyQt6.QtWidgets import QMenuBar, QScrollBar
+from PyQt6.QtWidgets import (
+    QGroupBox,
+    QLabel,
+    QMenuBar,
+    QScrollBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 def test_color_scheme_creation():
@@ -98,7 +105,13 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
         menu_bar.show()
         qapp.processEvents()
 
-        assert qapp.styleSheet() == theme_manager.get_current_style_sheet()
+        assert qapp.styleSheet() == theme_manager.get_native_control_style_sheet()
+        assert "QGroupBox" not in qapp.styleSheet()
+        assert "QDialog" not in qapp.styleSheet()
+        assert "padding:" not in qapp.styleSheet()
+        assert "margin:" not in qapp.styleSheet()
+        assert "min-height:" not in qapp.styleSheet()
+        assert "min-width:" not in qapp.styleSheet()
         image = menu_bar.grab().toImage()
         rendered_colors = {
             image.pixelColor(x, y).name()
@@ -106,8 +119,48 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
             for y in range(image.height())
         }
         assert scheme.to_hex(scheme.panel_bg) in rendered_colors
-        assert scheme.to_hex(scheme.border_color) in rendered_colors
     finally:
         menu_bar.close()
+        qapp.setStyleSheet(original_stylesheet)
+        qapp.setPalette(original_palette)
+
+
+def test_native_control_theme_preserves_nested_widget_geometry(qapp):
+    """Coloring native chrome must not alter nested form spacing or size hints."""
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
+
+    original_palette = QPalette(qapp.palette())
+    original_stylesheet = qapp.styleSheet()
+    root = QWidget()
+    outer_layout = QVBoxLayout(root)
+    outer_group = QGroupBox("Outer")
+    outer_layout.addWidget(outer_group)
+    inner_layout = QVBoxLayout(outer_group)
+    inner_group = QGroupBox("Inner")
+    inner_layout.addWidget(inner_group)
+    leaf_layout = QVBoxLayout(inner_group)
+    leaf_layout.addWidget(QLabel("Value"))
+    try:
+        qapp.setStyleSheet("")
+        root.ensurePolished()
+        qapp.processEvents()
+        baseline_size_hint = root.sizeHint()
+        baseline_layout_metrics = tuple(
+            (layout.contentsMargins(), layout.spacing())
+            for layout in (outer_layout, inner_layout, leaf_layout)
+        )
+
+        scheme = ColorScheme()
+        ThemeManager(scheme).apply_color_scheme(scheme)
+        root.ensurePolished()
+        qapp.processEvents()
+
+        assert root.sizeHint() == baseline_size_hint
+        assert tuple(
+            (layout.contentsMargins(), layout.spacing())
+            for layout in (outer_layout, inner_layout, leaf_layout)
+        ) == baseline_layout_metrics
+    finally:
+        root.close()
         qapp.setStyleSheet(original_stylesheet)
         qapp.setPalette(original_palette)

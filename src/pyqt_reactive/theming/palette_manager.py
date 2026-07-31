@@ -201,7 +201,7 @@ class ThemeManager:
         self.palette_manager.apply_palette_to_application()
         app = QApplication.instance()
         if app is not None:
-            app.setStyleSheet(self.get_current_style_sheet())
+            app.setStyleSheet(self.get_native_control_style_sheet())
         
         # Notify callbacks
         for callback in self._theme_change_callbacks:
@@ -239,6 +239,11 @@ class ThemeManager:
             str: Complete QStyleSheet for current theme
         """
         return self.style_generator.generate_complete_application_style()
+
+    def get_native_control_style_sheet(self) -> str:
+        """Return application chrome styles that do not alter form geometry."""
+
+        return self.style_generator.generate_native_control_style()
     
     def load_theme_from_config(self, config_path: str) -> bool:
         """

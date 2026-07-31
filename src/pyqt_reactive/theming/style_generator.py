@@ -126,11 +126,9 @@ class StyleSheetGenerator:
             QMenuBar {{
                 background-color: {cs.to_hex(cs.panel_bg)};
                 color: {cs.to_hex(cs.text_primary)};
-                border-bottom: 1px solid {cs.to_hex(cs.border_color)};
             }}
             QMenuBar::item {{
                 background-color: transparent;
-                padding: 4px 8px;
             }}
             QMenuBar::item:selected, QMenuBar::item:pressed {{
                 background-color: {cs.to_hex(cs.button_hover_bg)};
@@ -138,39 +136,27 @@ class StyleSheetGenerator:
             QMenu {{
                 background-color: {cs.to_hex(cs.panel_bg)};
                 color: {cs.to_hex(cs.text_primary)};
-                border: 1px solid {cs.to_hex(cs.border_color)};
-            }}
-            QMenu::item {{
-                padding: 4px 20px;
             }}
             QMenu::item:selected {{
                 background-color: {cs.to_hex(cs.button_hover_bg)};
             }}
             QMenu::separator {{
-                height: 1px;
                 background-color: {cs.to_hex(cs.separator_color)};
-                margin: 3px 6px;
             }}
         """
 
     def generate_scrollbar_style(self) -> str:
         """Generate application-wide styling for both scrollbar orientations."""
         cs = self.color_scheme
-        corner_radius = layout_constants.CURRENT_LAYOUT.widget_corner_radius
         return f"""
             QScrollBar:vertical, QScrollBar:horizontal {{
                 background-color: {cs.to_hex(cs.panel_bg)};
-                border: none;
             }}
             QScrollBar::handle:vertical {{
                 background-color: {cs.to_hex(cs.button_normal_bg)};
-                border-radius: {corner_radius}px;
-                min-height: 20px;
             }}
             QScrollBar::handle:horizontal {{
                 background-color: {cs.to_hex(cs.button_normal_bg)};
-                border-radius: {corner_radius}px;
-                min-width: 20px;
             }}
             QScrollBar::handle:vertical:hover,
             QScrollBar::handle:horizontal:hover {{
@@ -181,9 +167,13 @@ class StyleSheetGenerator:
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,
             QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
                 background-color: {cs.to_hex(cs.panel_bg)};
-                border: none;
             }}
         """
+
+    def generate_native_control_style(self) -> str:
+        """Style OS-painted chrome without changing form-widget geometry."""
+
+        return self.generate_menu_style() + "\n" + self.generate_scrollbar_style()
 
     def generate_tree_widget_style(self) -> str:
         """
@@ -461,8 +451,7 @@ class StyleSheetGenerator:
         """
         return (
             self.generate_dialog_style() + "\n" +
-            self.generate_menu_style() + "\n" +
-            self.generate_scrollbar_style() + "\n" +
+            self.generate_native_control_style() + "\n" +
             self.generate_tree_widget_style() + "\n" +
             self.generate_button_style() + "\n" +
             self.generate_combobox_style() + "\n" +
