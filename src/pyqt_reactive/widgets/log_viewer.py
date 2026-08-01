@@ -613,7 +613,7 @@ class LogItemDelegate(QStyledItemDelegate):
         needle = self._search_text if self._case_sensitive else self._search_text.lower()
         for row in range(model.rowCount()):
             index = model.index(row, 0)
-            text = index.data(Qt.DisplayRole)
+            text = index.data(Qt.ItemDataRole.DisplayRole)
             if text:
                 haystack = text if self._case_sensitive else text.lower()
                 if needle in haystack:
@@ -912,7 +912,7 @@ class LogItemDelegate(QStyledItemDelegate):
                         width = metrics.horizontalAdvance("M") * max_chars + 8
                 return QSize(width, self._fixed_row_height)
 
-        text = index.data(Qt.DisplayRole)
+        text = index.data(Qt.ItemDataRole.DisplayRole)
         if text is None:
             return super().sizeHint(option, index)
 

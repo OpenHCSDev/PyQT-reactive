@@ -4,15 +4,37 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import qInstallMessageHandler
+from PyQt6.QtCore import Qt, qInstallMessageHandler
+from PyQt6.QtWidgets import QStyleOptionViewItem
 
 from pyqt_reactive.protocols import register_log_discovery_provider
 from pyqt_reactive.utils.log_highlighter import build_log_line_html
 from pyqt_reactive.widgets.log_viewer import (
     LogFileInfo,
     LogFileLoader,
+    LogItemDelegate,
+    LogListModel,
     LogViewerWindow,
 )
+
+
+def test_log_delegate_uses_pyqt6_item_data_role(qtbot) -> None:
+    """Search and sizing must use PyQt6's scoped item-data enum."""
+
+    model = LogListModel()
+    model.append_lines(["alpha", "matching line"])
+    delegate = LogItemDelegate()
+    delegate.set_search_state("matching", case_sensitive=False)
+
+    delegate._precompute_search_matches(model)
+    hint = delegate.sizeHint(QStyleOptionViewItem(), model.index(1, 0))
+
+    assert delegate._search_match_rows == {1}
+    assert (
+        model.data(model.index(1, 0), Qt.ItemDataRole.DisplayRole)
+        == "matching line"
+    )
+    assert hint.isValid()
 
 
 def test_log_line_html_uses_authoritative_highlight_segments() -> None:
