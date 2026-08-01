@@ -253,6 +253,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             color_scheme=self.style_generator.color_scheme,
             enable_status_scrolling=False,
         )
+        self.manager_header = header_parts
         self.status_label = header_parts.status_label
         return header_parts.header
 

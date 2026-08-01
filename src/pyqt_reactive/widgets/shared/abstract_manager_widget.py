@@ -140,6 +140,7 @@ class ManagerUiLifecycleMixin:
             on_action=self.handle_button_action,
             button_grid_columns=self.BUTTON_GRID_COLUMNS,
         )
+        self.manager_header = ui_parts.manager_header
         self.title_layout = ui_parts.title_layout
         self.status_label = ui_parts.status_label
         self._status_scroll = ui_parts.status_scroll
@@ -674,6 +675,7 @@ class AbstractManagerWidget(
         # UI components (created in setup_ui)
         self.buttons: Dict[str, QPushButton] = {}
         self.status_label: Optional[QLabel] = None
+        self.manager_header = None
         self.item_list: Optional[ReorderableListWidget] = None
 
         # Status widgets are created in setup_ui.
@@ -700,7 +702,7 @@ class AbstractManagerWidget(
 
         # Create preview formatting strategy
         # Handle field(default_factory=FormattingConfig) pattern
-        from dataclasses import is_dataclass, Field
+        from dataclasses import Field
         if isinstance(self.PREVIEW_FORMATTING_CONFIG, Field):
             # Extract default_factory from Field and call it
             config = self.PREVIEW_FORMATTING_CONFIG.default_factory()

@@ -29,6 +29,7 @@ from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.services.persistent_system_monitor import PersistentSystemMonitor
 from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
 from pyqt_reactive.services.system_metrics_sampler import SystemMetrics
+from pyqt_reactive.widgets.shared.manager_ui_scaffold import create_manager_header
 
 logger = logging.getLogger(__name__)
 
@@ -292,8 +293,14 @@ class SystemMonitorWidget(QWidget):
         main_layout.setSpacing(2)
 
         # Header (title + status) - similar to AbstractManagerWidget
-        header = self._create_header()
-        main_layout.addWidget(header)
+        self.manager_header = create_manager_header(
+            title="System Monitor",
+            color_scheme=self.color_scheme,
+            enable_status_scrolling=False,
+        )
+        self.title_layout = self.manager_header.title_layout
+        self.status_label = self.manager_header.status_label
+        main_layout.addWidget(self.manager_header.header)
 
         # MAIN HSPLIT: Left side (with nested VSPLIT) | Right side (graphs)
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -329,33 +336,6 @@ class SystemMonitorWidget(QWidget):
 
         # Load PyQtGraph asynchronously
         self._load_pyqtgraph_async()
-
-    def _create_header(self) -> QWidget:
-        """Create header with title and status label (similar to AbstractManagerWidget)."""
-        header = QWidget()
-        header.setMinimumHeight(30)  # Ensure title and status are visible
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(5, 5, 5, 5)
-
-        # Title label
-        title_label = QLabel("System Monitor")
-        title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        title_label.setStyleSheet(
-            f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};"
-        )
-        header_layout.addWidget(title_label)
-
-        header_layout.addStretch()
-
-        # Status label
-        self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet(
-            f"color: {self.color_scheme.to_hex(self.color_scheme.status_success)}; "
-            f"font-weight: bold;"
-        )
-        header_layout.addWidget(self.status_label)
-
-        return header
 
     def _create_left_side_with_vsplit(self) -> QWidget:
         """Create left side with VSPLIT: System Info on top, buttons on bottom."""

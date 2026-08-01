@@ -40,6 +40,7 @@ class ManagerHeaderParts:
 class ManagerWidgetUiParts:
     """Widgets created for a standard manager list UI."""
 
+    manager_header: ManagerHeaderParts
     header: QWidget
     title_layout: ResponsiveGroupBoxTitle
     status_label: QLabel
@@ -56,6 +57,7 @@ def create_manager_header(
 ) -> ManagerHeaderParts:
     """Create a standard manager header (title + status label)."""
     header = QWidget()
+    header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
     header_layout = QHBoxLayout(header)
     header_layout.setContentsMargins(5, 5, 5, 5)
 
@@ -188,6 +190,7 @@ def setup_manager_widget_ui(
         bottom_widget=button_panel,
     )
     return ManagerWidgetUiParts(
+        manager_header=header_parts,
         header=header_parts.header,
         title_layout=header_parts.title_layout,
         status_label=header_parts.status_label,
