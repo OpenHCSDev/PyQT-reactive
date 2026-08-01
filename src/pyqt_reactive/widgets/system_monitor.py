@@ -130,7 +130,7 @@ class SystemMonitorWidget(QWidget):
         # Set size policy to minimum - let surrounding widgets expand into this space
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
         # Set minimum size for usability - more vertically compact
-        self.setMinimumSize(200, 160)
+        self.setMinimumSize(200, 80)
 
         logger.debug("System monitor widget initialized")
 

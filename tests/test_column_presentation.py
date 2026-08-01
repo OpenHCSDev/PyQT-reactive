@@ -118,8 +118,6 @@ def test_abstract_browser_composes_column_filters_with_external_projection(qapp)
             "c": {"filename": "c.tif", "ome_UUID": "plate-A", "channel": "W2"},
         }
     )
-    panel = browser.column_filter_panel
-
     assert browser.set_column_filter_selection("ome_UUID", ("plate-A",))
     assert tuple(browser.filtered_items) == ("a", "c")
 
@@ -140,8 +138,11 @@ def test_abstract_browser_stacks_context_above_same_generic_filter_panel(qapp) -
     assert browser.column_filter_splitter.widget(0) is context_widget
     assert browser.column_filter_splitter.widget(1) is browser.column_filter_panel
     assert browser.content_splitter.orientation() is Qt.Orientation.Horizontal
-    assert browser.content_splitter.widget(0) is browser.column_filter_splitter
+    assert browser.content_splitter.widget(0) is browser.column_filter_sidebar
     assert browser.content_splitter.widget(1) is browser.table_widget
+    sidebar_layout = browser.column_filter_sidebar.layout()
+    assert sidebar_layout.itemAt(0).widget() is browser.column_filter_panel.presentation_header
+    assert sidebar_layout.itemAt(1).widget() is browser.column_filter_splitter
 
 
 def test_columns_control_remains_visible_when_filter_body_is_empty(qapp) -> None:

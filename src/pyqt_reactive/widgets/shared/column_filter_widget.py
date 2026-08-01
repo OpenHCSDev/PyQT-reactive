@@ -525,7 +525,9 @@ class MultiColumnFilterPanel(QWidget):
         self.hidden_active_label.setVisible(False)
         settings_layout.addWidget(self.hidden_active_label)
         settings_layout.addStretch()
-        main_layout.addLayout(settings_layout)
+        self.presentation_header = QWidget(self)
+        self.presentation_header.setLayout(settings_layout)
+        main_layout.addWidget(self.presentation_header)
         main_layout.addWidget(self.scroll_area)
         self._sync_filter_body_visibility()
 

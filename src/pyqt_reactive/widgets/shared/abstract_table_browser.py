@@ -261,12 +261,26 @@ class AbstractTableBrowser(QWidget, Generic[T]):
             column_presentation=self.column_presentation,
             parent=self,
         )
+        self.column_filter_sidebar = QWidget(self)
+        sidebar_layout = QVBoxLayout(self.column_filter_sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+        panel_layout = self.column_filter_panel.layout()
+        panel_layout.removeWidget(self.column_filter_panel.presentation_header)
+        self.column_filter_panel.presentation_header.setParent(
+            self.column_filter_sidebar
+        )
+        sidebar_layout.addWidget(
+            self.column_filter_panel.presentation_header,
+            alignment=Qt.AlignmentFlag.AlignTop,
+        )
         self._column_filter_context_widget: QWidget | None = None
         self.column_filter_splitter = QSplitter(Qt.Orientation.Vertical, self)
         self.column_filter_splitter.addWidget(self.column_filter_panel)
+        sidebar_layout.addWidget(self.column_filter_splitter, 1)
 
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self.content_splitter.addWidget(self.column_filter_splitter)
+        self.content_splitter.addWidget(self.column_filter_sidebar)
         self.content_splitter.addWidget(self.table_widget)
         self.content_splitter.setStretchFactor(0, 0)
         self.content_splitter.setStretchFactor(1, 1)
