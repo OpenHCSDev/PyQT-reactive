@@ -338,3 +338,91 @@ def test_monitor_colors_are_closed_nominal_choices() -> None:
         PerformanceMonitorColors(cpu="not-a-qt-color")
 
     assert all(isinstance(color, str) for color in PerformanceGraphColor)
+
+
+def test_embedded_monitor_height_fits_info_and_action_panels(
+    qapp,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(SystemMonitorWidget, "_load_pyqtgraph_async", lambda self: None)
+    monkeypatch.setattr(SystemMonitorWidget, "start_monitoring", lambda self: None)
+    widget = SystemMonitorWidget()
+    widget.resize(1024, SystemMonitorWidget.EMBEDDED_CONTENT_HEIGHT)
+
+    try:
+        widget.show()
+        qapp.processEvents()
+
+        assert widget.info_widget.height() >= widget.info_widget.sizeHint().height()
+        assert widget.button_panel.height() >= widget.button_panel.sizeHint().height()
+    finally:
+        widget.close()
+
+
+def test_compact_plot_layout_removes_outer_padding_and_preserves_axis_labels() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Layout:
+        def setContentsMargins(self, *margins) -> None:  # noqa: N802
+            calls.append(("layout_margins", margins))
+
+        def setHorizontalSpacing(self, spacing: int) -> None:  # noqa: N802
+            calls.append(("horizontal_spacing", spacing))
+
+        def setVerticalSpacing(self, spacing: int) -> None:  # noqa: N802
+            calls.append(("vertical_spacing", spacing))
+
+    class PlotItem:
+        layout = Layout()
+
+        def setContentsMargins(self, *margins) -> None:  # noqa: N802
+            calls.append(("item_margins", margins))
+
+        def hideButtons(self) -> None:  # noqa: N802
+            calls.append(("hide_buttons", True))
+
+    class Axis:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def setTextPen(self, pen) -> None:  # noqa: N802
+            calls.append((f"{self.name}_pen", pen))
+
+        def setStyle(self, **style) -> None:  # noqa: N802
+            calls.append((f"{self.name}_style", style))
+
+        def setWidth(self, width: int) -> None:  # noqa: N802
+            calls.append((f"{self.name}_width", width))
+
+        def setHeight(self, height: int) -> None:  # noqa: N802
+            calls.append((f"{self.name}_height", height))
+
+    class ViewBox:
+        def setDefaultPadding(self, padding: int) -> None:  # noqa: N802
+            calls.append(("view_padding", padding))
+
+    class Plot:
+        plot_item = PlotItem()
+        axes = {"left": Axis("left"), "bottom": Axis("bottom")}
+        view_box = ViewBox()
+
+        def setContentsMargins(self, *margins) -> None:  # noqa: N802
+            calls.append(("plot_margins", margins))
+
+        def getPlotItem(self):  # noqa: N802
+            return self.plot_item
+
+        def getAxis(self, name: str):  # noqa: N802
+            return self.axes[name]
+
+        def getViewBox(self):  # noqa: N802
+            return self.view_box
+
+    SystemMonitorWidget._configure_compact_plot_layout(Plot())
+
+    assert ("plot_margins", (0, 0, 0, 0)) in calls
+    assert ("layout_margins", (0, 0, 0, 0)) in calls
+    assert ("horizontal_spacing", 0) in calls
+    assert ("left_width", SystemMonitorWidget.PLOT_LEFT_AXIS_WIDTH) in calls
+    assert ("bottom_height", 0) in calls
+    assert ("view_padding", 0) in calls

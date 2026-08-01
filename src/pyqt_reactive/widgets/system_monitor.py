@@ -42,7 +42,8 @@ class SystemMonitorWidget(QWidget):
     Provides the same functionality as the Textual SystemMonitorTextual widget.
     """
 
-    EMBEDDED_CONTENT_HEIGHT = 121
+    EMBEDDED_CONTENT_HEIGHT = 208
+    PLOT_LEFT_AXIS_WIDTH = 30
     
     # Declarative button configuration (matches AbstractManagerWidget pattern)
     BUTTON_CONFIGS = [
@@ -551,18 +552,7 @@ class SystemMonitorWidget(QWidget):
         _cpu_vb.setAutoPan(x=False, y=False)
         _cpu_vb.disableAutoRange()
 
-        # Minimize left axis
-        self.cpu_gpu_plot.getAxis('left').setTextPen('white')
-        self.cpu_gpu_plot.getAxis('left').setStyle(tickLength=-5)
-        self.cpu_gpu_plot.getAxis('left').setWidth(35)  # Minimal width for y-axis
-
-        # Hide bottom axis completely
-        self.cpu_gpu_plot.getAxis('bottom').setHeight(0)
-        self.cpu_gpu_plot.getAxis('bottom').setStyle(showValues=False)
-
-        # Minimize all margins and padding
-        self.cpu_gpu_plot.getPlotItem().setContentsMargins(0, 0, 0, 0)
-        self.cpu_gpu_plot.getViewBox().setDefaultPadding(0)
+        self._configure_compact_plot_layout(self.cpu_gpu_plot)
 
         # Style RAM/VRAM plot - minimal padding
         self.ram_vram_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
@@ -573,18 +563,7 @@ class SystemMonitorWidget(QWidget):
         _ram_vb.setAutoPan(x=False, y=False)
         _ram_vb.disableAutoRange()
 
-        # Minimize left axis
-        self.ram_vram_plot.getAxis('left').setTextPen('white')
-        self.ram_vram_plot.getAxis('left').setStyle(tickLength=-5)
-        self.ram_vram_plot.getAxis('left').setWidth(35)  # Minimal width for y-axis
-
-        # Hide bottom axis completely
-        self.ram_vram_plot.getAxis('bottom').setHeight(0)
-        self.ram_vram_plot.getAxis('bottom').setStyle(showValues=False)
-
-        # Minimize all margins and padding
-        self.ram_vram_plot.getPlotItem().setContentsMargins(0, 0, 0, 0)
-        self.ram_vram_plot.getViewBox().setDefaultPadding(0)
+        self._configure_compact_plot_layout(self.ram_vram_plot)
         self._apply_fixed_plot_ranges(history)
 
         # Add plots to grid layout (side-by-side by default)
@@ -594,6 +573,28 @@ class SystemMonitorWidget(QWidget):
         main_layout.addWidget(self.graph_container, 0)
 
         return widget
+
+    @classmethod
+    def _configure_compact_plot_layout(cls, plot) -> None:
+        """Remove plot chrome while preserving readable y-axis values."""
+
+        plot.setContentsMargins(0, 0, 0, 0)
+        plot_item = plot.getPlotItem()
+        plot_item.setContentsMargins(0, 0, 0, 0)
+        plot_item.layout.setContentsMargins(0, 0, 0, 0)
+        plot_item.layout.setHorizontalSpacing(0)
+        plot_item.layout.setVerticalSpacing(0)
+        plot_item.hideButtons()
+
+        left_axis = plot.getAxis('left')
+        left_axis.setTextPen('white')
+        left_axis.setStyle(tickLength=-3, tickTextOffset=2)
+        left_axis.setWidth(cls.PLOT_LEFT_AXIS_WIDTH)
+
+        bottom_axis = plot.getAxis('bottom')
+        bottom_axis.setHeight(0)
+        bottom_axis.setStyle(showValues=False)
+        plot.getViewBox().setDefaultPadding(0)
 
     def _configure_plot_acceleration(self) -> bool:
         """Enable pyqtgraph's OpenGL curve path for monitor plots when available."""
