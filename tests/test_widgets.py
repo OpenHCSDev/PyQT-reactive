@@ -559,7 +559,7 @@ def test_responsive_parameter_row_coalesces_logical_content_construction(
     assert row._row1_layout.itemAt(2).widget() is reset
 
 
-def test_staged_wrap_layout_keeps_unchanged_group_ownership(monkeypatch):
+def test_staged_wrap_layout_keeps_unchanged_group_ownership(qapp, monkeypatch):
     """Content growth does not repeatedly remove and reinsert stable groups."""
     from PyQt6.QtWidgets import QLabel, QWidget
 
@@ -590,7 +590,7 @@ def test_staged_wrap_layout_keeps_unchanged_group_ownership(monkeypatch):
     assert layout._row1_layout.itemAt(1).widget() is right_group
 
 
-def test_staged_wrap_layout_reclassifies_same_widget_after_intrinsic_growth():
+def test_staged_wrap_layout_reclassifies_same_widget_after_intrinsic_growth(qapp):
     """A stable group identity still wraps when its required width changes."""
     from PyQt6.QtWidgets import QWidget
 
@@ -618,6 +618,32 @@ def test_staged_wrap_layout_reclassifies_same_widget_after_intrinsic_growth():
     assert layout._row1_layout.itemAt(0).widget() is title_group
     assert layout._row2_layout.count() == 1
     assert layout._row2_layout.itemAt(0).widget() is right_group
+
+
+def test_staged_wrap_layout_can_lock_all_groups_to_one_row(qapp):
+    """Dock chrome can disable responsive rows without duplicating group ownership."""
+    from PyQt6.QtWidgets import QWidget
+
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        StagedWrapLayout,
+    )
+
+    layout = StagedWrapLayout()
+    layout.resize(100, 100)
+    title_group = QWidget()
+    title_group.setMinimumWidth(80)
+    right_group = QWidget()
+    right_group.setMinimumWidth(80)
+    groups = [("title", title_group), ("right", right_group)]
+    layout.set_groups(groups, ["title", "right"])
+
+    assert layout._row2_layout.itemAt(0).widget() is right_group
+
+    layout.set_wrapping_enabled(False)
+
+    assert layout._row1_layout.itemAt(0).widget() is title_group
+    assert layout._row1_layout.itemAt(1).widget() is right_group
+    assert layout._row2_layout.count() == 0
 
 
 def test_action_tab_row_keeps_tabs_and_actions_on_one_row_when_they_fit(qapp):

@@ -306,6 +306,7 @@ class StagedWrapLayout(QWidget):
     def __init__(self, parent=None, spacing=4):
         super().__init__(parent)
         self._spacing = spacing
+        self._wrapping_enabled = True
         self._groups = []
         self._stay_priority = []
         self._right_align_names = set()
@@ -361,6 +362,15 @@ class StagedWrapLayout(QWidget):
         self._update_layout()
         self.updateGeometry()
 
+    def set_wrapping_enabled(self, enabled: bool) -> None:
+        """Choose whether capacity may move groups onto a second row."""
+
+        enabled = bool(enabled)
+        if enabled == self._wrapping_enabled:
+            return
+        self._wrapping_enabled = enabled
+        self.refresh_layout()
+
     def resizeEvent(self, a0):
         super().resizeEvent(a0)
         self._resize_timer.start(50)
@@ -388,15 +398,18 @@ class StagedWrapLayout(QWidget):
             name: _widget_required_width(widget) for name, widget in self._groups
         }
 
-        keep_names = []
-        for name in self._stay_priority:
-            candidate = keep_names + [name]
-            if (
-                not keep_names
-                or available <= 0
-                or self._row_width(candidate, widths) <= available
-            ):
-                keep_names.append(name)
+        if self._wrapping_enabled:
+            keep_names = []
+            for name in self._stay_priority:
+                candidate = keep_names + [name]
+                if (
+                    not keep_names
+                    or available <= 0
+                    or self._row_width(candidate, widths) <= available
+                ):
+                    keep_names.append(name)
+        else:
+            keep_names = list(visual_order)
 
         row1_names = [name for name in visual_order if name in keep_names]
         row2_names = [name for name in visual_order if name not in keep_names]

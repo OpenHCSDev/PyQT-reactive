@@ -35,6 +35,16 @@ class ManagerHeaderParts:
     status_label: QLabel
     status_scroll: QScrollArea | None
 
+    def present_as_dock_title(self) -> None:
+        """Keep permanent dock chrome on one compact title row."""
+
+        self.title_layout.set_wrapping_enabled(False)
+        self.title_layout.updateGeometry()
+        layout = self.header.layout()
+        if layout is not None:
+            layout.invalidate()
+        self.header.updateGeometry()
+
 
 @dataclass(frozen=True)
 class ManagerWidgetUiParts:

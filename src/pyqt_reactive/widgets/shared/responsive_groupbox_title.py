@@ -104,6 +104,11 @@ class ResponsiveGroupBoxTitle(QWidget):
         self._inline_widgets.append((widget, stretch))
         self._inline_layout.addWidget(widget, stretch)
         self._refresh_groups()
+
+    def set_wrapping_enabled(self, enabled: bool) -> None:
+        """Choose whether title groups may move onto a second row."""
+
+        self._staged_layout.set_wrapping_enabled(enabled)
     
     def _check_switch(self):
         self._refresh_groups()

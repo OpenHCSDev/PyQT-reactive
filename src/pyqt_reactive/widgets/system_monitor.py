@@ -41,6 +41,8 @@ class SystemMonitorWidget(QWidget):
     Displays real-time system metrics with graphs for CPU, RAM, GPU, and VRAM usage.
     Provides the same functionality as the Textual SystemMonitorTextual widget.
     """
+
+    EMBEDDED_CONTENT_HEIGHT = 90
     
     # Declarative button configuration (matches AbstractManagerWidget pattern)
     BUTTON_CONFIGS = [
