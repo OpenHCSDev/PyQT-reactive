@@ -42,7 +42,7 @@ class SystemMonitorWidget(QWidget):
     Provides the same functionality as the Textual SystemMonitorTextual widget.
     """
 
-    EMBEDDED_CONTENT_HEIGHT = 115
+    EMBEDDED_CONTENT_HEIGHT = 121
     
     # Declarative button configuration (matches AbstractManagerWidget pattern)
     BUTTON_CONFIGS = [

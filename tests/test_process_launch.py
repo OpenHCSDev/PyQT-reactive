@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 from pyqt_reactive.process_launch import (
@@ -56,11 +57,62 @@ def test_non_windows_background_process_detaches_without_windows_flags() -> None
     )
 
 
+def test_windows_background_python_uses_windowed_interpreter(
+    tmp_path: Path,
+) -> None:
+    python_executable = tmp_path / "python.exe"
+    windowed_executable = tmp_path / "pythonw.exe"
+    python_executable.touch()
+    windowed_executable.touch()
+
+    policy = BackgroundProcessLaunchPolicy(
+        platform=BackgroundProcessPlatform.WINDOWS,
+    )
+
+    assert policy.python_executable(str(python_executable)) == str(
+        windowed_executable
+    )
+
+
+def test_background_python_keeps_original_when_windowed_interpreter_is_absent(
+    tmp_path: Path,
+) -> None:
+    python_executable = tmp_path / "python.exe"
+    python_executable.touch()
+
+    policy = BackgroundProcessLaunchPolicy(
+        platform=BackgroundProcessPlatform.WINDOWS,
+    )
+
+    assert policy.python_executable(str(python_executable)) == str(
+        python_executable
+    )
+
+
+def test_non_windows_background_python_keeps_requested_interpreter(
+    tmp_path: Path,
+) -> None:
+    python_executable = tmp_path / "python"
+    python_executable.touch()
+    (tmp_path / "pythonw.exe").touch()
+
+    policy = BackgroundProcessLaunchPolicy(
+        platform=BackgroundProcessPlatform.OTHER,
+    )
+
+    assert policy.python_executable(str(python_executable)) == str(
+        python_executable
+    )
+
+
 class _ConsumerLaunchPolicy:
     @classmethod
     def current(cls, *, detached=False):
         assert detached is False
-        return SimpleNamespace(popen_arguments=lambda: {"creationflags": 73})
+        return SimpleNamespace(
+            popen_arguments=lambda: {"creationflags": 73},
+            python_executable=lambda _executable: "windowed-python",
+        )
 
 
 def test_system_metric_helpers_use_background_process_policy(monkeypatch) -> None:
@@ -113,11 +165,14 @@ def test_log_highlighter_uses_background_process_policy(monkeypatch) -> None:
     monkeypatch.setattr(
         log_highlight_client.subprocess,
         "Popen",
-        lambda _command, **kwargs: captured.update(kwargs) or process,
+        lambda command, **kwargs: (
+            captured.update(command=command, **kwargs) or process
+        ),
     )
     log_highlight_client.LogHighlightClient._proc = None
     try:
         assert log_highlight_client.LogHighlightClient._ensure_process() is process
+        assert captured["command"][0] == "windowed-python"
         assert captured["creationflags"] == 73
     finally:
         log_highlight_client.LogHighlightClient._proc = None

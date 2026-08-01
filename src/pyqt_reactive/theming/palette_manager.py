@@ -11,6 +11,7 @@ from typing import Optional
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication
 from .color_scheme import ColorScheme
+from .splitter_grip_style import install_splitter_grip_style
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,6 @@ class PaletteManager:
         Returns:
             dict: Dictionary with palette color information
         """
-        palette = self.create_palette()
         cs = self.color_scheme
         
         return {
@@ -201,6 +201,7 @@ class ThemeManager:
         self.palette_manager.apply_palette_to_application()
         app = QApplication.instance()
         if app is not None:
+            install_splitter_grip_style(app)
             app.setStyleSheet(self.get_application_control_style_sheet())
         
         # Notify callbacks

@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollBar,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -87,6 +88,75 @@ def test_theme_manager_renders_both_scrollbar_orientations_from_color_scheme(
         assert scheme.to_hex(scheme.button_normal_bg) in rendered_colors
     finally:
         scrollbar.close()
+        qapp.setStyleSheet(original_stylesheet)
+        qapp.setPalette(original_palette)
+
+
+@pytest.mark.parametrize(
+    "orientation",
+    (Qt.Orientation.Horizontal, Qt.Orientation.Vertical),
+)
+def test_theme_manager_renders_splitter_grip_without_changing_geometry(
+    qapp,
+    orientation,
+):
+    """The shared style supplies visible grip dots without resizing handles."""
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
+
+    original_palette = QPalette(qapp.palette())
+    original_stylesheet = qapp.styleSheet()
+    splitter = QSplitter(orientation)
+    splitter.addWidget(QLabel("First"))
+    splitter.addWidget(QLabel("Second"))
+    splitter.resize(180, 60)
+    splitter.show()
+    qapp.processEvents()
+
+    handle = splitter.handle(1)
+    baseline_handle_size = handle.size()
+    try:
+        scheme = ColorScheme()
+        ThemeManager(scheme).apply_color_scheme(scheme)
+        qapp.processEvents()
+
+        assert handle.size() == baseline_handle_size
+        image = handle.grab().toImage()
+        center = image.rect().center()
+        grip_color = scheme.to_hex(scheme.border_color)
+        for offset in (-6, -3, 0, 3, 6):
+            if orientation is Qt.Orientation.Horizontal:
+                pixel = image.pixelColor(center.x(), center.y() + offset)
+            else:
+                pixel = image.pixelColor(center.x() + offset, center.y())
+            assert pixel.name() == grip_color
+    finally:
+        splitter.close()
+        qapp.setStyleSheet(original_stylesheet)
+        qapp.setPalette(original_palette)
+
+
+def test_splitter_grip_style_is_application_owned_and_idempotent(qapp):
+    """Repeated theme application reuses one proxy and preserves application QSS."""
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
+    from pyqt_reactive.theming.splitter_grip_style import (
+        install_splitter_grip_style,
+    )
+
+    original_palette = QPalette(qapp.palette())
+    original_stylesheet = qapp.styleSheet()
+    try:
+        scheme = ColorScheme()
+        manager = ThemeManager(scheme)
+        manager.apply_color_scheme(scheme)
+        installed = install_splitter_grip_style(qapp)
+        application_stylesheet = qapp.styleSheet()
+
+        manager.apply_color_scheme(scheme)
+
+        assert install_splitter_grip_style(qapp) is installed
+        assert qapp.styleSheet() == application_stylesheet
+        assert application_stylesheet == manager.get_application_control_style_sheet()
+    finally:
         qapp.setStyleSheet(original_stylesheet)
         qapp.setPalette(original_palette)
 

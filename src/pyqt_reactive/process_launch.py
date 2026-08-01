@@ -10,6 +10,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 
 class BackgroundProcessPlatform(Enum):
@@ -79,3 +80,19 @@ class BackgroundProcessLaunchPolicy:
         """Resolve directly to ``subprocess.Popen`` keyword arguments."""
 
         return self.resolve().popen_arguments()
+
+    def python_executable(self, executable: str) -> str:
+        """Return the interpreter for a background Python process family.
+
+        Windows creation flags suppress the first child console, but a child
+        launched through ``python.exe`` can still create visible consoles when
+        it starts multiprocessing descendants.  Using the colocated
+        ``pythonw.exe`` makes the console-free interpreter identity transitive.
+        """
+
+        if self.platform is not BackgroundProcessPlatform.WINDOWS:
+            return executable
+        windowed_executable = Path(executable).with_name("pythonw.exe")
+        if windowed_executable.is_file():
+            return str(windowed_executable)
+        return executable

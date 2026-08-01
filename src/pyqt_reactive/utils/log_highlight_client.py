@@ -29,14 +29,19 @@ class LogHighlightClient:
         if cls._proc and cls._proc.poll() is None:
             return cls._proc
 
+        launch_policy = BackgroundProcessLaunchPolicy.current()
         cls._proc = subprocess.Popen(
-            [sys.executable, "-m", "pyqt_reactive.utils.log_highlighter"],
+            [
+                launch_policy.python_executable(sys.executable),
+                "-m",
+                "pyqt_reactive.utils.log_highlighter",
+            ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            **BackgroundProcessLaunchPolicy.current().popen_arguments(),
+            **launch_policy.popen_arguments(),
         )
         return cls._proc
 

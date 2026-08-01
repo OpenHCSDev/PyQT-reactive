@@ -8,6 +8,7 @@ for consistent application-wide theming.
 from .color_scheme import ColorScheme
 from .color_scheme_resolution import ColorSchemeResolution, WidgetTheme
 from .palette_manager import PaletteManager, ThemeManager
+from .splitter_grip_style import SplitterGripStyle
 from .style_generator import StyleSheetGenerator
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     "WidgetTheme",
     "PaletteManager",
     "ThemeManager",
+    "SplitterGripStyle",
     "StyleSheetGenerator",
 ]

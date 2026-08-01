@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyqt-reactive"
-version = "0.1.35"
+dynamic = ["version"]
 description = "React-quality reactive form generation framework for PyQt6"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
 license = {text = "MIT"}
@@ -59,6 +59,9 @@ Issues = "https://github.com/OpenHCSDev/pyqt-reactive/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyqt_reactive"]
+
+[tool.hatch.version]
+path = "src/pyqt_reactive/__init__.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
