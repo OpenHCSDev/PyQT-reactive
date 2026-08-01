@@ -479,6 +479,68 @@ def test_action_tabbed_window_body_shows_tabs_only_for_multiple_pages(qapp):
     assert not body.tab_bar.isHidden()
 
 
+def test_action_tabbed_window_body_releases_one_live_action_projection(qapp):
+    """A caller can place the active actions without copying per-tab buttons."""
+    from PyQt6.QtWidgets import QLabel, QPushButton
+    from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
+        ActionTabSpec,
+        ActionTabbedWindowBody,
+    )
+
+    body = ActionTabbedWindowBody()
+    first_actions = QPushButton("First action")
+    second_actions = QPushButton("Second action")
+    body.add_tab(ActionTabSpec("First", QLabel("first"), first_actions))
+    body.add_tab(ActionTabSpec("Second", QLabel("second"), second_actions))
+
+    live_actions = body.release_active_actions_widget()
+
+    assert live_actions is body._active_actions_container
+    assert all(
+        widget is not live_actions for widget, _stretch in body.tab_row._right_widgets
+    )
+    assert not first_actions.isHidden()
+    assert second_actions.isHidden()
+
+    body.set_current_index(1)
+    qapp.processEvents()
+
+    assert first_actions.isHidden()
+    assert not second_actions.isHidden()
+
+
+def test_enhanced_path_widget_reserves_editor_width_beside_browse(qapp):
+    """Path rows wrap before the browse button crushes the text editor."""
+    from PyQt6.QtWidgets import QLabel, QPushButton
+    from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
+    from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+        ResponsiveParameterRow,
+        ResponsiveRowLayoutMode,
+    )
+
+    row = ResponsiveParameterRow()
+    label = QLabel("Materialization Results Path:")
+    editor = EnhancedPathWidget("materialization_results_path", None)
+    reset = QPushButton("Reset")
+    row.set_label(label)
+    row.set_input(editor)
+    row.set_reset_button(reset)
+    row.show()
+
+    assert editor.minimumSizeHint().width() >= (
+        editor.path_input.sizeHint().width()
+        + editor.browse_button.minimumSizeHint().width()
+        + editor.layout().spacing()
+    )
+    required_width = row._calculate_content_width()
+    row.resize(required_width - 1, row.sizeHint().height() * 2)
+    row._check_switch()
+    qapp.processEvents()
+
+    assert row._layout_mode is ResponsiveRowLayoutMode.VERTICAL
+    assert editor.path_input.width() >= editor.path_input.sizeHint().width()
+
+
 def test_responsive_parameter_row_wraps_only_below_minimum_capacity(qapp):
     """Parameter rows use all available width without an empty editor column."""
     from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton

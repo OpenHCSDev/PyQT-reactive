@@ -64,6 +64,7 @@ class ActionTabbedWindowBody(QWidget):
         super().__init__(parent)
         self.color_scheme = color_scheme
         self._action_widgets: list[QWidget | None] = []
+        self._active_actions_released = False
         self._materializations: list[ActionTabMaterialization | None] = []
         self._materialization_factories: list[
             Callable[[], ActionTabMaterialization] | None
@@ -122,7 +123,19 @@ class ActionTabbedWindowBody(QWidget):
         self._materialize(self.tab_bar.currentIndex())
         self.tab_bar.setVisible(self.content_stack.count() > 1)
         self._show_current_actions()
+        self._sync_tab_row_visibility()
         return index
+
+    def release_active_actions_widget(self) -> QWidget:
+        """Transfer the stable active-action projection to an external layout."""
+
+        if self._active_actions_released:
+            raise RuntimeError("Active tab actions have already been released.")
+        if not self.tab_row.release_widgets(self._active_actions_container):
+            raise RuntimeError("Active tab actions are not owned by the tab row.")
+        self._active_actions_released = True
+        self._sync_tab_row_visibility()
+        return self._active_actions_container
 
     def set_current_index(self, index: int) -> None:
         self.setCurrentIndex(index)
@@ -263,6 +276,13 @@ class ActionTabbedWindowBody(QWidget):
         for index, action_widget in enumerate(self._action_widgets):
             if action_widget is not None:
                 action_widget.setVisible(index == current_index)
+
+    def _sync_tab_row_visibility(self) -> None:
+        """Show tab chrome only while it still presents tabs or actions."""
+
+        self.tab_row.setVisible(
+            self.content_stack.count() > 1 or not self._active_actions_released
+        )
 
     def _apply_default_tab_style(self) -> None:
         if self.color_scheme is None:

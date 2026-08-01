@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from PyQt6.QtWidgets import QWidget, QLineEdit, QPushButton, QHBoxLayout, QFileDialog
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QSize, pyqtSignal
 
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
@@ -317,6 +317,24 @@ class EnhancedPathWidget(
         self._apply_styling()
         self._setup_signals()
         self.set_path(current_value)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt virtual method name
+        """Preserve a usable editor width beside the browse affordance."""
+
+        layout = self.layout()
+        margins = layout.contentsMargins()
+        width = (
+            self.path_input.sizeHint().width()
+            + self.browse_button.minimumSizeHint().width()
+            + layout.spacing()
+            + margins.left()
+            + margins.right()
+        )
+        height = max(
+            self.path_input.minimumSizeHint().height(),
+            self.browse_button.minimumSizeHint().height(),
+        ) + margins.top() + margins.bottom()
+        return QSize(width, height)
 
     def _apply_styling(self):
         """Apply color scheme styling to widgets."""
