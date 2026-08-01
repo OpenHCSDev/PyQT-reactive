@@ -482,6 +482,7 @@ def test_action_tabbed_window_body_shows_tabs_only_for_multiple_pages(qapp):
 def test_action_tabbed_window_body_releases_one_live_action_projection(qapp):
     """A caller can place the active actions without copying per-tab buttons."""
     from PyQt6.QtWidgets import QLabel, QPushButton
+
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabSpec,
         ActionTabbedWindowBody,
@@ -512,6 +513,7 @@ def test_action_tabbed_window_body_releases_one_live_action_projection(qapp):
 def test_enhanced_path_widget_reserves_editor_width_beside_browse(qapp):
     """Path rows wrap before the browse button crushes the text editor."""
     from PyQt6.QtWidgets import QLabel, QPushButton
+
     from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
     from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
         ResponsiveParameterRow,
