@@ -6,8 +6,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from python_introspect import validate_annotated_dataclass
-from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
 from zmqruntime.config import PositiveFloat, PositiveInteger
+
+from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
 
 
 class PerformanceGraphColor(StrEnum):
@@ -76,8 +77,8 @@ class PerformanceMonitorConfig:
     antialiasing: bool = True
     """Whether plot curves request antialiased rendering."""
 
-    use_opengl: bool = True
-    """Whether plots request pyqtgraph's OpenGL rendering path."""
+    use_opengl: bool = False
+    """Whether plots request pyqtgraph's experimental OpenGL rendering path."""
 
     line_width: PositiveFloat = 2.0
     """Width of all monitor plot curves in pixels."""

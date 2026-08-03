@@ -144,6 +144,21 @@ def fake_widget(config: PerformanceMonitorConfig, *, with_plots: bool = False):
     return widget_type(**attributes), old_persistent
 
 
+def test_performance_monitor_defaults_to_stable_raster_rendering(monkeypatch) -> None:
+    fake_pg = FakePyqtgraph()
+    monkeypatch.setattr(system_monitor_module, "pg", fake_pg)
+    config = PerformanceMonitorConfig()
+    widget, _old_persistent = fake_widget(config, with_plots=True)
+
+    enabled = SystemMonitorWidget._configure_plot_acceleration(widget)
+
+    assert config.use_opengl is False
+    assert enabled is False
+    assert ("enableExperimental", False) in fake_pg.options
+    assert widget.cpu_gpu_plot.opengl_calls == [False]
+    assert widget.ram_vram_plot.opengl_calls == [False]
+
+
 @pytest.mark.parametrize(
     ("field_name", "value", "expected_interval", "expected_history"),
     (
@@ -224,7 +239,7 @@ def test_each_sampler_leaf_rebuilds_monitor_with_exact_nominal_policy(
     (
         ("show_grid", False),
         ("antialiasing", False),
-        ("use_opengl", False),
+        ("use_opengl", True),
         ("line_width", 7.0),
         (
             "colors",
@@ -347,14 +362,45 @@ def test_embedded_monitor_height_fits_info_and_action_panels(
     monkeypatch.setattr(SystemMonitorWidget, "_load_pyqtgraph_async", lambda self: None)
     monkeypatch.setattr(SystemMonitorWidget, "start_monitoring", lambda self: None)
     widget = SystemMonitorWidget()
-    widget.resize(1024, SystemMonitorWidget.EMBEDDED_CONTENT_HEIGHT)
+    layout = widget.layout()
+    layout.removeWidget(widget.manager_header.header)
+    widget.manager_header.header.hide()
 
     try:
+        widget.resize(1024, widget.embedded_content_height)
         widget.show()
         qapp.processEvents()
 
+        widget.resize(1024, widget.embedded_content_height)
+        qapp.processEvents()
         assert widget.info_widget.height() >= widget.info_widget.sizeHint().height()
         assert widget.button_panel.height() >= widget.button_panel.sizeHint().height()
+    finally:
+        widget.close()
+
+
+def test_embedded_monitor_content_fills_height_after_header_is_dock_chrome(
+    qapp,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(SystemMonitorWidget, "_load_pyqtgraph_async", lambda self: None)
+    monkeypatch.setattr(SystemMonitorWidget, "start_monitoring", lambda self: None)
+    widget = SystemMonitorWidget()
+    layout = widget.layout()
+    layout.removeWidget(widget.manager_header.header)
+    widget.manager_header.header.hide()
+
+    try:
+        widget.resize(1024, widget.embedded_content_height)
+        widget.show()
+        qapp.processEvents()
+
+        widget.resize(1024, widget.embedded_content_height)
+        qapp.processEvents()
+        content_geometry = layout.itemAt(0).geometry()
+        margins = layout.contentsMargins()
+        assert content_geometry.top() == margins.top()
+        assert content_geometry.bottom() == widget.rect().bottom() - margins.bottom()
     finally:
         widget.close()
 

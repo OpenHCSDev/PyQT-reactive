@@ -42,7 +42,6 @@ class SystemMonitorWidget(QWidget):
     Provides the same functionality as the Textual SystemMonitorTextual widget.
     """
 
-    EMBEDDED_CONTENT_HEIGHT = 208
     PLOT_LEFT_AXIS_WIDTH = 30
     
     # Declarative button configuration (matches AbstractManagerWidget pattern)
@@ -56,6 +55,7 @@ class SystemMonitorWidget(QWidget):
     
     # Signals
     metrics_updated = pyqtSignal(object)  # Emits SystemMetrics.
+    embedded_content_height_changed = pyqtSignal(int)
     _pyqtgraph_loaded = pyqtSignal()  # Internal signal for async pyqtgraph loading
     _pyqtgraph_failed = pyqtSignal()  # Internal signal for async pyqtgraph loading failure
     
@@ -110,6 +110,10 @@ class SystemMonitorWidget(QWidget):
 
         # Delay monitoring start until widget is shown (fixes WSL2 hanging)
         self._monitoring_started = False
+
+        # Required height of the content when the manager header is presented as
+        # native dock chrome. The value is derived from the owned child layouts.
+        self._embedded_content_height = 0
 
         # Plot update state. Curves use a fixed relative x-axis and update only
         # when new metric samples arrive.
@@ -288,6 +292,42 @@ class SystemMonitorWidget(QWidget):
                 value_font = QFont("Arial", label_size)
                 value_font.setBold(True)
                 label_pair[1].setFont(value_font)
+
+        self.info_widget.updateGeometry()
+        self.button_panel.updateGeometry()
+        self._refresh_embedded_content_height()
+
+    @property
+    def embedded_content_height(self) -> int:
+        """Return the minimum non-clipping height for embedded content."""
+
+        return self._embedded_content_height
+
+    def _refresh_embedded_content_height(self) -> None:
+        """Project owned child size requirements into the embedded height."""
+
+        info_height = max(
+            self.info_widget.minimumSizeHint().height(),
+            self.info_widget.sizeHint().height(),
+        )
+        button_height = max(
+            self.button_panel.minimumSizeHint().height(),
+            self.button_panel.sizeHint().height(),
+        )
+        margins = self.layout().contentsMargins()
+        required_height = (
+            info_height
+            + self.left_splitter.handleWidth()
+            + button_height
+            + margins.top()
+            + margins.bottom()
+        )
+        if required_height == self._embedded_content_height:
+            return
+
+        self.left_splitter.setSizes([info_height, button_height])
+        self._embedded_content_height = required_height
+        self.embedded_content_height_changed.emit(required_height)
     
     def setup_ui(self):
         """Setup the user interface with proper splitter hierarchy."""
@@ -306,11 +346,11 @@ class SystemMonitorWidget(QWidget):
         main_layout.addWidget(self.manager_header.header)
 
         # MAIN HSPLIT: Left side (with nested VSPLIT) | Right side (graphs)
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # LEFT SIDE: VSPLIT with System Info (top) and Buttons (bottom)
         left_side = self._create_left_side_with_vsplit()
-        main_splitter.addWidget(left_side)
+        self.main_splitter.addWidget(left_side)
 
         # RIGHT SIDE: Performance Monitor (graphs)
         self.graphs_container = QWidget()
@@ -323,41 +363,39 @@ class SystemMonitorWidget(QWidget):
         self.monitoring_widget = self.create_loading_placeholder()
         self.graphs_layout.addWidget(self.monitoring_widget)
 
-        main_splitter.addWidget(self.graphs_container)
+        self.main_splitter.addWidget(self.graphs_container)
 
         # Set sizes: smaller left side, larger graphs area
-        main_splitter.setSizes([80, 240])
-        main_splitter.setStretchFactor(0, 0)  # Don't expand left side
-        main_splitter.setStretchFactor(1, 1)  # Graphs can expand horizontally
-        # Cap maximum height for graphs to keep vertical compactness
-        self.graphs_container.setMaximumHeight(180)
-
-        main_layout.addWidget(main_splitter)
+        self.main_splitter.setSizes([80, 240])
+        self.main_splitter.setStretchFactor(0, 0)  # Don't expand left side
+        self.main_splitter.setStretchFactor(1, 1)  # Graphs can expand horizontally
+        main_layout.addWidget(self.main_splitter)
 
         # Apply centralized styling
         self.setStyleSheet(self.style_generator.generate_system_monitor_style())
+        self._refresh_embedded_content_height()
 
         # Load PyQtGraph asynchronously
         self._load_pyqtgraph_async()
 
     def _create_left_side_with_vsplit(self) -> QWidget:
         """Create left side with VSPLIT: System Info on top, buttons on bottom."""
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.left_splitter = QSplitter(Qt.Orientation.Vertical)
 
         # Top: System info panel
         self.info_widget = self.create_info_panel()
-        splitter.addWidget(self.info_widget)
+        self.left_splitter.addWidget(self.info_widget)
 
         # Bottom: Button panel - store reference for API access
         self.button_panel = self._create_button_panel()
-        splitter.addWidget(self.button_panel)
+        self.left_splitter.addWidget(self.button_panel)
 
         # Set sizes: fixed sizes - don't expand
-        splitter.setSizes([200, 80])
-        splitter.setStretchFactor(0, 0)  # Info doesn't expand
-        splitter.setStretchFactor(1, 0)  # Buttons don't expand
+        self.left_splitter.setSizes([200, 80])
+        self.left_splitter.setStretchFactor(0, 0)  # Info doesn't expand
+        self.left_splitter.setStretchFactor(1, 0)  # Buttons don't expand
 
-        return splitter
+        return self.left_splitter
 
     def _create_button_panel(self) -> QWidget:
         """Create button panel using reusable ButtonPanel component."""
