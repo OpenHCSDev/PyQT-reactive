@@ -46,49 +46,6 @@ class AttributeItemIdProjection(ItemIdProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class ListItemDataProjection:
-    """Bidirectional codec for QListWidgetItem.UserRole payloads."""
-
-    project: Callable[[Any, int], Any]
-    resolve_data: Callable[[Any, list[Any]], Any]
-
-    def __call__(self, item: Any, index: int) -> Any:
-        return self.project(item, index)
-
-    def resolve(self, data: Any, items: list[Any]) -> Any:
-        return self.resolve_data(data, items)
-
-
-def _project_item(item: Any, index: int) -> Any:
-    del index
-    return item
-
-
-def _resolve_item(data: Any, items: list[Any]) -> Any:
-    del items
-    return data
-
-
-def _project_index(item: Any, index: int) -> Any:
-    del item
-    return index
-
-
-def _resolve_index(data: Any, items: list[Any]) -> Any:
-    return items[data] if data is not None and 0 <= data < len(items) else None
-
-
-ITEM_LIST_DATA_PROJECTION = ListItemDataProjection(
-    project=_project_item,
-    resolve_data=_resolve_item,
-)
-INDEX_LIST_DATA_PROJECTION = ListItemDataProjection(
-    project=_project_index,
-    resolve_data=_resolve_index,
-)
-
-
-@dataclass(frozen=True, slots=True)
 class ManagerItemHooks:
     """Typed source for list-item behavior consumed by AbstractManagerWidget."""
 
@@ -96,9 +53,6 @@ class ManagerItemHooks:
         default_factory=lambda: AttributeItemIdProjection("id")
     )
     preserve_selection_pred: Callable[[Any], bool] = lambda _manager: False
-    data_projection: ListItemDataProjection = field(
-        default_factory=lambda: ITEM_LIST_DATA_PROJECTION
-    )
 
     def item_id(self, item: Any) -> str:
         return self.id_projection(item)
@@ -107,7 +61,18 @@ class ManagerItemHooks:
         return bool(self.preserve_selection_pred(manager))
 
     def list_item_data_for(self, item: Any, index: int) -> Any:
-        return self.data_projection(item, index)
+        """Return the stable, transport-safe identity stored in ``UserRole``."""
+
+        del index
+        return self.item_id(item)
 
     def item_from_list_data(self, data: Any, items: list[Any]) -> Any:
-        return self.data_projection.resolve(data, items)
+        """Resolve one stable row identity against the authoritative backing list."""
+
+        if data is None:
+            return None
+        item_id = str(data)
+        return next(
+            (item for item in items if self.item_id(item) == item_id),
+            None,
+        )

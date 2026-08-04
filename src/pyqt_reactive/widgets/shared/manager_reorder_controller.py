@@ -33,7 +33,8 @@ class ManagerReorderController:
         from_index: int,
         to_index: int,
     ) -> None:
-        list_item = operations.list_widget.item(from_index)
+        # Qt has already moved the source row when this signal is emitted.
+        list_item = operations.list_widget.item(to_index)
         item = operations.item_from_list_item(list_item)
         item_id = operations.item_id(item) if item else "Unknown"
 

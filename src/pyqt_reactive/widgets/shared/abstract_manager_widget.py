@@ -474,7 +474,6 @@ class ManagerListUpdateWorkflowMixin:
         return ManagerListUpdateOperations(
             item_list=self.item_list,
             backing_items=self._item_access.state_binding.items(self),
-            item_id=self._item_access.item_hooks.item_id,
             should_preserve_selection=lambda: self._item_access.item_hooks.should_preserve_selection(self),
             placeholder=self._get_list_placeholder,
             prepare_update=self.prepare_list_update,

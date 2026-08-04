@@ -35,6 +35,7 @@ class ManagerListVisualState:
         self._pending_flash_scopes: set[str] = set()
         self._pending_changed_scope_paths: dict[str, set[str]] = {}
         self._scope_change_flush_scheduled = False
+        ObjectStateRegistry.add_register_callback(self._on_registry_registered)
         ObjectStateRegistry.add_resolved_changed_callback(
             self._on_registry_resolved_changed
         )
@@ -150,10 +151,19 @@ class ManagerListVisualState:
 
     def dispose(self) -> None:
         """Release registry callbacks and row subscriptions for widget teardown."""
+        ObjectStateRegistry.remove_register_callback(self._on_registry_registered)
         ObjectStateRegistry.remove_resolved_changed_callback(
             self._on_registry_resolved_changed
         )
         self.reset_context()
+
+    def _on_registry_registered(self, scope_id: str, _state: Any) -> None:
+        if not scope_id:
+            return
+        if scope_id in self._scope_to_list_item:
+            self._manager.queue_flash_batch((scope_id,))
+            return
+        self._pending_flash_scopes.add(scope_id)
 
     def _on_registry_resolved_changed(
         self,

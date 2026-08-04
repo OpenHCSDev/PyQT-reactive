@@ -34,7 +34,6 @@ class ManagerListUpdateOperations(
 
     item_list: QListWidget
     backing_items: list[ListItemT]
-    item_id: Callable[[ListItemT], str]
     should_preserve_selection: Callable[[], bool]
     placeholder: Callable[[], Optional[tuple[str, PlaceholderDataT]]]
     prepare_update: Callable[[], UpdateContextT]
@@ -135,7 +134,6 @@ class ManagerListUpdater:
 
         preserve_selection_during_update(
             operations.item_list,
-            operations.item_id,
             operations.should_preserve_selection,
             lambda: self._update_items(operations, update_context),
         )

@@ -1097,7 +1097,6 @@ def test_manager_list_in_place_refresh_skips_unchanged_tooltip(qapp):
     operations = ManagerListUpdateOperations(
         item_list=item_list,
         backing_items=[item_obj],
-        item_id=lambda item: item["id"],
         should_preserve_selection=lambda: False,
         placeholder=lambda: None,
         prepare_update=lambda: object(),
@@ -1154,7 +1153,6 @@ def test_manager_list_scope_refresh_updates_only_matching_rows(qapp):
     operations = ManagerListUpdateOperations(
         item_list=item_list,
         backing_items=items,
-        item_id=lambda item: item["id"],
         should_preserve_selection=lambda: False,
         placeholder=lambda: None,
         prepare_update=lambda: object(),
@@ -1206,7 +1204,6 @@ def test_manager_list_in_place_refresh_does_not_infer_flash_from_text(qapp):
     operations = ManagerListUpdateOperations(
         item_list=item_list,
         backing_items=[item_obj],
-        item_id=lambda item: item["id"],
         should_preserve_selection=lambda: False,
         placeholder=lambda: None,
         prepare_update=lambda: object(),
@@ -1251,7 +1248,6 @@ def test_manager_list_rebuild_does_not_infer_flash_from_new_scope(qapp):
     operations = ManagerListUpdateOperations(
         item_list=item_list,
         backing_items=[item_obj],
-        item_id=lambda item: item["id"],
         should_preserve_selection=lambda: False,
         placeholder=lambda: None,
         prepare_update=lambda: object(),
@@ -1300,7 +1296,6 @@ def test_manager_list_rebuild_does_not_flash_existing_scope(qapp):
     operations = ManagerListUpdateOperations(
         item_list=item_list,
         backing_items=[item_obj],
-        item_id=lambda item: item["id"],
         should_preserve_selection=lambda: False,
         placeholder=lambda: None,
         prepare_update=lambda: object(),
@@ -1446,6 +1441,99 @@ def test_manager_list_visual_state_buffers_objectstate_change_until_row_visible(
         assert manager.queued_flashes == ["scope-1"]
     finally:
         visual_state.dispose()
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_manager_list_visual_state_flashes_registered_row_when_visible(qapp):
+    """ObjectState registration, not list rebuilding, identifies a new row."""
+    from dataclasses import dataclass
+
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
+
+    from pyqt_reactive.widgets.shared.manager_list_visual_state import (
+        ManagerListVisualState,
+    )
+
+    @dataclass
+    class RowState:
+        value: int = 1
+
+    @dataclass
+    class BaseConfig:
+        value: int = 0
+
+    class ItemAccess:
+        def scope_for_item(self, item):
+            return item["scope"]
+
+    class Manager(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.item_list = QListWidget(self)
+            self.queued_flashes = []
+
+        def queue_flash_batch(self, scope_ids):
+            self.queued_flashes.extend(scope_ids)
+
+        def queue_list_scope_visual_update(self, scope_id, changed_paths=None):
+            pass
+
+    set_base_config_type(BaseConfig)
+    ObjectStateRegistry.clear()
+    existing_state = ObjectState(RowState(), scope_id="scope-existing")
+    ObjectStateRegistry.register(existing_state, _skip_snapshot=True)
+    manager = Manager()
+    visual_state = ManagerListVisualState(manager, 99, ItemAccess())
+    register_callback = visual_state._on_registry_registered
+
+    try:
+        assert register_callback in ObjectStateRegistry._on_register_callbacks
+
+        existing_item = QListWidgetItem("existing row")
+        manager.item_list.addItem(existing_item)
+        visual_state.subscribe_flash(
+            {"scope": "scope-existing"},
+            existing_item,
+            "scope-existing",
+        )
+
+        list_only_item = QListWidgetItem("list-only row")
+        manager.item_list.addItem(list_only_item)
+        visual_state.subscribe_flash(
+            {"scope": "scope-list-only"},
+            list_only_item,
+            "scope-list-only",
+        )
+        assert manager.queued_flashes == []
+
+        visible_new_state = ObjectState(RowState(), scope_id="scope-list-only")
+        ObjectStateRegistry.register(visible_new_state, _skip_snapshot=True)
+        assert manager.queued_flashes == ["scope-list-only"]
+        manager.queued_flashes.clear()
+
+        new_state = ObjectState(RowState(), scope_id="scope-new")
+        ObjectStateRegistry.register(new_state, _skip_snapshot=True)
+        assert manager.queued_flashes == []
+
+        new_item = QListWidgetItem("new row")
+        manager.item_list.addItem(new_item)
+        visual_state.subscribe_flash(
+            {"scope": "scope-new"},
+            new_item,
+            "scope-new",
+        )
+        visual_state.subscribe_flash(
+            {"scope": "scope-new"},
+            new_item,
+            "scope-new",
+        )
+
+        assert manager.queued_flashes == ["scope-new"]
+    finally:
+        visual_state.dispose()
+        assert register_callback not in ObjectStateRegistry._on_register_callbacks
         manager.deleteLater()
         ObjectStateRegistry.clear()
 
@@ -3239,7 +3327,7 @@ def test_restore_selection_by_id_preserves_without_selection_signal(qapp):
 
     item_list = QListWidget()
     first_item = QListWidgetItem("one")
-    first_item.setData(Qt.ItemDataRole.UserRole, {"id": "one"})
+    first_item.setData(Qt.ItemDataRole.UserRole, "one")
     item_list.addItem(first_item)
     item_list.setCurrentRow(0)
     emissions = []
@@ -3248,7 +3336,6 @@ def test_restore_selection_by_id_preserves_without_selection_signal(qapp):
     restore_selection_by_id(
         item_list,
         "one",
-        lambda item: item["id"],
     )
 
     assert item_list.currentRow() == 0
@@ -3256,18 +3343,74 @@ def test_restore_selection_by_id_preserves_without_selection_signal(qapp):
 
     item_list.clear()
     replacement_item = QListWidgetItem("one")
-    replacement_item.setData(Qt.ItemDataRole.UserRole, {"id": "one"})
+    replacement_item.setData(Qt.ItemDataRole.UserRole, "one")
     item_list.addItem(replacement_item)
     emissions.clear()
 
     restore_selection_by_id(
         item_list,
         "one",
-        lambda item: item["id"],
     )
 
     assert item_list.currentRow() == 0
     assert emissions == []
+
+
+def test_manager_reorder_resolves_transport_safe_identity_after_qt_move(qapp):
+    """Qt drag MIME data stays scalar while the backing item is resolved by id."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+
+    from pyqt_reactive.widgets.shared.manager_item_hooks import (
+        DictItemIdProjection,
+        ManagerItemHooks,
+    )
+    from pyqt_reactive.widgets.shared.manager_reorder_controller import (
+        ManagerReorderController,
+        ManagerReorderOperations,
+    )
+
+    hooks = ManagerItemHooks(id_projection=DictItemIdProjection("id"))
+    items = [{"id": "one"}, {"id": "two"}]
+    item_list = QListWidget()
+    for index, item in enumerate(items):
+        row = QListWidgetItem(item["id"])
+        row.setData(Qt.ItemDataRole.UserRole, hooks.list_item_data_for(item, index))
+        item_list.addItem(row)
+
+    source_row = item_list.item(0)
+    assert source_row.data(Qt.ItemDataRole.UserRole) == "one"
+    assert item_list.mimeData([source_row]) is not None
+
+    moved_row = item_list.takeItem(0)
+    item_list.insertItem(1, moved_row)
+    statuses: list[str] = []
+
+    def reorder_items(from_index: int, to_index: int) -> None:
+        item = items.pop(from_index)
+        items.insert(to_index, item)
+
+    ManagerReorderController().handle_reordered(
+        ManagerReorderOperations(
+            list_widget=item_list,
+            item_from_list_item=lambda row: hooks.item_from_list_data(
+                row.data(Qt.ItemDataRole.UserRole),
+                items,
+            ),
+            item_id=hooks.item_id,
+            item_name_singular="item",
+            item_name_plural="items",
+            reorder_items=reorder_items,
+            emit_items_changed=lambda: None,
+            update_item_list=lambda: None,
+            emit_status=statuses.append,
+        ),
+        0,
+        1,
+    )
+
+    assert [item["id"] for item in items] == ["two", "one"]
+    assert statuses == ["Moved item 'one' down"]
 
 
 def test_visual_update_batch_repaints_after_text_update(qapp):

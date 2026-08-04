@@ -81,7 +81,6 @@ class ManagerSelectionController:
         handle_selection_change_with_prevention(
             operations.list_widget,
             operations.selected_items,
-            operations.item_id,
             operations.should_preserve_selection,
             operations.current_selection_id,
             lambda items: self._select_first(operations, items),
