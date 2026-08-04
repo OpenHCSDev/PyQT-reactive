@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, Protocol, Set, runtime_checkable
+from collections.abc import Iterable, Iterator
+from typing import Protocol, runtime_checkable
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
@@ -42,7 +43,7 @@ class TreeStateAdapter:
         self._key_builder = key_builder
 
     @classmethod
-    def default(cls) -> "TreeStateAdapter":
+    def default(cls) -> TreeStateAdapter:
         """Build the default typed-payload tree state adapter."""
         return cls(TypedPayloadTreeItemKeyBuilder())
 
@@ -55,43 +56,60 @@ class TreeStateAdapter:
         segments.reverse()
         return "/".join(segments)
 
-    def capture_expansion_state(self, tree: QTreeWidget) -> Dict[str, bool]:
-        state: Dict[str, bool] = {}
+    @staticmethod
+    def _subtree_items(
+        roots: Iterable[QTreeWidgetItem],
+    ) -> Iterator[QTreeWidgetItem]:
+        pending = list(reversed(tuple(roots)))
+        while pending:
+            item = pending.pop()
+            yield item
+            pending.extend(item.child(index) for index in reversed(range(item.childCount())))
 
-        def walk(item: QTreeWidgetItem) -> None:
-            state[self.item_tree_key(item)] = item.isExpanded()
-            for idx in range(item.childCount()):
-                walk(item.child(idx))
+    def capture_subtree_expansion_state(
+        self,
+        roots: Iterable[QTreeWidgetItem],
+    ) -> dict[str, bool]:
+        """Capture expansion state beneath the supplied item roots."""
 
-        for idx in range(tree.topLevelItemCount()):
-            walk(tree.topLevelItem(idx))
-        return state
+        return {self.item_tree_key(item): item.isExpanded() for item in self._subtree_items(roots)}
 
-    def restore_expansion_state(self, tree: QTreeWidget, state: Dict[str, bool]) -> None:
-        if not state:
-            return
+    def restore_subtree_expansion_state(
+        self,
+        roots: Iterable[QTreeWidgetItem],
+        state: dict[str, bool],
+        *,
+        default_expanded: bool | None = None,
+    ) -> None:
+        """Restore known items and optionally default newly introduced items."""
 
-        def walk(item: QTreeWidgetItem) -> None:
+        for item in self._subtree_items(roots):
             key = self.item_tree_key(item)
             if key in state:
                 item.setExpanded(state[key])
-            for idx in range(item.childCount()):
-                walk(item.child(idx))
+            elif default_expanded is not None:
+                item.setExpanded(default_expanded)
 
-        for idx in range(tree.topLevelItemCount()):
-            walk(tree.topLevelItem(idx))
+    def capture_expansion_state(self, tree: QTreeWidget) -> dict[str, bool]:
+        return self.capture_subtree_expansion_state(
+            tree.topLevelItem(index) for index in range(tree.topLevelItemCount())
+        )
 
-    def capture_selected_keys(self, tree: QTreeWidget) -> Set[str]:
+    def restore_expansion_state(self, tree: QTreeWidget, state: dict[str, bool]) -> None:
+        if not state:
+            return
+        self.restore_subtree_expansion_state(
+            (tree.topLevelItem(index) for index in range(tree.topLevelItemCount())),
+            state,
+        )
+
+    def capture_selected_keys(self, tree: QTreeWidget) -> set[str]:
         return {self.item_tree_key(item) for item in tree.selectedItems()}
 
-    def restore_selected_keys(self, tree: QTreeWidget, selected_keys: Set[str]) -> None:
+    def restore_selected_keys(self, tree: QTreeWidget, selected_keys: set[str]) -> None:
         if not selected_keys:
             return
-
-        def walk(item: QTreeWidgetItem) -> None:
+        for item in self._subtree_items(
+            tree.topLevelItem(index) for index in range(tree.topLevelItemCount())
+        ):
             item.setSelected(self.item_tree_key(item) in selected_keys)
-            for idx in range(item.childCount()):
-                walk(item.child(idx))
-
-        for idx in range(tree.topLevelItemCount()):
-            walk(tree.topLevelItem(idx))
