@@ -11,7 +11,7 @@ import tempfile
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Callable, Generic, Optional, TypeVar
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout,
                              QMessageBox, QMenuBar, QFileDialog, QSplitter)
@@ -26,6 +26,7 @@ from pyqt_reactive.services.window_code_document import (
 from pyqt_reactive.services.window_manager import WindowManager
 
 logger = logging.getLogger(__name__)
+DeclarationT = TypeVar("DeclarationT")
 
 # Try to import QScintilla, fall back to QTextEdit if not available
 try:
@@ -38,7 +39,10 @@ except ImportError as e:
     QSCINTILLA_AVAILABLE = False
 
 
-class SimpleCodeEditorWindowCodeDocumentDriver(WindowCodeDocumentDriver):
+class SimpleCodeEditorWindowCodeDocumentDriver(
+    WindowCodeDocumentDriver[DeclarationT],
+    Generic[DeclarationT],
+):
     """WindowManager code-document driver for floating simple code editors."""
 
     def __init__(
@@ -47,16 +51,19 @@ class SimpleCodeEditorWindowCodeDocumentDriver(WindowCodeDocumentDriver):
         dialog: QDialog,
         title: str,
         callback: Optional[Callable[[str], None]],
+        declaration_type: type[DeclarationT] | None,
     ) -> None:
         self._dialog = dialog
         self._title = title
         self._callback = callback
+        self._declaration_type = declaration_type
 
-    def read_document(self, clean: bool = True) -> WindowCodeDocument:
+    def read_document(self, clean: bool = True) -> WindowCodeDocument[DeclarationT]:
         return WindowCodeDocument(
             title=self._title,
             source=self._content(),
             mime_type=PYTHON_MIME_TYPE,
+            declaration_type=self._declaration_type,
         )
 
     def current_revision_token(self) -> str:
@@ -81,7 +88,7 @@ class SimpleCodeEditorWindowCodeDocumentDriver(WindowCodeDocumentDriver):
         self._dialog.set_content(source)
 
 
-class SimpleCodeEditorService:
+class SimpleCodeEditorService(Generic[DeclarationT]):
     """
     Simple, modular code editor service.
 
@@ -102,7 +109,7 @@ class SimpleCodeEditorService:
     def edit_code(self, initial_content: str, title: str = "Edit Code",
                   callback: Optional[Callable[[str], None]] = None,
                   use_external: bool = False,
-                  code_type: str = None,
+                  declaration_type: type[DeclarationT] | None = None,
                   code_data: dict = None) -> None:
         """
         Edit code using either Qt native editor or external program.
@@ -112,17 +119,23 @@ class SimpleCodeEditorService:
             title: Editor window title
             callback: Callback function called with edited content
             use_external: If True, use external editor; if False, use Qt native
-            code_type: Type of code being edited ('orchestrator', 'pipeline', 'function', None)
+            declaration_type: Nominal type of the declaration being edited.
             code_data: Data needed to regenerate code (for clean mode toggle)
         """
         if use_external:
             self._edit_with_external_program(initial_content, callback)
         else:
-            self._edit_with_qt_native(initial_content, title, callback, code_type, code_data)
+            self._edit_with_qt_native(
+                initial_content,
+                title,
+                callback,
+                declaration_type,
+                code_data,
+            )
     
     def _edit_with_qt_native(self, initial_content: str, title: str,
                            callback: Optional[Callable[[str], None]],
-                           code_type: str = None,
+                           declaration_type: type[DeclarationT] | None = None,
                            code_data: dict = None,
                            error_line: int = None) -> None:
         """Edit code using Qt native text editor dialog (QScintilla preferred)."""
@@ -131,7 +144,8 @@ class SimpleCodeEditorService:
                 logger.debug("Using QScintilla editor for code editing")
                 dialog = QScintillaCodeEditorDialog(self.parent, initial_content, title,
                                                    callback=callback,
-                                                   code_type=code_type, code_data=code_data,
+                                                   declaration_type=declaration_type,
+                                                   code_data=code_data,
                                                    initial_line=error_line)
             else:
                 logger.debug("QScintilla not available, using QTextEdit fallback")
@@ -143,7 +157,7 @@ class SimpleCodeEditorService:
                 dialog,
                 title=title,
                 callback=callback,
-                code_type=code_type,
+                declaration_type=declaration_type,
             )
             dialog.show()
             dialog.raise_()
@@ -159,10 +173,14 @@ class SimpleCodeEditorService:
         *,
         title: str,
         callback: Optional[Callable[[str], None]],
-        code_type: str = None,
+        declaration_type: type[DeclarationT] | None = None,
     ) -> None:
         """Expose the floating editor through WindowManager code-document APIs."""
-        scope_type = code_type or "code"
+        scope_type = (
+            "code"
+            if declaration_type is None
+            else f"{declaration_type.__module__}.{declaration_type.__qualname__}"
+        )
         scope_id = f"code_editor:{scope_type}:{id(dialog)}"
         WindowManager.register(
             scope_id,
@@ -171,6 +189,7 @@ class SimpleCodeEditorService:
                 dialog=dialog,
                 title=title,
                 callback=callback,
+                declaration_type=declaration_type,
             ),
         )
 
@@ -225,7 +244,7 @@ class SimpleCodeEditorService:
         QMessageBox.critical(self.parent, "Editor Error", message)
 
 
-class QScintillaCodeEditorDialog(QDialog):
+class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
     """
     Professional code editor dialog using QScintilla.
 
@@ -236,7 +255,8 @@ class QScintillaCodeEditorDialog(QDialog):
 
     def __init__(self, parent, initial_content: str, title: str,
                  callback: Optional[Callable[[str], None]] = None,
-                 code_type: str = None, code_data: dict = None, initial_line: int = None):
+                 declaration_type: type[DeclarationT] | None = None,
+                 code_data: dict = None, initial_line: int = None):
         """
         Initialize code editor dialog.
 
@@ -245,7 +265,7 @@ class QScintillaCodeEditorDialog(QDialog):
             initial_content: Initial code content
             title: Window title
             callback: Callback function called with edited content on successful save
-            code_type: Type of code being edited ('orchestrator', 'pipeline', 'function', None)
+            declaration_type: Nominal type of the declaration being edited.
             code_data: Data needed to regenerate code (for clean mode toggle)
             initial_line: Line number to position cursor at (1-based, None for start)
         """
@@ -256,11 +276,11 @@ class QScintillaCodeEditorDialog(QDialog):
 
         # Store callback and code generation context
         self.callback = callback
-        self.code_type = code_type
+        self.declaration_type = declaration_type
         self.code_data = code_data or {}
         self.clean_mode = self.code_data.get('clean_mode', True)  # Default to clean mode
         self.initial_line = initial_line
-        self.llm_panel: Optional['LLMChatPanel'] = None
+        self.llm_panel = None
         self.llm_panel_visible = False
 
         # Get color scheme from parent
@@ -315,7 +335,7 @@ class QScintillaCodeEditorDialog(QDialog):
         self.llm_panel = LLMChatPanel(
             parent=self,
             color_scheme=self.color_scheme,
-            code_type=self.code_type
+            declaration_type=self.declaration_type,
         )
         self.llm_panel.code_generated.connect(self._on_llm_code_generated)
         self.llm_panel.setVisible(False)
@@ -637,8 +657,6 @@ class QScintillaCodeEditorDialog(QDialog):
 
             # Create Jedi script with current code
             # Use project parameter to tell Jedi where to find project modules
-            import os
-
             # Use configured project roots for Jedi (defaults to cwd)
             from pyqt_reactive.protocols import get_form_config
             config = get_form_config()
@@ -652,7 +670,10 @@ class QScintillaCodeEditorDialog(QDialog):
             )
 
             script = jedi.Script(code, path='<editor>', project=project)
-            logger.info(f"  ✓ Created Jedi script with project root: {project_root}")
+            logger.info(
+                "  ✓ Created Jedi script with project root: %s",
+                project_paths[0],
+            )
 
             # Get completions at cursor position
             completions = script.complete(jedi_line, jedi_col)
@@ -661,7 +682,7 @@ class QScintillaCodeEditorDialog(QDialog):
             # If no completions, try to get more info about what Jedi sees
             if len(completions) == 0:
                 logger.info("  ⚠️  No completions - Jedi may not be able to resolve the module")
-                logger.info(f"  💡 Project root: {project_root}")
+                logger.info("  💡 Project root: %s", project_paths[0])
 
             if completions:
                 # Log first few completions for debugging
@@ -885,16 +906,7 @@ class QScintillaCodeEditorDialog(QDialog):
     def _toggle_clean_mode(self, checked):
         """Toggle between clean mode (minimal) and explicit mode (full)."""
         try:
-            # Parse current code to extract data
             current_code = self.editor.text()
-            namespace = {}
-            exec(current_code, namespace)
-
-            # Toggle clean mode
-            self.clean_mode = checked
-            self.code_data['clean_mode'] = self.clean_mode
-
-            # Auto-detect code type from namespace variables
             from pyqt_reactive.protocols import get_codegen_provider
             provider = get_codegen_provider()
             if provider is None:
@@ -903,62 +915,19 @@ class QScintillaCodeEditorDialog(QDialog):
                                   "No codegen provider registered. Call register_codegen_provider(...) in the host app.")
                 return
 
-            # Check what variables exist in the namespace to determine code type
-            if 'plate_paths' in namespace or 'pipeline_data' in namespace:
-                # Orchestrator code
-                plate_paths = namespace.get('plate_paths', [])
-                pipeline_data = namespace.get('pipeline_data', {})
-                global_config = namespace.get('global_config')
-                per_plate_configs = namespace.get('per_plate_configs')
-
-                new_code = provider.generate_complete_orchestrator_code(
-                    plate_paths=plate_paths,
-                    pipeline_data=pipeline_data,
-                    global_config=global_config,
-                    per_plate_configs=per_plate_configs,
-                    clean_mode=self.clean_mode
-                )
-            elif 'pipeline_steps' in namespace:
-                # Pipeline steps code
-                pipeline_steps = namespace.get('pipeline_steps', [])
-
-                new_code = provider.generate_complete_pipeline_steps_code(
-                    pipeline_steps=pipeline_steps,
-                    clean_mode=self.clean_mode
-                )
-            elif 'pattern' in namespace:
-                # Function pattern code (uses 'pattern' variable name)
-                pattern = namespace.get('pattern')
-
-                new_code = provider.generate_complete_function_pattern_code(
-                    func_obj=pattern,
-                    clean_mode=self.clean_mode
-                )
-            elif 'step' in namespace:
-                step_obj = namespace.get('step')
-
-                new_code = provider.generate_step_code(
-                    step_obj,
-                    clean_mode=self.clean_mode
-                )
-            elif 'config' in namespace:
-                # Config code - auto-detect config class from the object
-                config = namespace.get('config')
-                config_class = type(config)
-
-                new_code = provider.generate_config_code(
-                    config_obj=config,
-                    clean_mode=self.clean_mode,
-                    config_class=config_class,
-                )
-            else:
-                # Unsupported code type
+            if self.declaration_type is None:
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Clean Mode Toggle",
-                                  "Could not detect code type. Expected one of: plate_paths, pipeline_steps, step, pattern, or config variable.")
+                                  "This editor has no nominal declaration type.")
                 return
 
-            # Update editor with new code
+            new_code = provider.normalize_source(
+                current_code,
+                declaration_type=self.declaration_type,
+                clean_mode=checked,
+            )
+            self.clean_mode = checked
+            self.code_data['clean_mode'] = self.clean_mode
             self.editor.setText(new_code)
 
         except Exception as e:

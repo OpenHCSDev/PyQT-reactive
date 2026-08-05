@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 PYTHON_MIME_TYPE = "text/x-python"
+DeclarationT = TypeVar("DeclarationT")
 
 
 class WindowCodeDocumentError(RuntimeError):
@@ -14,15 +16,16 @@ class WindowCodeDocumentError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class WindowCodeDocument:
+class WindowCodeDocument(Generic[DeclarationT]):
     """Rendered code document owned by one managed window."""
 
     title: str
     source: str
     mime_type: str = PYTHON_MIME_TYPE
+    declaration_type: type[DeclarationT] | None = None
 
 
-class WindowCodeDocumentDriver(ABC):
+class WindowCodeDocumentDriver(ABC, Generic[DeclarationT]):
     """Read/apply code-mode content for one WindowManager scope."""
 
     def current_revision_token(self) -> str:
@@ -35,7 +38,7 @@ class WindowCodeDocumentDriver(ABC):
         return True
 
     @abstractmethod
-    def read_document(self, clean: bool = True) -> WindowCodeDocument:
+    def read_document(self, clean: bool = True) -> WindowCodeDocument[DeclarationT]:
         """Return the current code document."""
         raise NotImplementedError
 

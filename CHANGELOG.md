@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0rc1
+
+- Align the shared function table browser with typed endpoint catalog entries so
+  consumers can pass the authoritative projection directly without metadata adapters.
+- Replace string code-document kinds with the nominal declaration type already owned by
+  each editor and make declaration typing generic through the editor, LLM, and driver
+  protocols.
+- Collapse the code-generation provider onto assignment rendering and declaration-owned
+  source normalization; remove the obsolete parallel code-generator compatibility API.
+
 ## [0.1.30] - 2026-07-30
 
 ### Fixed

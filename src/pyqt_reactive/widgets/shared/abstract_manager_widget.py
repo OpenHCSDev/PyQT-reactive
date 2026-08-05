@@ -111,6 +111,7 @@ class AbstractManagerWidgetCodeDocumentDriver(WindowCodeDocumentDriver):
         return WindowCodeDocument(
             title=self._widget.code_document_title(),
             source=self._widget.code_document_source(clean=clean),
+            declaration_type=self._widget.CODE_EDITOR_PAYLOAD.declaration_type,
         )
 
     def validate_source(self, source: str) -> None:

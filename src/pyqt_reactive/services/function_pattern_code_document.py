@@ -331,8 +331,10 @@ class FunctionPatternCodeDocumentService:
                 "No codegen provider registered. "
                 "Call register_codegen_provider(...)."
             )
-        return provider.generate_complete_function_pattern_code(
+        return provider.render_assignment(
             pattern_data,
+            assignment_name=self.pattern_assignment_name,
+            header="# Edit this function pattern and save to apply changes",
             clean_mode=clean_mode,
         )
 
@@ -976,6 +978,7 @@ class FunctionPatternScopeCodeDocumentDriver(WindowCodeDocumentDriver):
                 clean_mode=clean,
             ),
             mime_type=PYTHON_MIME_TYPE,
+            declaration_type=FunctionPatternValue,
         )
 
     def validate_source(self, source: str) -> None:

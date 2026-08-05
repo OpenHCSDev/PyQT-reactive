@@ -1,6 +1,9 @@
 """LLM service protocol for pluggable code generation backends."""
 
-from typing import Protocol, Tuple, List, Optional
+from typing import List, Optional, Protocol, Tuple, TypeVar
+
+
+DeclarationT = TypeVar("DeclarationT")
 
 
 class LLMServiceProtocol(Protocol):
@@ -17,8 +20,16 @@ class LLMServiceProtocol(Protocol):
         """Return list of available model names."""
         ...
 
-    def generate_code(self, request: str, code_type: Optional[str] = None) -> str:
-        """Generate code for a request and optional code type."""
+    def get_system_prompt(self, declaration_type: type[DeclarationT]) -> str:
+        """Return the prompt for the nominal declaration being authored."""
+        ...
+
+    def generate_code(
+        self,
+        request: str,
+        declaration_type: type[DeclarationT],
+    ) -> str:
+        """Generate code for a nominal declaration type."""
         ...
 
 
@@ -34,4 +45,3 @@ def register_llm_service(service: LLMServiceProtocol) -> None:
 def get_llm_service() -> Optional[LLMServiceProtocol]:
     """Get the registered LLM service implementation."""
     return _llm_service
-

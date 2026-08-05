@@ -6,7 +6,6 @@ Used as the table portion of FunctionSelectorDialog.
 """
 
 from collections.abc import Sequence
-from enum import Enum
 from typing import ClassVar, Protocol, cast
 
 from pyqt_reactive.theming import ColorScheme
@@ -18,30 +17,25 @@ from pyqt_reactive.widgets.shared.abstract_table_browser import (
 
 
 class FunctionTableRow(Protocol):
-    """Structural contract for function metadata shown in the selector table."""
+    """Structural contract for one projected function-catalog entry."""
 
     name: str
     module: str
-    contract: object
-    tags: Sequence[str]
-    doc: str
-    display_name: str
-
-    def get_memory_type(self) -> str | None: ...
-
-    def get_registry_name(self) -> str: ...
+    library: str
+    backend_tags: Sequence[str]
+    summary: str | None
 
 
 def _function_tags(item: object) -> Sequence[str]:
     """Return the multivalued tag projection declared by the Tags column."""
-    return cast(FunctionTableRow, item).tags
+    return cast(FunctionTableRow, item).backend_tags
 
 
 class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
     """
     Table browser for function metadata.
 
-    Static columns: Name, Module, Backend, Registry, Contract, Tags, Description
+    Static columns: Name, Module, Library, Tags, Description
     Single-select mode.
     """
 
@@ -51,11 +45,15 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
     COLUMNS: ClassVar[tuple[ColumnDef, ...]] = (
         ColumnDef("Name", "name", 150),
         ColumnDef("Module", "module", MODULE_WIDTH),
-        ColumnDef("Backend", "backend", 80, filterable=True),
-        ColumnDef("Registry", "registry", 80, filterable=True),
-        ColumnDef("Contract", "contract", 100, filterable=True),
-        ColumnDef("Tags", "tags", 100, filterable=True, filter_values=_function_tags),
-        ColumnDef("Description", "doc", DESCRIPTION_WIDTH),
+        ColumnDef("Library", "library", 90, filterable=True),
+        ColumnDef(
+            "Tags",
+            "backend_tags",
+            120,
+            filterable=True,
+            filter_values=_function_tags,
+        ),
+        ColumnDef("Description", "summary", DESCRIPTION_WIDTH),
     )
 
     def __init__(self, color_scheme: ColorScheme | None = None, parent=None):
@@ -65,52 +63,34 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
             parent=parent,
         )
 
-    @staticmethod
-    def _contract_display_name(contract: object, *, unknown_label: str) -> str:
-        if contract is None:
-            return unknown_label
-        if isinstance(contract, Enum):
-            return contract.name
-        return str(contract)
-
     def get_columns(self) -> list[ColumnDef]:
         """Static column definitions for function table."""
         return list(self.COLUMNS)
 
     def extract_row_data(self, item: FunctionTableRow) -> list[str]:
         """Extract display values from function metadata."""
-        # Get contract name
-        contract_name = self._contract_display_name(item.contract, unknown_label="unknown")
-        memory_type = item.get_memory_type()
+        tags_str = ", ".join(item.backend_tags) if item.backend_tags else ""
 
-        # Format tags
-        tags_str = ", ".join(item.tags) if item.tags else ""
-
-        # Truncate description
-        description = item.doc[:150] + "..." if len(item.doc) > 150 else item.doc
+        summary = item.summary or ""
+        description = summary[:150] + "..." if len(summary) > 150 else summary
 
         return [
-            item.display_name,
+            item.name,
             item.module,
-            (memory_type or "").title(),
-            item.get_registry_name().title(),
-            contract_name,
+            item.library,
             tags_str,
             description,
         ]
 
     def get_searchable_text(self, item: FunctionTableRow) -> str:
         """Return searchable text for function metadata."""
-        contract_name = self._contract_display_name(item.contract, unknown_label="")
-
         return " ".join([
-            item.display_name,
             item.name,
             item.module,
-            contract_name,
-            " ".join(item.tags),
-            item.doc,
+            item.library,
+            " ".join(item.backend_tags),
+            item.summary or "",
         ])
 
     def get_search_placeholder(self) -> str:
-        return "Search functions by name, module, contract, or tags..."
+        return "Search functions by name, module, library, or tags..."

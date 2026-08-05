@@ -1,48 +1,33 @@
 """Code generation provider protocol for app-specific code emitters."""
 
-from typing import Protocol, Any, Optional
+from typing import Protocol, TypeVar
+
+
+DeclarationT = TypeVar("DeclarationT")
 
 
 class CodegenProvider(Protocol):
     """Protocol for code generators used by the simple code editor."""
 
-    def generate_complete_orchestrator_code(
+    def render_assignment(
         self,
-        plate_paths: list[str],
-        pipeline_data: dict,
-        global_config: Optional[Any] = None,
-        per_plate_configs: Optional[dict] = None,
-        clean_mode: bool = True,
-    ) -> str:
-        ...
+        value: object,
+        *,
+        assignment_name: str,
+        header: str,
+        clean_mode: bool,
+    ) -> str: ...
 
-    def generate_complete_pipeline_steps_code(
+    def normalize_source(
         self,
-        pipeline_steps: list[Any],
-        clean_mode: bool = True,
-    ) -> str:
-        ...
-
-    def generate_complete_function_pattern_code(
-        self,
-        func_obj: Any,
-        clean_mode: bool = False,
-    ) -> str:
-        ...
-
-    def generate_config_code(
-        self,
-        config_obj: Any,
-        clean_mode: bool = True,
-        config_class: Optional[type] = None,
-    ) -> str:
-        ...
-
-    def generate_step_code(self, step_obj: Any, clean_mode: bool = True) -> str:
-        ...
+        source: str,
+        *,
+        declaration_type: type[DeclarationT],
+        clean_mode: bool,
+    ) -> str: ...
 
 
-_codegen_provider: Optional[CodegenProvider] = None
+_codegen_provider: CodegenProvider | None = None
 
 
 def register_codegen_provider(provider: CodegenProvider) -> None:
@@ -51,6 +36,6 @@ def register_codegen_provider(provider: CodegenProvider) -> None:
     _codegen_provider = provider
 
 
-def get_codegen_provider() -> Optional[CodegenProvider]:
+def get_codegen_provider() -> CodegenProvider | None:
     """Get the registered code generation provider."""
     return _codegen_provider

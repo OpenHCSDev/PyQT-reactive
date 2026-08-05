@@ -8,21 +8,22 @@ import os
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, Optional, TypeAlias
+from typing import Any, Generic, Optional, TypeAlias, TypeVar
 
 logger = logging.getLogger(__name__)
 
 
 ManagerActionHandler: TypeAlias = Callable[[], None]
 ManagerDynamicActionHandler: TypeAlias = Callable[[], ManagerActionHandler]
+DeclarationT = TypeVar("DeclarationT")
 
 
 @dataclass(frozen=True)
-class CodeEditorPayload:
+class CodeEditorPayload(Generic[DeclarationT]):
     """Declarative payload for the manager code editor template."""
 
     content: str = ""
-    code_type: str = "python"
+    declaration_type: type[DeclarationT] | None = None
     title: str = "Code Editor"
     data: dict[str, Any] = field(default_factory=dict)
     missing_error_message: str = "No valid assignments found in edited code"
@@ -104,14 +105,17 @@ class ManagerActionController:
             code=payload.content,
             title=payload.title,
             callback=lambda edited_code: self.apply_edited_code(operations, edited_code),
-            code_type=payload.code_type,
+            declaration_type=payload.declaration_type,
             code_data=dict(payload.data),
         )
 
     def apply_edited_code(self, operations: ManagerActionOperations, code: str) -> None:
         payload = operations.code_payload
-        code_type = payload.code_type
-        logger.debug("%s code edited, processing changes...", code_type)
+        declaration_type = payload.declaration_type
+        declaration_name = (
+            "code" if declaration_type is None else declaration_type.__name__
+        )
+        logger.debug("%s code edited, processing changes...", declaration_name)
         try:
             namespace = self._execute_code_namespace(
                 operations,
@@ -130,7 +134,7 @@ class ManagerActionController:
             full_traceback = traceback.format_exc()
             logger.error(
                 "Failed to parse edited %s code: %s\nFull traceback:\n%s",
-                code_type,
+                declaration_name,
                 error,
                 full_traceback,
             )
@@ -195,7 +199,7 @@ class ManagerActionController:
         code: str,
         title: str,
         callback: Callable[[str], None],
-        code_type: str,
+        declaration_type: type[DeclarationT] | None,
         code_data: dict[str, Any],
     ) -> None:
         from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
@@ -212,6 +216,6 @@ class ManagerActionController:
             title=title,
             callback=callback,
             use_external=use_external,
-            code_type=code_type,
+            declaration_type=declaration_type,
             code_data=code_data,
         )

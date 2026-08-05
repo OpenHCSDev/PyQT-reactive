@@ -34,6 +34,7 @@ from pyqt_reactive.services.function_pattern_code_document import (
     FunctionPatternByKey,
     FunctionPatternCodeDocumentService,
     FunctionPatternList,
+    FunctionPatternValue,
     PatternTokens,
     TokenizedFunctionEntry,
 )
@@ -1188,13 +1189,13 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 "yes",
             )
 
-            # Launch editor with callback and code_type for clean mode toggle
+            # Launch editor with the authored nominal declaration type.
             editor_service.edit_code(
                 initial_content=python_code,
                 title="Edit Function Pattern",
                 callback=self._handle_edited_pattern,
                 use_external=use_external,
-                code_type="function",
+                declaration_type=FunctionPatternValue,
                 code_data={"pattern_data": self.pattern_data, "clean_mode": True},
             )
 

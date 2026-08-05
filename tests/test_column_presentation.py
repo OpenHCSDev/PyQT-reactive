@@ -181,21 +181,9 @@ def test_image_table_browser_acquires_dynamic_filters_from_column_declarations(
 class _FunctionRow:
     name: str
     module: str
-    backend: str
-    registry: str
-    contract: str
-    tags: tuple[str, ...]
-    doc: str
-
-    @property
-    def display_name(self) -> str:
-        return self.name
-
-    def get_memory_type(self) -> str:
-        return self.backend
-
-    def get_registry_name(self) -> str:
-        return self.registry
+    library: str
+    backend_tags: tuple[str, ...]
+    summary: str
 
 
 def test_function_table_browser_acquires_scalar_and_multivalue_filters(qapp) -> None:
@@ -205,18 +193,14 @@ def test_function_table_browser_acquires_scalar_and_multivalue_filters(qapp) -> 
             "core": _FunctionRow(
                 "core",
                 "pkg.core",
-                "cpu",
                 "core",
-                "FLEXIBLE",
                 ("segmentation", "shared"),
                 "Core function",
             ),
             "plugin": _FunctionRow(
                 "plugin",
                 "pkg.plugin",
-                "gpu",
                 "plugin",
-                "PURE_2D",
                 ("measurement", "shared"),
                 "Plugin function",
             ),
@@ -225,17 +209,15 @@ def test_function_table_browser_acquires_scalar_and_multivalue_filters(qapp) -> 
 
     panel = browser.column_filter_panel
     assert tuple(panel.column_filters) == (
-        "backend",
-        "registry",
-        "contract",
-        "tags",
+        "library",
+        "backend_tags",
     )
-    assert panel.column_filters["tags"].unique_values == [
+    assert panel.column_filters["backend_tags"].unique_values == [
         "measurement",
         "segmentation",
         "shared",
     ]
-    assert browser.set_column_filter_selection("tags", ("segmentation",))
+    assert browser.set_column_filter_selection("backend_tags", ("segmentation",))
     assert tuple(browser.filtered_items) == ("core",)
 
 

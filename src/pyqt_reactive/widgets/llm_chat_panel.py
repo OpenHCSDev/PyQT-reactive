@@ -7,7 +7,7 @@ Can be integrated into any code editor or dialog.
 
 import html
 import logging
-from typing import Optional
+from typing import Generic, Optional, TypeVar
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
@@ -23,8 +23,8 @@ from pyqt_reactive.core import BackgroundTaskManager
 from pyqt_reactive.widgets import StatusIndicator, StatusState
 from pyqt_reactive.core import RichTextAppender
 from pyqt_reactive.protocols import get_llm_service, register_llm_service, LLMServiceProtocol
-
 logger = logging.getLogger(__name__)
+DeclarationT = TypeVar("DeclarationT")
 
 
 class LLMStatusIndicator(StatusIndicator):
@@ -40,7 +40,7 @@ class LLMStatusIndicator(StatusIndicator):
         self._generate_button.setEnabled(state == StatusState.CONNECTED)
 
 
-class LLMChatPanel(QWidget):
+class LLMChatPanel(QWidget, Generic[DeclarationT]):
     """
     Chat panel for LLM-powered code generation.
 
@@ -54,14 +54,14 @@ class LLMChatPanel(QWidget):
         self,
         parent=None,
         color_scheme: Optional[ColorScheme] = None,
-        code_type: Optional[str] = None,
+        declaration_type: type[DeclarationT] | None = None,
         llm_service: Optional[LLMServiceProtocol] = None,
     ):
         super().__init__(parent)
 
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
-        self.code_type = code_type or "pipeline"
+        self.declaration_type = declaration_type
         self.llm_service = llm_service or get_llm_service()
 
         # State
@@ -80,10 +80,11 @@ class LLMChatPanel(QWidget):
         layout.setSpacing(5)
 
         # --- Header: Title + Status Indicator ---
-        context_name = {
-            'pipeline': 'Pipeline', 'step': 'Step', 'config': 'Config',
-            'function': 'Function', 'orchestrator': 'Orchestrator'
-        }.get(self.code_type, 'Code')
+        context_name = (
+            "Code"
+            if self.declaration_type is None
+            else self.declaration_type.__name__
+        )
 
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
@@ -212,7 +213,9 @@ class LLMChatPanel(QWidget):
         self.copy_prompt_button.clicked.connect(self._on_copy_prompt_clicked)
 
     def _on_copy_prompt_clicked(self):
-        prompt = self.llm_service.get_system_prompt(self.code_type).strip()
+        prompt = self.llm_service.get_system_prompt(
+            self._require_declaration_type()
+        ).strip()
         QApplication.clipboard().setText(prompt)
         self._chat_appender.append_success("System prompt copied to clipboard.")
 
@@ -231,7 +234,10 @@ class LLMChatPanel(QWidget):
         self.user_input.clear()
 
         self._generation_tasks.run(
-            target=lambda: self.llm_service.generate_code(request, self.code_type),
+            target=lambda: self.llm_service.generate_code(
+                request,
+                self._require_declaration_type(),
+            ),
             button=self.generate_button,
             button_loading_text="Generating...",
             on_success=self._on_generation_success,
@@ -246,6 +252,13 @@ class LLMChatPanel(QWidget):
 
     def _on_generation_error(self, error: Exception):
         self._chat_appender.append_error(str(error))
+
+    def _require_declaration_type(self) -> type[DeclarationT]:
+        if self.declaration_type is None:
+            raise TypeError(
+                "LLM generation requires the nominal declaration type being edited."
+            )
+        return self.declaration_type
 
     def _on_insert_clicked(self):
         if self._pending_code:
