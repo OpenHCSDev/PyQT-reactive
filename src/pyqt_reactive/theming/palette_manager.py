@@ -8,8 +8,11 @@ managing theme switching across the entire application.
 
 import logging
 from typing import Optional
+
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication
+
 from .color_scheme import ColorScheme
 from .splitter_grip_style import install_splitter_grip_style
 
@@ -196,6 +199,15 @@ class ThemeManager:
         self.color_scheme = color_scheme
         self.palette_manager.update_color_scheme(color_scheme)
         self.style_generator.update_color_scheme(color_scheme)
+
+        # Native file dialogs are painted by the host OS and bypass both the
+        # shared Qt palette and the application stylesheet.  Select Qt's
+        # inherited dialog implementation once at the application boundary so
+        # every QFileDialog caller receives the active theme automatically.
+        QApplication.setAttribute(
+            Qt.ApplicationAttribute.AA_DontUseNativeDialogs,
+            True,
+        )
         
         # Apply to application
         self.palette_manager.apply_palette_to_application()

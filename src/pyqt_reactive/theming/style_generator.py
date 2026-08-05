@@ -173,7 +173,15 @@ class StyleSheetGenerator:
     def generate_native_control_style(self) -> str:
         """Style OS-painted chrome without changing form-widget geometry."""
 
-        return self.generate_menu_style() + "\n" + self.generate_scrollbar_style()
+        return (
+            self.generate_dialog_color_style()
+            + "\n"
+            + self.generate_menu_style()
+            + "\n"
+            + self.generate_scrollbar_style()
+            + "\n"
+            + self.generate_tab_color_style()
+        )
 
     def generate_application_control_style(self) -> str:
         """Style application controls without restyling form containers."""
@@ -371,6 +379,47 @@ class StyleSheetGenerator:
             }}
         """
 
+    def generate_tab_color_style(self) -> str:
+        """Color native tab controls without changing their layout geometry."""
+
+        cs = self.color_scheme
+        inactive_tab_bg = cs.button_normal_bg
+        selected_tab_bg = cs.panel_bg
+        return f"""
+            QTabWidget::pane {{
+                background-color: {cs.to_hex(cs.panel_bg)};
+            }}
+            QTabBar {{
+                background-color: {cs.to_hex(cs.panel_bg)};
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+            QTabBar::tab {{
+                background-color: {cs.to_hex(inactive_tab_bg)};
+                color: {cs.to_hex(cs.text_secondary)};
+            }}
+            QTabBar::tab:selected {{
+                background-color: {cs.to_hex(selected_tab_bg)};
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+            QTabBar::tab:hover {{
+                background-color: {cs.to_hex(cs.button_hover_bg)};
+            }}
+        """
+
+    def generate_dialog_color_style(self) -> str:
+        """Color every Qt dialog without imposing per-dialog layout rules."""
+
+        cs = self.color_scheme
+        return f"""
+            QDialog, QMessageBox, QFileDialog {{
+                background-color: {cs.to_hex(cs.window_bg)};
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+            QDialog QLabel, QMessageBox QLabel, QFileDialog QLabel {{
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+        """
+
     def generate_tab_widget_style(self) -> str:
         """
         Generate QStyleSheet for tab widgets.
@@ -380,20 +429,12 @@ class StyleSheetGenerator:
         """
         cs = self.color_scheme
         layout = layout_constants.CURRENT_LAYOUT
-        # Use grey shades for tabs instead of blue selection color
-        # Lighter grey for inactive tabs, darker grey for selected tab
-        inactive_tab_bg = cs.button_normal_bg  # Lighter grey
-        selected_tab_bg = cs.panel_bg  # Darker grey (same as panel background)
-
-        return f"""
+        return self.generate_tab_color_style() + f"""
             QTabWidget::pane {{
                 border: 1px solid {cs.to_hex(cs.border_color)};
                 border-radius: {layout.widget_corner_radius}px;
-                background-color: {cs.to_hex(cs.panel_bg)};
             }}
             QTabBar::tab {{
-                background-color: {cs.to_hex(inactive_tab_bg)};
-                color: {cs.to_hex(cs.text_secondary)};
                 border: none;
                 border-top-left-radius: {layout.widget_corner_radius}px;
                 border-top-right-radius: {layout.widget_corner_radius}px;
@@ -401,13 +442,8 @@ class StyleSheetGenerator:
                 margin-right: 2px;
             }}
             QTabBar::tab:selected {{
-                background-color: {cs.to_hex(selected_tab_bg)};
-                color: {cs.to_hex(cs.text_primary)};
                 font-weight: bold;
                 border-bottom: 2px solid {cs.to_hex(cs.text_accent)};
-            }}
-            QTabBar::tab:hover {{
-                background-color: {cs.to_hex(cs.button_hover_bg)};
             }}
         """
     

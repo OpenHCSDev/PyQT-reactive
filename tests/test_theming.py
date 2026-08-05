@@ -4,6 +4,8 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
     QGroupBox,
     QLabel,
     QMenuBar,
@@ -11,9 +13,18 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollBar,
     QSplitter,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
+
+
+class _DerivedTabBar(QTabBar):
+    """Representative docking/log-viewer tab subclass."""
+
+
+class _DerivedDialog(QDialog):
+    """Representative application dialog subclass."""
 
 
 def test_color_scheme_creation():
@@ -46,6 +57,8 @@ def test_complete_application_style_owns_native_menu_and_scrollbar_colors():
     assert "QScrollBar:vertical, QScrollBar:horizontal" in stylesheet
     assert "QScrollBar::handle:vertical" in stylesheet
     assert "QScrollBar::handle:horizontal" in stylesheet
+    assert "QTabWidget::pane" in stylesheet
+    assert "QTabBar::tab" in stylesheet
     assert scheme.to_hex(scheme.panel_bg) in stylesheet
     assert scheme.to_hex(scheme.button_normal_bg) in stylesheet
 
@@ -185,7 +198,7 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
         assert "QPushButton {" in qapp.styleSheet()
         assert "border: none;" in qapp.styleSheet()
         assert "QGroupBox" not in qapp.styleSheet()
-        assert "QDialog" not in qapp.styleSheet()
+        assert "QDialog, QMessageBox, QFileDialog" in qapp.styleSheet()
         assert "margin:" not in qapp.styleSheet()
         assert "min-height:" not in qapp.styleSheet()
         assert "min-width:" not in qapp.styleSheet()
@@ -198,6 +211,93 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
         assert scheme.to_hex(scheme.panel_bg) in rendered_colors
     finally:
         menu_bar.close()
+        qapp.setStyleSheet(original_stylesheet)
+        qapp.setPalette(original_palette)
+
+
+def test_theme_manager_renders_tab_bar_from_color_scheme(qapp):
+    """Application tabs inherit the shared theme instead of OS white defaults."""
+
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
+
+    original_palette = QPalette(qapp.palette())
+    original_stylesheet = qapp.styleSheet()
+    tab_bar = _DerivedTabBar()
+    try:
+        scheme = ColorScheme()
+        theme_manager = ThemeManager(scheme)
+        theme_manager.apply_color_scheme(scheme)
+        tab_bar.addTab("First")
+        tab_bar.addTab("Second")
+        tab_bar.setCurrentIndex(0)
+        tab_bar.resize(240, 32)
+        tab_bar.show()
+        qapp.processEvents()
+
+        stylesheet = theme_manager.get_native_control_style_sheet()
+        assert "QTabBar::tab" in stylesheet
+        assert scheme.to_hex(scheme.panel_bg) in stylesheet
+        assert scheme.to_hex(scheme.button_normal_bg) in stylesheet
+
+        image = tab_bar.grab().toImage()
+        rendered_colors = {
+            image.pixelColor(x, y).name()
+            for x in range(image.width())
+            for y in range(image.height())
+        }
+        assert scheme.to_hex(scheme.panel_bg) in rendered_colors
+        assert scheme.to_hex(scheme.button_normal_bg) in rendered_colors
+    finally:
+        tab_bar.close()
+        qapp.setStyleSheet(original_stylesheet)
+        qapp.setPalette(original_palette)
+
+
+def test_theme_manager_selects_inherited_qt_file_dialogs(qapp):
+    """The shared theme prevents native dialogs from bypassing application QSS."""
+
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
+
+    attribute = Qt.ApplicationAttribute.AA_DontUseNativeDialogs
+    original_value = QApplication.testAttribute(attribute)
+    try:
+        QApplication.setAttribute(attribute, False)
+        scheme = ColorScheme()
+        ThemeManager(scheme).apply_color_scheme(scheme)
+
+        assert QApplication.testAttribute(attribute)
+    finally:
+        QApplication.setAttribute(attribute, original_value)
+
+
+def test_theme_manager_renders_all_dialog_subclasses_from_shared_colors(qapp):
+    """Application, message, and file dialogs share one inherited color rule."""
+
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
+
+    original_palette = QPalette(qapp.palette())
+    original_stylesheet = qapp.styleSheet()
+    dialogs = (_DerivedDialog(), QMessageBox())
+    try:
+        scheme = ColorScheme()
+        ThemeManager(scheme).apply_color_scheme(scheme)
+        for dialog in dialogs:
+            dialog.resize(240, 120)
+            dialog.show()
+        qapp.processEvents()
+
+        expected_background = scheme.to_hex(scheme.window_bg)
+        assert "QFileDialog" in qapp.styleSheet()
+        for dialog in dialogs:
+            rendered_colors = {
+                dialog.grab().toImage().pixelColor(x, y).name()
+                for x in range(dialog.width())
+                for y in range(dialog.height())
+            }
+            assert expected_background in rendered_colors
+    finally:
+        for dialog in dialogs:
+            dialog.close()
         qapp.setStyleSheet(original_stylesheet)
         qapp.setPalette(original_palette)
 
