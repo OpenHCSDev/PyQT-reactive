@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0rc1
+## 0.2.0
 
 - Align the shared function table browser with typed endpoint catalog entries so
   consumers can pass the authoritative projection directly without metadata adapters.
