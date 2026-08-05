@@ -1,7 +1,6 @@
 """LLM service protocol for pluggable code generation backends."""
 
-from typing import List, Optional, Protocol, Tuple, TypeVar
-
+from typing import Protocol, TypeVar
 
 DeclarationT = TypeVar("DeclarationT")
 
@@ -10,13 +9,13 @@ class LLMServiceProtocol(Protocol):
     """Protocol for LLM services used by LLMChatPanel."""
 
     api_endpoint: str
-    model: Optional[str]
+    model: str | None
 
-    def test_connection(self) -> Tuple[bool, str]:
+    def test_connection(self) -> tuple[bool, str]:
         """Return (is_connected, status_message)."""
         ...
 
-    def _get_available_models(self) -> List[str]:
+    def _get_available_models(self) -> list[str]:
         """Return list of available model names."""
         ...
 
@@ -33,7 +32,7 @@ class LLMServiceProtocol(Protocol):
         ...
 
 
-_llm_service: Optional[LLMServiceProtocol] = None
+_llm_service: LLMServiceProtocol | None = None
 
 
 def register_llm_service(service: LLMServiceProtocol) -> None:
@@ -42,6 +41,6 @@ def register_llm_service(service: LLMServiceProtocol) -> None:
     _llm_service = service
 
 
-def get_llm_service() -> Optional[LLMServiceProtocol]:
+def get_llm_service() -> LLMServiceProtocol | None:
     """Get the registered LLM service implementation."""
     return _llm_service

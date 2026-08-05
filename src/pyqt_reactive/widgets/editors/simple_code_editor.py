@@ -7,16 +7,26 @@ No threading complications - keeps it simple and direct.
 
 import hashlib
 import logging
-import tempfile
 import os
 import subprocess
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Generic, Optional, TypeVar
+from typing import Generic, TypeVar
 
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout,
-                             QMessageBox, QMenuBar, QFileDialog, QSplitter)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QAction, QKeySequence
+from PyQt6.QtGui import QAction, QFont, QKeySequence
+from PyQt6.QtWidgets import (
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QMenuBar,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QTextEdit,
+    QVBoxLayout,
+)
 
 from pyqt_reactive.services.window_code_document import (
     PYTHON_MIME_TYPE,
@@ -50,7 +60,7 @@ class SimpleCodeEditorWindowCodeDocumentDriver(
         *,
         dialog: QDialog,
         title: str,
-        callback: Optional[Callable[[str], None]],
+        callback: Callable[[str], None] | None,
         declaration_type: type[DeclarationT] | None,
     ) -> None:
         self._dialog = dialog
@@ -107,7 +117,7 @@ class SimpleCodeEditorService(Generic[DeclarationT]):
         self.parent = parent_widget
 
     def edit_code(self, initial_content: str, title: str = "Edit Code",
-                  callback: Optional[Callable[[str], None]] = None,
+                  callback: Callable[[str], None] | None = None,
                   use_external: bool = False,
                   declaration_type: type[DeclarationT] | None = None,
                   code_data: dict = None) -> None:
@@ -134,7 +144,7 @@ class SimpleCodeEditorService(Generic[DeclarationT]):
             )
     
     def _edit_with_qt_native(self, initial_content: str, title: str,
-                           callback: Optional[Callable[[str], None]],
+                           callback: Callable[[str], None] | None,
                            declaration_type: type[DeclarationT] | None = None,
                            code_data: dict = None,
                            error_line: int = None) -> None:
@@ -172,7 +182,7 @@ class SimpleCodeEditorService(Generic[DeclarationT]):
         dialog: QDialog,
         *,
         title: str,
-        callback: Optional[Callable[[str], None]],
+        callback: Callable[[str], None] | None,
         declaration_type: type[DeclarationT] | None = None,
     ) -> None:
         """Expose the floating editor through WindowManager code-document APIs."""
@@ -200,7 +210,7 @@ class SimpleCodeEditorService(Generic[DeclarationT]):
         dialog.destroyed.connect(lambda _obj=None: unregister())
     
     def _edit_with_external_program(self, initial_content: str,
-                                  callback: Optional[Callable[[str], None]]) -> None:
+                                  callback: Callable[[str], None] | None) -> None:
         """Edit code using external program (vim, nano, vscode, etc.)."""
         try:
             # Create temporary file
@@ -254,7 +264,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
     """
 
     def __init__(self, parent, initial_content: str, title: str,
-                 callback: Optional[Callable[[str], None]] = None,
+                 callback: Callable[[str], None] | None = None,
                  declaration_type: type[DeclarationT] | None = None,
                  code_data: dict = None, initial_line: int = None):
         """
@@ -1008,7 +1018,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             # Keep dialog open - user can fix the error or click Cancel
             # Do NOT call self.accept() or self.reject() here
 
-    def _extract_error_line(self, exception: Exception) -> Optional[int]:
+    def _extract_error_line(self, exception: Exception) -> int | None:
         """Extract line number from exception if available."""
         # For SyntaxError, use lineno attribute
         if isinstance(exception, SyntaxError) and hasattr(exception, 'lineno'):

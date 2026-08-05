@@ -2,7 +2,6 @@
 
 from typing import Protocol, TypeVar
 
-
 DeclarationT = TypeVar("DeclarationT")
 
 
