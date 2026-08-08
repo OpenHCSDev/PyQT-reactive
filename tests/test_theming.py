@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pyqt_reactive.theming import ColorScheme
+
 
 class _DerivedTabBar(QTabBar):
     """Representative docking/log-viewer tab subclass."""
@@ -79,7 +81,7 @@ def test_theme_manager_renders_both_scrollbar_orientations_from_color_scheme(
     size,
 ):
     """Both native scrollbar orientations render with the declared dark colors."""
-    from pyqt_reactive.theming import ColorScheme, ThemeManager
+    from pyqt_reactive.theming import ThemeManager
 
     original_palette = QPalette(qapp.palette())
     original_stylesheet = qapp.styleSheet()
@@ -222,10 +224,17 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
         qapp.setPalette(original_palette)
 
 
-def test_theme_manager_colors_native_form_controls_without_geometry_rules(qapp):
+@pytest.mark.parametrize(
+    "scheme_factory",
+    (ColorScheme, ColorScheme.create_light_theme),
+)
+def test_theme_manager_colors_native_form_controls_without_geometry_rules(
+    qapp,
+    scheme_factory,
+):
     """Windows-sensitive inputs use theme colors without shared layout QSS."""
 
-    from pyqt_reactive.theming import ColorScheme, ThemeManager
+    from pyqt_reactive.theming import ThemeManager
 
     original_palette = QPalette(qapp.palette())
     original_stylesheet = qapp.styleSheet()
@@ -233,7 +242,7 @@ def test_theme_manager_colors_native_form_controls_without_geometry_rules(qapp):
     progress = QProgressBar()
     checkbox = QCheckBox("Enabled")
     try:
-        scheme = ColorScheme()
+        scheme = scheme_factory()
         manager = ThemeManager(scheme)
         manager.apply_color_scheme(scheme)
         combo.addItems(["First", "Second"])
@@ -261,7 +270,8 @@ def test_theme_manager_colors_native_form_controls_without_geometry_rules(qapp):
             for x in range(checkbox.width())
             for y in range(checkbox.height())
         }
-        assert scheme.to_hex(scheme.selection_bg) in checkbox_colors
+        assert scheme.to_hex(scheme.button_normal_bg) in checkbox_colors
+        assert scheme.to_hex(scheme.selection_bg) not in checkbox_colors
     finally:
         combo.close()
         progress.close()

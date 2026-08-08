@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
@@ -22,12 +20,12 @@ class ApplicationControlStyle(QProxyStyle):
     _DOT_OFFSETS = (-6, -3, 0, 3, 6)
     _DOT_DIAMETER = 2
 
-    def drawPrimitive(
+    def drawPrimitive(  # noqa: N802 - Qt virtual method name
         self,
         element: QStyle.PrimitiveElement,
         option: QStyleOption,
         painter: QPainter,
-        widget: Optional[QWidget] = None,
+        widget: QWidget | None = None,
     ) -> None:
         """Paint check-box indicators from the active application palette."""
 
@@ -53,7 +51,7 @@ class ApplicationControlStyle(QProxyStyle):
             palette.color(
                 group,
                 (
-                    QPalette.ColorRole.Highlight
+                    QPalette.ColorRole.Button
                     if checked or partially_checked
                     else QPalette.ColorRole.Base
                 ),
@@ -63,7 +61,7 @@ class ApplicationControlStyle(QProxyStyle):
 
         if checked:
             check_pen = QPen(
-                palette.color(group, QPalette.ColorRole.HighlightedText),
+                palette.color(group, QPalette.ColorRole.ButtonText),
                 max(1.5, indicator.width() / 8),
             )
             check_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -85,17 +83,17 @@ class ApplicationControlStyle(QProxyStyle):
         elif partially_checked:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(
-                palette.color(group, QPalette.ColorRole.HighlightedText)
+                palette.color(group, QPalette.ColorRole.ButtonText)
             )
             painter.drawRect(indicator.adjusted(3, 3, -3, -3))
         painter.restore()
 
-    def drawControl(
+    def drawControl(  # noqa: N802 - Qt virtual method name
         self,
         element: QStyle.ControlElement,
         option: QStyleOption,
         painter: QPainter,
-        widget: Optional[QWidget] = None,
+        widget: QWidget | None = None,
     ) -> None:
         """Paint the native control, then overlay the palette-owned grip dots."""
 
