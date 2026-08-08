@@ -18,7 +18,6 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont
 
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.core import BackgroundTaskManager
 from pyqt_reactive.widgets import StatusIndicator, StatusState
 from pyqt_reactive.core import RichTextAppender
@@ -60,7 +59,6 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
         super().__init__(parent)
 
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.declaration_type = declaration_type
         self.llm_service = llm_service or get_llm_service()
 
@@ -97,7 +95,9 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
 
         # Generate button (created early so StatusIndicator can reference it)
         self.generate_button = QPushButton("Generate")
-        self.generate_button.setStyleSheet(self.style_generator.generate_button_style())
+        self.generate_button.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         self.generate_button.setMinimumHeight(28)
         self.generate_button.setEnabled(False)  # Disabled until connection confirmed
 
@@ -114,14 +114,18 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
         self.copy_prompt_button = QPushButton("Copy Prompt")
         self.copy_prompt_button.setFixedHeight(24)
         self.copy_prompt_button.setToolTip("Copy the runtime system prompt to clipboard")
-        self.copy_prompt_button.setStyleSheet(self.style_generator.generate_button_style())
+        self.copy_prompt_button.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         header_layout.addWidget(self.copy_prompt_button)
 
         # Settings button (gear icon)
         self.settings_button = QPushButton("⚙")
         self.settings_button.setFixedSize(24, 24)
         self.settings_button.setToolTip("Configure LLM endpoint")
-        self.settings_button.setStyleSheet(self.style_generator.generate_button_style())
+        self.settings_button.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         header_layout.addWidget(self.settings_button)
 
         layout.addLayout(header_layout)
@@ -150,11 +154,15 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
         action_layout.setSpacing(8)
 
         self.insert_button = QPushButton("Insert into Editor")
-        self.insert_button.setStyleSheet(self.style_generator.generate_button_style())
+        self.insert_button.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         action_layout.addWidget(self.insert_button)
 
         self.regenerate_button = QPushButton("Regenerate")
-        self.regenerate_button.setStyleSheet(self.style_generator.generate_button_style())
+        self.regenerate_button.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         action_layout.addWidget(self.regenerate_button)
 
         action_layout.addStretch()
@@ -191,7 +199,9 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
         button_layout.addWidget(self.generate_button)
 
         self.clear_button = QPushButton("Clear")
-        self.clear_button.setStyleSheet(self.style_generator.generate_button_style())
+        self.clear_button.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         self.clear_button.setMinimumHeight(28)
         button_layout.addWidget(self.clear_button)
 

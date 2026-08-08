@@ -7,11 +7,27 @@ Used by log viewer to distinguish logs from running vs terminated processes.
 
 import logging
 import re
-from pathlib import Path
-from typing import Iterable, Set, Optional
 from dataclasses import dataclass
+from enum import Enum
+from importlib.util import find_spec
+from pathlib import Path
+from typing import Iterable, Optional, Set
+
+from pyqt_reactive.core.log_utils import LogFileInfo
 
 logger = logging.getLogger(__name__)
+
+
+class ProcessLiveness(Enum):
+    """PID-reuse-safe liveness and its log-view presentation."""
+
+    RUNNING = ("Running", "🟢")
+    TERMINATED = ("Terminated", "⚫")
+    UNKNOWN = ("Unknown", "❓")
+
+    def __init__(self, label: str, icon: str) -> None:
+        self.label = label
+        self.icon = icon
 
 
 @dataclass
@@ -34,14 +50,10 @@ class ProcessTracker:
         """Initialize process tracker."""
         self.alive_pids: Set[int] = set()
         self.process_info: dict[int, ProcessInfo] = {}
-        self._psutil_available = False
-        
-        # Check if psutil is available
-        try:
-            import psutil
-            self._psutil_available = True
+        self._psutil_available = find_spec("psutil") is not None
+        if self._psutil_available:
             logger.debug("ProcessTracker initialized with psutil support")
-        except ImportError:
+        else:
             logger.warning("psutil not available - process tracking disabled")
     
     def update(self, target_pids: Iterable[int] | None = None) -> bool:
@@ -118,6 +130,24 @@ class ProcessTracker:
         if pid is None or not self._psutil_available:
             return False
         return pid in self.alive_pids
+
+    def log_liveness(self, log_info: LogFileInfo) -> ProcessLiveness:
+        """Resolve liveness from declared identity, falling back to file PID."""
+
+        if log_info.process_identity is not None:
+            return (
+                ProcessLiveness.RUNNING
+                if log_info.process_identity.is_alive()
+                else ProcessLiveness.TERMINATED
+            )
+        pid = extract_pid_from_log_filename(log_info.path)
+        if pid is None or not self._psutil_available:
+            return ProcessLiveness.UNKNOWN
+        if not self.is_alive(pid):
+            return ProcessLiveness.TERMINATED
+        # A live PID alone cannot prove that an old log belongs to the current
+        # process occupying that PID. Only a declared ProcessIdentity can.
+        return ProcessLiveness.UNKNOWN
     
     def get_process_info(self, pid: int) -> Optional[ProcessInfo]:
         """
@@ -141,9 +171,7 @@ class ProcessTracker:
         Returns:
             str: Status icon (🟢 alive, ⚫ dead, ❓ unknown)
         """
-        if pid is None or not self._psutil_available:
-            return "❓"
-        return "🟢" if self.is_alive(pid) else "⚫"
+        return self.pid_liveness(pid).icon
     
     def get_status_text(self, pid: Optional[int]) -> str:
         """
@@ -155,9 +183,16 @@ class ProcessTracker:
         Returns:
             str: Status text ("Running", "Terminated", "Unknown")
         """
+        return self.pid_liveness(pid).label
+
+    def pid_liveness(self, pid: Optional[int]) -> ProcessLiveness:
+        """Resolve best-effort liveness when only a PID is available."""
+
         if pid is None or not self._psutil_available:
-            return "Unknown"
-        return "Running" if self.is_alive(pid) else "Terminated"
+            return ProcessLiveness.UNKNOWN
+        if self.is_alive(pid):
+            return ProcessLiveness.RUNNING
+        return ProcessLiveness.TERMINATED
 
 
 def extract_pid_from_log_filename(log_path: Path) -> Optional[int]:
@@ -196,40 +231,52 @@ def extract_pid_from_log_filename(log_path: Path) -> Optional[int]:
     return None
 
 
-def get_log_display_name(log_path: Path, process_tracker: ProcessTracker) -> str:
+def get_log_display_name(
+    log_info: LogFileInfo,
+    process_tracker: ProcessTracker,
+) -> str:
     """
     Get display name for log file with process status indicator.
     
     Args:
-        log_path: Path to log file
+        log_info: Classified log and optional authoritative process identity
         process_tracker: ProcessTracker instance
         
     Returns:
         str: Display name with status icon (e.g., "🟢 worker_12345.log")
     """
-    pid = extract_pid_from_log_filename(log_path)
-    icon = process_tracker.get_status_icon(pid)
-    return f"{icon} {log_path.name}"
+    liveness = process_tracker.log_liveness(log_info)
+    return f"{liveness.icon} {log_info.display_name or log_info.path.name}"
 
 
-def get_log_tooltip(log_path: Path, process_tracker: ProcessTracker) -> str:
+def get_log_tooltip(
+    log_info: LogFileInfo,
+    process_tracker: ProcessTracker,
+) -> str:
     """
     Get tooltip text for log file with process information.
     
     Args:
-        log_path: Path to log file
+        log_info: Classified log and optional authoritative process identity
         process_tracker: ProcessTracker instance
         
     Returns:
         str: Tooltip text with process status and info
     """
-    pid = extract_pid_from_log_filename(log_path)
+    identity = log_info.process_identity
+    pid = (
+        identity.pid
+        if identity is not None
+        else extract_pid_from_log_filename(log_info.path)
+    )
     
     if pid is None:
-        return f"Log file: {log_path.name}\nProcess: Unknown"
+        return f"Log file: {log_info.path.name}\nProcess: Unknown"
     
-    status = process_tracker.get_status_text(pid)
-    tooltip = f"Log file: {log_path.name}\nPID: {pid}\nStatus: {status}"
+    liveness = process_tracker.log_liveness(log_info)
+    tooltip = (
+        f"Log file: {log_info.path.name}\nPID: {pid}\nStatus: {liveness.label}"
+    )
     
     # Add additional process info if available
     proc_info = process_tracker.get_process_info(pid)

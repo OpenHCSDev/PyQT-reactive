@@ -13,13 +13,15 @@ Example:
     # Create panel
     panel = ButtonPanel(
         button_configs=self.BUTTON_CONFIGS,
-        style_generator=self.style_generator,
+        color_scheme=self.color_scheme,
         on_action=self.handle_button_action
     )
 """
 
 from typing import List, Tuple, Callable, Optional
 from PyQt6.QtWidgets import QWidget, QGridLayout, QPushButton
+
+from pyqt_reactive.theming import ColorScheme
 
 
 class ButtonPanel(QWidget):
@@ -33,7 +35,7 @@ class ButtonPanel(QWidget):
         self,
         button_configs: List[Tuple[str, str, str]],
         on_action: Callable[[str], None],
-        style_generator=None,
+        color_scheme: ColorScheme | None = None,
         grid_columns: int = 0,
         parent: Optional[QWidget] = None
     ):
@@ -42,7 +44,7 @@ class ButtonPanel(QWidget):
         Args:
             button_configs: List of (label, action_id, tooltip) tuples
             on_action: Callback function(action_id) when button is clicked
-            style_generator: Optional style generator for button styling
+            color_scheme: Optional color authority for button styling
             grid_columns: Number of columns (0 = single row)
             parent: Parent widget
         """
@@ -50,7 +52,7 @@ class ButtonPanel(QWidget):
         
         self.button_configs = button_configs
         self.on_action = on_action
-        self.style_generator = style_generator
+        self.color_scheme = color_scheme
         self.grid_columns = grid_columns
         self.buttons: dict = {}
         
@@ -66,8 +68,10 @@ class ButtonPanel(QWidget):
             button = QPushButton(label)
             button.setToolTip(tooltip)
             
-            if self.style_generator:
-                button.setStyleSheet(self.style_generator.generate_button_style())
+            if self.color_scheme is not None:
+                button.setStyleSheet(
+                    self.color_scheme.styles.generate_button_style()
+                )
             
             button.clicked.connect(lambda checked, a=action_id: self.on_action(a))
             self.add_button(action_id, button)

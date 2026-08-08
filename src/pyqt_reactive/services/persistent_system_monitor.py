@@ -7,17 +7,17 @@ and provides smooth, responsive performance monitoring.
 """
 
 import logging
-from collections import deque
-import time
 
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker, Qt
 
 from pyqt_reactive.services.system_metrics_sampler import (
     SystemMetrics,
     SystemMetricsSampler,
-    SystemMetricsSamplerConfig,
 )
-from pyqt_reactive.services.system_monitor_core import SystemMetricsHistory
+from pyqt_reactive.services.system_monitor_core import (
+    SystemMetricsHistory,
+    SystemMonitorCore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class PersistentSystemMonitorThread(QThread):
         update_interval: float = 1.0,
         history_length: int = 60,
         *,
-        sampler_config: SystemMetricsSamplerConfig | None = None,
+        sampler: SystemMetricsSampler,
     ):
         """
         Initialize the persistent monitor thread.
@@ -52,29 +52,12 @@ class PersistentSystemMonitorThread(QThread):
         super().__init__()
         
         self.update_interval = update_interval
-        self.history_length = history_length
         self._stop_requested = False
-        self.sampler_config = sampler_config or SystemMetricsSamplerConfig()
-        self._sampler = SystemMetricsSampler(self.sampler_config)
+        self._sampler = sampler
         
         # Thread-safe data storage
         self._mutex = QMutex()
-        self.cpu_history = deque(maxlen=history_length)
-        self.ram_history = deque(maxlen=history_length)
-        self.gpu_history = deque(maxlen=history_length)
-        self.vram_history = deque(maxlen=history_length)
-        self.time_stamps = deque(maxlen=history_length)
-        
-        # Initialize with zeros
-        for _ in range(history_length):
-            self.cpu_history.append(0)
-            self.ram_history.append(0)
-            self.gpu_history.append(0)
-            self.vram_history.append(0)
-            self.time_stamps.append(0)
-        
-        # Cache for current metrics
-        self._current_metrics = SystemMetrics()
+        self._history = SystemMonitorCore(history_length=history_length)
     
     def run(self):
         """Main thread loop - continuously collect metrics."""
@@ -87,14 +70,7 @@ class PersistentSystemMonitorThread(QThread):
 
                 # Update history with thread safety
                 with QMutexLocker(self._mutex):
-                    self.cpu_history.append(metrics.cpu_percent)
-                    self.ram_history.append(metrics.ram_percent)
-                    self.gpu_history.append(metrics.gpu_percent)
-                    self.vram_history.append(metrics.vram_percent)
-                    self.time_stamps.append(time.time())
-
-                    # Cache current metrics
-                    self._current_metrics = metrics
+                    self._history.record_metrics(metrics)
 
                 # Emit signal with new metrics
                 self.metrics_updated.emit(metrics)
@@ -137,18 +113,12 @@ class PersistentSystemMonitorThread(QThread):
     def get_current_metrics(self) -> SystemMetrics:
         """Get the current cached metrics (thread-safe)."""
         with QMutexLocker(self._mutex):
-            return self._current_metrics
+            return self._history.get_metrics()
 
     def get_history_data(self) -> SystemMetricsHistory:
         """Get historical data (thread-safe)."""
         with QMutexLocker(self._mutex):
-            return SystemMetricsHistory(
-                cpu=tuple(self.cpu_history),
-                ram=tuple(self.ram_history),
-                gpu=tuple(self.gpu_history),
-                vram=tuple(self.vram_history),
-                timestamps=tuple(self.time_stamps),
-            )
+            return self._history.get_history_data()
     
     def set_update_interval(self, interval: float):
         """Set the update interval in seconds."""
@@ -165,23 +135,15 @@ class PersistentSystemMonitor:
     
     def __init__(
         self,
-        update_interval: float = 1.0,
-        history_length: int = 60,
-        *,
-        sampler_config: SystemMetricsSamplerConfig | None = None,
+        thread: PersistentSystemMonitorThread,
     ):
         """
         Initialize the persistent system monitor.
 
         Args:
-            update_interval: Time between updates in seconds
-            history_length: Number of historical data points to keep
+            thread: Configured execution thread owned by this lifecycle wrapper.
         """
-        self.thread = PersistentSystemMonitorThread(
-            update_interval,
-            history_length,
-            sampler_config=sampler_config,
-        )
+        self.thread = thread
         self._is_running = False
 
     def __del__(self):

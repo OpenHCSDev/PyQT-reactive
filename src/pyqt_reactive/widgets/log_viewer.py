@@ -9,40 +9,68 @@ for native desktop integration.
 import logging
 import re
 from collections import deque
-from typing import Optional, List, Set, Tuple
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QComboBox,
-    QListView, QToolBar, QLineEdit, QCheckBox, QPushButton, QDialog,
-    QStyledItemDelegate, QAbstractItemView, QApplication, QStyleOptionViewItem,
-    QStyle, QPlainTextEdit,
-)
-from PyQt6.QtGui import QSyntaxHighlighter, QTextDocument
+from pygments.token import Token
 from PyQt6.QtCore import (
-    QObject, QTimer, QFileSystemWatcher, pyqtSignal, pyqtSlot,
-    Qt, QRegularExpression, QThread, QAbstractListModel, QModelIndex, QSize,
-    QThreadPool, QRunnable, QPoint, QPointF,
+    QAbstractListModel,
+    QFileSystemWatcher,
+    QModelIndex,
+    QObject,
+    QPoint,
+    QPointF,
+    QRegularExpression,
+    QRunnable,
+    QSignalBlocker,
+    QSize,
+    Qt,
+    QThread,
+    QThreadPool,
+    QTimer,
+    pyqtSignal,
+    pyqtSlot,
 )
-from PyQt6.QtGui import QTextCharFormat, QColor, QAction, QFont, QTextCursor, QPalette, QAbstractTextDocumentLayout, QKeySequence, QFontMetrics
+from PyQt6.QtGui import (
+    QAbstractTextDocumentLayout,
+    QAction,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QKeySequence,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextCursor,
+    QTextDocument,
+)
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QHBoxLayout,
+    QLineEdit,
+    QListView,
+    QMainWindow,
+    QPushButton,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
 
-from pyqt_reactive.core.log_utils import LogFileInfo
+from pyqt_reactive.core.log_utils import LogFileInfo, LogType
 from pyqt_reactive.protocols import get_log_discovery_provider, get_server_scan_provider
 from pyqt_reactive.services.process_tracker import (
-    ProcessTracker, extract_pid_from_log_filename, get_log_display_name, get_log_tooltip
+    ProcessLiveness,
+    ProcessTracker,
+    extract_pid_from_log_filename,
+    get_log_display_name,
+    get_log_tooltip,
 )
-
-# Import Pygments for advanced syntax highlighting
-from pygments import highlight
-from pygments.lexers import PythonLexer, get_lexer_by_name
-from pygments.formatters import get_formatter_by_name
-from pygments.token import Token
-from pygments.style import Style
-from pygments.styles import get_style_by_name
-from dataclasses import dataclass
-from typing import Dict, Tuple
-
-from pyqt_reactive.utils.log_highlight_client import LogHighlightClient, HighlightedSegmentDTO
+from pyqt_reactive.utils.log_highlight_client import LogHighlightClient
 from pyqt_reactive.utils.log_highlighter import build_log_line_html
 
 logger = logging.getLogger(__name__)
@@ -1348,9 +1376,6 @@ class LogListView(QListView):
             return str(text)[minPos:maxPos]
         else:
             # Multi-line selection
-            minRow = min(startRow, endRow)
-            maxRow = max(startRow, endRow)
-
             # Determine if we're selecting forward or backward
             if startRow < endRow or (startRow == endRow and self._selection_start_pos < self._selection_end_pos):
                 # Forward selection
@@ -1544,7 +1569,7 @@ class LogFileDetector(QObject):
         except Exception as e:
             logger.debug(f"Provider classification failed for {file_path}: {e}")
 
-        return LogFileInfo(path=file_path, log_type="unknown")
+        return LogFileInfo(path=file_path, log_type=LogType.UNKNOWN)
 
 
 
@@ -1569,7 +1594,11 @@ class LogFileDetector(QObject):
             if file_path.exists():
                 try:
                     log_info = self._classify_log_path(file_path)
-                    logger.info(f"New relevant log file detected: {file_path} (type: {log_info.log_type})")
+                    logger.info(
+                        "New relevant log file detected: %s (type: %s)",
+                        file_path,
+                        log_info.log_type.value,
+                    )
                     self.new_log_detected.emit(log_info)
                 except Exception as e:
                     logger.error(f"Error classifying new log file {file_path}: {e}")
@@ -2169,7 +2198,7 @@ class LogViewerWindow(QMainWindow):
         except Exception as e:
             logger.debug(f"Provider classification failed for {file_path}: {e}")
 
-        return LogFileInfo(path=file_path, log_type="unknown")
+        return LogFileInfo(path=file_path, log_type=LogType.UNKNOWN)
 
     def initialize_logs(self) -> None:
         """Initialize with main log only, then scan for subprocess logs in background."""
@@ -2261,12 +2290,20 @@ class LogViewerWindow(QMainWindow):
             return
 
         # Add server logs to master list (avoid duplicates by path)
-        existing_paths = {log.path for log in self._all_discovered_logs}
+        existing_indices = {
+            log.path: index
+            for index, log in enumerate(self._all_discovered_logs)
+        }
         new_logs_added = 0
         for server_log in server_logs:
-            if server_log.path not in existing_paths:
+            existing_index = existing_indices.get(server_log.path)
+            if existing_index is None:
                 self._all_discovered_logs.append(server_log)
                 new_logs_added += 1
+            else:
+                # A heartbeat carries the process owner's PID-reuse-safe
+                # identity. Replace any earlier filename-only projection.
+                self._all_discovered_logs[existing_index] = server_log
 
         # Repopulate dropdown from master list
         self.populate_log_dropdown(self._all_discovered_logs)
@@ -2325,7 +2362,12 @@ class LogViewerWindow(QMainWindow):
             log_files: List of LogFileInfo objects to add to dropdown
         """
         self._update_tracked_processes(log_files)
-        self.log_selector.clear()
+        selected_path = self.current_log_path
+        current_index = self.log_selector.currentIndex()
+        if selected_path is None and current_index >= 0:
+            current = self.log_selector.itemData(current_index)
+            if current is not None:
+                selected_path = current.path
 
         # Sort logs: TUI first, main subprocess, then workers by timestamp
         sorted_logs = sorted(log_files, key=self._log_sort_key)
@@ -2337,14 +2379,24 @@ class LogViewerWindow(QMainWindow):
                 if self._is_log_from_alive_process(log_info)
             ]
 
-        for log_info in sorted_logs:
-            # Add process status indicator to display name
-            display_name = get_log_display_name(log_info.path, self.process_tracker)
-            tooltip = get_log_tooltip(log_info.path, self.process_tracker)
+        with QSignalBlocker(self.log_selector):
+            self.log_selector.clear()
+            selected_index = -1
+            for log_info in sorted_logs:
+                display_name = get_log_display_name(log_info, self.process_tracker)
+                tooltip = get_log_tooltip(log_info, self.process_tracker)
 
-            self.log_selector.addItem(display_name, log_info)
-            # Set tooltip for the item
-            self.log_selector.setItemData(self.log_selector.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole)
+                self.log_selector.addItem(display_name, log_info)
+                item_index = self.log_selector.count() - 1
+                self.log_selector.setItemData(
+                    item_index,
+                    tooltip,
+                    Qt.ItemDataRole.ToolTipRole,
+                )
+                if selected_path is not None and log_info.path == selected_path:
+                    selected_index = item_index
+            if selected_index >= 0:
+                self.log_selector.setCurrentIndex(selected_index)
 
         logger.debug(f"Populated dropdown with {len(sorted_logs)} log files (filtered: {self.show_alive_only})")
 
@@ -2358,31 +2410,25 @@ class LogViewerWindow(QMainWindow):
         Returns:
             tuple: Sort key (priority, timestamp)
         """
-        # Priority: TUI=0, main=1, worker=2, unknown=3
-        priority_map = {"tui": 0, "main": 1, "worker": 2, "unknown": 3}
-        priority = priority_map.get(log_info.log_type, 3)
-
         # Use file modification time as secondary sort
         try:
             timestamp = log_info.path.stat().st_mtime
         except (OSError, AttributeError):
             timestamp = 0
 
-        return (priority, -timestamp)  # Negative timestamp for newest first
+        return (
+            log_info.log_type.sort_priority,
+            -timestamp,
+        )  # Negative timestamp for newest first
 
     def clear_subprocess_logs(self) -> None:
         """Remove all non-TUI logs from dropdown and switch to TUI log."""
-        import traceback
-        logger.error(f"🔥 DEBUG: clear_subprocess_logs called! Stack trace:")
-        for line in traceback.format_stack():
-            logger.error(f"🔥 DEBUG: {line.strip()}")
-
         current_logs = []
 
         # Collect TUI logs only
         for i in range(self.log_selector.count()):
             log_info = self.log_selector.itemData(i)
-            if log_info and log_info.log_type == "tui":
+            if log_info and log_info.log_type.retained_on_clear:
                 current_logs.append(log_info)
 
         # Repopulate with TUI logs only
@@ -2432,6 +2478,20 @@ class LogViewerWindow(QMainWindow):
             log_path: Path to log file to display
         """
         try:
+            log_path = Path(log_path)
+            if not any(
+                log_info.path == log_path
+                for log_info in self._all_discovered_logs
+            ):
+                self._all_discovered_logs.append(self._classify_log_path(log_path))
+                self.populate_log_dropdown(self._all_discovered_logs)
+            with QSignalBlocker(self.log_selector):
+                for index in range(self.log_selector.count()):
+                    log_info = self.log_selector.itemData(index)
+                    if log_info is not None and log_info.path == log_path:
+                        self.log_selector.setCurrentIndex(index)
+                        break
+
             # Stop current tailing
             self.stop_log_tailing()
 
@@ -2931,8 +2991,16 @@ class LogViewerWindow(QMainWindow):
     def _tracked_log_pids(self, log_files: Optional[List[LogFileInfo]] = None) -> set[int]:
         """Return PIDs represented by the current discovered log list."""
         pids = set()
-        for log_info in (log_files if log_files is not None else self._all_discovered_logs):
-            pid = extract_pid_from_log_filename(log_info.path)
+        tracked_logs = (
+            log_files if log_files is not None else self._all_discovered_logs
+        )
+        for log_info in tracked_logs:
+            identity = log_info.process_identity
+            pid = (
+                identity.pid
+                if identity is not None
+                else extract_pid_from_log_filename(log_info.path)
+            )
             if pid is not None:
                 pids.add(pid)
         return pids
@@ -2950,28 +3018,8 @@ class LogViewerWindow(QMainWindow):
         # Refresh dropdown to update status indicators
         # Only if we have logs loaded
         if self.log_selector.count() > 0:
-            # Remember current selection
-            current_index = self.log_selector.currentIndex()
-            current_log_info = self.log_selector.itemData(current_index) if current_index >= 0 else None
-
-            # Temporarily disconnect signal to avoid triggering reload
-            self.log_selector.currentIndexChanged.disconnect(self.on_log_selection_changed)
-
-            try:
-                # Repopulate from master list with updated status indicators
-                self.populate_log_dropdown(self._all_discovered_logs)
-
-                # Restore selection if possible
-                if current_log_info:
-                    # Find the same log in the new dropdown
-                    for i in range(self.log_selector.count()):
-                        log_info = self.log_selector.itemData(i)
-                        if log_info and log_info.path == current_log_info.path:
-                            self.log_selector.setCurrentIndex(i)
-                            break
-            finally:
-                # Reconnect signal
-                self.log_selector.currentIndexChanged.connect(self.on_log_selection_changed)
+            # Repopulation blocks the selector signal and restores this exact path.
+            self.populate_log_dropdown(self._all_discovered_logs)
 
     def _get_process_start_time(self) -> float:
         """
@@ -2981,8 +3029,9 @@ class LogViewerWindow(QMainWindow):
             float: Process start time as Unix timestamp
         """
         try:
-            import psutil
             import os
+
+            import psutil
             process = psutil.Process(os.getpid())
             return process.create_time()
         except Exception as e:
@@ -3018,13 +3067,12 @@ class LogViewerWindow(QMainWindow):
             log_info: LogFileInfo to check
 
         Returns:
-            bool: True if process is alive or unknown, False if terminated
+            bool: True only when the log's process is confirmed alive
         """
-        pid = extract_pid_from_log_filename(log_info.path)
-        if pid is None:
-            # No PID found - assume it's a main log (always show)
-            return True
-        return self.process_tracker.is_alive(pid)
+        return (
+            self.process_tracker.log_liveness(log_info)
+            is ProcessLiveness.RUNNING
+        )
 
     def on_filter_changed(self, state: int) -> None:
         """

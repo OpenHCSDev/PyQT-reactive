@@ -26,9 +26,7 @@ from pyqt_reactive.widgets.shared.manager_workflows import (
 )
 
 
-from PyQt6.QtWidgets import (
-    QWidget, QPushButton, QListWidgetItem, QLabel
-)
+from PyQt6.QtWidgets import QWidget, QPushButton, QListWidgetItem
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 
 from pyqt_reactive.core import ReorderableListWidget
@@ -42,7 +40,6 @@ from objectstate import DottedFieldPath, ObjectStateRegistry, patch_lazy_constru
 from pyqt_reactive.widgets.mixins import (
     CrossWindowPreviewMixin,
 )
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.strategies import (
     FormattingConfig,
     DefaultPreviewFormattingStrategy,
@@ -135,16 +132,12 @@ class ManagerUiLifecycleMixin:
             owner=self,
             title=self.TITLE,
             color_scheme=self.color_scheme,
-            style_generator=self.style_generator,
             enable_status_scrolling=self.ENABLE_STATUS_SCROLLING,
             button_configs=self.BUTTON_CONFIGS,
             on_action=self.handle_button_action,
             button_grid_columns=self.BUTTON_GRID_COLUMNS,
         )
         self.manager_header = ui_parts.manager_header
-        self.title_layout = ui_parts.title_layout
-        self.status_label = ui_parts.status_label
-        self._status_scroll = ui_parts.status_scroll
         self.item_list = ui_parts.item_list
         self.button_panel = ui_parts.button_panel
         self.buttons = self.button_panel.buttons
@@ -178,8 +171,7 @@ class ManagerUiLifecycleMixin:
         self._status_controller.update(
             message=message,
             context=self,
-            status_label=self.status_label,
-            status_scroll=self._status_scroll,
+            manager_header=self.manager_header,
         )
 
     def resizeEvent(self, event) -> None:
@@ -187,8 +179,7 @@ class ManagerUiLifecycleMixin:
         super().resizeEvent(event)
         self._status_controller.recalculate_after_resize(
             context=self,
-            status_label=self.status_label,
-            status_scroll=self._status_scroll,
+            manager_header=self.manager_header,
         )
 
     def _find_main_window(self):
@@ -665,7 +656,6 @@ class AbstractManagerWidget(
         # Core dependencies (REQUIRED)
         self.service_adapter = service_adapter
         self.color_scheme = color_scheme
-        self.style_generator = StyleSheetGenerator(self.color_scheme)  # Create internally
         self.event_bus = service_adapter.get_event_bus()
         self.code_execution_workflow: ManagerCodeExecutionWorkflow = (
             NullManagerCodeExecutionWorkflow()
@@ -674,12 +664,8 @@ class AbstractManagerWidget(
 
         # UI components (created in setup_ui)
         self.buttons: Dict[str, QPushButton] = {}
-        self.status_label: Optional[QLabel] = None
         self.manager_header = None
         self.item_list: Optional[ReorderableListWidget] = None
-
-        # Status widgets are created in setup_ui.
-        self._status_scroll: Optional[QWidget] = None  # QScrollArea when scrolling enabled
 
         # Live context resolver for config attribute resolution
         self._live_context_resolver = LiveContextResolver()

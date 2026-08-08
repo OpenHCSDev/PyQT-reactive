@@ -14,7 +14,6 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QIcon
 
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
     ReflowingVerticalScrollArea,
 )
@@ -111,8 +110,9 @@ class TabbedFormWidget(QWidget):
 
         # Apply styling if color_scheme provided
         if self.config.color_scheme:
-            style_gen = StyleSheetGenerator(self.config.color_scheme)
-            self.tab_widget.setStyleSheet(style_gen.generate_tab_widget_style())
+            self.tab_widget.setStyleSheet(
+                self.config.color_scheme.styles.generate_tab_widget_style()
+            )
 
         # Create tabs
         for tab_config in self.config.tabs:

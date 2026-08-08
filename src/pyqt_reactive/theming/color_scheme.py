@@ -8,9 +8,14 @@ JSON configuration, and WCAG accessibility compliance.
 
 import logging
 from dataclasses import dataclass
-from typing import Tuple, Dict
+from functools import cached_property
 from pathlib import Path
+from typing import TYPE_CHECKING, Dict, Self, Tuple
+
 from PyQt6.QtGui import QColor
+
+if TYPE_CHECKING:
+    from .style_generator import StyleSheetGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +139,14 @@ class ColorScheme:
     single_quoted_string_color: Tuple[int, int, int] = (206, 145, 120) # Orange - 'string'
     list_comprehension_color: Tuple[int, int, int] = (156, 220, 254)  # Light blue - [x for x in y]
     generator_expression_color: Tuple[int, int, int] = (156, 220, 254) # Light blue - (x for x in y)
+
+    @cached_property
+    def styles(self) -> "StyleSheetGenerator":
+        """Return the stylesheet projection owned by this color declaration."""
+
+        from .style_generator import StyleSheetGenerator
+
+        return StyleSheetGenerator(self)
     
     def to_qcolor(self, color_tuple: Tuple[int, int, int]) -> QColor:
         """
@@ -173,7 +186,7 @@ class ColorScheme:
         return f"#{r:02x}{g:02x}{b:02x}"
 
     @classmethod
-    def create_dark_theme(cls) -> 'PyQt6ColorScheme':
+    def create_dark_theme(cls) -> Self:
         """
         Create a dark theme variant with adjusted colors for dark backgrounds.
 
@@ -197,7 +210,7 @@ class ColorScheme:
         )
 
     @classmethod
-    def create_light_theme(cls) -> 'PyQt6ColorScheme':
+    def create_light_theme(cls) -> Self:
         """
         Create a light theme variant with adjusted colors for light backgrounds.
 
@@ -280,7 +293,7 @@ class ColorScheme:
         )
 
     @classmethod
-    def load_color_scheme_from_config(cls, config_path: str = None) -> 'PyQt6ColorScheme':
+    def load_color_scheme_from_config(cls, config_path: str = None) -> Self:
         """
         Load color scheme from external configuration file.
 

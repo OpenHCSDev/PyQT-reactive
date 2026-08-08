@@ -7,6 +7,7 @@ semantic color scheme references.
 """
 
 import logging
+from collections.abc import Callable
 from enum import Enum
 
 from PyQt6.QtGui import QColor
@@ -21,10 +22,21 @@ logger = logging.getLogger(__name__)
 class StatusColorRole(Enum):
     """Closed status color roles supported by the theme."""
 
-    SUCCESS = "success"
-    WARNING = "warning"
-    ERROR = "error"
-    INFO = "info"
+    def __new__(
+        cls,
+        value: str,
+        color_resolver: Callable[[ColorScheme], tuple[int, int, int]],
+    ) -> "StatusColorRole":
+        member = object.__new__(cls)
+        member._value_ = value
+        member._color_resolver = color_resolver
+        return member
+
+    SUCCESS = ("success", lambda color_scheme: color_scheme.status_success)
+    WARNING = ("warning", lambda color_scheme: color_scheme.status_warning)
+    ERROR = ("error", lambda color_scheme: color_scheme.status_error)
+    INFO = ("info", lambda color_scheme: color_scheme.status_info)
+    UNKNOWN = ("unknown", lambda color_scheme: color_scheme.text_secondary)
 
     @classmethod
     def from_name(cls, status_type: str) -> "StatusColorRole":
@@ -37,13 +49,10 @@ class StatusColorRole(Enum):
                 f"available roles: {available}."
             ) from exc
 
+    def color_hex(self, color_scheme: ColorScheme) -> str:
+        """Resolve this role through its member-owned color selection leaf."""
 
-STATUS_COLOR_SELECTOR_BY_ROLE = {
-    StatusColorRole.SUCCESS: lambda color_scheme: color_scheme.status_success,
-    StatusColorRole.WARNING: lambda color_scheme: color_scheme.status_warning,
-    StatusColorRole.ERROR: lambda color_scheme: color_scheme.status_error,
-    StatusColorRole.INFO: lambda color_scheme: color_scheme.status_info,
-}
+        return color_scheme.to_hex(self._color_resolver(color_scheme))
 
 
 class StyleSheetGenerator:
@@ -189,8 +198,46 @@ class StyleSheetGenerator:
         return (
             self.generate_native_control_style()
             + "\n"
+            + self.generate_native_form_control_color_style()
+            + "\n"
             + self.generate_button_style()
         )
+
+    def generate_native_form_control_color_style(self) -> str:
+        """Color OS-sensitive form controls without changing their geometry."""
+
+        cs = self.color_scheme
+        return f"""
+            QToolTip {{
+                background-color: {cs.to_hex(cs.panel_bg)};
+                color: {cs.to_hex(cs.text_primary)};
+                border: 1px solid {cs.to_hex(cs.border_color)};
+            }}
+            QComboBox {{
+                background-color: {cs.to_hex(cs.input_bg)};
+                color: {cs.to_hex(cs.input_text)};
+            }}
+            QComboBox::drop-down {{
+                background-color: {cs.to_hex(cs.button_normal_bg)};
+                border-color: {cs.to_hex(cs.input_border)};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {cs.to_hex(cs.input_bg)};
+                color: {cs.to_hex(cs.input_text)};
+                selection-background-color: {cs.to_hex(cs.selection_bg)};
+                selection-color: {cs.to_hex(cs.selection_text)};
+            }}
+            QProgressBar {{
+                background-color: {cs.to_hex(cs.progress_bg)};
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+            QProgressBar::chunk {{
+                background-color: {cs.to_hex(cs.progress_fill)};
+            }}
+            QCheckBox {{
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+        """
 
     def generate_tree_widget_style(self) -> str:
         """
@@ -791,5 +838,4 @@ class StyleSheetGenerator:
             str: Hex color string for the status type
         """
         role = StatusColorRole.from_name(status_type)
-        color = STATUS_COLOR_SELECTOR_BY_ROLE[role](self.color_scheme)
-        return self.color_scheme.to_hex(color)
+        return role.color_hex(self.color_scheme)

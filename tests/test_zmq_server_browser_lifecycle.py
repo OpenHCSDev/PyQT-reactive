@@ -2,7 +2,7 @@
 
 from PyQt6.QtCore import QCoreApplication, QEvent
 
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.services.zmq_server_scan_service import ZMQServerScanService
 from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
     KillOperationKind,
@@ -63,7 +63,7 @@ def test_scan_completion_is_suppressed_after_cleanup(qapp, monkeypatch) -> None:
     browser = _Browser(
         ports_to_scan=[5000],
         title="Servers",
-        style_generator=StyleSheetGenerator(ColorScheme()),
+        color_scheme=ColorScheme(),
         scan_service=_ScanService(),
     )
     completions = []
@@ -96,7 +96,7 @@ def test_scan_completion_is_suppressed_after_qt_destroys_browser(
     browser = _Browser(
         ports_to_scan=[5000],
         title="Servers",
-        style_generator=StyleSheetGenerator(ColorScheme()),
+        color_scheme=ColorScheme(),
         scan_service=_ScanService(),
     )
     completions = []
@@ -121,7 +121,7 @@ def test_browser_owns_periodic_timers(qapp) -> None:
     browser = _Browser(
         ports_to_scan=[5000],
         title="Servers",
-        style_generator=StyleSheetGenerator(ColorScheme()),
+        color_scheme=ColorScheme(),
         scan_service=_ScanService(),
     )
 
@@ -145,7 +145,7 @@ def test_kill_completion_is_suppressed_after_cleanup(qapp, monkeypatch) -> None:
     browser = _Browser(
         ports_to_scan=[5000],
         title="Servers",
-        style_generator=StyleSheetGenerator(ColorScheme()),
+        color_scheme=ColorScheme(),
         scan_service=_ScanService(),
     )
     completions = []

@@ -51,10 +51,6 @@ class ManagerWidgetUiParts:
     """Widgets created for a standard manager list UI."""
 
     manager_header: ManagerHeaderParts
-    header: QWidget
-    title_layout: ResponsiveGroupBoxTitle
-    status_label: QLabel
-    status_scroll: QScrollArea | None
     item_list: ReorderableListWidget
     button_panel: ButtonPanel
 
@@ -146,12 +142,11 @@ def create_manager_header(
 def create_manager_list_widget(
     *,
     color_scheme,
-    style_generator,
     delegate_manager,
 ) -> ReorderableListWidget:
     """Create a styled manager list widget with the multiline preview delegate."""
     list_widget = ReorderableListWidget()
-    list_widget.setStyleSheet(style_generator.generate_list_widget_style())
+    list_widget.setStyleSheet(color_scheme.styles.generate_list_widget_style())
 
     delegate = MultilinePreviewItemDelegate(
         name_color=color_scheme.to_qcolor(color_scheme.text_primary),
@@ -169,7 +164,6 @@ def setup_manager_widget_ui(
     owner: QWidget,
     title: str,
     color_scheme,
-    style_generator,
     enable_status_scrolling: bool,
     button_configs,
     on_action,
@@ -183,13 +177,12 @@ def setup_manager_widget_ui(
     )
     item_list = create_manager_list_widget(
         color_scheme=color_scheme,
-        style_generator=style_generator,
         delegate_manager=owner,
     )
     button_panel = ButtonPanel(
         button_configs=button_configs,
         on_action=on_action,
-        style_generator=style_generator,
+        color_scheme=color_scheme,
         grid_columns=button_grid_columns,
         parent=owner,
     )
@@ -201,10 +194,6 @@ def setup_manager_widget_ui(
     )
     return ManagerWidgetUiParts(
         manager_header=header_parts,
-        header=header_parts.header,
-        title_layout=header_parts.title_layout,
-        status_label=header_parts.status_label,
-        status_scroll=header_parts.status_scroll,
         item_list=item_list,
         button_panel=button_panel,
     )

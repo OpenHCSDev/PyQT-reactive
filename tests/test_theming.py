@@ -5,11 +5,14 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QComboBox,
     QDialog,
     QGroupBox,
     QLabel,
     QMenuBar,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollBar,
     QSplitter,
@@ -47,10 +50,10 @@ def test_palette_manager(qapp):
 
 def test_complete_application_style_owns_native_menu_and_scrollbar_colors():
     """The application theme, rather than individual widgets, owns native chrome."""
-    from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+    from pyqt_reactive.theming import ColorScheme
 
     scheme = ColorScheme()
-    stylesheet = StyleSheetGenerator(scheme).generate_complete_application_style()
+    stylesheet = scheme.styles.generate_complete_application_style()
 
     assert "QMenuBar {" in stylesheet
     assert "QMenu {" in stylesheet
@@ -152,7 +155,7 @@ def test_splitter_grip_style_is_application_owned_and_idempotent(qapp):
     """Repeated theme application reuses one proxy and preserves application QSS."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
     from pyqt_reactive.theming.splitter_grip_style import (
-        install_splitter_grip_style,
+        install_application_control_style,
     )
 
     original_palette = QPalette(qapp.palette())
@@ -161,12 +164,12 @@ def test_splitter_grip_style_is_application_owned_and_idempotent(qapp):
         scheme = ColorScheme()
         manager = ThemeManager(scheme)
         manager.apply_color_scheme(scheme)
-        installed = install_splitter_grip_style(qapp)
+        installed = install_application_control_style(qapp)
         application_stylesheet = qapp.styleSheet()
 
         manager.apply_color_scheme(scheme)
 
-        assert install_splitter_grip_style(qapp) is installed
+        assert install_application_control_style(qapp) is installed
         assert qapp.styleSheet() == application_stylesheet
         assert application_stylesheet == manager.get_application_control_style_sheet()
     finally:
@@ -199,6 +202,10 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
         assert "border: none;" in qapp.styleSheet()
         assert "QGroupBox" not in qapp.styleSheet()
         assert "QDialog, QMessageBox, QFileDialog" in qapp.styleSheet()
+        assert "QToolTip {" in qapp.styleSheet()
+        assert "QComboBox QAbstractItemView" in qapp.styleSheet()
+        assert "QProgressBar::chunk" in qapp.styleSheet()
+        assert "QCheckBox {" in qapp.styleSheet()
         assert "margin:" not in qapp.styleSheet()
         assert "min-height:" not in qapp.styleSheet()
         assert "min-width:" not in qapp.styleSheet()
@@ -211,6 +218,54 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
         assert scheme.to_hex(scheme.panel_bg) in rendered_colors
     finally:
         menu_bar.close()
+        qapp.setStyleSheet(original_stylesheet)
+        qapp.setPalette(original_palette)
+
+
+def test_theme_manager_colors_native_form_controls_without_geometry_rules(qapp):
+    """Windows-sensitive inputs use theme colors without shared layout QSS."""
+
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
+
+    original_palette = QPalette(qapp.palette())
+    original_stylesheet = qapp.styleSheet()
+    combo = QComboBox()
+    progress = QProgressBar()
+    checkbox = QCheckBox("Enabled")
+    try:
+        scheme = ColorScheme()
+        manager = ThemeManager(scheme)
+        manager.apply_color_scheme(scheme)
+        combo.addItems(["First", "Second"])
+        progress.setRange(0, 100)
+        progress.setValue(50)
+        checkbox.setChecked(True)
+        for widget in (combo, progress, checkbox):
+            widget.resize(180, 30)
+            widget.show()
+        qapp.processEvents()
+
+        stylesheet = manager.get_application_control_style_sheet()
+        assert scheme.to_hex(scheme.input_bg) in stylesheet
+        assert scheme.to_hex(scheme.progress_bg) in stylesheet
+        assert scheme.to_hex(scheme.progress_fill) in stylesheet
+        native_form_style = (
+            manager.color_scheme.styles.generate_native_form_control_color_style()
+        )
+        assert "padding:" not in native_form_style
+        assert "min-height:" not in stylesheet
+        assert "min-width:" not in stylesheet
+
+        checkbox_colors = {
+            checkbox.grab().toImage().pixelColor(x, y).name()
+            for x in range(checkbox.width())
+            for y in range(checkbox.height())
+        }
+        assert scheme.to_hex(scheme.selection_bg) in checkbox_colors
+    finally:
+        combo.close()
+        progress.close()
+        checkbox.close()
         qapp.setStyleSheet(original_stylesheet)
         qapp.setPalette(original_palette)
 
@@ -344,7 +399,7 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(qapp, monkeypatch
     """The code editor must not restore its former outlined button mirror."""
     from types import SimpleNamespace
 
-    from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator, ThemeManager
+    from pyqt_reactive.theming import ColorScheme, ThemeManager
     from pyqt_reactive.widgets import llm_chat_panel
     from pyqt_reactive.widgets.editors.simple_code_editor import (
         QSCINTILLA_AVAILABLE,
@@ -369,7 +424,7 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(qapp, monkeypatch
         dialog.show()
         qapp.processEvents()
 
-        shared_button_style = StyleSheetGenerator(scheme).generate_button_style()
+        shared_button_style = scheme.styles.generate_button_style()
         assert shared_button_style in dialog.styleSheet()
         former_outline = (
             f"border: 1px solid {scheme.to_hex(scheme.border_light)}"

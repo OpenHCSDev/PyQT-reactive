@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pyqt_reactive.forms.layout_constants import COMPACT_LAYOUT
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
     ColumnDef,
     ColumnPresentation,
@@ -286,7 +286,6 @@ class ColumnFilterWidget(QFrame):
         self.unique_values = sorted(unique_values)  # Sort for consistent display
         self.checkboxes: Dict[str, QCheckBox] = {}
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_gen = StyleSheetGenerator(self.color_scheme)
 
         # Apply frame styling
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
@@ -328,14 +327,18 @@ class ColumnFilterWidget(QFrame):
         select_all_btn = QPushButton("All")
         select_all_btn.setMaximumWidth(35)
         select_all_btn.setMaximumHeight(20)
-        select_all_btn.setStyleSheet(self.style_gen.generate_button_style())
+        select_all_btn.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         select_all_btn.clicked.connect(self.select_all)
         header_layout.addWidget(select_all_btn)
 
         select_none_btn = QPushButton("None")
         select_none_btn.setMaximumWidth(35)
         select_none_btn.setMaximumHeight(20)
-        select_none_btn.setStyleSheet(self.style_gen.generate_button_style())
+        select_none_btn.setStyleSheet(
+            self.color_scheme.styles.generate_button_style()
+        )
         select_none_btn.clicked.connect(self.select_none)
         header_layout.addWidget(select_none_btn)
 
@@ -484,7 +487,6 @@ class MultiColumnFilterPanel(QWidget):
         self.column_filters: Dict[str, ColumnFilterWidget] = {}
         self._retained_selections: Dict[str, tuple[frozenset[str], bool]] = {}
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_gen = StyleSheetGenerator(self.color_scheme)
         self.column_presentation = column_presentation or ColumnPresentationState(
             parent=self
         )
@@ -514,7 +516,7 @@ class MultiColumnFilterPanel(QWidget):
             self,
         )
         self.presentation_control.setStyleSheet(
-            self.style_gen.generate_button_style()
+            self.color_scheme.styles.generate_button_style()
         )
         settings_layout.addWidget(self.presentation_control)
         self.hidden_active_label = QLabel(self)

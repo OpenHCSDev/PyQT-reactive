@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pyqt_reactive.services.search_service import SearchService
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 
 T = TypeVar('T')
 
@@ -213,7 +213,6 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         super().__init__(parent)
 
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_gen = StyleSheetGenerator(self.color_scheme)
         self._selection_mode = selection_mode
         self.column_presentation = column_presentation or ColumnPresentationState(
             parent=self
@@ -287,7 +286,9 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         layout.addWidget(self.content_splitter, 1)
         
         # Apply styling
-        self.table_widget.setStyleSheet(self.style_gen.generate_table_widget_style())
+        self.table_widget.setStyleSheet(
+            self.color_scheme.styles.generate_table_widget_style()
+        )
 
     @property
     def column_filter_context_widget(self) -> QWidget | None:

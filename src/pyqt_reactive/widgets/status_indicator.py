@@ -1,50 +1,52 @@
 """Reusable status indicator widget with colored dot, label, and refresh button."""
 
+from abc import ABCMeta
+from collections.abc import Callable
 from enum import Enum
-from typing import Optional, Callable, Tuple
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
+from functools import partialmethod
+
 from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from pyqt_reactive.core import BackgroundTaskManager
-from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.theming import ColorScheme, StatusColorRole
+from zmqruntime.startup import EndpointStartupPresentationTarget
 
 # --- Module-level constants ---
 DEFAULT_DEBOUNCE_MS = 2000  # Debounce for connection checks
 
 
+class _CombinedMeta(ABCMeta, type(QWidget)):
+    """Combine nominal presentation and Qt widget metaclasses."""
+
+
 class StatusState(Enum):
-    """Status indicator states — colors resolved from color scheme at runtime."""
-    UNKNOWN = "Unknown"
-    CHECKING = "Checking..."
-    CONNECTED = "connected"      # No default message - uses check result
-    DISCONNECTED = "disconnected"
-    WARNING = "warning"
+    """Status indicator states whose colors come from the active theme."""
 
-    @property
-    def default_message(self) -> Optional[str]:
-        # Only UNKNOWN and CHECKING have user-visible default messages
-        if self in (StatusState.UNKNOWN, StatusState.CHECKING):
-            return self.value
-        return None
+    def __new__(
+        cls,
+        value: str,
+        default_message: str | None,
+        color_role: StatusColorRole,
+    ) -> "StatusState":
+        member = object.__new__(cls)
+        member._value_ = value
+        member.default_message = default_message
+        member.color_role = color_role
+        return member
 
-
-def get_status_color(state: StatusState, color_scheme: ColorScheme) -> str:
-    """Resolve status state to color from scheme."""
-    import logging
-    logger = logging.getLogger(__name__)
-    COLOR_MAP = {
-        StatusState.UNKNOWN: color_scheme.text_secondary,
-        StatusState.CHECKING: color_scheme.status_warning,
-        StatusState.CONNECTED: color_scheme.status_success,
-        StatusState.DISCONNECTED: color_scheme.status_error,
-        StatusState.WARNING: color_scheme.status_warning,
-    }
-    color_tuple = COLOR_MAP[state]
-    logger.info(f"get_status_color: state={state}, color_tuple={color_tuple}, status_success={color_scheme.status_success}")
-    return color_scheme.to_hex(color_tuple)
+    UNKNOWN = ("Unknown", "Unknown", StatusColorRole.UNKNOWN)
+    CHECKING = ("Checking...", "Checking...", StatusColorRole.WARNING)
+    CONNECTED = ("connected", None, StatusColorRole.SUCCESS)
+    DISCONNECTED = ("disconnected", None, StatusColorRole.ERROR)
+    WARNING = ("warning", None, StatusColorRole.WARNING)
 
 
-class StatusIndicator(QWidget):
+class StatusIndicator(
+    QWidget,
+    EndpointStartupPresentationTarget,
+    metaclass=_CombinedMeta,
+):
     """
     Reusable status indicator with colored dot, label, and refresh button.
 
@@ -62,12 +64,12 @@ class StatusIndicator(QWidget):
 
     def __init__(
         self,
-        check_fn: Callable[[], Tuple[bool, str]] = None,
-        color_scheme: ColorScheme = None,
+        check_fn: Callable[[], tuple[bool, str]] | None = None,
+        color_scheme: ColorScheme | None = None,
         show_refresh: bool = True,
         debounce_ms: int = DEFAULT_DEBOUNCE_MS,
-        parent=None
-    ):
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._check_fn = check_fn
         self._color_scheme = color_scheme or ColorScheme()
@@ -103,18 +105,23 @@ class StatusIndicator(QWidget):
 
         self.set_state(StatusState.UNKNOWN)
 
-    def set_state(self, state: StatusState, message: str = None):
+    def set_state(self, state: StatusState, message: str | None = None) -> None:
         """Update visual state."""
         import logging
         logger = logging.getLogger(__name__)
         logger.info(f"StatusIndicator.set_state: state={state}, message={message}")
-        color = get_status_color(state, self._color_scheme)
+        color = state.color_role.color_hex(self._color_scheme)
         logger.info(f"StatusIndicator.set_state: color={color}")
         self._dot.setStyleSheet(f"color: {color};")
         self._label.setText(message or state.default_message or "")
 
         if self._refresh_btn:
             self._refresh_btn.setEnabled(state != StatusState.CHECKING)
+
+    present_checking = partialmethod(set_state, StatusState.CHECKING)
+    present_connected = partialmethod(set_state, StatusState.CONNECTED)
+    present_disconnected = partialmethod(set_state, StatusState.DISCONNECTED)
+    present_warning = partialmethod(set_state, StatusState.WARNING)
 
     def refresh(self, force: bool = False):
         """Trigger async status check."""
@@ -131,7 +138,7 @@ class StatusIndicator(QWidget):
         if task is not None:
             self.set_state(StatusState.CHECKING)
 
-    def _on_check_complete(self, result: Tuple[bool, str]):
+    def _on_check_complete(self, result: tuple[bool, str]):
         """Handle check result."""
         import logging
         logger = logging.getLogger(__name__)
@@ -154,4 +161,3 @@ class StatusIndicator(QWidget):
         """Cleanup on close."""
         self._task_manager.cleanup()
         super().closeEvent(event)
-

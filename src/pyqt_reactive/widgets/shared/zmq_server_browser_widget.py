@@ -26,7 +26,7 @@ from pyqt_reactive.services.zmq_server_info import (
 from pyqt_reactive.services.zmq_server_scan_service import (
     ZMQServerScanService,
 )
-from pyqt_reactive.theming import StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
     create_manager_header,
@@ -145,7 +145,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         *,
         ports_to_scan: List[int],
         title: str,
-        style_generator: StyleSheetGenerator,
+        color_scheme: ColorScheme,
         scan_service: ZMQServerScanService,
         parent: QWidget | None = None,
     ) -> None:
@@ -153,7 +153,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         self.ports_to_scan = ports_to_scan
         self.title = title
-        self.style_generator = style_generator
+        self.color_scheme = color_scheme
         self._scan_service = scan_service
 
         self.servers: list[BaseServerInfo] = []
@@ -235,7 +235,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         )
 
         self.server_tree.setStyleSheet(
-            self.style_generator.generate_tree_widget_style()
+            self.color_scheme.styles.generate_tree_widget_style()
             + """
             QTreeWidget::item {
                 padding: 1px 0px 1px 0px;
@@ -250,18 +250,17 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     def _create_header(self) -> QWidget:
         header_parts = create_manager_header(
             title=self.title,
-            color_scheme=self.style_generator.color_scheme,
+            color_scheme=self.color_scheme,
             enable_status_scrolling=False,
         )
         self.manager_header = header_parts
-        self.status_label = header_parts.status_label
         return header_parts.header
 
     def _create_button_panel(self) -> QWidget:
         panel = ButtonPanel(
             button_configs=self.BUTTON_CONFIGS,
             on_action=self._handle_button_action,
-            style_generator=self.style_generator,
+            color_scheme=self.color_scheme,
             grid_columns=0,
             parent=self,
         )

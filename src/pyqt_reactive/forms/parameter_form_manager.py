@@ -1,14 +1,8 @@
 """PyQt parameter form manager - VIEW layer for ObjectState MODEL."""
 
-from dataclasses import dataclass, is_dataclass, replace
 import logging
-from typing import Any, Dict, Type, Optional, List, Set, Callable, TYPE_CHECKING
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor
-
-from pyqt_reactive.animation import FlashMixin
-from pyqt_reactive.animation.flash_trace import flash_trace
+from dataclasses import dataclass, is_dataclass, replace
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Type
 
 # FlashableGroupBox not extracted - OpenHCS specific
 from objectstate import (
@@ -18,38 +12,48 @@ from objectstate import (
     register_hierarchy_relationship,
     unregister_hierarchy_relationship,
 )
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+
+from pyqt_reactive.animation import FlashMixin
+from pyqt_reactive.animation.flash_trace import flash_trace
 
 if TYPE_CHECKING:
     from objectstate import ObjectState
+
     from pyqt_reactive.widgets.structural_table import StructuralFlashTarget
 
-from .widget_creation_types import ParameterFormManager as ParameterFormManagerABC, _CombinedMeta
+from contextlib import contextmanager
 
-# timer decorator made optional
-from .widget_operations import WidgetOperations
-from .widget_strategies import create_pyqt6_widget
-from .layout_constants import CURRENT_LAYOUT
-from .parameter_form_chrome_sync import ParameterFormChromeSync
-from .parameter_form_tree_index import ParameterFormTreeIndex
-from pyqt_reactive.services.value_collection_service import ValueCollectionService
-from pyqt_reactive.services.signal_service import SignalService
+from pyqt_reactive.forms.parameter_info_types import ParameterInfo
+from pyqt_reactive.forms.parameter_value_contracts import (
+    FormContext,
+    ParameterDefaultsByName,
+    ParameterTypesByName,
+    ParameterValue,
+    WidgetValue,
+)
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 
 # LiveContextService deleted - functionality moved to ObjectStateRegistry
 from pyqt_reactive.services.flag_context_manager import FlagContextManager
-from .form_init_service import FormBuildOrchestrator, FormBuildTransaction
-from pyqt_reactive.forms.parameter_info_types import ParameterInfo
-from pyqt_reactive.forms.parameter_value_contracts import (
-    FormContext,
-    ParameterTypesByName,
-    ParameterDefaultsByName,
-    ParameterValue,
-    WidgetValue,
-)
+from pyqt_reactive.services.signal_service import SignalService
+from pyqt_reactive.services.value_collection_service import ValueCollectionService
+from pyqt_reactive.services.window_navigation import FormNavigationManager
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.config_tree_contracts import ConfigTreeFlashManager
-from pyqt_reactive.services.window_navigation import FormNavigationManager
-from contextlib import contextmanager
+
+from .form_init_service import FormBuildOrchestrator, FormBuildTransaction
+from .layout_constants import CURRENT_LAYOUT
+from .parameter_form_chrome_sync import ParameterFormChromeSync
+from .parameter_form_tree_index import ParameterFormTreeIndex
+from .widget_creation_types import ParameterFormManager as ParameterFormManagerABC
+from .widget_creation_types import _CombinedMeta
+
+# timer decorator made optional
+from .widget_operations import WidgetOperations
+from .widget_strategies import create_pyqt6_widget
 
 try:
     from pyqt_reactive.core.performance_monitor import timer
@@ -391,11 +395,11 @@ class ParameterFormManager(
 
             # STEP 2: Build UI config (still needed for widget creation)
             with timer("  Build config", threshold_ms=5.0):
-                from pyqt_reactive.forms.parameter_form_service import ParameterFormService
                 from pyqt_reactive.forms.form_init_service import (
-                    ExtractedParameters,
                     ConfigBuilderService,
+                    ExtractedParameters,
                 )
+                from pyqt_reactive.forms.parameter_form_service import ParameterFormService
 
                 self.service = ParameterFormService()
                 # Use the canonical dotted-path `field_id`. For nested PFMs a
@@ -608,10 +612,9 @@ class ParameterFormManager(
         # repolishing without adding any local semantics.
         if not is_nested:
             with timer("    Style generation", threshold_ms=1.0):
-                from pyqt_reactive.theming.style_generator import StyleSheetGenerator
-
-                style_gen = StyleSheetGenerator(self.color_scheme)
-                self.setStyleSheet(style_gen.generate_config_window_style())
+                self.setStyleSheet(
+                    self.color_scheme.styles.generate_config_window_style()
+                )
 
         # Build form content
         with timer("    Build form", threshold_ms=5.0):

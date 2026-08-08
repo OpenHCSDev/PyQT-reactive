@@ -6,8 +6,11 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, qInstallMessageHandler
 from PyQt6.QtWidgets import QStyleOptionViewItem
+from zmqruntime.messages import ProcessIdentity
 
+from pyqt_reactive.core.log_utils import LogType
 from pyqt_reactive.protocols import register_log_discovery_provider
+from pyqt_reactive.services.process_tracker import ProcessLiveness
 from pyqt_reactive.utils.log_highlighter import build_log_line_html
 from pyqt_reactive.widgets.log_viewer import (
     LogFileInfo,
@@ -63,7 +66,7 @@ class _LogDiscoveryProvider:
     ) -> list[LogFileInfo]:
         if not include_main_log:
             return []
-        return [LogFileInfo(path=self.main_log_path, log_type="main")]
+        return [LogFileInfo(path=self.main_log_path, log_type=LogType.MAIN)]
 
 
 def _disable_external_discovery(monkeypatch) -> None:
@@ -167,3 +170,91 @@ def test_cleanup_joins_an_active_file_loader(qapp, tmp_path, monkeypatch) -> Non
 
     assert viewer.file_loader is None
     assert viewer._file_loaders == set()
+
+
+def test_dropdown_refresh_preserves_exact_programmatic_log_selection(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """An asynchronous discovery refresh cannot replace a server-log selection."""
+
+    main_log_path = tmp_path / "main.log"
+    server_log_path = tmp_path / "server.log"
+    later_log_path = tmp_path / "later.log"
+    for path, text in (
+        (main_log_path, "main\n"),
+        (server_log_path, "server\n"),
+        (later_log_path, "later\n"),
+    ):
+        path.write_text(text, encoding="utf-8")
+    register_log_discovery_provider(_LogDiscoveryProvider(main_log_path))
+    _disable_external_discovery(monkeypatch)
+    viewer = LogViewerWindow(file_manager=None, service_adapter=None)
+    try:
+        viewer.switch_to_log(server_log_path)
+        viewer._on_subprocess_scan_complete(
+            [
+                LogFileInfo(
+                    path=later_log_path,
+                    log_type=LogType.WORKER,
+                    worker_id="1",
+                )
+            ]
+        )
+
+        selected = viewer.log_selector.itemData(viewer.log_selector.currentIndex())
+        assert viewer.current_log_path == server_log_path
+        assert selected.path == server_log_path
+    finally:
+        viewer.cleanup()
+
+
+def test_live_filter_requires_confirmed_pid_reuse_safe_liveness(
+    qapp,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Unknown logs and reused PIDs are not presented as live processes."""
+
+    main_log_path = tmp_path / "main.log"
+    main_log_path.write_text("main\n", encoding="utf-8")
+    register_log_discovery_provider(_LogDiscoveryProvider(main_log_path))
+    _disable_external_discovery(monkeypatch)
+    viewer = LogViewerWindow(file_manager=None, service_adapter=None)
+    try:
+        current = ProcessIdentity.current()
+        live = LogFileInfo(
+            path=tmp_path / "live.log",
+            log_type=LogType.ZMQ_SERVER,
+            process_identity=current,
+        )
+        reused = LogFileInfo(
+            path=tmp_path / "reused.log",
+            log_type=LogType.ZMQ_SERVER,
+            process_identity=ProcessIdentity(
+                pid=current.pid,
+                create_time=current.create_time - 10,
+            ),
+        )
+        pid_only = LogFileInfo(
+            path=tmp_path / f"worker_{current.pid}.log",
+            log_type=LogType.WORKER,
+            worker_id=str(current.pid),
+        )
+        unknown = LogFileInfo(
+            path=tmp_path / "unknown.log",
+            log_type=LogType.UNKNOWN,
+        )
+        viewer._update_tracked_processes([live, reused, pid_only, unknown])
+
+        assert viewer._is_log_from_alive_process(live)
+        assert not viewer._is_log_from_alive_process(reused)
+        assert (
+            viewer.process_tracker.log_liveness(pid_only)
+            is ProcessLiveness.UNKNOWN
+        )
+        assert not viewer._is_log_from_alive_process(pid_only)
+        assert not viewer._is_log_from_alive_process(unknown)
+    finally:
+        viewer.cleanup()

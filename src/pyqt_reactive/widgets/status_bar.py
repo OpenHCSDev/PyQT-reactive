@@ -15,7 +15,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import ColorScheme
 
 logger = logging.getLogger(__name__)
@@ -42,9 +41,7 @@ class StatusBarWidget(QWidget):
         """
         super().__init__(parent)
 
-        # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         # Business logic state
         self.current_status = "Ready"

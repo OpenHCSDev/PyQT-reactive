@@ -936,7 +936,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
         if self._button_style:
-            return self.theme.styles.require_config_button_style(self._button_style)
+            return self.theme.scheme.styles.require_config_button_style(
+                self._button_style
+            )
 
         return f"""
             QPushButton {{

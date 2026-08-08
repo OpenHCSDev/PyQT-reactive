@@ -148,7 +148,12 @@ def test_system_metric_helpers_use_background_process_policy(monkeypatch) -> Non
     )
 
     assert system_metrics_sampler.get_cpu_freq_mhz() == 2400
-    system_metrics_sampler.PersistentNvidiaSmiPoller().start()
+    system_metrics_sampler.PersistentNvidiaSmiPoller(
+        cadence=system_metrics_sampler.PollingCadence(1.0),
+        temperature_sampling=(
+            system_metrics_sampler.GpuTemperatureSampling.ENABLED
+        ),
+    ).start()
 
     assert check_output_calls[0]["creationflags"] == 73
     assert popen_calls[0]["creationflags"] == 73

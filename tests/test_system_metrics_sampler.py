@@ -11,7 +11,11 @@ from pyqt_reactive.services.parameter_help_service import (
 )
 from pyqt_reactive.services.system_metrics_sampler import (
     BackgroundMetricPoller,
+    CpuMetrics,
+    GpuTemperatureSampling,
     GpuMetrics,
+    MemoryMetrics,
+    PollingCadence,
     PersistentNvidiaSmiPoller,
     SystemMetrics,
     SystemMetricsSampler,
@@ -42,9 +46,9 @@ class MemorySnapshot:
 class FakeCpuFrequencyPoller:
     created: list["FakeCpuFrequencyPoller"] = []
 
-    def __init__(self, *, name, refresh_seconds, probe, default) -> None:
+    def __init__(self, *, name, cadence, probe, default) -> None:
         self.name = name
-        self.refresh_seconds = refresh_seconds
+        self.cadence = cadence
         self.probe = probe
         self.default = default
         self.stopped = False
@@ -60,9 +64,9 @@ class FakeCpuFrequencyPoller:
 class FakeGpuMetricsPoller:
     created: list["FakeGpuMetricsPoller"] = []
 
-    def __init__(self, *, refresh_seconds, gpu_temperature_monitoring) -> None:
-        self.refresh_seconds = refresh_seconds
-        self.gpu_temperature_monitoring = gpu_temperature_monitoring
+    def __init__(self, *, cadence, temperature_sampling) -> None:
+        self.cadence = cadence
+        self.temperature_sampling = temperature_sampling
         self.stopped = False
         self.__class__.created.append(self)
 
@@ -110,15 +114,22 @@ def test_sampler_returns_typed_metrics_from_cached_background_providers(monkeypa
     metrics = sampler.collect_metrics()
 
     assert isinstance(metrics, SystemMetrics)
-    assert metrics.cpu_percent == 7.5
-    assert metrics.cpu_cores == 16
-    assert metrics.cpu_freq_mhz == 2400
-    assert metrics.ram_total_gb == 16
-    assert metrics.gpu_name == "Test GPU"
-    assert metrics.vram_percent == 25.0
-    assert metrics.gpu_percent == 12.5
-    assert FakeCpuFrequencyPoller.created[0].refresh_seconds == 2.0
-    assert FakeGpuMetricsPoller.created[0].refresh_seconds == 0.25
+    assert metrics.cpu == CpuMetrics(
+        cpu_percent=7.5,
+        cpu_cores=16,
+        cpu_freq_mhz=2400,
+    )
+    assert metrics.memory == MemoryMetrics(
+        ram_percent=40.0,
+        ram_used_gb=4.0,
+        ram_total_gb=16.0,
+        ram_available_gb=12.0,
+    )
+    assert metrics.gpu.gpu_name == "Test GPU"
+    assert metrics.gpu.vram_percent == 25.0
+    assert metrics.gpu.gpu_percent == 12.5
+    assert FakeCpuFrequencyPoller.created[0].cadence == PollingCadence(2.0)
+    assert FakeGpuMetricsPoller.created[0].cadence == PollingCadence(0.25)
 
     sampler.close()
 
@@ -128,8 +139,8 @@ def test_sampler_returns_typed_metrics_from_cached_background_providers(monkeypa
 
 def test_nvidia_smi_poller_parses_typed_metrics() -> None:
     poller = PersistentNvidiaSmiPoller(
-        refresh_seconds=0.5,
-        gpu_temperature_monitoring=True,
+        cadence=PollingCadence(0.5),
+        temperature_sampling=GpuTemperatureSampling.ENABLED,
     )
 
     metrics = poller._parse_gpu_line("12, 63, 2048, 8192, NVIDIA RTX")
@@ -146,8 +157,8 @@ def test_nvidia_smi_poller_parses_typed_metrics() -> None:
 
 def test_nvidia_smi_poller_respects_temperature_policy() -> None:
     poller = PersistentNvidiaSmiPoller(
-        refresh_seconds=0.5,
-        gpu_temperature_monitoring=False,
+        cadence=PollingCadence(0.5),
+        temperature_sampling=GpuTemperatureSampling.DISABLED,
     )
 
     metrics = poller._parse_gpu_line("12, 63, 2048, 8192, NVIDIA RTX")
@@ -173,7 +184,10 @@ def test_gpu_temperature_monitoring_leaf_reaches_gpu_provider(monkeypatch) -> No
 
     sampler = SystemMetricsSampler(config)
 
-    assert FakeGpuMetricsPoller.created[-1].gpu_temperature_monitoring is False
+    assert (
+        FakeGpuMetricsPoller.created[-1].temperature_sampling
+        is GpuTemperatureSampling.DISABLED
+    )
     sampler.close()
 
 
@@ -195,7 +209,7 @@ def test_gpu_refresh_seconds_leaf_reaches_gpu_provider(monkeypatch) -> None:
 
     sampler = SystemMetricsSampler(config)
 
-    assert FakeGpuMetricsPoller.created[-1].refresh_seconds == 0.25
+    assert FakeGpuMetricsPoller.created[-1].cadence == PollingCadence(0.25)
     sampler.close()
 
 
@@ -208,7 +222,7 @@ def test_cpu_frequency_refresh_seconds_leaf_reaches_frequency_provider(
 
     sampler = SystemMetricsSampler(config)
 
-    assert FakeCpuFrequencyPoller.created[-1].refresh_seconds == 2.0
+    assert FakeCpuFrequencyPoller.created[-1].cadence == PollingCadence(2.0)
     sampler.close()
 
 
@@ -221,7 +235,7 @@ def test_background_metric_poller_is_lazy_and_does_not_restart_after_stop() -> N
 
     poller = BackgroundMetricPoller(
         name="TestMetricPoller",
-        refresh_seconds=60.0,
+        cadence=PollingCadence(60.0),
         probe=probe,
         default=0,
     )

@@ -5,10 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar, TypeAlias, TypeVar
+from functools import partial
+from typing import ClassVar, TypeAlias, TypeVar, cast
 
 from metaclass_registry import AutoRegisterMeta
-from PyQt6.QtCore import QAbstractItemModel, QModelIndex, QPoint, QRect, Qt
+from PyQt6.QtCore import QAbstractItemModel, QModelIndex, QPoint, QRect, Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -60,6 +61,25 @@ class WidgetActionKind(Enum):
     SPIN_INPUT = "spin_input"
     TAB_SELECTOR = "tab_selector"
     TEXT_INPUT = "text_input"
+
+
+class WidgetActionInvocationError(RuntimeError):
+    """Base error raised by a nominal widget projector during invocation."""
+
+
+class WidgetActionUnsupportedError(WidgetActionInvocationError):
+    """The selected nominal widget projector does not own the requested action."""
+
+
+class WidgetActionTargetInvalidError(WidgetActionInvocationError):
+    """An indexed widget action targets an unavailable item."""
+
+    def __init__(self, target_index: int | None, item_count: int) -> None:
+        self.target_index = target_index
+        self.item_count = item_count
+        super().__init__(
+            f"Target index {target_index!r} is invalid for {item_count} item(s)."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +227,18 @@ class WidgetDescriptorProjector(ABC, metaclass=AutoRegisterMeta):
         """Project widget-family-specific fields."""
         raise NotImplementedError
 
+    def invoke_action(
+        self,
+        widget: QWidget,
+        action_kind: WidgetActionKind,
+        *,
+        target_index: int | None,
+    ) -> None:
+        """Invoke behavior owned by this projector or reject the action."""
+
+        del widget, action_kind, target_index
+        raise WidgetActionUnsupportedError
+
     def _require_type(
         self,
         widget: QWidget,
@@ -264,6 +296,29 @@ class QAbstractButtonDescriptorProjector(WidgetDescriptorProjector):
     """Project button text and current checkable/clickable state."""
 
     widget_type = QAbstractButton
+    supported_action_kinds = frozenset(
+        {
+            WidgetActionKind.BUTTON,
+            WidgetActionKind.CHECKABLE,
+        }
+    )
+
+    def invoke_action(
+        self,
+        widget: QWidget,
+        action_kind: WidgetActionKind,
+        *,
+        target_index: int | None,
+    ) -> None:
+        del target_index
+        button = self._require_type(widget, QAbstractButton)
+        if action_kind not in self.supported_action_kinds:
+            return super().invoke_action(
+                widget,
+                action_kind,
+                target_index=None,
+            )
+        QTimer.singleShot(0, button.click)
 
     def project(
         self,
@@ -382,10 +437,50 @@ class QPlainTextEditDescriptorProjector(PlainTextMethodEditableDescriptorProject
     widget_type = QPlainTextEdit
 
 
-class QComboBoxDescriptorProjector(WidgetDescriptorProjector):
+class IndexedSelectionWidgetDescriptorProjector(WidgetDescriptorProjector):
+    """Template projector for widgets selected through a current index."""
+
+    indexed_selection_action_kind: ClassVar[WidgetActionKind]
+
+    def invoke_action(
+        self,
+        widget: QWidget,
+        action_kind: WidgetActionKind,
+        *,
+        target_index: int | None,
+    ) -> None:
+        if action_kind is not self.indexed_selection_action_kind:
+            return super().invoke_action(
+                widget,
+                action_kind,
+                target_index=target_index,
+            )
+        selection_widget = self.indexed_selection_widget(widget)
+        item_count = selection_widget.count()
+        if target_index is None or target_index not in range(item_count):
+            raise WidgetActionTargetInvalidError(target_index, item_count)
+        QTimer.singleShot(
+            0,
+            partial(selection_widget.setCurrentIndex, target_index),
+        )
+
+    def indexed_selection_widget(
+        self,
+        widget: QWidget,
+    ) -> QComboBox | QTabWidget | QTabBar:
+        """Return the typed Qt widget that owns the current index."""
+
+        return cast(
+            QComboBox | QTabWidget | QTabBar,
+            self._require_type(widget, self.require_widget_type()),
+        )
+
+
+class QComboBoxDescriptorProjector(IndexedSelectionWidgetDescriptorProjector):
     """Project combo-box selection state."""
 
     widget_type = QComboBox
+    indexed_selection_action_kind = WidgetActionKind.CHOICE
 
     def project(
         self,
@@ -396,7 +491,7 @@ class QComboBoxDescriptorProjector(WidgetDescriptorProjector):
         combo_box = self._require_type(widget, QComboBox)
         is_enabled = combo_box.isEnabled()
         return WidgetProjectionFields(
-            action_kinds=(WidgetActionKind.CHOICE,),
+            action_kinds=(self.indexed_selection_action_kind,),
             clickable=is_enabled,
             actionable=is_enabled,
             current_index=combo_box.currentIndex(),
@@ -445,6 +540,26 @@ class QGroupBoxDescriptorProjector(WidgetDescriptorProjector):
 
     widget_type = QGroupBox
 
+    def invoke_action(
+        self,
+        widget: QWidget,
+        action_kind: WidgetActionKind,
+        *,
+        target_index: int | None,
+    ) -> None:
+        del target_index
+        group_box = self._require_type(widget, QGroupBox)
+        if action_kind is not WidgetActionKind.CHECKABLE or not group_box.isCheckable():
+            return super().invoke_action(
+                widget,
+                action_kind,
+                target_index=None,
+            )
+        QTimer.singleShot(
+            0,
+            partial(group_box.setChecked, not group_box.isChecked()),
+        )
+
     def project(
         self,
         widget: QWidget,
@@ -470,66 +585,50 @@ class QGroupBoxDescriptorProjector(WidgetDescriptorProjector):
         )
 
 
-class QTabWidgetDescriptorProjector(WidgetDescriptorProjector):
-    """Project current tab selection state."""
+class TabSelectionWidgetDescriptorProjector(IndexedSelectionWidgetDescriptorProjector):
+    """Template projector for Qt tab controls with the shared tab API."""
+
+    indexed_selection_action_kind = WidgetActionKind.TAB_SELECTOR
+
+    def project(
+        self,
+        widget: QWidget,
+        policy: WidgetTreeProjectionPolicy,
+    ) -> WidgetProjectionFields:
+        del policy
+        tab_control = cast(
+            QTabWidget | QTabBar,
+            self.indexed_selection_widget(widget),
+        )
+        current_index = tab_control.currentIndex()
+        current_text = None
+        if current_index >= 0:
+            current_text = tab_control.tabText(current_index)
+
+        is_actionable = tab_control.isEnabled() and tab_control.count() > 1
+        return WidgetProjectionFields(
+            action_kinds=(self.indexed_selection_action_kind,),
+            clickable=is_actionable,
+            actionable=is_actionable,
+            current_index=current_index,
+            current_text=current_text,
+            item_count=tab_control.count(),
+            item_texts=tuple(
+                tab_control.tabText(index) for index in range(tab_control.count())
+            ),
+        )
+
+
+class QTabWidgetDescriptorProjector(TabSelectionWidgetDescriptorProjector):
+    """Project current selection for a tab-page container."""
 
     widget_type = QTabWidget
 
-    def project(
-        self,
-        widget: QWidget,
-        policy: WidgetTreeProjectionPolicy,
-    ) -> WidgetProjectionFields:
-        del policy
-        tab_widget = self._require_type(widget, QTabWidget)
-        current_index = tab_widget.currentIndex()
-        current_text = None
-        if current_index >= 0:
-            current_text = tab_widget.tabText(current_index)
 
-        is_actionable = tab_widget.isEnabled() and tab_widget.count() > 1
-        return WidgetProjectionFields(
-            action_kinds=(WidgetActionKind.TAB_SELECTOR,),
-            clickable=is_actionable,
-            actionable=is_actionable,
-            current_index=current_index,
-            current_text=current_text,
-            item_count=tab_widget.count(),
-            item_texts=tuple(
-                tab_widget.tabText(index) for index in range(tab_widget.count())
-            ),
-        )
-
-
-class QTabBarDescriptorProjector(WidgetDescriptorProjector):
+class QTabBarDescriptorProjector(TabSelectionWidgetDescriptorProjector):
     """Project current selection for standalone tab bars."""
 
     widget_type = QTabBar
-
-    def project(
-        self,
-        widget: QWidget,
-        policy: WidgetTreeProjectionPolicy,
-    ) -> WidgetProjectionFields:
-        del policy
-        tab_bar = self._require_type(widget, QTabBar)
-        current_index = tab_bar.currentIndex()
-        current_text = None
-        if current_index >= 0:
-            current_text = tab_bar.tabText(current_index)
-
-        is_actionable = tab_bar.isEnabled() and tab_bar.count() > 1
-        return WidgetProjectionFields(
-            action_kinds=(WidgetActionKind.TAB_SELECTOR,),
-            clickable=is_actionable,
-            actionable=is_actionable,
-            current_index=current_index,
-            current_text=current_text,
-            item_count=tab_bar.count(),
-            item_texts=tuple(
-                tab_bar.tabText(index) for index in range(tab_bar.count())
-            ),
-        )
 
 
 class QStackedWidgetDescriptorProjector(WidgetDescriptorProjector):
@@ -614,7 +713,6 @@ class WidgetDescriptorProjectorRegistry:
         raise WidgetProjectionError(
             f"No QWidget descriptor projector registered for {type(widget).__name__}"
         )
-
 
 DEFAULT_WIDGET_DESCRIPTOR_PROJECTOR_REGISTRY = (
     WidgetDescriptorProjectorRegistry.from_registered_projectors()

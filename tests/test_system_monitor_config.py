@@ -19,9 +19,8 @@ from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 class FakeCoreMonitor:
     created: list[FakeCoreMonitor] = []
 
-    def __init__(self, history_length, *, sampler_config) -> None:
+    def __init__(self, history_length) -> None:
         self.history_length = history_length
-        self.sampler_config = sampler_config
         self.__class__.created.append(self)
 
 
@@ -47,6 +46,28 @@ class FakePersistentMonitor:
         self.metrics_callback = metrics_callback
         self.error_callback = error_callback
         self.connected = True
+
+
+class FakeRuntime:
+    created: list[FakeRuntime] = []
+
+    def __init__(self, history, live, sampler_config) -> None:
+        self.history = history
+        self.live = live
+        self.sampler_config = sampler_config
+        self.__class__.created.append(self)
+
+    @classmethod
+    def from_config(cls, config: PerformanceMonitorConfig) -> FakeRuntime:
+        return cls(
+            history=FakeCoreMonitor(config.calculated_max_data_points),
+            live=FakePersistentMonitor(
+                config.update_interval_seconds,
+                config.calculated_max_data_points,
+                sampler_config=config.sampler_config,
+            ),
+            sampler_config=config.sampler_config,
+        )
 
 
 class FakeCurve:
@@ -116,8 +137,7 @@ def fake_widget(config: PerformanceMonitorConfig, *, with_plots: bool = False):
     )
     attributes = {
         "monitor_config": config,
-        "monitor": object(),
-        "persistent_monitor": old_persistent,
+        "runtime": SimpleNamespace(history=object(), live=old_persistent),
         "_history_length": 1,
         "_history_x": object(),
         "_history_cpu": object(),
@@ -176,12 +196,8 @@ def test_each_sampling_history_leaf_rebuilds_owned_monitors(
 ) -> None:
     FakeCoreMonitor.created.clear()
     FakePersistentMonitor.created.clear()
-    monkeypatch.setattr(system_monitor_module, "SystemMonitorCore", FakeCoreMonitor)
-    monkeypatch.setattr(
-        system_monitor_module,
-        "PersistentSystemMonitor",
-        FakePersistentMonitor,
-    )
+    FakeRuntime.created.clear()
+    monkeypatch.setattr(system_monitor_module, "SystemMonitorRuntime", FakeRuntime)
     original = PerformanceMonitorConfig()
     widget, old_persistent = fake_widget(original)
     updated = replace(original, **{field_name: value})
@@ -190,12 +206,12 @@ def test_each_sampling_history_leaf_rebuilds_owned_monitors(
 
     assert old_persistent.stopped is True
     assert widget.monitor_config is updated
-    assert widget.monitor is FakeCoreMonitor.created[-1]
-    assert widget.monitor.history_length == expected_history
-    assert widget.persistent_monitor.update_interval == expected_interval
-    assert widget.persistent_monitor.history_length == expected_history
-    assert widget.persistent_monitor.started is True
-    assert widget.persistent_monitor.connected is True
+    assert widget.runtime.history is FakeCoreMonitor.created[-1]
+    assert widget.runtime.history.history_length == expected_history
+    assert widget.runtime.live.update_interval == expected_interval
+    assert widget.runtime.live.history_length == expected_history
+    assert widget.runtime.live.started is True
+    assert widget.runtime.live.connected is True
 
 
 @pytest.mark.parametrize(
@@ -215,12 +231,8 @@ def test_each_sampler_leaf_rebuilds_monitor_with_exact_nominal_policy(
 ) -> None:
     FakeCoreMonitor.created.clear()
     FakePersistentMonitor.created.clear()
-    monkeypatch.setattr(system_monitor_module, "SystemMonitorCore", FakeCoreMonitor)
-    monkeypatch.setattr(
-        system_monitor_module,
-        "PersistentSystemMonitor",
-        FakePersistentMonitor,
-    )
+    FakeRuntime.created.clear()
+    monkeypatch.setattr(system_monitor_module, "SystemMonitorRuntime", FakeRuntime)
     original = PerformanceMonitorConfig()
     widget, old_persistent = fake_widget(original)
     sampler_config = replace(original.sampler_config, **{field_name: value})
@@ -229,9 +241,8 @@ def test_each_sampler_leaf_rebuilds_monitor_with_exact_nominal_policy(
     SystemMonitorWidget.update_config(widget, updated)
 
     assert old_persistent.stopped is True
-    assert widget.monitor.sampler_config is sampler_config
-    assert widget.persistent_monitor.sampler_config is sampler_config
-    assert getattr(widget.persistent_monitor.sampler_config, field_name) == value
+    assert widget.runtime.sampler_config is sampler_config
+    assert getattr(widget.runtime.sampler_config, field_name) == value
 
 
 @pytest.mark.parametrize(

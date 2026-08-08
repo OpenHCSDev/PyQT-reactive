@@ -20,7 +20,7 @@ from pyqt_reactive.services.parameter_help_service import (
     parameter_help_content,
     resolved_parameter_description,
 )
-from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
 
 logger = logging.getLogger(__name__)
@@ -93,9 +93,7 @@ class BaseHelpWindow(QDialog):
     ) -> None:
         super().__init__(parent)
 
-        # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         self.setWindowTitle(title)
         self.setModal(False)  # Allow interaction with main window
@@ -104,7 +102,7 @@ class BaseHelpWindow(QDialog):
         self.setup_ui()
 
         # Apply centralized styling
-        self.setStyleSheet(self.style_generator.generate_dialog_style())
+        self.setStyleSheet(self.color_scheme.styles.generate_dialog_style())
 
     def setup_ui(self) -> None:
         """Setup the base help window UI."""

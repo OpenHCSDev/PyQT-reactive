@@ -14,7 +14,7 @@ from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication
 
 from .color_scheme import ColorScheme
-from .splitter_grip_style import install_splitter_grip_style
+from .splitter_grip_style import install_application_control_style
 
 logger = logging.getLogger(__name__)
 
@@ -135,28 +135,6 @@ class PaletteManager:
         app.setPalette(self._original_palette)
         logger.debug("Restored original application palette")
     
-    def get_palette_info(self) -> dict:
-        """
-        Get information about the current palette configuration.
-        
-        Returns:
-            dict: Dictionary with palette color information
-        """
-        cs = self.color_scheme
-        
-        return {
-            "window_bg": cs.to_hex(cs.window_bg),
-            "window_text": cs.to_hex(cs.text_primary),
-            "base_bg": cs.to_hex(cs.input_bg),
-            "base_text": cs.to_hex(cs.input_text),
-            "button_bg": cs.to_hex(cs.button_normal_bg),
-            "button_text": cs.to_hex(cs.button_text),
-            "selection_bg": cs.to_hex(cs.selection_bg),
-            "selection_text": cs.to_hex(cs.selection_text),
-            "disabled_text": cs.to_hex(cs.text_disabled),
-        }
-
-
 class ThemeManager:
     """
     High-level theme management for the entire application.
@@ -174,11 +152,7 @@ class ThemeManager:
         """
         self.color_scheme = initial_color_scheme or ColorScheme()
         self.palette_manager = PaletteManager(self.color_scheme)
-        
-        # Import here to avoid circular imports
-        from pyqt_reactive.theming.style_generator import StyleSheetGenerator
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
-        
+
         self._theme_change_callbacks = []
     
     def switch_to_dark_theme(self):
@@ -198,7 +172,6 @@ class ThemeManager:
         """
         self.color_scheme = color_scheme
         self.palette_manager.update_color_scheme(color_scheme)
-        self.style_generator.update_color_scheme(color_scheme)
 
         # Native file dialogs are painted by the host OS and bypass both the
         # shared Qt palette and the application stylesheet.  Select Qt's
@@ -213,7 +186,7 @@ class ThemeManager:
         self.palette_manager.apply_palette_to_application()
         app = QApplication.instance()
         if app is not None:
-            install_splitter_grip_style(app)
+            install_application_control_style(app)
             app.setStyleSheet(self.get_application_control_style_sheet())
         
         # Notify callbacks
@@ -251,17 +224,17 @@ class ThemeManager:
         Returns:
             str: Complete QStyleSheet for current theme
         """
-        return self.style_generator.generate_complete_application_style()
+        return self.color_scheme.styles.generate_complete_application_style()
 
     def get_native_control_style_sheet(self) -> str:
         """Return application chrome styles that do not alter form geometry."""
 
-        return self.style_generator.generate_native_control_style()
+        return self.color_scheme.styles.generate_native_control_style()
 
     def get_application_control_style_sheet(self) -> str:
         """Return the shared application chrome and button presentation."""
 
-        return self.style_generator.generate_application_control_style()
+        return self.color_scheme.styles.generate_application_control_style()
     
     def load_theme_from_config(self, config_path: str) -> bool:
         """

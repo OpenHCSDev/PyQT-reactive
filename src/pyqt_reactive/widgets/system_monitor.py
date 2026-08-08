@@ -4,8 +4,13 @@ Real-time system monitoring with CPU, RAM, GPU, and VRAM usage graphs.
 Migrated from Textual TUI with full feature parity.
 """
 
+from __future__ import annotations
+
 import logging
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -14,24 +19,196 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QResizeEvent
 
-# Lazy import of PyQtGraph to avoid blocking startup
-# PyQtGraph imports cupy at module level, which takes 8+ seconds
-# We'll import it on-demand when creating graphs
-PYQTGRAPH_AVAILABLE = None  # None = not checked, True = available, False = not available
+# Lazy import of PyQtGraph to avoid blocking startup. PyQtGraph imports cupy at
+# module level, so the presentation backend is selected only after that import.
 pg = None  # Will be set when pyqtgraph is imported
 
 # Import the SystemMonitorCore service (framework-agnostic)
 from pyqt_reactive.animation import queue_visual_frame_callback
-from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.theming import ColorScheme
 
 from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
-from pyqt_reactive.services.persistent_system_monitor import PersistentSystemMonitor
+from pyqt_reactive.services.persistent_system_monitor import (
+    PersistentSystemMonitor,
+    PersistentSystemMonitorThread,
+)
 from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
-from pyqt_reactive.services.system_metrics_sampler import SystemMetrics
+from pyqt_reactive.services.system_metrics_sampler import (
+    SystemMetrics,
+    SystemMetricsSampler,
+)
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import create_manager_header
 
 logger = logging.getLogger(__name__)
+
+
+class SystemMonitorAction(str, Enum):
+    """Declared system-monitor actions with member-owned execution leaves."""
+
+    def __new__(
+        cls,
+        value: str,
+        label: str,
+        tooltip: str,
+        executor: Callable[[SystemMonitorWidget], None],
+    ) -> SystemMonitorAction:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.label = label
+        member.tooltip = tooltip
+        member._executor = executor
+        return member
+
+    GLOBAL_CONFIG = (
+        "global_config",
+        "Global Config",
+        "Open global configuration editor",
+        lambda widget: widget.show_global_config.emit(),
+    )
+    LOG_VIEWER = (
+        "log_viewer",
+        "Log Viewer",
+        "Open log viewer window",
+        lambda widget: widget.show_log_viewer.emit(),
+    )
+    CUSTOM_FUNCTIONS = (
+        "custom_functions",
+        "Custom Functions",
+        "Manage custom functions",
+        lambda widget: widget.show_custom_functions.emit(),
+    )
+    TEST_PLATE = (
+        "test_plate",
+        "Test Plate",
+        "Generate synthetic test plate",
+        lambda widget: widget.show_test_plate_generator.emit(),
+    )
+
+    @property
+    def button_config(self) -> tuple[str, str, str]:
+        """Project this action into the generic button-panel contract."""
+
+        return self.label, self.value, self.tooltip
+
+    def invoke(self, widget: SystemMonitorWidget) -> None:
+        """Execute this member's leaf behavior."""
+
+        self._executor(widget)
+
+
+class SystemMonitorGraphLayout(Enum):
+    """Graph arrangements with member-owned placement and transition policy."""
+
+    def __new__(
+        cls,
+        toggle_label: str,
+        positions: tuple[tuple[int, int], tuple[int, int]],
+        successor: Callable[[], SystemMonitorGraphLayout],
+    ) -> SystemMonitorGraphLayout:
+        member = object.__new__(cls)
+        member._value_ = toggle_label
+        member.toggle_label = toggle_label
+        member.positions = positions
+        member._successor = successor
+        return member
+
+    SIDE_BY_SIDE = (
+        "Stack",
+        ((0, 0), (0, 1)),
+        lambda: SystemMonitorGraphLayout.STACKED,
+    )
+    STACKED = (
+        "Side-by-Side",
+        ((0, 0), (1, 0)),
+        lambda: SystemMonitorGraphLayout.SIDE_BY_SIDE,
+    )
+
+    def successor(self) -> SystemMonitorGraphLayout:
+        """Return the member-declared next layout."""
+
+        return self._successor()
+
+    def arrange(self, layout: QGridLayout, widgets: tuple[QWidget, QWidget]) -> None:
+        """Apply this member's declared grid positions."""
+
+        for widget, (row, column) in zip(widgets, self.positions, strict=True):
+            layout.addWidget(widget, row, column)
+
+
+class SystemMonitorPresentationBackend(Enum):
+    """Monitoring presentations with member-owned lifecycle leaves."""
+
+    def __new__(
+        cls,
+        widget_factory: Callable[[SystemMonitorWidget], QWidget],
+        presenter: Callable[[SystemMonitorWidget, SystemMetrics], None],
+        cleanup: Callable[[SystemMonitorWidget], None],
+        activation_message: str,
+    ) -> SystemMonitorPresentationBackend:
+        member = object.__new__(cls)
+        member._value_ = activation_message
+        member._widget_factory = widget_factory
+        member._presenter = presenter
+        member._cleanup = cleanup
+        member.activation_message = activation_message
+        return member
+
+    LOADING = (
+        lambda widget: widget.create_loading_placeholder(),
+        lambda _widget, _metrics: None,
+        lambda _widget: None,
+        "Loading system monitor",
+    )
+    PYQTGRAPH = (
+        lambda widget: widget.create_pyqtgraph_section(),
+        lambda widget, metrics: widget._queue_pyqtgraph_plot_update(metrics),
+        lambda widget: widget._cleanup_pyqtgraph_presentation(),
+        "Switched to PyQtGraph UI",
+    )
+    FALLBACK = (
+        lambda widget: widget.create_fallback_section(),
+        lambda widget, metrics: widget.update_fallback_display(metrics),
+        lambda _widget: None,
+        "Switched to fallback UI (PyQtGraph not available)",
+    )
+
+    def create_widget(self, widget: SystemMonitorWidget) -> QWidget:
+        """Create this backend's presentation widget."""
+
+        return self._widget_factory(widget)
+
+    def present(self, widget: SystemMonitorWidget, metrics: SystemMetrics) -> None:
+        """Present metrics through this backend's leaf."""
+
+        self._presenter(widget, metrics)
+
+    def cleanup(self, widget: SystemMonitorWidget) -> None:
+        """Release resources owned by this backend."""
+
+        self._cleanup(widget)
+
+
+@dataclass(frozen=True, slots=True)
+class SystemMonitorRuntime:
+    """History and live-sampling resources built from one monitor config."""
+
+    history: SystemMonitorCore
+    live: PersistentSystemMonitor
+
+    @classmethod
+    def from_config(cls, config: PerformanceMonitorConfig) -> SystemMonitorRuntime:
+        """Build the complete runtime while resolving sampler policy once."""
+
+        history_length = config.calculated_max_data_points
+        thread = PersistentSystemMonitorThread(
+            update_interval=config.update_interval_seconds,
+            history_length=history_length,
+            sampler=SystemMetricsSampler(config.sampler_config),
+        )
+        return cls(
+            history=SystemMonitorCore(history_length=history_length),
+            live=PersistentSystemMonitor(thread),
+        )
 
 
 class SystemMonitorWidget(QWidget):
@@ -44,13 +221,7 @@ class SystemMonitorWidget(QWidget):
 
     PLOT_LEFT_AXIS_WIDTH = 30
     
-    # Declarative button configuration (matches AbstractManagerWidget pattern)
-    BUTTON_CONFIGS = [
-        ("Global Config", "global_config", "Open global configuration editor"),
-        ("Log Viewer", "log_viewer", "Open log viewer window"),
-        ("Custom Functions", "custom_functions", "Manage custom functions"),
-        ("Test Plate", "test_plate", "Generate synthetic test plate"),
-    ]
+    BUTTON_CONFIGS = [action.button_config for action in SystemMonitorAction]
     BUTTON_GRID_COLUMNS = 0  # Single row (all buttons next to each other)
     
     # Signals
@@ -82,31 +253,14 @@ class SystemMonitorWidget(QWidget):
         # Initialize configuration
         self.monitor_config = config or PerformanceMonitorConfig()
 
-        # Initialize color scheme and style generator
         self.color_scheme = color_scheme or ColorScheme()
-        self.style_generator = StyleSheetGenerator(self.color_scheme)
 
-        # Calculate monitoring parameters from configuration
-        update_interval = self.monitor_config.update_interval_seconds
-        history_length = self.monitor_config.calculated_max_data_points
+        self.runtime = SystemMonitorRuntime.from_config(self.monitor_config)
 
-        # Core monitoring - use persistent thread for non-blocking metrics collection
-        sampler_config = self.monitor_config.sampler_config
-        self.monitor = SystemMonitorCore(
-            history_length=history_length,
-            sampler_config=sampler_config,
-        )  # Match the dynamic history length
-
-        self.persistent_monitor = PersistentSystemMonitor(
-            update_interval=update_interval,
-            history_length=history_length,
-            sampler_config=sampler_config,
-        )
-        # No timer needed - the persistent thread handles timing
-
-        # Track graph layout mode (True = side-by-side, False = stacked)
-        # MUST be set before setup_ui() since create_pyqtgraph_section() uses it
-        self._graphs_side_by_side = True
+        # These declaration instances must exist before setup_ui() creates the
+        # loading presentation and initial graph layout.
+        self._graph_layout_mode = SystemMonitorGraphLayout.SIDE_BY_SIDE
+        self._presentation_backend = SystemMonitorPresentationBackend.LOADING
 
         # Delay monitoring start until widget is shown (fixes WSL2 hanging)
         self._monitoring_started = False
@@ -174,7 +328,7 @@ class SystemMonitorWidget(QWidget):
 
     def _import_pyqtgraph_main_thread(self):
         """Import PyQtGraph in main thread after delay."""
-        global PYQTGRAPH_AVAILABLE, pg
+        global pg
 
         try:
             logger.info("⏳ Loading PyQtGraph (UI will freeze for ~8 seconds)...")
@@ -184,7 +338,6 @@ class SystemMonitorWidget(QWidget):
 
             logger.info("🔧 Initializing PyQtGraph (loading GPU libraries: cupy, numpy, etc.)...")
             pg = pg_module
-            PYQTGRAPH_AVAILABLE = True
             logger.info("✅ PyQtGraph loaded successfully (GPU libraries ready)")
 
             # Flush logs so startup screen can read them
@@ -197,42 +350,37 @@ class SystemMonitorWidget(QWidget):
 
             # Schedule UI switch on next event loop tick so startup screen can update
             from PyQt6.QtCore import QTimer as _QTimer
-            _QTimer.singleShot(0, self._switch_to_pyqtgraph_ui)
+            _QTimer.singleShot(
+                0,
+                lambda: self._activate_presentation_backend(
+                    SystemMonitorPresentationBackend.PYQTGRAPH
+                ),
+            )
         except ImportError as e:
             logger.warning(f"❌ PyQtGraph not available: {e}")
-            PYQTGRAPH_AVAILABLE = False
 
             # Schedule fallback switch similarly
             from PyQt6.QtCore import QTimer as _QTimer
-            _QTimer.singleShot(0, self._switch_to_fallback_ui)
+            _QTimer.singleShot(
+                0,
+                lambda: self._activate_presentation_backend(
+                    SystemMonitorPresentationBackend.FALLBACK
+                ),
+            )
 
-    def _switch_to_pyqtgraph_ui(self):
-        """Switch from loading placeholder to PyQtGraph UI (called in main thread)."""
-        # Remove loading placeholder from graphs container
+    def _activate_presentation_backend(
+        self,
+        backend: SystemMonitorPresentationBackend,
+    ) -> None:
+        """Replace the current presentation through one declared backend."""
+
         old_widget = self.monitoring_widget
         self.graphs_layout.removeWidget(old_widget)
         old_widget.deleteLater()
-
-        # Create PyQtGraph section
-        self.monitoring_widget = self.create_pyqtgraph_section()
-        # Add to graphs container layout
+        self._presentation_backend = backend
+        self.monitoring_widget = backend.create_widget(self)
         self.graphs_layout.addWidget(self.monitoring_widget)
-
-        logger.info("Switched to PyQtGraph UI")
-
-    def _switch_to_fallback_ui(self):
-        """Switch from loading placeholder to fallback UI (called in main thread)."""
-        # Remove loading placeholder from graphs container
-        old_widget = self.monitoring_widget
-        self.graphs_layout.removeWidget(old_widget)
-        old_widget.deleteLater()
-
-        # Create fallback section
-        self.monitoring_widget = self.create_fallback_section()
-        # Add to graphs container layout
-        self.graphs_layout.addWidget(self.monitoring_widget)
-
-        logger.info("Switched to fallback UI (PyQtGraph not available)")
+        logger.info(backend.activation_message)
 
     def showEvent(self, event):
         """Handle widget show event - start monitoring when widget becomes visible."""
@@ -360,7 +508,7 @@ class SystemMonitorWidget(QWidget):
         self.graphs_layout.setSpacing(0)
 
         # Start with loading placeholder
-        self.monitoring_widget = self.create_loading_placeholder()
+        self.monitoring_widget = self._presentation_backend.create_widget(self)
         self.graphs_layout.addWidget(self.monitoring_widget)
 
         self.main_splitter.addWidget(self.graphs_container)
@@ -372,7 +520,7 @@ class SystemMonitorWidget(QWidget):
         main_layout.addWidget(self.main_splitter)
 
         # Apply centralized styling
-        self.setStyleSheet(self.style_generator.generate_system_monitor_style())
+        self.setStyleSheet(self.color_scheme.styles.generate_system_monitor_style())
         self._refresh_embedded_content_height()
 
         # Load PyQtGraph asynchronously
@@ -405,7 +553,7 @@ class SystemMonitorWidget(QWidget):
         panel = ButtonPanel(
             button_configs=self.BUTTON_CONFIGS,
             on_action=self.handle_button_action,
-            style_generator=self.style_generator,
+            color_scheme=self.color_scheme,
             grid_columns=self.BUTTON_GRID_COLUMNS,
             parent=self
         )
@@ -413,16 +561,9 @@ class SystemMonitorWidget(QWidget):
         panel.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
         return panel
     
-    def handle_button_action(self, action_id: str):
+    def handle_button_action(self, action_id: str) -> None:
         """Handle button actions declaratively."""
-        if action_id == "global_config":
-            self.show_global_config.emit()
-        elif action_id == "log_viewer":
-            self.show_log_viewer.emit()
-        elif action_id == "custom_functions":
-            self.show_custom_functions.emit()
-        elif action_id == "test_plate":
-            self.show_test_plate_generator.emit()
+        SystemMonitorAction(action_id).invoke(self)
     
     def _force_refresh(self):
         """Force an immediate refresh of system metrics."""
@@ -584,7 +725,7 @@ class SystemMonitorWidget(QWidget):
         history = float(self.monitor_config.history_duration_seconds)
         self.cpu_gpu_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
         self.cpu_gpu_plot.setYRange(0, 100)
-        self.cpu_gpu_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
+        self._apply_plot_grid(self.cpu_gpu_plot)
         # Disable auto-ranging so manual panning works reliably
         _cpu_vb = self.cpu_gpu_plot.getPlotItem().getViewBox()
         _cpu_vb.setAutoPan(x=False, y=False)
@@ -595,7 +736,7 @@ class SystemMonitorWidget(QWidget):
         # Style RAM/VRAM plot - minimal padding
         self.ram_vram_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
         self.ram_vram_plot.setYRange(0, 100)
-        self.ram_vram_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
+        self._apply_plot_grid(self.ram_vram_plot)
         # Disable auto-ranging so manual panning works reliably
         _ram_vb = self.ram_vram_plot.getPlotItem().getViewBox()
         _ram_vb.setAutoPan(x=False, y=False)
@@ -633,6 +774,15 @@ class SystemMonitorWidget(QWidget):
         bottom_axis.setHeight(0)
         bottom_axis.setStyle(showValues=False)
         plot.getViewBox().setDefaultPadding(0)
+
+    def _apply_plot_grid(self, plot) -> None:
+        """Apply the declared grid policy to one plot."""
+
+        plot.showGrid(
+            x=self.monitor_config.show_grid,
+            y=self.monitor_config.show_grid,
+            alpha=0.3,
+        )
 
     def _configure_plot_acceleration(self) -> bool:
         """Enable pyqtgraph's OpenGL curve path for monitor plots when available."""
@@ -699,22 +849,16 @@ class SystemMonitorWidget(QWidget):
         self.layout_toggle_button.clicked.connect(self.toggle_graph_layout)
 
         # Style the button to match parameter form manager style
-        button_styles = self.style_generator.generate_config_button_styles()
+        button_styles = self.color_scheme.styles.generate_config_button_styles()
         self.layout_toggle_button.setStyleSheet(button_styles["reset"])
 
         return self.layout_toggle_button
 
     def toggle_graph_layout(self):
         """Toggle between side-by-side and stacked graph layouts."""
-        self._graphs_side_by_side = not self._graphs_side_by_side
+        self._graph_layout_mode = self._graph_layout_mode.successor()
         self._update_graph_layout()
-
-        # Update button text via ButtonPanel API
-        if hasattr(self, 'button_panel'):
-            if self._graphs_side_by_side:
-                self.button_panel.set_button_text("toggle_layout", "Stack")
-            else:
-                self.button_panel.set_button_text("toggle_layout", "Side-by-Side")
+        self.layout_toggle_button.setText(self._graph_layout_mode.toggle_label)
 
     def _update_graph_layout(self):
         """Update the graph layout based on current mode."""
@@ -724,14 +868,10 @@ class SystemMonitorWidget(QWidget):
             if item.widget():
                 item.widget().setParent(None)
 
-        if self._graphs_side_by_side:
-            # Side-by-side: 1 row, 2 columns
-            self.graph_layout.addWidget(self.cpu_gpu_plot, 0, 0)
-            self.graph_layout.addWidget(self.ram_vram_plot, 0, 1)
-        else:
-            # Stacked: 2 rows, 1 column
-            self.graph_layout.addWidget(self.cpu_gpu_plot, 0, 0)
-            self.graph_layout.addWidget(self.ram_vram_plot, 1, 0)
+        self._graph_layout_mode.arrange(
+            self.graph_layout,
+            (self.cpu_gpu_plot, self.ram_vram_plot),
+        )
 
     def create_fallback_section(self) -> QWidget:
         """
@@ -765,19 +905,19 @@ class SystemMonitorWidget(QWidget):
         self.metrics_updated.connect(self.update_display)
 
         # Connect persistent monitor signals
-        self.persistent_monitor.connect_signals(
+        self.runtime.live.connect_signals(
             metrics_callback=self.on_metrics_updated,
             error_callback=self.on_metrics_error
         )
     
     def start_monitoring(self):
         """Start the persistent monitoring thread."""
-        self.persistent_monitor.start_monitoring()
+        self.runtime.live.start_monitoring()
         logger.debug("System monitoring started")
 
     def stop_monitoring(self):
         """Stop the persistent monitoring thread."""
-        self.persistent_monitor.stop_monitoring()
+        self.runtime.live.stop_monitoring()
         logger.debug("System monitoring stopped")
 
     def cleanup(self):
@@ -788,49 +928,33 @@ class SystemMonitorWidget(QWidget):
             # Stop monitoring first
             self.stop_monitoring()
 
-            # Clean up pyqtgraph plots
-            if PYQTGRAPH_AVAILABLE and hasattr(self, 'cpu_plot'):
-                try:
-                    self.cpu_plot.clear()
-                    self.ram_plot.clear()
-                    self.gpu_plot.clear()
-                    self.vram_plot.clear()
-
-                    # Clear plot widgets
-                    if hasattr(self, 'cpu_plot_widget'):
-                        self.cpu_plot_widget.close()
-                    if hasattr(self, 'ram_plot_widget'):
-                        self.ram_plot_widget.close()
-                    if hasattr(self, 'gpu_plot_widget'):
-                        self.gpu_plot_widget.close()
-                    if hasattr(self, 'vram_plot_widget'):
-                        self.vram_plot_widget.close()
-
-                except Exception as e:
-                    logger.warning(f"Error cleaning up pyqtgraph plots: {e}")
+            self._presentation_backend.cleanup(self)
 
             # Clear data
-            if hasattr(self, 'monitor'):
-                self.monitor.cpu_history.clear()
-                self.monitor.ram_history.clear()
-                self.monitor.gpu_history.clear()
-                self.monitor.vram_history.clear()
-                self.monitor.time_stamps.clear()
+            self.runtime.history.reset_history()
 
             logger.debug("SystemMonitorWidget cleanup completed")
 
         except Exception as e:
             logger.warning(f"Error during SystemMonitorWidget cleanup: {e}")
+
+    def _cleanup_pyqtgraph_presentation(self) -> None:
+        """Release resources guaranteed by the PyQtGraph backend."""
+
+        try:
+            self.cpu_curve.clear()
+            self.ram_curve.clear()
+            self.gpu_curve.clear()
+            self.vram_curve.clear()
+            self.cpu_gpu_plot.close()
+            self.ram_vram_plot.close()
+        except Exception as error:
+            logger.warning("Error cleaning up PyQtGraph plots: %s", error)
     
     def on_metrics_updated(self, metrics: SystemMetrics):
         """Handle metrics update from persistent monitor thread."""
         try:
-            self.monitor.cpu_history.append(metrics.cpu_percent)
-            self.monitor.ram_history.append(metrics.ram_percent)
-            self.monitor.gpu_history.append(metrics.gpu_percent)
-            self.monitor.vram_history.append(metrics.vram_percent)
-            self.monitor.time_stamps.append(time.time())
-            self.monitor._current_metrics = metrics
+            self.runtime.history.record_metrics(metrics, timestamp=time.time())
 
             self.metrics_updated.emit(metrics)
 
@@ -853,10 +977,7 @@ class SystemMonitorWidget(QWidget):
             # Update system info
             self.update_system_info(metrics)
 
-            if PYQTGRAPH_AVAILABLE is True:
-                self._queue_pyqtgraph_plot_update(metrics)
-            elif PYQTGRAPH_AVAILABLE is False:
-                self.update_fallback_display(metrics)
+            self._presentation_backend.present(self, metrics)
 
         except Exception as e:
             logger.warning(f"Failed to update display: {e}")
@@ -891,7 +1012,7 @@ class SystemMonitorWidget(QWidget):
     def update_pyqtgraph_plots(self):
         """Update consolidated PyQtGraph plot data at metrics cadence."""
         try:
-            data_length = len(self.monitor.cpu_history)
+            data_length = len(self.runtime.history.cpu_history)
             if data_length == 0:
                 return
 
@@ -899,10 +1020,10 @@ class SystemMonitorWidget(QWidget):
             history = float(self.monitor_config.history_duration_seconds)
             self._ensure_plot_buffers(data_length, update_interval)
 
-            self._copy_history(self.monitor.cpu_history, self._history_cpu)
-            self._copy_history(self.monitor.ram_history, self._history_ram)
-            self._copy_history(self.monitor.gpu_history, self._history_gpu)
-            self._copy_history(self.monitor.vram_history, self._history_vram)
+            self._copy_history(self.runtime.history.cpu_history, self._history_cpu)
+            self._copy_history(self.runtime.history.ram_history, self._history_ram)
+            self._copy_history(self.runtime.history.gpu_history, self._history_gpu)
+            self._copy_history(self.runtime.history.vram_history, self._history_vram)
             self._history_length = data_length
 
             if self._last_plot_history != history:
@@ -1012,10 +1133,10 @@ class SystemMonitorWidget(QWidget):
         try:
             display_text = f"""
 ┌─────────────────────────────────────────────────────────────────┐
-│ CPU:  {self.create_text_bar(metrics.cpu_percent)} {metrics.cpu_percent:5.1f}%
-│ RAM:  {self.create_text_bar(metrics.ram_percent)} {metrics.ram_percent:5.1f}% ({metrics.ram_used_gb:.1f}/{metrics.ram_total_gb:.1f}GB)
-│ GPU:  {self.create_text_bar(metrics.gpu_percent)} {metrics.gpu_percent:5.1f}%
-│ VRAM: {self.create_text_bar(metrics.vram_percent)} {metrics.vram_percent:5.1f}%
+│ CPU:  {self.create_text_bar(metrics.cpu.cpu_percent)} {metrics.cpu.cpu_percent:5.1f}%
+│ RAM:  {self.create_text_bar(metrics.memory.ram_percent)} {metrics.memory.ram_percent:5.1f}% ({metrics.memory.ram_used_gb:.1f}/{metrics.memory.ram_total_gb:.1f}GB)
+│ GPU:  {self.create_text_bar(metrics.gpu.gpu_percent)} {metrics.gpu.gpu_percent:5.1f}%
+│ VRAM: {self.create_text_bar(metrics.gpu.vram_percent)} {metrics.gpu.vram_percent:5.1f}%
 └─────────────────────────────────────────────────────────────────┘
 """
             self.fallback_label.setText(display_text)
@@ -1031,22 +1152,27 @@ class SystemMonitorWidget(QWidget):
             metrics: Typed system metrics snapshot.
         """
         try:
-            self.cpu_cores_label[1].setText(str(metrics.cpu_cores))
-            self.cpu_freq_label[1].setText(f"{metrics.cpu_freq_mhz:.0f} MHz")
+            self.cpu_cores_label[1].setText(str(metrics.cpu.cpu_cores))
+            self.cpu_freq_label[1].setText(f"{metrics.cpu.cpu_freq_mhz:.0f} MHz")
 
             # Update RAM info
-            self.ram_total_label[1].setText(f"{metrics.ram_total_gb:.1f} GB")
-            self.ram_used_label[1].setText(f"{metrics.ram_used_gb:.1f} GB")
+            self.ram_total_label[1].setText(
+                f"{metrics.memory.ram_total_gb:.1f} GB"
+            )
+            self.ram_used_label[1].setText(
+                f"{metrics.memory.ram_used_gb:.1f} GB"
+            )
 
             # Update GPU info if available
-            gpu_name = metrics.gpu_name
+            gpu_name = metrics.gpu.gpu_name
             if len(gpu_name) > 35:
                 gpu_name = gpu_name[:32] + '...'
 
             self.gpu_name_label[1].setText(gpu_name)
-            self.gpu_temp_label[1].setText(f"{metrics.gpu_temp}°C")
+            self.gpu_temp_label[1].setText(f"{metrics.gpu.gpu_temp}°C")
             self.vram_label[1].setText(
-                f"{metrics.vram_used_mb:.0f} / {metrics.vram_total_mb:.0f} MB"
+                f"{metrics.gpu.vram_used_mb:.0f} / "
+                f"{metrics.gpu.vram_total_mb:.0f} MB"
             )
 
             self.gpu_name_label[0].show()
@@ -1098,7 +1224,7 @@ class SystemMonitorWidget(QWidget):
             interval_ms: Update interval in milliseconds
         """
         interval_seconds = interval_ms / 1000.0
-        self.persistent_monitor.set_update_interval(interval_seconds)
+        self.runtime.live.set_update_interval(interval_seconds)
 
     def update_config(self, new_config: PerformanceMonitorConfig):
         """
@@ -1132,25 +1258,12 @@ class SystemMonitorWidget(QWidget):
             # Stop current monitoring
             self.stop_monitoring()
 
-            # Recalculate parameters
-            update_interval = self.monitor_config.update_interval_seconds
-            history_length = self.monitor_config.calculated_max_data_points
-
-            # Create new monitors with updated config
-            self.monitor = SystemMonitorCore(
-                history_length=history_length,
-                sampler_config=new_sampler_config,
-            )
-            self.persistent_monitor = PersistentSystemMonitor(
-                update_interval=update_interval,
-                history_length=history_length,
-                sampler_config=new_sampler_config,
-            )
+            self.runtime = SystemMonitorRuntime.from_config(self.monitor_config)
             self._reset_plot_buffers()
             self._apply_fixed_plot_ranges()
 
             # Reconnect signals
-            self.persistent_monitor.connect_signals(
+            self.runtime.live.connect_signals(
                 metrics_callback=self.on_metrics_updated,
                 error_callback=self.on_metrics_error
             )
@@ -1202,9 +1315,5 @@ class SystemMonitorWidget(QWidget):
         # Update plot grid for consolidated plots (don't change X range here - let update_pyqtgraph_plots handle it)
         plots = [self.cpu_gpu_plot, self.ram_vram_plot]
         for plot in plots:
-            plot.showGrid(
-                x=self.monitor_config.show_grid,
-                y=self.monitor_config.show_grid,
-                alpha=0.3,
-            )
+            self._apply_plot_grid(plot)
         self._apply_fixed_plot_ranges()

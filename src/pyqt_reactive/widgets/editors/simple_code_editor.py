@@ -765,7 +765,6 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
     def _apply_theme(self):
         """Apply ColorScheme theming to QScintilla editor."""
         cs = self.color_scheme
-        from pyqt_reactive.theming.style_generator import StyleSheetGenerator
 
         # Keep the editor-specific dialog surface local while sharing the
         # application button authority with every other dialog.
@@ -776,7 +775,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             }}
         """
         self.setStyleSheet(
-            dialog_style + StyleSheetGenerator(cs).generate_button_style()
+            dialog_style + cs.styles.generate_button_style()
         )
 
         # Apply QScintilla-specific theming

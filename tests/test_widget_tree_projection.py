@@ -1,5 +1,6 @@
 """Tests for generic QWidget tree projection."""
 
+import pytest
 from PyQt6.QtCore import QStringListModel
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -20,7 +21,9 @@ from PyQt6.QtWidgets import (
 )
 
 from pyqt_reactive.services.widget_tree_projection import (
+    DEFAULT_WIDGET_DESCRIPTOR_PROJECTOR_REGISTRY,
     WidgetActionKind,
+    WidgetActionTargetInvalidError,
     WidgetDescriptor,
     WidgetTreeProjectionPolicy,
     WidgetTreeProjectionService,
@@ -176,6 +179,39 @@ def test_widget_tree_projection_describes_known_widget_families(qapp) -> None:
         "Artifacts",
     )
     assert editor_tab_bar.action_kinds == (WidgetActionKind.TAB_SELECTOR,)
+
+
+def test_nominal_widget_projectors_own_indexed_selection(qapp) -> None:
+    combo = QComboBox()
+    combo.addItems(("main", "server"))
+    tab_bar = QTabBar()
+    tab_bar.addTab("Status")
+    tab_bar.addTab("Logs")
+
+    registry = DEFAULT_WIDGET_DESCRIPTOR_PROJECTOR_REGISTRY
+
+    registry.projector_for(combo).invoke_action(
+        combo,
+        WidgetActionKind.CHOICE,
+        target_index=1,
+    )
+    qapp.processEvents()
+    assert combo.currentText() == "server"
+
+    registry.projector_for(tab_bar).invoke_action(
+        tab_bar,
+        WidgetActionKind.TAB_SELECTOR,
+        target_index=1,
+    )
+    qapp.processEvents()
+    assert tab_bar.currentIndex() == 1
+
+    with pytest.raises(WidgetActionTargetInvalidError):
+        registry.projector_for(combo).invoke_action(
+            combo,
+            WidgetActionKind.CHOICE,
+            target_index=2,
+        )
 
 
 def test_widget_projector_registry_resolves_qt_mro(qapp) -> None:

@@ -7,17 +7,65 @@ shared between UI implementations.
 
 import logging
 import time
-from pathlib import Path
-from typing import Optional, List
+from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum, nonmember
+from pathlib import Path
+from typing import List, Optional
 
-from pyqt_reactive.protocols import get_form_config
+from zmqruntime.execution.logs import ExecutionWorkerLogIdentity
+from zmqruntime.messages import ProcessIdentity
 
 logger = logging.getLogger(__name__)
 
 
+LogDisplayNameResolver = Callable[[Path, str | None], str]
+
+
+class LogType(str, Enum):
+    """Closed log roles with member-owned presentation and ordering semantics."""
+
+    _path_name = nonmember(lambda path, worker_id: path.name)
+    _main_process = nonmember(lambda path, worker_id: "Main Process")
+    _main_subprocess = nonmember(lambda path, worker_id: "Main Subprocess")
+    _worker = nonmember(
+        lambda path, worker_id: (
+            f"Worker {worker_id}" if worker_id is not None else path.name
+        )
+    )
+
+    def __new__(
+        cls,
+        value: str,
+        display_name_resolver: LogDisplayNameResolver,
+        sort_priority: int,
+        retained_on_clear: bool = False,
+    ) -> "LogType":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member._display_name_resolver = display_name_resolver
+        member.sort_priority = sort_priority
+        member.retained_on_clear = retained_on_clear
+        return member
+
+    TUI = ("tui", _main_process, 0, True)
+    MAIN = ("main", _main_subprocess, 1)
+    WORKER = ("worker", _worker, 2)
+    ZMQ_SERVER = ("zmq_server", _path_name, 3)
+    ZMQ_WORKER = ("zmq_worker", _path_name, 3)
+    NAPARI = ("napari", _path_name, 3)
+    UNKNOWN = ("unknown", _path_name, 3)
+
+    def display_name_for(self, path: Path, worker_id: str | None) -> str:
+        """Resolve this member's default display name."""
+
+        return self._display_name_resolver(path, worker_id)
+
+
 def _get_log_dir() -> Path:
     """Return configured log directory or default."""
+    from pyqt_reactive.protocols.form_config import get_form_config
+
     config = get_form_config()
     if config.log_dir:
         return Path(config.log_dir)
@@ -26,6 +74,8 @@ def _get_log_dir() -> Path:
 
 def _get_log_prefixes() -> List[str]:
     """Return configured log prefixes or default."""
+    from pyqt_reactive.protocols.form_config import get_form_config
+
     config = get_form_config()
     return config.log_prefixes or ["pyqt_reactive_"]
 
@@ -40,6 +90,8 @@ def _match_prefixed(file_name: str, suffix: str) -> Optional[str]:
 
 def get_current_log_file_path() -> str:
     """Get the current log file path from the logging system."""
+    from pyqt_reactive.protocols.form_config import get_form_config
+
     try:
         # Get the root logger and find the FileHandler
         root_logger = logging.getLogger()
@@ -66,25 +118,23 @@ def get_current_log_file_path() -> str:
         raise RuntimeError(f"Could not determine log file path: {e}")
 
 
-@dataclass
+@dataclass(slots=True)
 class LogFileInfo:
     """Information about a discovered log file."""
+
     path: Path
-    log_type: str  # "tui", "main", "worker", "unknown"
+    log_type: LogType
     worker_id: Optional[str] = None
     display_name: Optional[str] = None
+    process_identity: Optional[ProcessIdentity] = None
 
     def __post_init__(self):
         """Generate display name if not provided."""
-        if not self.display_name:
-            if self.log_type == "tui":
-                self.display_name = "Main Process"
-            elif self.log_type == "main":
-                self.display_name = "Main Subprocess"
-            elif self.log_type == "worker" and self.worker_id:
-                self.display_name = f"Worker {self.worker_id}"
-            else:
-                self.display_name = self.path.name
+        if self.display_name is None:
+            self.display_name = self.log_type.display_name_for(
+                self.path,
+                self.worker_id,
+            )
 
 
 def discover_logs(base_log_path: Optional[str] = None, include_main_log: bool = True,
@@ -158,7 +208,11 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
         try:
             tui_log_path = get_current_log_file_path()
             if log_path == Path(tui_log_path):
-                return LogFileInfo(log_path, "tui", display_name="Main Process")
+                return LogFileInfo(
+                    log_path,
+                    LogType.TUI,
+                    process_identity=ProcessIdentity.current(),
+                )
         except RuntimeError:
             pass  # TUI log not found, continue with other classification
 
@@ -168,21 +222,31 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
         # Extract port from filename
         parts = file_name.replace(f'{prefix}zmq_server_port_', '').replace('.log', '').split('_')
         port = parts[0] if parts else 'unknown'
-        return LogFileInfo(log_path, "zmq_server", display_name=f"ZMQ Server (port {port})")
+        return LogFileInfo(
+            log_path,
+            LogType.ZMQ_SERVER,
+            display_name=f"ZMQ Server (port {port})",
+        )
 
     # Check for ZMQ worker logs
-    if file_name.startswith('zmq_worker_exec_'):
-        # Extract execution ID and worker PID
-        parts = file_name.replace('zmq_worker_exec_', '').replace('.log', '').split('_worker_')
-        if len(parts) == 2:
-            exec_id_short = parts[0][:8]  # First 8 chars of UUID
-            worker_pid = parts[1].split('_')[0]  # PID is first part after _worker_
-            return LogFileInfo(log_path, "zmq_worker", worker_pid, display_name=f"ZMQ Worker {worker_pid}")
+    worker_log = ExecutionWorkerLogIdentity.from_path(log_path)
+    if worker_log is not None:
+        worker_id = str(worker_log.worker_pid)
+        return LogFileInfo(
+            log_path,
+            LogType.ZMQ_WORKER,
+            worker_id,
+            display_name=f"ZMQ Worker {worker_id}",
+        )
 
     # Check for Napari viewer logs
     if file_name.startswith('napari_detached_port_'):
         port = file_name.replace('napari_detached_port_', '').replace('.log', '')
-        return LogFileInfo(log_path, "napari", display_name=f"Napari Viewer (port {port})")
+        return LogFileInfo(
+            log_path,
+            LogType.NAPARI,
+            display_name=f"Napari Viewer (port {port})",
+        )
 
     # Check subprocess logs if base_log_path is provided
     if base_log_path:
@@ -190,18 +254,18 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
 
         # Check if it's the main subprocess log: exact match
         if file_name == f"{base_name}.log":
-            return LogFileInfo(log_path, "main", display_name="Main Subprocess")
+            return LogFileInfo(log_path, LogType.MAIN)
 
         # Check if it's a worker log: {base_name}_worker_*.log
         if file_name.startswith(f"{base_name}_worker_") and file_name.endswith('.log'):
             # Extract worker ID (everything between _worker_ and .log)
             worker_part = file_name[len(f"{base_name}_worker_"):-4]  # Remove .log suffix
             worker_id = worker_part.split('_')[0]  # Take first part before any additional underscores
-            return LogFileInfo(log_path, "worker", worker_id, display_name=f"Worker {worker_id}")
+            return LogFileInfo(log_path, LogType.WORKER, worker_id)
 
     # Unknown or malformed log file
     logger.debug(f"Unrecognized log file pattern: {file_name}")
-    return LogFileInfo(log_path, "unknown")
+    return LogFileInfo(log_path, LogType.UNKNOWN)
 
 
 def is_relevant_log_file(file_path: Path, base_log_path: Optional[str]) -> bool:

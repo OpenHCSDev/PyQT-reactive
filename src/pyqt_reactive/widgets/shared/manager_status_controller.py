@@ -12,6 +12,7 @@ from pyqt_reactive.strategies import (
     DefaultStatusPresentationStrategy,
     StatusPresentationInput,
 )
+from pyqt_reactive.widgets.shared.manager_ui_scaffold import ManagerHeaderParts
 
 
 @dataclass
@@ -34,12 +35,13 @@ class ManagerStatusController:
         *,
         message: str,
         context: Any,
-        status_label: QLabel | None,
-        status_scroll: Any | None,
+        manager_header: ManagerHeaderParts | None,
     ) -> None:
         """Render a status message, starting marquee scrolling when configured."""
-        if not status_label:
+        if manager_header is None:
             return
+        status_label = manager_header.status_label
+        status_scroll = manager_header.status_scroll
 
         presentation = self.presentation_strategy.present(
             StatusPresentationInput(message=message, context=context)
@@ -62,16 +64,17 @@ class ManagerStatusController:
         self,
         *,
         context: Any,
-        status_label: QLabel | None,
-        status_scroll: Any | None,
+        manager_header: ManagerHeaderParts | None,
     ) -> None:
         """Re-apply the current message so scroll duplication matches new width."""
+        status_scroll = (
+            None if manager_header is None else manager_header.status_scroll
+        )
         if self.enable_scrolling and status_scroll:
             self.update(
                 message=self.current_message,
                 context=context,
-                status_label=status_label,
-                status_scroll=status_scroll,
+                manager_header=manager_header,
             )
 
     def _render_scrolling_message(

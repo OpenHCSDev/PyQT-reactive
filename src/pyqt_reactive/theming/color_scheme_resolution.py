@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pyqt_reactive.theming.color_scheme import ColorScheme
-from pyqt_reactive.theming.style_generator import StyleSheetGenerator
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,12 +21,11 @@ class ColorSchemeResolution:
 
 @dataclass(frozen=True, slots=True)
 class WidgetTheme:
-    """Resolved theme surface for widgets that need colors and stylesheets."""
+    """Resolved color declaration for themed widgets."""
 
     scheme: ColorScheme
-    styles: StyleSheetGenerator
 
     @classmethod
     def from_optional(cls, provided_scheme: ColorScheme | None) -> "WidgetTheme":
         scheme = ColorSchemeResolution(provided_scheme).resolve()
-        return cls(scheme=scheme, styles=StyleSheetGenerator(scheme))
+        return cls(scheme=scheme)
