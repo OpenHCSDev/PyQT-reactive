@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Harden native Qt theming across menus, previews, progress bars, and boolean
+  editors.
+- Correlate live process records with their owning logs and endpoint status.
+- Keep shared system-monitor sampling and presentation responsive under load.
+
 ## 0.2.0
 
 - Align the shared function table browser with typed endpoint catalog entries so
