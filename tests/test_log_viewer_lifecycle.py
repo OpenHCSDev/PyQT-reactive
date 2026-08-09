@@ -17,6 +17,7 @@ from pyqt_reactive.widgets.log_viewer import (
     LogFileLoader,
     LogItemDelegate,
     LogListModel,
+    LogTailer,
     LogViewerWindow,
 )
 
@@ -100,6 +101,17 @@ def test_log_file_loader_runs_as_interruptible_qthread(qtbot, tmp_path) -> None:
     assert started == [True]
     assert [chunk[1][0]["text"] for chunk in chunks] == ["second", "third"]
     assert all(owner is loader for owner, _chunk in chunks)
+
+
+def test_log_tailer_honors_stop_requested_before_run(qapp, tmp_path) -> None:
+    """A stop requested during QThread startup cannot be overwritten by run()."""
+
+    tailer = LogTailer(tmp_path / "main.log")
+    tailer.request_stop()
+    tailer.start()
+
+    assert tailer.wait(1_000)
+    assert not tailer.isRunning()
 
 
 def test_rapid_log_switching_retires_workers_without_qt_lifecycle_failure(

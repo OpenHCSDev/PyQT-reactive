@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3
+
+- Make the log-tailer's monotonic stop request the sole shutdown authority so
+  rapid log switches cannot lose a request during QThread startup.
+
 ## 0.2.2
 
 - Use one immutable endpoint-observation snapshot as the authority for responsive

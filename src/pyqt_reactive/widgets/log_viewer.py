@@ -11,6 +11,7 @@ import re
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 from typing import Dict, List, Optional, Set, Tuple
 
 from pygments.token import Token
@@ -1924,16 +1925,14 @@ class LogTailer(QThread):
         super().__init__()
         self.log_path = log_path
         self.file_position = initial_position
-        self._running = False
+        self._stop_requested = Event()
 
     def run(self):
         """Continuously tail log file in background thread."""
-        self._running = True
-
-        while self._running:
+        while not self._stop_requested.is_set():
             try:
                 if not self.log_path.exists():
-                    self.msleep(100)
+                    self._stop_requested.wait(0.1)
                     continue
 
                 # Get current file size
@@ -1965,12 +1964,11 @@ class LogTailer(QThread):
             except Exception as e:
                 self.error_occurred.emit(f"Unexpected error: {e}")
 
-            # Sleep for 100ms before next check
-            self.msleep(100)
+            self._stop_requested.wait(0.1)
 
-    def stop(self):
-        """Stop the tailing thread."""
-        self._running = False
+    def request_stop(self) -> None:
+        """Request shutdown without depending on QThread startup timing."""
+        self._stop_requested.set()
 
 
 class LogViewerWindow(QMainWindow):
@@ -2821,7 +2819,7 @@ class LogViewerWindow(QMainWindow):
         if self.log_tailer:
             log_tailer = self.log_tailer
             self.log_tailer = None
-            log_tailer.stop()
+            log_tailer.request_stop()
             log_tailer.wait()
         logger.debug("Stopped log tailing")
 
