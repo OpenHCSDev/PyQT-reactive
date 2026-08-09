@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2
+
+- Use one immutable endpoint-observation snapshot as the authority for responsive
+  servers and typed startup lifecycle observations.
+- Keep locally proven live endpoints visible through transient control-channel
+  scan misses without maintaining copied connection flags.
+- Reject stale background scans whose base snapshot was superseded by a newer
+  lifecycle observation.
+
 ## 0.2.1
 
 - Harden native Qt theming across menus, previews, progress bars, and boolean

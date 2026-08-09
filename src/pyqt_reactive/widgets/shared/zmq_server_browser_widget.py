@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import threading
 from abc import ABC, ABCMeta, abstractmethod
-from dataclasses import dataclass
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, List
 
+from objectstate import spawn_thread_with_context
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -17,13 +18,16 @@ from PyQt6.QtWidgets import (
     QTreeWidgetItem,
     QWidget,
 )
-
-from objectstate import spawn_thread_with_context
+from zmqruntime import EndpointShutdownMode
+from zmqruntime.startup import EndpointStartupStatus
 
 from pyqt_reactive.services.zmq_server_info import (
     BaseServerInfo,
 )
 from pyqt_reactive.services.zmq_server_scan_service import (
+    EndpointObservationSnapshot,
+    EndpointScanResult,
+    StartingEndpointObservation,
     ZMQServerScanService,
 )
 from pyqt_reactive.theming import ColorScheme
@@ -34,7 +38,6 @@ from pyqt_reactive.widgets.shared.manager_ui_scaffold import (
 )
 from pyqt_reactive.widgets.shared.tree_rebuild_coordinator import TreeRebuildCoordinator
 from pyqt_reactive.widgets.shared.tree_state_adapter import TreeStateAdapter
-from zmqruntime.messages import PongResponse
 
 logger = logging.getLogger(__name__)
 
@@ -43,69 +46,41 @@ class _CombinedMeta(ABCMeta, type(QWidget)):
     """Combined metaclass for ABC + PyQt6 QWidget."""
 
 
-@dataclass(frozen=True)
-class KillOperationPlan:
-    """Server kill execution plan."""
-
-    graceful: bool
-    strict_failures: bool
-    emit_signal_on_failure: bool
-    success_message: str
-
-
 class KillOperationKind(str, Enum):
-    """Closed user-facing server kill actions."""
+    """Closed user-facing kill actions with member-owned execution policy."""
 
-    GRACEFUL = "graceful"
-    FORCE = "force"
+    def __new__(
+        cls,
+        value: str,
+        shutdown_mode: EndpointShutdownMode,
+        success_message: str,
+        thread_name: str,
+    ) -> KillOperationKind:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.shutdown_mode = shutdown_mode
+        member.success_message = success_message
+        member.thread_name = thread_name
+        return member
 
-
-@dataclass(frozen=True)
-class KillOperationPolicy:
-    """Invariant policy attached to one kill action kind."""
-
-    plan: KillOperationPlan
-    thread_name: str
-
-
-KILL_OPERATION_POLICIES: dict[KillOperationKind, KillOperationPolicy] = {
-    KillOperationKind.GRACEFUL: KillOperationPolicy(
-        plan=KillOperationPlan(
-            graceful=True,
-            strict_failures=True,
-            emit_signal_on_failure=False,
-            success_message="All servers quit successfully",
-        ),
-        thread_name="kill_servers",
-    ),
-    KillOperationKind.FORCE: KillOperationPolicy(
-        plan=KillOperationPlan(
-            graceful=False,
-            strict_failures=False,
-            emit_signal_on_failure=True,
-            success_message="Force kill operation completed (list will refresh)",
-        ),
-        thread_name="force_kill_servers",
-    ),
-}
-
-
-@dataclass(frozen=True)
-class ServerKillAction:
-    """User-selected server kill action with its execution policy."""
-
-    ports: List[int]
-    plan: KillOperationPlan
-    thread_name: str
+    GRACEFUL = (
+        "graceful",
+        EndpointShutdownMode.GRACEFUL,
+        "All servers quit successfully",
+        "kill_servers",
+    )
+    FORCE = (
+        "force",
+        EndpointShutdownMode.FORCE,
+        "All servers force killed successfully",
+        "force_kill_servers",
+    )
 
     @classmethod
-    def from_kind(cls, ports: List[int], kind: KillOperationKind) -> "ServerKillAction":
-        policy = KILL_OPERATION_POLICIES[kind]
-        return cls(
-            ports=ports,
-            plan=policy.plan,
-            thread_name=policy.thread_name,
-        )
+    def from_force(cls, force: bool) -> KillOperationKind:
+        """Resolve the caller's force flag at the declaration owner."""
+
+        return cls.FORCE if force else cls.GRACEFUL
 
 
 class BrowserLifecycleState:
@@ -124,14 +99,50 @@ class BrowserLifecycleState:
         return True
 
 
+class CoalescedScanRequests:
+    """Single authority for one active scan and any newer invalidations."""
+
+    def __init__(self) -> None:
+        self._outstanding = 0
+        self._lock = threading.Lock()
+
+    def request(self) -> bool:
+        """Record an invalidation and report whether its scan must start now."""
+
+        with self._lock:
+            self._outstanding += 1
+            return self._outstanding == 1
+
+    def complete(self) -> bool:
+        """Complete the active scan and retain at most one follow-up request."""
+
+        with self._lock:
+            follow_up_required = self._outstanding > 1
+            self._outstanding = 1 if follow_up_required else 0
+            return follow_up_required
+
+    def clear(self) -> None:
+        """Discard all work when the browser lifecycle ends."""
+
+        with self._lock:
+            self._outstanding = 0
+
+    def has_outstanding(self) -> bool:
+        """Return whether a scan or a coalesced follow-up is outstanding."""
+
+        with self._lock:
+            return self._outstanding > 0
+
+
 class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     """Generic ZMQ browser UI infrastructure with domain extension hooks."""
 
     _TREE_INDENTATION_PX = 12
 
-    server_killed = pyqtSignal(int)
+    endpoint_terminated = pyqtSignal(int)
+    endpoint_snapshot_changed = pyqtSignal(object)
     log_file_opened = pyqtSignal(str)
-    _scan_complete = pyqtSignal(list)
+    _scan_complete = pyqtSignal(object)
     _kill_complete = pyqtSignal(bool, str)
 
     BUTTON_CONFIGS = [
@@ -143,7 +154,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     def __init__(
         self,
         *,
-        ports_to_scan: List[int],
+        ports_to_scan: list[int],
         title: str,
         color_scheme: ColorScheme,
         scan_service: ZMQServerScanService,
@@ -156,9 +167,8 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         self.color_scheme = color_scheme
         self._scan_service = scan_service
 
-        self.servers: list[BaseServerInfo] = []
-        self._last_known_servers: dict[int, BaseServerInfo] = {}
-        self._scan_in_flight = False
+        self._endpoint_snapshot = EndpointObservationSnapshot()
+        self._scan_requests = CoalescedScanRequests()
         self._lifecycle_state = BrowserLifecycleState()
         self.destroyed.connect(
             lambda _object=None, lifecycle=self._lifecycle_state: lifecycle.begin_cleanup()
@@ -166,7 +176,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         self._tree_state_adapter = TreeStateAdapter.default()
         self._tree_rebuild_coordinator = TreeRebuildCoordinator(self._tree_state_adapter)
 
-        self._button_actions: Dict[str, Callable[[], None]] = {
+        self._button_actions: dict[str, Callable[[], None]] = {
             "refresh": self.refresh_servers,
             "quit": self.quit_selected_servers,
             "force_kill": self.force_kill_selected_servers,
@@ -174,7 +184,6 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         self._scan_complete.connect(self._update_server_list)
         self._kill_complete.connect(self._on_kill_complete)
-        self.server_killed.connect(self._on_server_killed)
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.refresh_servers)
@@ -197,6 +206,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             self._cleanup_timer.stop()
             self._cleanup_timer.deleteLater()
             self._cleanup_timer = None
+        self._scan_requests.clear()
 
         self.on_browser_cleanup()
 
@@ -274,34 +284,102 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         action()
 
     def refresh_servers(self) -> None:
-        if self._lifecycle_state.is_cleaning_up() or self._scan_in_flight:
+        if self._lifecycle_state.is_cleaning_up():
             return
-        self._scan_in_flight = True
+        if not self._scan_requests.request():
+            return
+        self._start_server_scan()
+
+    def _start_server_scan(self) -> None:
+        """Run the active coalesced scan request."""
+
+        previous_snapshot = self._endpoint_snapshot
 
         def _scan_and_emit() -> None:
             try:
-                servers = self._scan_service.scan_ports(self.ports_to_scan)
-                if not self._lifecycle_state.is_cleaning_up():
-                    self._scan_complete.emit(servers)
-            finally:
-                self._scan_in_flight = False
+                snapshot = self._scan_service.scan_ports(
+                    self.ports_to_scan,
+                    previous_snapshot=previous_snapshot,
+                )
+            except Exception:
+                logger.exception("Failed to scan ZMQ server endpoints")
+                snapshot = previous_snapshot
+            if not self._lifecycle_state.is_cleaning_up():
+                self._scan_complete.emit(
+                    EndpointScanResult(
+                        snapshot=snapshot,
+                        base_snapshot=previous_snapshot,
+                    )
+                )
 
         spawn_thread_with_context(_scan_and_emit, name="scan_servers")
 
-    def _ping_server(self, port: int) -> PongResponse | None:
-        return self._scan_service.ping_server(port)
+    @pyqtSlot(object)
+    def _update_server_list(self, result: EndpointScanResult) -> None:
+        """Commit one scan authority, then update every derived UI projection."""
 
-    @pyqtSlot(list)
-    def _update_server_list(self, responses: list[PongResponse]) -> None:
-        servers = [BaseServerInfo.from_response(response) for response in responses]
-        self.servers = servers
-        for server in servers:
-            self._last_known_servers[server.port] = server
+        if not isinstance(result, EndpointScanResult):
+            raise TypeError("ZMQ browser scan completion requires EndpointScanResult")
+        if result.base_snapshot is self._endpoint_snapshot:
+            self._commit_endpoint_snapshot(result.snapshot)
+        else:
+            self._scan_requests.request()
+        if self._scan_requests.complete() and not self._lifecycle_state.is_cleaning_up():
+            self._start_server_scan()
+
+    def observe_endpoint_startup(
+        self,
+        port: int,
+        status: EndpointStartupStatus,
+    ) -> None:
+        """Commit one endpoint lifecycle event into the shared snapshot authority."""
+
+        if not isinstance(status, EndpointStartupStatus):
+            raise TypeError("Endpoint startup observation requires EndpointStartupStatus")
+        self._commit_endpoint_snapshot(self._endpoint_snapshot.with_startup_status(port, status))
+
+    def _commit_endpoint_snapshot(
+        self,
+        snapshot: EndpointObservationSnapshot,
+    ) -> None:
+        """Install and publish the sole persistent endpoint observation state."""
+
+        if snapshot == self._endpoint_snapshot:
+            return
+        self._endpoint_snapshot = snapshot
+        self.render_endpoint_snapshot(snapshot)
+        self.endpoint_snapshot_changed.emit(snapshot)
+
+    def render_endpoint_snapshot(
+        self,
+        snapshot: EndpointObservationSnapshot,
+    ) -> None:
+        """Render the generic tree projection of one committed snapshot."""
+
+        servers = [BaseServerInfo.from_response(response) for response in snapshot.responses]
 
         def _rebuild_contents() -> None:
             self.populate_tree(servers)
+            for observation in snapshot.startup_observations:
+                self.server_tree.addTopLevelItem(self.startup_endpoint_tree_item(observation))
 
         self._tree_rebuild_coordinator.rebuild(self.server_tree, _rebuild_contents)
+
+    def startup_endpoint_tree_item(
+        self,
+        observation: StartingEndpointObservation,
+    ) -> QTreeWidgetItem:
+        """Render a row before the endpoint can identify its server role."""
+
+        item = QTreeWidgetItem(
+            [
+                f"Port {observation.port} - Endpoint",
+                "🚀 Starting",
+                observation.status.message,
+            ]
+        )
+        item.setData(0, Qt.ItemDataRole.UserRole, observation)
+        return item
 
     @pyqtSlot(bool, str)
     def _on_kill_complete(self, success: bool, message: str) -> None:
@@ -309,29 +387,19 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             QMessageBox.warning(self, "Kill Failed", message)
         QTimer.singleShot(200, self.refresh_servers)
 
-    @pyqtSlot(int)
-    def _on_server_killed(self, port: int) -> None:
-        if port in self._last_known_servers:
-            del self._last_known_servers[port]
-
     def _periodic_cleanup(self) -> None:
         self.periodic_domain_cleanup()
-        # Note: We intentionally do NOT clean up _last_known_servers here.
-        # Servers are removed from the tree by populate_tree based on scan misses.
-        # Keeping _last_known_servers allows subclasses to access server info
-        # (like active executions) even when ping temporarily fails.
-        # Subclasses can implement their own cleanup via periodic_domain_cleanup.
 
-    def _collect_selected_server_ports(self, empty_selection_message: str) -> List[int]:
+    def _collect_selected_server_ports(self, empty_selection_message: str) -> list[int]:
         selected_items = self.server_tree.selectedItems()
         if not selected_items:
             QMessageBox.warning(self, "No Selection", empty_selection_message)
             return []
 
-        ports_to_kill: List[int] = []
+        ports_to_kill: list[int] = []
         for item in selected_items:
             data = item.data(0, Qt.ItemDataRole.UserRole)
-            if isinstance(data, BaseServerInfo):
+            if isinstance(data, (BaseServerInfo, StartingEndpointObservation)):
                 ports_to_kill.append(data.port)
 
         if not ports_to_kill:
@@ -355,21 +423,25 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         )
         return reply == QMessageBox.StandardButton.Yes
 
-    def _spawn_server_kill_thread(self, action: ServerKillAction) -> None:
+    def _spawn_server_kill_thread(
+        self,
+        ports: list[int],
+        kind: KillOperationKind,
+    ) -> None:
         def _kill_servers() -> None:
-            def _publish_server_killed(port: int) -> None:
+            def _publish_endpoint_terminated(port: int) -> None:
                 if not self._lifecycle_state.is_cleaning_up():
-                    self.server_killed.emit(port)
+                    self.endpoint_terminated.emit(port)
 
-            success, message = self.kill_ports_with_plan(
-                ports=action.ports,
-                plan=action.plan,
-                on_server_killed=_publish_server_killed,
+            success, message = self.execute_kill_operation(
+                ports=ports,
+                kind=kind,
+                on_endpoint_terminated=_publish_endpoint_terminated,
             )
             if not self._lifecycle_state.is_cleaning_up():
                 self._kill_complete.emit(success, message)
 
-        spawn_thread_with_context(_kill_servers, name=action.thread_name)
+        spawn_thread_with_context(_kill_servers, name=kind.thread_name)
 
     def quit_selected_servers(self) -> None:
         ports_to_kill = self._collect_selected_server_ports("Please select servers to quit.")
@@ -387,9 +459,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         if not confirmed:
             return
 
-        self._spawn_server_kill_thread(
-            ServerKillAction.from_kind(ports_to_kill, KillOperationKind.GRACEFUL)
-        )
+        self._spawn_server_kill_thread(ports_to_kill, KillOperationKind.GRACEFUL)
 
     def force_kill_selected_servers(self) -> None:
         ports_to_kill = self._collect_selected_server_ports("Please select servers to force kill.")
@@ -408,9 +478,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         if not confirmed:
             return
 
-        self._spawn_server_kill_thread(
-            ServerKillAction.from_kind(ports_to_kill, KillOperationKind.FORCE)
-        )
+        self._spawn_server_kill_thread(ports_to_kill, KillOperationKind.FORCE)
 
     def _on_item_double_clicked(self, item: QTreeWidgetItem) -> None:
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -434,7 +502,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         )
 
     @abstractmethod
-    def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
+    def populate_tree(self, parsed_servers: list[BaseServerInfo]) -> None:
         """Build tree items from parsed server payloads."""
 
     @abstractmethod
@@ -442,12 +510,12 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         """Run domain-specific cleanup on timer ticks."""
 
     @abstractmethod
-    def kill_ports_with_plan(
+    def execute_kill_operation(
         self,
         *,
-        ports: List[int],
-        plan: KillOperationPlan,
-        on_server_killed: Callable[[int], None],
+        ports: list[int],
+        kind: KillOperationKind,
+        on_endpoint_terminated: Callable[[int], None],
     ) -> tuple[bool, str]:
         """Execute blocking kill operation for selected ports."""
 
