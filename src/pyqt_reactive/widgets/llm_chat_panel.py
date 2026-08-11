@@ -7,21 +7,31 @@ Can be integrated into any code editor or dialog.
 
 import html
 import logging
-from typing import Generic, Optional, TypeVar
+from typing import Generic, TypeVar
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton,
-    QLabel, QMessageBox, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
-    QComboBox, QApplication
-)
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
+from pyqt_reactive.core import BackgroundTaskManager, RichTextAppender
+from pyqt_reactive.protocols import LLMServiceProtocol, get_llm_service, register_llm_service
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.core import BackgroundTaskManager
 from pyqt_reactive.widgets import StatusIndicator, StatusState
-from pyqt_reactive.core import RichTextAppender
-from pyqt_reactive.protocols import get_llm_service, register_llm_service, LLMServiceProtocol
+
 logger = logging.getLogger(__name__)
 DeclarationT = TypeVar("DeclarationT")
 
@@ -52,9 +62,9 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
     def __init__(
         self,
         parent=None,
-        color_scheme: Optional[ColorScheme] = None,
+        color_scheme: ColorScheme | None = None,
         declaration_type: type[DeclarationT] | None = None,
-        llm_service: Optional[LLMServiceProtocol] = None,
+        llm_service: LLMServiceProtocol | None = None,
     ):
         super().__init__(parent)
 
@@ -63,10 +73,9 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
         self.llm_service = llm_service or get_llm_service()
 
         # State
-        self._pending_code: Optional[str] = None
-        self._last_request: Optional[str] = None
+        self._pending_code: str | None = None
+        self._last_request: str | None = None
 
-        # Abstractions from plan_00
         self._generation_tasks = BackgroundTaskManager()
 
         self._setup_ui()
@@ -174,11 +183,16 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
 
         # --- User Input ---
         input_label = QLabel("Describe what you want:")
-        input_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; font-size: 9pt;")
+        input_label.setStyleSheet(
+            f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)}; "
+            "font-size: 9pt;"
+        )
         layout.addWidget(input_label)
 
         self.user_input = QTextEdit()
-        self.user_input.setPlaceholderText("Example: Add a step that normalizes images using percentile normalization")
+        self.user_input.setPlaceholderText(
+            "Example: Add a step that normalizes images using percentile normalization"
+        )
         self.user_input.setStyleSheet(f"""
             QTextEdit {{
                 background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
@@ -331,14 +345,17 @@ class LLMChatPanel(QWidget, Generic[DeclarationT]):
             new_model = model_combo.currentText().strip()
 
             if new_endpoint and new_model and not new_model.startswith("("):
-                service_cls = self.llm_service.__class__
-                self.llm_service = service_cls(api_endpoint=new_endpoint, model=new_model)
-                register_llm_service(self.llm_service)
+                self._apply_connection_settings(new_endpoint, new_model)
 
-                # Update status indicator's check function
-                self._status_indicator._check_fn = self.llm_service.test_connection
-                self._status_indicator.refresh(force=True)
+    def _apply_connection_settings(self, api_endpoint: str, model: str) -> None:
+        """Delegate connection changes to the registered service authority."""
+        self.llm_service.configure_connection(
+            api_endpoint=api_endpoint,
+            model=model,
+        )
+        register_llm_service(self.llm_service)
+        self._status_indicator.refresh(force=True)
 
-    def closeEvent(self, a0):
+    def closeEvent(self, a0):  # noqa: N802 - Qt override
         self._generation_tasks.cleanup()
         super().closeEvent(a0)

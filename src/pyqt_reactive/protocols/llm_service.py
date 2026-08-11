@@ -19,6 +19,15 @@ class LLMServiceProtocol(Protocol):
         """Return list of available model names."""
         ...
 
+    def configure_connection(
+        self,
+        *,
+        api_endpoint: str,
+        model: str | None,
+    ) -> None:
+        """Apply endpoint settings while preserving service-owned dependencies."""
+        ...
+
     def get_system_prompt(self, declaration_type: type[DeclarationT]) -> str:
         """Return the prompt for the nominal declaration being authored."""
         ...
