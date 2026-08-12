@@ -4,8 +4,11 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-
 from objectstate.object_state_registry import ObjectStateRegistry
+
+from pyqt_reactive.services.function_pattern_code_document import (
+    FunctionPatternCodeDocumentService,
+)
 from pyqt_reactive.widgets.function_list_editor import (
     FunctionListEditorWidget,
     PatternMutation,
@@ -84,6 +87,33 @@ def test_function_editor_replaces_stale_sidecar_scope_token() -> None:
     )
 
     assert tokens == ["cellprofilerruntimecallable_0"]
+
+
+def test_function_pattern_tokens_are_unique_per_occurrence() -> None:
+    service = FunctionPatternCodeDocumentService()
+
+    tokens = service.tokens_for_pattern(
+        {
+            "0": [sample_function, sample_function],
+            "1": [sample_function],
+        }
+    )
+
+    assert tokens == {
+        "0": ["func_0", "func_1"],
+        "1": ["func_2"],
+    }
+
+
+def test_function_pattern_tokens_reuse_existing_occurrence_tokens() -> None:
+    service = FunctionPatternCodeDocumentService()
+
+    tokens = service.tokens_for_pattern(
+        [sample_function, sample_function],
+        ["func_4", "func_7"],
+    )
+
+    assert tokens == ["func_4", "func_7"]
 
 
 def test_pattern_mutation_authorization_runs_before_local_write() -> None:

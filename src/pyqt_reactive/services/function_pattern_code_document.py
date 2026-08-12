@@ -18,8 +18,8 @@ from python_introspect import parameter_exclusions, set_parameter_exclusions
 
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.pattern_metadata import PatternScopeToken
-from pyqt_reactive.services.function_navigation import FunctionPatternField
 from pyqt_reactive.protocols import get_codegen_provider
+from pyqt_reactive.services.function_navigation import FunctionPatternField
 from pyqt_reactive.services.pattern_data_manager import (
     FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
 )
@@ -422,6 +422,34 @@ class FunctionPatternCodeDocumentService:
     def ensure_token(self) -> str:
         """Return a fresh function-entry token."""
         return self._func_token_generator.ensure()
+
+    def tokens_for_pattern(
+        self,
+        pattern: PatternSourceValue | None,
+        existing_tokens: PatternTokens | None = None,
+    ) -> PatternTokens:
+        """Return occurrence-owned tokens for a complete function pattern."""
+
+        seed_tokens = existing_tokens or []
+        self.seed_func_token_generator(seed_tokens)
+        seen_tokens: set[str] = set()
+        if isinstance(pattern, dict):
+            seed_by_key = seed_tokens if isinstance(seed_tokens, dict) else {}
+            tokens_by_key: dict[str, list[str]] = {}
+            for key, func_list in pattern.items():
+                _normalized, tokens = self.normalize_function_list(
+                    func_list,
+                    seen_tokens=seen_tokens,
+                    seed_tokens=seed_by_key.get(str(key), []),
+                )
+                tokens_by_key[str(key)] = tokens
+            return tokens_by_key
+        _normalized, tokens = self.normalize_function_list(
+            pattern,
+            seen_tokens=seen_tokens,
+            seed_tokens=seed_tokens if isinstance(seed_tokens, list) else [],
+        )
+        return tokens
 
     def canonical_function_scope_tokens(
         self,

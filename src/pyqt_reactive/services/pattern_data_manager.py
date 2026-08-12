@@ -8,12 +8,14 @@ Framework-agnostic - can be used by any UI framework (PyQt, Textual, etc.).
 """
 
 import copy
-from typing import Union, List, Dict, Tuple, Optional, Callable, Any, NewType
+from collections.abc import Mapping
+from typing import Callable, Dict, List, NewType, Optional, Tuple, Union
 
 from objectstate.object_state_metadata import (
     ObjectStateMetadataContract,
     ObjectStateMetadataContractRegistry,
 )
+
 PatternKey = NewType("PatternKey", str)
 
 
@@ -115,18 +117,16 @@ class PatternDataManager:
         Returns:
             Tuple of (callable, kwargs_dict)
         """
-        # EXACT current logic preservation
         if isinstance(func_item, tuple) and len(func_item) == 2 and callable(func_item[0]):
-            result = func_item[0], func_item[1]
-            print(f"🔍 PATTERN DATA MANAGER extract_func_and_kwargs: tuple case - returning {result}")
-            return result
-        elif callable(func_item):
-            result = func_item, {}
-            print(f"🔍 PATTERN DATA MANAGER extract_func_and_kwargs: callable case - returning {result}")
-            return result
-        else:
-            print("🔍 PATTERN DATA MANAGER extract_func_and_kwargs: neither tuple nor callable - returning None, {}")
-            return None, {}
+            _func, kwargs = func_item
+            if not isinstance(kwargs, Mapping):
+                raise TypeError(
+                    "Function-pattern tuple entries must carry a kwargs mapping."
+                )
+            return func_item[0], dict(kwargs)
+        if callable(func_item):
+            return func_item, {}
+        return None, {}
     
     @staticmethod
     def validate_pattern_structure(pattern: Union[List, Dict]) -> bool:
