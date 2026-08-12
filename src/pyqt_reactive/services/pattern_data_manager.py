@@ -8,8 +8,8 @@ Framework-agnostic - can be used by any UI framework (PyQt, Textual, etc.).
 """
 
 import copy
-from collections.abc import Mapping
-from typing import Callable, Dict, List, NewType, Optional, Tuple, Union
+from collections.abc import Callable, Mapping
+from typing import NewType
 
 from objectstate.object_state_metadata import (
     ObjectStateMetadataContract,
@@ -46,28 +46,28 @@ ObjectStateMetadataContractRegistry.register(
 class PatternDataManager:
     """
     Pure data operations for function patterns.
-    
+
     Handles List↔Dict conversions, cloning, and data transformations
     with order determinism and immutable operations.
     """
-    
+
     @staticmethod
-    def clone_pattern(pattern: Union[List, Dict]) -> Union[List, Dict]:
+    def clone_pattern(pattern: list | dict) -> list | dict:
         """
         Deep clone preserving callable references exactly.
-        
+
         Args:
             pattern: Pattern to clone (List or Dict)
-            
+
         Returns:
             Deep cloned pattern with preserved callable references
         """
         if pattern is None:
             return []
         return copy.deepcopy(pattern)
-    
+
     @staticmethod
-    def convert_list_to_dict(pattern: List) -> Dict:
+    def convert_list_to_dict(pattern: list) -> dict:
         """
         Convert List pattern to empty Dict - user must add component keys manually.
 
@@ -82,9 +82,9 @@ class PatternDataManager:
 
         # Return empty dict - user will add experimental component keys manually
         return {}
-    
+
     @staticmethod
-    def convert_dict_to_list(pattern: Dict) -> Union[List, Dict]:
+    def convert_dict_to_list(pattern: dict) -> list | dict:
         """
         Convert Dict pattern to List when empty.
 
@@ -103,9 +103,9 @@ class PatternDataManager:
 
         # Keep as dict if it has keys
         return pattern
-    
+
     @staticmethod
-    def extract_func_and_kwargs(func_item) -> Tuple[Optional[Callable], Dict]:
+    def extract_func_and_kwargs(func_item) -> tuple[Callable | None, dict]:
         """
         Parse (func, kwargs) tuples and bare callables.
 
@@ -120,28 +120,26 @@ class PatternDataManager:
         if isinstance(func_item, tuple) and len(func_item) == 2 and callable(func_item[0]):
             _func, kwargs = func_item
             if not isinstance(kwargs, Mapping):
-                raise TypeError(
-                    "Function-pattern tuple entries must carry a kwargs mapping."
-                )
+                raise TypeError("Function-pattern tuple entries must carry a kwargs mapping.")
             return func_item[0], dict(kwargs)
         if callable(func_item):
             return func_item, {}
         return None, {}
-    
+
     @staticmethod
-    def validate_pattern_structure(pattern: Union[List, Dict]) -> bool:
+    def validate_pattern_structure(pattern: list | dict) -> bool:
         """
         Basic structural validation of pattern.
-        
+
         Args:
             pattern: Pattern to validate
-            
+
         Returns:
             True if structure is valid, False otherwise
         """
         if pattern is None:
             return True
-        
+
         if isinstance(pattern, list):
             # Validate list items are callables or (callable, dict) tuples
             for item in pattern:
@@ -151,7 +149,7 @@ class PatternDataManager:
                 if not isinstance(kwargs, dict):
                     return False
             return True
-        
+
         elif isinstance(pattern, dict):
             # Validate dict values are lists of callables
             for key, value in pattern.items():
@@ -161,20 +159,20 @@ class PatternDataManager:
                 if not PatternDataManager.validate_pattern_structure(value):
                     return False
             return True
-        
+
         else:
             return False
-    
+
     @staticmethod
-    def get_current_functions(pattern: Union[List, Dict], key: PatternKey, is_dict: bool) -> List:
+    def get_current_functions(pattern: list | dict, key: PatternKey, is_dict: bool) -> list:
         """
         Extract function list for current context.
-        
+
         Args:
             pattern: Full pattern (List or Dict)
             key: Current key (for Dict patterns)
             is_dict: Whether pattern is currently in dict mode
-            
+
         Returns:
             List of functions for current context
         """
@@ -186,21 +184,22 @@ class PatternDataManager:
             return pattern
         else:
             return []
-    
+
     @staticmethod
-    def update_pattern_functions(pattern: Union[List, Dict], key: PatternKey, is_dict: bool,
-                               new_functions: List) -> Union[List, Dict]:
+    def update_pattern_functions(
+        pattern: list | dict, key: PatternKey, is_dict: bool, new_functions: list
+    ) -> list | dict:
         """
         Update functions in pattern for current context.
-        
+
         Returns new pattern object (immutable operation).
-        
+
         Args:
             pattern: Original pattern
             key: Current key (for Dict patterns)
             is_dict: Whether pattern is in dict mode
             new_functions: New function list
-            
+
         Returns:
             New pattern with updated functions
         """
@@ -213,16 +212,16 @@ class PatternDataManager:
         else:
             # Fallback - return original pattern
             return copy.deepcopy(pattern)
-    
+
     @staticmethod
-    def add_new_key(pattern: Dict, new_key: str) -> Dict:
+    def add_new_key(pattern: dict, new_key: str) -> dict:
         """
         Add new key to dict pattern.
-        
+
         Args:
             pattern: Dict pattern
             new_key: Key to add
-            
+
         Returns:
             New dict with added key
         """
@@ -230,9 +229,9 @@ class PatternDataManager:
         if new_key not in new_pattern:
             new_pattern[new_key] = []
         return new_pattern
-    
+
     @staticmethod
-    def remove_key(pattern: Dict, key_to_remove: PatternKey) -> Union[List, Dict]:
+    def remove_key(pattern: dict, key_to_remove: PatternKey) -> list | dict:
         """
         Remove key from dict pattern.
 

@@ -59,10 +59,7 @@ FunctionPatternList = list[FunctionPatternItem]
 FunctionPatternByKey = dict[str, FunctionPatternList]
 PatternTokens = list[str] | dict[str, list[str]]
 PatternSourceValue = (
-    FunctionAuthority
-    | FunctionPatternItem
-    | FunctionPatternList
-    | FunctionPatternByKey
+    FunctionAuthority | FunctionPatternItem | FunctionPatternList | FunctionPatternByKey
 )
 
 
@@ -133,9 +130,7 @@ class EditableFunctionPatternCallable:
         kwargs: Mapping[str, ParameterValue],
     ) -> inspect.Signature:
         signature = inspect.signature(authority)
-        resolved_annotations = EditableFunctionPatternCallable._resolved_annotations(
-            authority
-        )
+        resolved_annotations = EditableFunctionPatternCallable._resolved_annotations(authority)
         parameters = [
             parameter.replace(annotation=resolved_annotations[name])
             if name in resolved_annotations
@@ -198,7 +193,7 @@ class FunctionPatternParameterExclusions:
     def from_callable(
         cls,
         func: FunctionAuthority,
-    ) -> "FunctionPatternParameterExclusions":
+    ) -> FunctionPatternParameterExclusions:
         ordered_names = cls._ordered_names(
             cls._first_positional_parameter_name(func),
             tuple(parameter_exclusions(func)),
@@ -246,7 +241,7 @@ class FunctionPatternChildScopeAddress:
     separator: ClassVar[str] = "::"
 
     @classmethod
-    def parse(cls, scope_id: str) -> "FunctionPatternChildScopeAddress":
+    def parse(cls, scope_id: str) -> FunctionPatternChildScopeAddress:
         parent_scope_id, separator, token = scope_id.rpartition(cls.separator)
         if separator != cls.separator or not parent_scope_id or not token:
             raise FunctionPatternRoundTripError(
@@ -289,8 +284,7 @@ class FunctionPatternCodeDocumentService:
         for key, value in kwargs.items():
             if not isinstance(key, str):
                 raise TypeError(
-                    "Function kwargs must be keyed by parameter name; "
-                    f"got key {key!r}."
+                    f"Function kwargs must be keyed by parameter name; got key {key!r}."
                 )
             clean_kwargs[key] = value
         return clean_kwargs
@@ -301,16 +295,10 @@ class FunctionPatternCodeDocumentService:
         func_item,
     ) -> FunctionPatternItem | None:
         """Return one normalized function-pattern entry."""
-        if (
-            isinstance(func_item, tuple)
-            and len(func_item) == 2
-            and callable(func_item[0])
-        ):
+        if isinstance(func_item, tuple) and len(func_item) == 2 and callable(func_item[0]):
             func, kwargs = func_item
             if not isinstance(kwargs, Mapping):
-                raise TypeError(
-                    "Function-pattern tuple entries must carry a kwargs mapping."
-                )
+                raise TypeError("Function-pattern tuple entries must carry a kwargs mapping.")
             return func, cls.sanitize_pattern_kwargs(kwargs)
 
         if callable(func_item):
@@ -328,8 +316,7 @@ class FunctionPatternCodeDocumentService:
         provider = get_codegen_provider()
         if provider is None:
             raise FunctionPatternRoundTripError(
-                "No codegen provider registered. "
-                "Call register_codegen_provider(...)."
+                "No codegen provider registered. Call register_codegen_provider(...)."
             )
         return provider.render_assignment(
             pattern_data,
@@ -483,8 +470,7 @@ class FunctionPatternCodeDocumentService:
         candidate_states = [
             state
             for state in ObjectStateRegistry.get_all()
-            if isinstance(state.scope_id, str)
-            and state.scope_id.startswith(f"{parent_scope_id}::")
+            if isinstance(state.scope_id, str) and state.scope_id.startswith(f"{parent_scope_id}::")
         ]
         if not candidate_states:
             return []
@@ -536,9 +522,7 @@ class FunctionPatternCodeDocumentService:
             if entry is None:
                 continue
             func, _kwargs = entry
-            state = ObjectStateRegistry.get_by_scope(
-                f"{parent_scope_id}::{tokens[index]}"
-            )
+            state = ObjectStateRegistry.get_by_scope(f"{parent_scope_id}::{tokens[index]}")
             if state is None:
                 return False
             if not self.same_function_authority(state.object_instance, func):
@@ -589,11 +573,7 @@ class FunctionPatternCodeDocumentService:
             entry = cls.function_and_kwargs(item)
             if entry is None:
                 continue
-            token = (
-                str(token_list[index])
-                if index < len(token_list) and token_list[index]
-                else ""
-            )
+            token = str(token_list[index]) if index < len(token_list) and token_list[index] else ""
             entries.append(
                 TokenizedFunctionEntry(
                     func=entry[0],
@@ -658,9 +638,7 @@ class FunctionPatternCodeDocumentService:
                 continue
             entry_map[entry.token] = FunctionPatternValue(
                 entry.func,
-                FunctionPatternCodeDocumentService.sanitize_pattern_kwargs(
-                    entry.kwargs
-                ),
+                FunctionPatternCodeDocumentService.sanitize_pattern_kwargs(entry.kwargs),
             )
         return entry_map
 
@@ -675,10 +653,7 @@ class FunctionPatternCodeDocumentService:
         """Apply kwargs into an existing child ObjectState."""
         for param_name, next_param_value in next_kwargs.items():
             previous_param_value = previous_kwargs.get(param_name)
-            if (
-                previous_param_value != next_param_value
-                and param_name in state.parameters
-            ):
+            if previous_param_value != next_param_value and param_name in state.parameters:
                 state.update_parameter(param_name, next_param_value)
 
         for param_name in previous_kwargs:
@@ -852,9 +827,7 @@ class FunctionPatternCodeDocumentService:
         """Return the child ObjectState for a child scope."""
         state = ObjectStateRegistry.get_by_scope(address.scope_id)
         if state is None:
-            raise FunctionPatternRoundTripError(
-                f"Missing child ObjectState {address.scope_id!r}."
-            )
+            raise FunctionPatternRoundTripError(f"Missing child ObjectState {address.scope_id!r}.")
         return state
 
     def require_parent_token(
@@ -865,8 +838,7 @@ class FunctionPatternCodeDocumentService:
         """Fail loudly when the parent pattern metadata does not own token."""
         if not self._parent_state_has_token(parent_state, token):
             raise FunctionPatternRoundTripError(
-                f"Parent scope {parent_state.scope_id!r} does not declare "
-                f"function token {token!r}."
+                f"Parent scope {parent_state.scope_id!r} does not declare function token {token!r}."
             )
 
     @staticmethod
@@ -939,8 +911,7 @@ class FunctionPatternCodeDocumentService:
                 index = self._token_index(token_list, token)
                 if pattern_key not in pattern:
                     raise FunctionPatternRoundTripError(
-                        f"Function token metadata references missing pattern key "
-                        f"{pattern_key!r}."
+                        f"Function token metadata references missing pattern key {pattern_key!r}."
                     )
                 items = pattern[pattern_key]
                 if not isinstance(items, list):
