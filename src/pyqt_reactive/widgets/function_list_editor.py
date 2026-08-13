@@ -1248,6 +1248,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         try:
             self._seed_func_token_generator()
             old_entries = self._iter_tokenized_entries(self.pattern_data, self._pattern_tokens)
+            reconciled_tokens = self.pattern_code_documents.reconcile_pattern_tokens(
+                self.pattern_data,
+                self._pattern_tokens,
+                new_pattern,
+            )
 
             # Get the new function list BEFORE updating self.functions
             if self.is_dict_mode:
@@ -1257,7 +1262,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                     normalized_pattern: dict[str, list] = {}
                     normalized_tokens: Dict[str, List[str]] = {}
                     seed_by_channel = (
-                        self._pattern_tokens if isinstance(self._pattern_tokens, dict) else {}
+                        reconciled_tokens if isinstance(reconciled_tokens, dict) else {}
                     )
                     for k, v in new_pattern.items():
                         sk = str(k)
@@ -1289,7 +1294,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 else:
                     raise ValueError("Expected dict pattern for dict mode")
             else:
-                seed_tokens = self._pattern_tokens if isinstance(self._pattern_tokens, list) else []
+                seed_tokens = reconciled_tokens if isinstance(reconciled_tokens, list) else []
                 if isinstance(new_pattern, list):
                     new_functions, new_current_tokens = self._normalize_function_list(
                         new_pattern,
@@ -1297,7 +1302,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                     )
                 elif callable(new_pattern):
                     new_functions = [(new_pattern, {})]
-                    new_current_tokens = [self.pattern_code_documents.ensure_token()]
+                    new_current_tokens = list(seed_tokens)
                 elif (
                     isinstance(new_pattern, tuple)
                     and len(new_pattern) == 2
@@ -1306,7 +1311,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 ):
                     func, kwargs = new_pattern
                     new_functions = [(func, self._sanitize_pattern_kwargs(kwargs))]
-                    new_current_tokens = [self.pattern_code_documents.ensure_token()]
+                    new_current_tokens = list(seed_tokens)
                 else:
                     raise ValueError(
                         f"Expected list, callable, or (callable, dict) tuple pattern for list mode, got {type(new_pattern)}"

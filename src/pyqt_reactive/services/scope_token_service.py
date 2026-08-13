@@ -7,11 +7,146 @@ same scope prefix (e.g., steps, nested functions).
 
 from __future__ import annotations
 
-from abc import ABC
 import logging
-from typing import Iterable, Optional, Sequence, Set
+from abc import ABC
+from collections.abc import Callable, Iterable, Sequence
+from typing import Optional, TypeVar
+
+from objectstate import semantic_values_equal
 
 logger = logging.getLogger(__name__)
+
+Occurrence = TypeVar("Occurrence")
+
+
+def reconcile_occurrence_tokens(
+    previous_occurrences: Sequence[Occurrence],
+    previous_tokens: Sequence[str],
+    next_occurrences: Sequence[Occurrence],
+    *,
+    same_declaration: Callable[[Occurrence, Occurrence], bool],
+    occurrence_authorities: Callable[[Occurrence], Sequence[object]],
+    token_factory: Callable[[], str],
+    requested_tokens: Sequence[str | None] | None = None,
+    claimed_tokens: set[str] | None = None,
+) -> list[str]:
+    """Reconcile occurrence identity without treating list position as authority.
+
+    Existing explicit tokens are authoritative. Tokenless declarations first match
+    exact prior declarations, then match a changed declaration only when the
+    authority relation is unambiguous in both directions. Every remaining
+    declaration receives a fresh token.
+    """
+
+    requested = requested_tokens or ()
+    claimed = claimed_tokens if claimed_tokens is not None else set()
+    available = {
+        index
+        for index, token in enumerate(previous_tokens[: len(previous_occurrences)])
+        if token and token not in claimed
+    }
+    token_to_previous = {
+        str(previous_tokens[index]): index
+        for index in available
+    }
+    previous_token_set = {
+        str(token) for token in previous_tokens[: len(previous_occurrences)] if token
+    }
+    resolved: list[str | None] = [None] * len(next_occurrences)
+
+    for next_index, requested_token in enumerate(requested):
+        if next_index >= len(resolved) or not requested_token:
+            continue
+        token = str(requested_token)
+        if token in claimed:
+            continue
+        previous_index = token_to_previous.get(token)
+        if previous_index in available:
+            available.remove(previous_index)
+        elif token in previous_token_set:
+            continue
+        resolved[next_index] = token
+        claimed.add(token)
+
+    for next_index, next_occurrence in enumerate(next_occurrences):
+        if resolved[next_index] is not None:
+            continue
+        previous_index = next(
+            (
+                candidate
+                for candidate in sorted(available)
+                if same_declaration(
+                    previous_occurrences[candidate],
+                    next_occurrence,
+                )
+            ),
+            None,
+        )
+        if previous_index is None:
+            continue
+        token = str(previous_tokens[previous_index])
+        resolved[next_index] = token
+        available.remove(previous_index)
+        claimed.add(token)
+
+    unresolved_next = {
+        index for index, token in enumerate(resolved) if token is None
+    }
+    previous_authorities = [
+        tuple(occurrence_authorities(value)) for value in previous_occurrences
+    ]
+    next_authorities = [
+        tuple(occurrence_authorities(value)) for value in next_occurrences
+    ]
+    authority_level_count = max(
+        (len(authorities) for authorities in previous_authorities + next_authorities),
+        default=0,
+    )
+    for authority_level in range(authority_level_count):
+        unresolved_next = {
+            index for index, token in enumerate(resolved) if token is None
+        }
+        authority_candidates = {
+            next_index: {
+                previous_index
+                for previous_index in available
+                if authority_level < len(previous_authorities[previous_index])
+                and authority_level < len(next_authorities[next_index])
+                and semantic_values_equal(
+                    previous_authorities[previous_index][authority_level],
+                    next_authorities[next_index][authority_level],
+                )
+            }
+            for next_index in unresolved_next
+        }
+        for next_index in sorted(unresolved_next):
+            candidates = authority_candidates[next_index] & available
+            if len(candidates) != 1:
+                continue
+            previous_index = next(iter(candidates))
+            competing_next = {
+                candidate
+                for candidate in unresolved_next
+                if resolved[candidate] is None
+                and previous_index in authority_candidates[candidate]
+            }
+            if len(competing_next) != 1:
+                continue
+            token = str(previous_tokens[previous_index])
+            resolved[next_index] = token
+            available.remove(previous_index)
+            claimed.add(token)
+
+    for index, token in enumerate(resolved):
+        if token is not None:
+            continue
+        fresh_token = token_factory()
+        while fresh_token in claimed:
+            fresh_token = token_factory()
+        resolved[index] = fresh_token
+        claimed.add(fresh_token)
+
+    return [str(token) for token in resolved]
 
 
 class ScopeTokenTarget(ABC):
@@ -58,7 +193,7 @@ class ScopeTokenGenerator:
         self.prefix = prefix
         self.attr_name = attr_name
         self._counter: int = 0
-        self._used_tokens: Set[str] = set()
+        self._used_tokens: set[str] = set()
 
     # ---------- Seeding ----------
     def seed_from_tokens(self, tokens: Iterable[str] | None) -> None:
@@ -203,7 +338,9 @@ class ScopeTokenService:
         """Transfer source object's scope token to a replacement target."""
         parent_scope = cls._normalize_scope(parent_scope)
         prefix = cls._get_prefix(source)
-        return cls.get_generator(parent_scope, prefix).transfer(source, target)
+        token = cls.get_generator(parent_scope, prefix).transfer(source, target)
+        cls._scope_id_cache.pop((parent_scope, id(target)), None)
+        return token
 
     @classmethod
     def adopt_token(
@@ -220,6 +357,7 @@ class ScopeTokenService:
         if generator.attr_name is None:
             return token
         ScopeTokenObjectStore.write(obj, generator.attr_name, token)
+        cls._scope_id_cache.pop((parent_scope, id(obj)), None)
         return token
 
     @classmethod

@@ -13,7 +13,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, get_type_hints
 
-from objectstate import ObjectState, ObjectStateRegistry, patch_lazy_constructors
+from objectstate import (
+    ObjectState,
+    ObjectStateRegistry,
+    patch_lazy_constructors,
+    semantic_values_equal,
+)
 from python_introspect import parameter_exclusions, set_parameter_exclusions
 
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
@@ -23,7 +28,10 @@ from pyqt_reactive.services.function_navigation import FunctionPatternField
 from pyqt_reactive.services.pattern_data_manager import (
     FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
 )
-from pyqt_reactive.services.scope_token_service import ScopeTokenGenerator
+from pyqt_reactive.services.scope_token_service import (
+    ScopeTokenGenerator,
+    reconcile_occurrence_tokens,
+)
 from pyqt_reactive.services.window_code_document import (
     PYTHON_MIME_TYPE,
     WindowCodeDocument,
@@ -353,34 +361,9 @@ class FunctionPatternCodeDocumentService:
         active_seen_tokens = seen_tokens if seen_tokens is not None else set()
         active_seed_tokens = seed_tokens if seed_tokens is not None else []
 
-        if (
-            isinstance(func_list, tuple)
-            and len(func_list) == 2
-            and callable(func_list[0])
-            and isinstance(func_list[1], Mapping)
-        ):
-            func_items = [func_list]
-        elif callable(func_list):
-            func_items = [(func_list, {})]
-        elif not func_list:
-            return [], []
-        elif isinstance(func_list, list):
-            func_items = func_list
-        else:
-            raise FunctionPatternRoundTripError(
-                "Function pattern list normalization requires a callable, "
-                "(callable, kwargs) tuple, list, or empty value."
-            )
-
-        normalized: FunctionPatternList = []
+        normalized = self._normalized_entries(func_list)
         tokens: list[str] = []
-        for index, item in enumerate(func_items):
-            entry = self.function_and_kwargs(item)
-            if entry is None:
-                raise FunctionPatternRoundTripError(
-                    f"Unsupported function-pattern entry at index {index}: {item!r}."
-                )
-
+        for index, _entry in enumerate(normalized):
             seed_token = (
                 str(active_seed_tokens[index])
                 if index < len(active_seed_tokens) and active_seed_tokens[index]
@@ -390,7 +373,6 @@ class FunctionPatternCodeDocumentService:
             if token in active_seen_tokens:
                 token = self._func_token_generator.ensure()
             active_seen_tokens.add(token)
-            normalized.append(entry)
             tokens.append(str(token))
 
         return normalized, tokens
@@ -413,30 +395,112 @@ class FunctionPatternCodeDocumentService:
     def tokens_for_pattern(
         self,
         pattern: PatternSourceValue | None,
-        existing_tokens: PatternTokens | None = None,
     ) -> PatternTokens:
-        """Return occurrence-owned tokens for a complete function pattern."""
+        """Return fresh occurrence-owned tokens for a new function pattern."""
 
-        seed_tokens = existing_tokens or []
-        self.seed_func_token_generator(seed_tokens)
         seen_tokens: set[str] = set()
         if isinstance(pattern, dict):
-            seed_by_key = seed_tokens if isinstance(seed_tokens, dict) else {}
             tokens_by_key: dict[str, list[str]] = {}
             for key, func_list in pattern.items():
                 _normalized, tokens = self.normalize_function_list(
                     func_list,
                     seen_tokens=seen_tokens,
-                    seed_tokens=seed_by_key.get(str(key), []),
                 )
                 tokens_by_key[str(key)] = tokens
             return tokens_by_key
         _normalized, tokens = self.normalize_function_list(
             pattern,
             seen_tokens=seen_tokens,
-            seed_tokens=seed_tokens if isinstance(seed_tokens, list) else [],
         )
         return tokens
+
+    def reconcile_pattern_tokens(
+        self,
+        previous_pattern: PatternSourceValue | None,
+        previous_tokens: PatternTokens | None,
+        next_pattern: PatternSourceValue | None,
+    ) -> PatternTokens:
+        """Reconcile complete-pattern tokens by declaration and callable authority."""
+
+        existing_tokens = previous_tokens or []
+        self.seed_func_token_generator(existing_tokens)
+        claimed_tokens: set[str] = set()
+        if isinstance(next_pattern, dict):
+            previous_by_key = (
+                previous_pattern if isinstance(previous_pattern, dict) else {}
+            )
+            tokens_by_key = (
+                existing_tokens if isinstance(existing_tokens, dict) else {}
+            )
+            return {
+                str(key): self._reconcile_function_list_tokens(
+                    previous_by_key.get(str(key)),
+                    tokens_by_key.get(str(key), []),
+                    func_list,
+                    claimed_tokens=claimed_tokens,
+                )
+                for key, func_list in next_pattern.items()
+            }
+        return self._reconcile_function_list_tokens(
+            previous_pattern,
+            existing_tokens if isinstance(existing_tokens, list) else [],
+            next_pattern,
+            claimed_tokens=claimed_tokens,
+        )
+
+    def _reconcile_function_list_tokens(
+        self,
+        previous_list,
+        previous_tokens: list[str],
+        next_list,
+        *,
+        claimed_tokens: set[str],
+    ) -> list[str]:
+        """Reconcile one list-shaped region of a function pattern."""
+
+        previous_entries = self._normalized_entries(previous_list)
+        next_entries = self._normalized_entries(next_list)
+        return reconcile_occurrence_tokens(
+            previous_entries,
+            previous_tokens,
+            next_entries,
+            same_declaration=self.same_function_declaration,
+            occurrence_authorities=lambda entry: (
+                function_pattern_authority(entry[0]),
+            ),
+            token_factory=self.ensure_token,
+            claimed_tokens=claimed_tokens,
+        )
+
+    @classmethod
+    def _normalized_entries(cls, func_list) -> FunctionPatternList:
+        """Return normalized entries without assigning occurrence identity."""
+
+        if (
+            isinstance(func_list, tuple)
+            and len(func_list) == 2
+            and callable(func_list[0])
+            and isinstance(func_list[1], Mapping)
+        ) or callable(func_list):
+            values = [func_list]
+        elif not func_list:
+            return []
+        elif isinstance(func_list, list):
+            values = func_list
+        else:
+            raise FunctionPatternRoundTripError(
+                "Function pattern reconciliation requires a callable, "
+                "(callable, kwargs) tuple, list, or empty value."
+            )
+        entries: FunctionPatternList = []
+        for index, value in enumerate(values):
+            entry = cls.function_and_kwargs(value)
+            if entry is None:
+                raise FunctionPatternRoundTripError(
+                    f"Unsupported function-pattern entry at index {index}: {value!r}."
+                )
+            entries.append(entry)
+        return entries
 
     def canonical_function_scope_tokens(
         self,
@@ -534,7 +598,19 @@ class FunctionPatternCodeDocumentService:
         """Return whether two callable objects represent the same authority."""
         left = function_pattern_authority(left)
         right = function_pattern_authority(right)
-        return left is right or left == right
+        return left is right or semantic_values_equal(left, right)
+
+    @classmethod
+    def same_function_declaration(
+        cls,
+        left: FunctionPatternItem,
+        right: FunctionPatternItem,
+    ) -> bool:
+        """Return whether callable authority and declared kwargs are unchanged."""
+
+        return cls.same_function_authority(left[0], right[0]) and semantic_values_equal(
+            left[1], right[1]
+        )
 
     @classmethod
     def iter_tokenized_entries(

@@ -9,6 +9,10 @@ from objectstate.object_state_registry import ObjectStateRegistry
 from pyqt_reactive.services.function_pattern_code_document import (
     FunctionPatternCodeDocumentService,
 )
+from pyqt_reactive.services.scope_token_service import (
+    ScopeTokenService,
+    reconcile_occurrence_tokens,
+)
 from pyqt_reactive.widgets.function_list_editor import (
     FunctionListEditorWidget,
     PatternMutation,
@@ -42,10 +46,23 @@ def sample_function(image, threshold: int = 1):
     return image
 
 
+def alternate_function(image, radius: int = 1):
+    return image
+
+
 @dataclass
 class RegisteredFunctionState:
     scope_id: str
     object_instance: object
+
+
+class AmbiguousEquality:
+    def __eq__(self, other: object):
+        del other
+        return self
+
+    def __bool__(self) -> bool:
+        raise ValueError("ambiguous")
 
 
 def test_function_editor_reuses_existing_child_scope_token() -> None:
@@ -105,15 +122,79 @@ def test_function_pattern_tokens_are_unique_per_occurrence() -> None:
     }
 
 
-def test_function_pattern_tokens_reuse_existing_occurrence_tokens() -> None:
+def test_complete_pattern_reconciliation_preserves_tokens_across_reorder_and_edit() -> None:
     service = FunctionPatternCodeDocumentService()
 
-    tokens = service.tokens_for_pattern(
-        [sample_function, sample_function],
+    tokens = service.reconcile_pattern_tokens(
+        [
+            (sample_function, {"threshold": 1}),
+            (alternate_function, {"radius": 2}),
+        ],
         ["func_4", "func_7"],
+        [
+            (alternate_function, {"radius": 2}),
+            (sample_function, {"threshold": 3}),
+        ],
     )
 
-    assert tokens == ["func_4", "func_7"]
+    assert tokens == ["func_7", "func_4"]
+
+
+def test_complete_pattern_reconciliation_does_not_guess_between_duplicates() -> None:
+    service = FunctionPatternCodeDocumentService()
+
+    tokens = service.reconcile_pattern_tokens(
+        [
+            (sample_function, {"threshold": 1}),
+            (sample_function, {"threshold": 2}),
+        ],
+        ["func_4", "func_7"],
+        [
+            (sample_function, {"threshold": 3}),
+            (sample_function, {"threshold": 4}),
+        ],
+    )
+
+    assert set(tokens).isdisjoint({"func_4", "func_7"})
+    assert len(set(tokens)) == 2
+
+
+def test_complete_pattern_reconciliation_handles_ambiguous_kwargs_equality() -> None:
+    service = FunctionPatternCodeDocumentService()
+
+    tokens = service.reconcile_pattern_tokens(
+        [(sample_function, {"threshold": AmbiguousEquality()})],
+        ["func_4"],
+        [(sample_function, {"threshold": AmbiguousEquality()})],
+    )
+
+    assert tokens == ["func_4"]
+
+
+def test_occurrence_reconciliation_keeps_a_new_explicit_token() -> None:
+    new_entry = (sample_function, {"threshold": 1})
+
+    tokens = reconcile_occurrence_tokens(
+        [],
+        [],
+        [new_entry],
+        same_declaration=lambda left, right: left == right,
+        occurrence_authorities=lambda entry: (entry[0],),
+        token_factory=lambda: "func_8",
+        requested_tokens=["func_4"],
+    )
+
+    assert tokens == ["func_4"]
+
+
+def test_adopting_a_token_invalidates_the_projected_scope_id() -> None:
+    target = SimpleNamespace(_scope_token="step_1")
+
+    assert ScopeTokenService.build_scope_id("plate", target) == "plate::step_1"
+
+    ScopeTokenService.adopt_token("plate", target, "step_7")
+
+    assert ScopeTokenService.build_scope_id("plate", target) == "plate::step_7"
 
 
 def test_pattern_mutation_authorization_runs_before_local_write() -> None:
