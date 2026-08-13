@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- Preserve function-pattern occurrence identity across complete-document reorders
+  and edits by reconciling declaration and callable authorities.
+- Require ObjectState 1.1.2 for shared nested value-comparison semantics.
+
 ## 0.2.3
 
 - Make the log-tailer's monotonic stop request the sole shutdown authority so
