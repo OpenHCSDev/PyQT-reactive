@@ -146,7 +146,10 @@ def test_convert_value_to_type_preserves_callable_pattern_entries() -> None:
 def test_convert_value_to_type_rejects_noncallable_pattern_entries() -> None:
     annotation = list[Callable | tuple[Callable, dict]] | None
 
-    with pytest.raises(ValueError, match="expected typing.Callable, got object"):
+    with pytest.raises(
+        ValueError,
+        match=r"expected (?:typing\.)?Callable, got object",
+    ):
         ParameterFormService().convert_value_to_type(
             [(object(), {})],
             annotation,
