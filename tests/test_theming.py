@@ -154,7 +154,7 @@ def test_theme_manager_renders_splitter_grip_without_changing_geometry(
 
 
 def test_splitter_grip_style_is_application_owned_and_idempotent(qapp):
-    """Repeated theme application reuses one proxy and preserves application QSS."""
+    """Repeated theme application reuses one proxy and its current application QSS."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
     from pyqt_reactive.theming.splitter_grip_style import (
         install_application_control_style,

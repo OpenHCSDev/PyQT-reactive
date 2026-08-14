@@ -187,7 +187,9 @@ class ThemeManager:
         app = QApplication.instance()
         if app is not None:
             install_application_control_style(app)
-            app.setStyleSheet(self.get_application_control_style_sheet())
+            application_style_sheet = self.get_application_control_style_sheet()
+            if app.styleSheet() != application_style_sheet:
+                app.setStyleSheet(application_style_sheet)
         
         # Notify callbacks
         for callback in self._theme_change_callbacks:

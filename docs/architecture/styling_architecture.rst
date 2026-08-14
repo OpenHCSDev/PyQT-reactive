@@ -13,3 +13,9 @@ inheritance or persist colors as configuration semantics.
 Applications may provide their own palette and scope-color adapter. Keep Qt
 stylesheet construction and contrast rules in pyqt-reactive, while domain labels
 and semantic status colors remain in the host.
+
+Application theming is idempotent at the live Qt owner. Reapplying a scheme
+reuses the installed control style and compares the generated application
+stylesheet with ``QApplication.styleSheet()`` before asking Qt to repolish the
+widget tree. A changed scheme still updates the application palette and
+stylesheet; an identical scheme does not repeat native style work.
