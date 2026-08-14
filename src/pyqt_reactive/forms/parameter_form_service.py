@@ -9,6 +9,7 @@ Uses React-style discriminated unions for type-safe parameter handling.
 """
 
 import dataclasses
+from collections.abc import Callable as CallableABC
 
 from objectstate import (
     DataclassFieldAccess,
@@ -342,6 +343,9 @@ class ParameterFormService:
         """Recursively rebuild structured values from JSON-like containers."""
         param_type = resolve_annotated(param_type)
         origin = get_origin(param_type)
+
+        if param_type is CallableABC or origin is CallableABC:
+            return value if callable(value) else _NO_CONVERSION
 
         if is_union_type(param_type):
             return self._convert_union_value(value, param_type, param_name)

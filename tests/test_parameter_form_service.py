@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Callable
 
 import pytest
 
@@ -123,6 +123,34 @@ def test_convert_value_to_type_resolves_annotated_union_members() -> None:
         )
         is True
     )
+
+
+def test_convert_value_to_type_preserves_callable_pattern_entries() -> None:
+    def process(image):
+        return image
+
+    annotation = list[Callable | tuple[Callable, dict]] | None
+    pattern = [(process, {"gain": 2})]
+
+    converted = ParameterFormService().convert_value_to_type(
+        pattern,
+        annotation,
+        "func",
+    )
+
+    assert converted == pattern
+    assert converted[0][0] is process
+
+
+def test_convert_value_to_type_rejects_noncallable_pattern_entries() -> None:
+    annotation = list[Callable | tuple[Callable, dict]] | None
+
+    with pytest.raises(ValueError, match="expected typing.Callable, got object"):
+        ParameterFormService().convert_value_to_type(
+            [(object(), {})],
+            annotation,
+            "func",
+        )
 
 
 def test_pep604_optional_dataclass_uses_shared_optional_authority() -> None:

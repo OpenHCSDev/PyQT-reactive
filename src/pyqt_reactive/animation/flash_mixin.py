@@ -3512,15 +3512,16 @@ class VisualUpdateMixin:
         )
 
     def register_flash_leaf(self, key: str, groupbox: 'QWidget', leaf_widget: 'QWidget', label_widget: Optional['QWidget'] = None) -> None:
-        """Register a leaf field for INVERSE flash rendering.
+        """Register a leaf field and its containing context for flash rendering.
 
-        Flashes the groupbox INCLUDING all sibling fields, but masks out:
+        The contextual groupbox flash masks out:
         - The groupbox title
         - The specific leaf widget that changed
         - The label associated with the leaf widget (if provided)
 
-        This highlights "all fields that inherited the change" while keeping
-        the actual changed widget visible.
+        A second source registered under the same semantic key paints the leaf
+        widget itself. The changed input therefore participates in reset and
+        provenance flashes without sacrificing the surrounding context.
 
         Uses the unified create_groupbox_element with leaf_widget and label_widget parameters.
         """
@@ -3537,6 +3538,7 @@ class VisualUpdateMixin:
                 label_widget=label_widget,
             ),
         )
+        self.register_flash_widget_rect(key, leaf_widget)
 
     def reregister_flash_elements(self) -> None:
         """Re-register all previously registered flash elements (after overlay cleanup)."""

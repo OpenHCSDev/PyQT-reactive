@@ -2024,6 +2024,66 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
         ObjectStateRegistry.clear()
 
 
+def test_nested_reset_flash_registers_each_changed_input_widget(qapp) -> None:
+    """Reset feedback paints the changed nested inputs as well as their context."""
+    from dataclasses import field
+
+    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from pyqt_reactive.animation.flash_mixin import (
+        WindowFlashOverlay,
+        widget_rect_flash_source_id,
+    )
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    @dataclass
+    class ChildConfig:
+        alpha: int = 1
+        beta: int = 2
+
+    @dataclass
+    class RootConfig:
+        child: ChildConfig = field(default_factory=ChildConfig)
+
+    set_base_config_type(RootConfig)
+    ObjectStateRegistry.clear()
+    host = QDialog()
+    layout = QVBoxLayout(host)
+    manager = ParameterFormManager(
+        ObjectState(RootConfig()),
+        FormManagerConfig(color_scheme=ColorScheme(), use_scroll_area=False),
+    )
+    layout.addWidget(manager)
+    host.show()
+
+    try:
+        qapp.processEvents()
+        nested = manager.nested_managers["child"]
+        nested.update_parameter("alpha", 11)
+        nested.update_parameter("beta", 12)
+        nested.reset_all_parameters()
+        qapp.processEvents()
+
+        overlay = WindowFlashOverlay.get_for_window(host)
+        assert overlay is not None
+        for field_name in ("alpha", "beta"):
+            widget = nested.widgets[field_name]
+            assert overlay.has_element_source(
+                f"child.{field_name}",
+                widget_rect_flash_source_id(widget),
+            )
+    finally:
+        WindowFlashOverlay.cleanup_window(host)
+        host.close()
+        host.deleteLater()
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
 def test_widget_rect_flash_element_paints_visible_pixels_over_children(qapp) -> None:
     """Widget-rect flashes paint the target section itself, including child tables."""
     from PyQt6.QtGui import QColor
