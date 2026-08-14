@@ -144,10 +144,13 @@ The system supports multiple element types via ``FlashElement`` dataclass:
      - ``create_list_item_element()``
      - Step/function lists
 
-INVERSE Mode with Label Widget Masking
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Context and leaf registration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-INVERSE mode now masks title + leaf_widget + label_widget (not all title row widgets):
+``register_flash_leaf`` registers two paint sources under the same semantic
+key. The inverse groupbox source paints the surrounding field context while
+masking the title, changed input, and its label. A widget-rectangle source
+paints the changed input itself:
 
 .. code-block:: python
 
@@ -155,15 +158,17 @@ INVERSE mode now masks title + leaf_widget + label_widget (not all title row wid
         key="my_field",
         groupbox=my_groupbox,
         leaf_widget=my_widget,
-        label_widget=my_label  # NEW: mask label too
+        label_widget=my_label
     )
 
-This highlights "all fields that inherited the change" while keeping the changed field and its label visible.
+Reset and provenance feedback therefore remains visible on the actual nested
+input that changed as well as on the form context that explains where it lives.
 
 **Masking Behavior**:
 
 - **STANDARD mode** (``leaf_widget=None``): Mask ALL children, flash only frame/background
-- **INVERSE mode** (``leaf_widget=widget``): Mask title + leaf_widget + label_widget, flash frame + all siblings
+- **INVERSE context source** (``leaf_widget=widget``): Mask title + leaf widget + label, flash frame + siblings
+- **Leaf source**: Paint the leaf widget rectangle under the same semantic key
 
 Usage with FlashMixin
 ---------------------

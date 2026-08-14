@@ -23,6 +23,12 @@ ObjectState. Field-change dispatch then coordinates local styling, nested views,
 and path-scoped cross-window refresh. Resolved-value callbacks update inherited
 placeholders without materializing them as explicit edits.
 
+Code-driven form updates use the same declared type conversion as widget edits.
+For ``Callable`` annotations, callable objects remain callable objects, including
+callable-plus-keyword-argument entries inside a function pattern. The form
+service rejects non-callable values instead of attempting to reconstruct a
+function from its runtime type name.
+
 Cross-window lifetime
 ---------------------
 
