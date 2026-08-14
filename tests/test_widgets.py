@@ -2028,8 +2028,9 @@ def test_nested_reset_flash_registers_each_changed_input_widget(qapp) -> None:
     """Reset feedback paints the changed nested inputs as well as their context."""
     from dataclasses import field
 
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
         widget_rect_flash_source_id,
