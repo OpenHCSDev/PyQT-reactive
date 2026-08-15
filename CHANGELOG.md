@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.5
+
+- Preserve live callable objects when typed parameter forms apply edited code.
+- Paint reset and provenance feedback on the changed nested input as well as
+  its containing form context.
+- Keep repeated application theming idempotent against the live
+  ``QApplication`` stylesheet, avoiding redundant native Qt repolishing.
+
 ## 0.2.4
 
 - Preserve function-pattern occurrence identity across complete-document reorders
