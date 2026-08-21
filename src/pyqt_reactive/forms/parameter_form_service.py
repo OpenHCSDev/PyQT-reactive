@@ -19,10 +19,9 @@ from objectstate import (
     should_hide_ui_parameter,
 )
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, Dict, Type, Optional, List, get_args, get_origin, get_type_hints
 
-from python_introspect import is_union_type, resolve_annotated
+from python_introspect import coerce_enum_member, is_union_type, resolve_annotated
 from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 from .parameter_type_utils import ParameterTypeUtils
 from pyqt_reactive.forms.ui_utils import FieldDisplayText, debug_param
@@ -294,7 +293,7 @@ class ParameterFormService:
 
         # Handle enum types
         if self._type_utils.is_enum_type(resolved_type):
-            return resolved_type(value)
+            return coerce_enum_member(resolved_type, value)
 
         # Handle list of enums
         if self._type_utils.is_list_of_enums(resolved_type):
@@ -303,7 +302,7 @@ class ParameterFormService:
                 return value
             enum_type = self._type_utils.get_enum_from_list_type(resolved_type)
             if enum_type:
-                return [enum_type(value)]
+                return [coerce_enum_member(enum_type, value)]
 
         # Handle basic types
         if resolved_type is bool and isinstance(value, str):
@@ -353,7 +352,7 @@ class ParameterFormService:
         if self._type_utils.is_enum_type(param_type):
             if isinstance(value, param_type):
                 return value
-            return param_type(value)
+            return coerce_enum_member(param_type, value)
 
         if dataclasses.is_dataclass(param_type):
             return self._convert_dataclass_value(value, param_type, param_name)

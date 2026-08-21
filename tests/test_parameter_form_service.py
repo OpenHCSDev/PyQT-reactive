@@ -20,6 +20,11 @@ class MatchSubject(Enum):
     DIRECTORY = "directory"
 
 
+class InheritableMode(Enum):
+    ENABLED = "enabled"
+    INHERIT = None
+
+
 @dataclass(frozen=True)
 class MatchClause:
     subject: MatchSubject
@@ -124,6 +129,28 @@ def test_convert_value_to_type_resolves_annotated_union_members() -> None:
         )
         is True
     )
+
+
+def test_convert_value_to_type_accepts_enum_member_names() -> None:
+    service = ParameterFormService()
+
+    assert (
+        service.convert_value_to_type("INHERIT", InheritableMode, "mode")
+        is InheritableMode.INHERIT
+    )
+    assert (
+        service.convert_value_to_type(
+            "INHERIT",
+            InheritableMode | None,
+            "mode",
+        )
+        is InheritableMode.INHERIT
+    )
+    assert service.convert_value_to_type(
+        ["enabled", "INHERIT"],
+        list[InheritableMode],
+        "modes",
+    ) == [InheritableMode.ENABLED, InheritableMode.INHERIT]
 
 
 def test_convert_value_to_type_preserves_callable_pattern_entries() -> None:
