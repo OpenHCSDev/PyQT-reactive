@@ -114,6 +114,9 @@ class AbstractManagerWidgetCodeDocumentDriver(WindowCodeDocumentDriver):
     def validate_source(self, source: str) -> None:
         self._widget.validate_code_document_source(source)
 
+    def writable(self) -> bool:
+        return self._widget.code_document_writable()
+
     def apply_source(self, source: str) -> None:
         self._widget.apply_code_document_source(source)
 
@@ -609,6 +612,10 @@ class AbstractManagerWidget(
         """Return the current code-mode source, or empty when unsupported."""
         del clean
         return self.CODE_EDITOR_PAYLOAD.content
+
+    def code_document_writable(self) -> bool:
+        """Return whether code mode can currently mutate manager state."""
+        return True
 
     def code_document_driver(self) -> WindowCodeDocumentDriver | None:
         """Return the code-document driver for managers with code-mode source."""

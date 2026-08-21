@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from pyqt_reactive.protocols import get_codegen_provider
+
 PYTHON_MIME_TYPE = "text/x-python"
 DeclarationT = TypeVar("DeclarationT")
 
@@ -36,6 +38,31 @@ class WindowCodeDocumentDriver(ABC, Generic[DeclarationT]):
     def records_object_state_snapshot_on_apply(self) -> bool:
         """Return whether applying this document must advance ObjectState history."""
         return True
+
+    def writable(self) -> bool:
+        """Return whether the live document currently accepts mutations."""
+        return True
+
+    def source_is_current(
+        self,
+        source: str,
+        *,
+        current_document: WindowCodeDocument[DeclarationT] | None = None,
+    ) -> bool:
+        """Compare edited source through the nominal declaration normalizer."""
+        current = current_document or self.read_document(clean=True)
+        provider = get_codegen_provider()
+        if provider is None or current.declaration_type is None:
+            return current.source == source
+        try:
+            normalized = provider.normalize_source(
+                source,
+                declaration_type=current.declaration_type,
+                clean_mode=True,
+            )
+        except Exception:
+            return current.source == source
+        return current.source == normalized
 
     @abstractmethod
     def read_document(self, clean: bool = True) -> WindowCodeDocument[DeclarationT]:
