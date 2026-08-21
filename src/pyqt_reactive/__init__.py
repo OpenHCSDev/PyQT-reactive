@@ -19,7 +19,7 @@ Key Features:
 - Cross-window reactive updates
 """
 
-__version__ = "0.2.7"
+__version__ = "0.2.8"
 
 # Public API will be populated as modules are added
 __all__ = [
