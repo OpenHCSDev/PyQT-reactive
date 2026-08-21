@@ -16,7 +16,8 @@ The implementation is split into small Qt components:
 * ``LogFileLoader`` and ``LogTailer`` are ``QThread`` workers for initial reads
   and appended data.
 * ``LogHighlighter`` applies syntax highlighting in the viewer.
-* ``LogFileDetector`` watches for file changes.
+* ``LogFileDetector`` watches for file changes and classifies them through the
+  same host-owned provider as the window.
 * ``LogViewerWindow`` composes selection, search, filtering, loading, tailing,
   and process tracking.
 
@@ -52,6 +53,9 @@ also register a ``ServerScanProvider`` when server-log discovery is available.
 ``scan_for_server_logs()``.  The host also owns the ``file_manager`` and
 ``service_adapter`` dependencies passed to the window.  Construction fails
 loudly if no log discovery provider has been registered.
+
+The viewer refreshes server discovery while it is visible. Refresh requests are
+coalesced so a slow provider never creates overlapping background scans.
 
 Ownership boundary
 ------------------

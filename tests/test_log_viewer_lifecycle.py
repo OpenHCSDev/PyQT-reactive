@@ -9,10 +9,14 @@ from PyQt6.QtWidgets import QStyleOptionViewItem
 from zmqruntime.messages import ProcessIdentity
 
 from pyqt_reactive.core.log_utils import LogType
-from pyqt_reactive.protocols import register_log_discovery_provider
+from pyqt_reactive.protocols import (
+    register_log_discovery_provider,
+    register_server_scan_provider,
+)
 from pyqt_reactive.services.process_tracker import ProcessLiveness
 from pyqt_reactive.utils.log_highlighter import build_log_line_html
 from pyqt_reactive.widgets.log_viewer import (
+    LogFileDetector,
     LogFileInfo,
     LogFileLoader,
     LogItemDelegate,
@@ -68,6 +72,88 @@ class _LogDiscoveryProvider:
         if not include_main_log:
             return []
         return [LogFileInfo(path=self.main_log_path, log_type=LogType.MAIN)]
+
+
+class _SequencedServerScanProvider:
+    def __init__(self, scans: list[list[LogFileInfo]]) -> None:
+        self._scans = iter(scans)
+
+    def scan_for_server_logs(self) -> list[LogFileInfo]:
+        return next(self._scans)
+
+
+def test_log_file_detector_classifies_new_path_through_injected_provider(
+    qtbot,
+    tmp_path,
+) -> None:
+    """A watched file is classified by the window's host-owned provider."""
+
+    main_log_path = tmp_path / "main.log"
+    provider = _LogDiscoveryProvider(main_log_path)
+    detector = LogFileDetector(log_discovery_provider=provider)
+    discovered = []
+    detector.new_log_detected.connect(discovered.append)
+
+    main_log_path.write_text("started\n", encoding="utf-8")
+    detector._on_directory_changed(str(tmp_path))
+
+    assert discovered == [
+        LogFileInfo(path=main_log_path, log_type=LogType.MAIN)
+    ]
+
+
+def test_visible_log_viewer_discovers_server_started_after_initial_scan(
+    qtbot,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A server launched after construction appears on the next visible refresh."""
+
+    main_log_path = tmp_path / "main.log"
+    server_log_path = tmp_path / "server.log"
+    main_log_path.write_text("main\n", encoding="utf-8")
+    server_log_path.write_text("server\n", encoding="utf-8")
+    register_log_discovery_provider(_LogDiscoveryProvider(main_log_path))
+    register_server_scan_provider(
+        _SequencedServerScanProvider(
+            [
+                [],
+                [LogFileInfo(path=server_log_path, log_type=LogType.ZMQ_SERVER)],
+            ]
+        )
+    )
+    callbacks = []
+    monkeypatch.setattr(
+        "pyqt_reactive.widgets.log_viewer.spawn_thread_with_context",
+        lambda callback, *, name: callbacks.append((callback, name)),
+    )
+    monkeypatch.setattr(LogViewerWindow, "_scan_subprocess_logs_async", lambda self: None)
+    monkeypatch.setattr(LogViewerWindow, "start_monitoring", lambda self: None)
+    monkeypatch.setattr(LogViewerWindow, "start_process_tracking", lambda self: None)
+
+    viewer = LogViewerWindow(file_manager=None, service_adapter=None)
+    try:
+        assert [name for _callback, name in callbacks] == ["scan_server_logs"]
+        viewer.show()
+        qtbot.waitExposed(viewer)
+        assert viewer.server_scan_timer.isActive()
+
+        initial_scan, _name = callbacks.pop(0)
+        initial_scan()
+        refresh_scan, refresh_name = callbacks.pop(0)
+        assert refresh_name == "scan_server_logs"
+        refresh_scan()
+
+        discovered_paths = {
+            viewer.log_selector.itemData(index).path
+            for index in range(viewer.log_selector.count())
+        }
+        assert discovered_paths == {main_log_path, server_log_path}
+
+        viewer.hide()
+        assert not viewer.server_scan_timer.isActive()
+    finally:
+        viewer.cleanup()
 
 
 def _disable_external_discovery(monkeypatch) -> None:

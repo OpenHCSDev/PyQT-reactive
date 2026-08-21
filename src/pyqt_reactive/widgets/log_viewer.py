@@ -14,6 +14,7 @@ from pathlib import Path
 from threading import Event
 from typing import Dict, List, Optional, Set, Tuple
 
+from objectstate import spawn_thread_with_context
 from pygments.token import Token
 from PyQt6.QtCore import (
     QAbstractListModel,
@@ -63,7 +64,12 @@ from PyQt6.QtWidgets import (
 )
 
 from pyqt_reactive.core.log_utils import LogFileInfo, LogType
-from pyqt_reactive.protocols import get_log_discovery_provider, get_server_scan_provider
+from pyqt_reactive.protocols import (
+    LogDiscoveryProvider,
+    get_log_discovery_provider,
+    get_server_scan_provider,
+)
+from pyqt_reactive.services.coalesced_scan_requests import CoalescedScanRequests
 from pyqt_reactive.services.process_tracker import (
     ProcessLiveness,
     ProcessTracker,
@@ -75,6 +81,25 @@ from pyqt_reactive.utils.log_highlight_client import LogHighlightClient
 from pyqt_reactive.utils.log_highlighter import build_log_line_html
 
 logger = logging.getLogger(__name__)
+
+
+def _classify_log_path(
+    log_discovery_provider: LogDiscoveryProvider,
+    file_path: Path,
+) -> LogFileInfo:
+    """Project one discovered path through the host-owned log authority."""
+    try:
+        logs = log_discovery_provider.discover_logs(
+            log_directory=file_path.parent,
+            include_main_log=True,
+        )
+        for log_info in logs:
+            if log_info.path == file_path:
+                return log_info
+    except Exception as error:
+        logger.debug("Provider classification failed for %s: %s", file_path, error)
+
+    return LogFileInfo(path=file_path, log_type=LogType.UNKNOWN)
 
 
 # Pre-compiled regex patterns for syntax highlighting (HUGE performance boost)
@@ -1470,17 +1495,30 @@ class LogFileDetector(QObject):
 
     # Signals
     new_log_detected = pyqtSignal(object)  # LogFileInfo object
-    _server_scan_complete = pyqtSignal(list)  # List of LogFileInfo from server scan
 
-    def __init__(self, base_log_path: Optional[str] = None):
+    def __init__(
+        self,
+        base_log_path: str | None = None,
+        *,
+        log_discovery_provider: LogDiscoveryProvider | None = None,
+    ):
         """
         Initialize LogFileDetector.
 
         Args:
             base_log_path: Base path for subprocess log files (file prefix, not directory)
+            log_discovery_provider: Host-owned authority used to classify new logs.
         """
         super().__init__()
         self._base_log_path = base_log_path
+        self._log_discovery_provider = (
+            log_discovery_provider or get_log_discovery_provider()
+        )
+        if self._log_discovery_provider is None:
+            raise RuntimeError(
+                "No log discovery provider registered. "
+                "Call register_log_discovery_provider(...)."
+            )
         self._previous_files: Set[Path] = set()
         self._watcher = QFileSystemWatcher()
         self._watcher.directoryChanged.connect(self._on_directory_changed)
@@ -1557,23 +1595,6 @@ class LogFileDetector(QObject):
         self._previous_files = current_files
         return new_files
 
-    def _classify_log_path(self, file_path: Path) -> LogFileInfo:
-        """Classify a log path using the discovery provider."""
-        try:
-            logs = self._log_discovery_provider.discover_logs(
-                log_directory=file_path.parent,
-                include_main_log=True,
-            )
-            for log_info in logs:
-                if log_info.path == file_path:
-                    return log_info
-        except Exception as e:
-            logger.debug(f"Provider classification failed for {file_path}: {e}")
-
-        return LogFileInfo(path=file_path, log_type=LogType.UNKNOWN)
-
-
-
     def _on_directory_changed(self, directory_path: str) -> None:
         """
         Handle QFileSystemWatcher directory change signal.
@@ -1594,7 +1615,10 @@ class LogFileDetector(QObject):
         for file_path in new_files:
             if file_path.exists():
                 try:
-                    log_info = self._classify_log_path(file_path)
+                    log_info = _classify_log_path(
+                        self._log_discovery_provider,
+                        file_path,
+                    )
                     logger.info(
                         "New relevant log file detected: %s (type: %s)",
                         file_path,
@@ -2020,7 +2044,10 @@ class LogViewerWindow(QMainWindow):
         self.highlighter: Optional[LogHighlighter] = None
         self.file_loader: Optional[LogFileLoader] = None  # Async file loader
         self._file_loaders: set[LogFileLoader] = set()
-        self.server_scan_timer: QTimer = None  # Periodic ZMQ server scanning
+        self._server_scan_requests = CoalescedScanRequests()
+        self.server_scan_timer = QTimer(self)
+        self.server_scan_timer.setInterval(5000)
+        self.server_scan_timer.timeout.connect(self._request_server_scan)
         self._pending_log_to_load: Optional[Path] = None  # Log to load when window is shown
         self._cleaned_up = False
 
@@ -2175,28 +2202,24 @@ class LogViewerWindow(QMainWindow):
         logger.debug("LogViewerWindow connections setup complete")
 
     def showEvent(self, event):
-        """Override showEvent to load log when window is first shown."""
+        """Load the pending log and refresh live server discovery."""
         super().showEvent(event)
+
+        if self._cleaned_up:
+            return
 
         # Load pending log on first show
         if self._pending_log_to_load:
             self.switch_to_log(self._pending_log_to_load)
             self._pending_log_to_load = None
 
-    def _classify_log_path(self, file_path: Path) -> LogFileInfo:
-        """Classify a log path using the discovery provider."""
-        try:
-            logs = self._log_discovery_provider.discover_logs(
-                log_directory=file_path.parent,
-                include_main_log=True,
-            )
-            for log_info in logs:
-                if log_info.path == file_path:
-                    return log_info
-        except Exception as e:
-            logger.debug(f"Provider classification failed for {file_path}: {e}")
+        self._request_server_scan()
+        self.server_scan_timer.start()
 
-        return LogFileInfo(path=file_path, log_type=LogType.UNKNOWN)
+    def hideEvent(self, event):  # noqa: N802
+        """Suspend periodic server discovery while the viewer is hidden."""
+        super().hideEvent(event)
+        self.server_scan_timer.stop()
 
     def initialize_logs(self) -> None:
         """Initialize with main log only, then scan for subprocess logs in background."""
@@ -2205,7 +2228,10 @@ class LogViewerWindow(QMainWindow):
         try:
             main_log = self._log_discovery_provider.get_current_log_path()
             if main_log.exists():
-                log_info = self._classify_log_path(main_log)
+                log_info = _classify_log_path(
+                    self._log_discovery_provider,
+                    main_log,
+                )
                 initial_logs.append(log_info)
                 logger.debug("Discovered main log")
         except Exception as e:
@@ -2229,34 +2255,39 @@ class LogViewerWindow(QMainWindow):
         self._scan_subprocess_logs_async()
 
         # Scan for servers in background (async - doesn't block)
-        self._scan_servers_async()
+        self._request_server_scan()
 
     def _scan_subprocess_logs_async(self) -> None:
         """Scan for existing subprocess logs in background thread (non-blocking)."""
-        import threading
-
         def scan_and_update():
             """Background thread function."""
             subprocess_logs = self._scan_for_subprocess_logs()
             # Emit signal to update UI on main thread
             self._subprocess_scan_complete.emit(subprocess_logs)
 
-        thread = threading.Thread(target=scan_and_update, daemon=True)
-        thread.start()
+        spawn_thread_with_context(scan_and_update, name="scan_subprocess_logs")
         logger.debug("Started async subprocess log scan in background")
+
+    def _request_server_scan(self) -> None:
+        """Coalesce one live-server catalog invalidation into background work."""
+        if (
+            self._cleaned_up
+            or self._server_scan_provider is None
+            or not self._server_scan_requests.request()
+        ):
+            return
+        self._scan_servers_async()
 
     def _scan_servers_async(self) -> None:
         """Scan for ZMQ servers in background thread (non-blocking)."""
-        import threading
-
         def scan_and_update():
             """Background thread function."""
             server_logs = self._scan_for_server_logs()
             # Emit signal to update UI on main thread
-            self._server_scan_complete.emit(server_logs)
+            if not self._cleaned_up:
+                self._server_scan_complete.emit(server_logs)
 
-        thread = threading.Thread(target=scan_and_update, daemon=True)
-        thread.start()
+        spawn_thread_with_context(scan_and_update, name="scan_server_logs")
         logger.debug("Started async server scan in background")
 
     @pyqtSlot(list)
@@ -2283,30 +2314,41 @@ class LogViewerWindow(QMainWindow):
     @pyqtSlot(list)
     def _on_server_scan_complete(self, server_logs: List[LogFileInfo]) -> None:
         """Handle server scan completion on UI thread."""
-        if not server_logs:
-            logger.debug("No server logs found during scan")
-            return
+        if server_logs:
+            # Add server logs to master list (avoid duplicates by path)
+            existing_indices = {
+                log.path: index
+                for index, log in enumerate(self._all_discovered_logs)
+            }
+            new_logs_added = 0
+            catalog_changed = False
+            for server_log in server_logs:
+                existing_index = existing_indices.get(server_log.path)
+                if existing_index is None:
+                    self._all_discovered_logs.append(server_log)
+                    new_logs_added += 1
+                    catalog_changed = True
+                elif self._all_discovered_logs[existing_index] != server_log:
+                    # A heartbeat carries the process owner's PID-reuse-safe
+                    # identity. Replace any earlier filename-only projection.
+                    self._all_discovered_logs[existing_index] = server_log
+                    catalog_changed = True
 
-        # Add server logs to master list (avoid duplicates by path)
-        existing_indices = {
-            log.path: index
-            for index, log in enumerate(self._all_discovered_logs)
-        }
-        new_logs_added = 0
-        for server_log in server_logs:
-            existing_index = existing_indices.get(server_log.path)
-            if existing_index is None:
-                self._all_discovered_logs.append(server_log)
-                new_logs_added += 1
+            if catalog_changed:
+                self.populate_log_dropdown(self._all_discovered_logs)
+            if new_logs_added:
+                logger.info(
+                    "Added %s new server logs to dropdown (scanned %s total)",
+                    new_logs_added,
+                    len(server_logs),
+                )
             else:
-                # A heartbeat carries the process owner's PID-reuse-safe
-                # identity. Replace any earlier filename-only projection.
-                self._all_discovered_logs[existing_index] = server_log
+                logger.debug("Server log catalog is current")
+        else:
+            logger.debug("No server logs found during scan")
 
-        # Repopulate dropdown from master list
-        self.populate_log_dropdown(self._all_discovered_logs)
-
-        logger.info(f"Added {new_logs_added} new server logs to dropdown (scanned {len(server_logs)} total)")
+        if self._server_scan_requests.complete() and not self._cleaned_up:
+            self._scan_servers_async()
 
     def _scan_for_subprocess_logs(self) -> List[LogFileInfo]:
         """
@@ -2481,7 +2523,9 @@ class LogViewerWindow(QMainWindow):
                 log_info.path == log_path
                 for log_info in self._all_discovered_logs
             ):
-                self._all_discovered_logs.append(self._classify_log_path(log_path))
+                self._all_discovered_logs.append(
+                    _classify_log_path(self._log_discovery_provider, log_path)
+                )
                 self.populate_log_dropdown(self._all_discovered_logs)
             with QSignalBlocker(self.log_selector):
                 for index in range(self.log_selector.count()):
@@ -2963,7 +3007,10 @@ class LogViewerWindow(QMainWindow):
                 log_directory = Path.cwd()
 
         # Start file watching
-        self.file_detector = LogFileDetector(base_log_path)
+        self.file_detector = LogFileDetector(
+            base_log_path,
+            log_discovery_provider=self._log_discovery_provider,
+        )
         self.file_detector.new_log_detected.connect(self.add_new_log)
         self.file_detector.start_watching(log_directory)
 
@@ -3115,6 +3162,9 @@ class LogViewerWindow(QMainWindow):
         if self.process_update_timer and self.process_update_timer.isActive():
             self.process_update_timer.stop()
         self.process_update_timer = None
+
+        self.server_scan_timer.stop()
+        self._server_scan_requests.clear()
 
         self.stop_monitoring()
         LogHighlightClient.shutdown()
