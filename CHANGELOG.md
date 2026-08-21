@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.9
+
+- Expose root-form completion and failure as public lifecycle state.
+- Emit one completion signal after the form tree finishes semantic finalization.
+
 ## 0.2.5
 
 - Preserve live callable objects when typed parameter forms apply edited code.
