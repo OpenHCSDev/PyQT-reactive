@@ -15,6 +15,16 @@ Construction
 4. Form services build widgets, connect signals, and project resolved state.
 5. Nested dataclasses receive nested managers tied to the same root state.
 
+Readiness
+---------
+
+Form construction is complete only after the root transaction has materialised
+the form tree and run semantic finalisation. Callers can inspect
+``form_build_complete``, inspect ``form_build_failure`` after a failed build,
+or subscribe to the one-shot ``form_build_completed`` signal. These public
+lifecycle surfaces let host workflows wait for a usable form without guessing
+from elapsed time or widget counts.
+
 State updates
 -------------
 
