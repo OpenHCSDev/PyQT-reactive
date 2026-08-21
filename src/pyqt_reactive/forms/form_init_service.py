@@ -180,6 +180,11 @@ class FormBuildTransaction:
             raise RuntimeError("Cannot register form work after finalization.")
         self._registration_depth += 1
 
+    @property
+    def complete(self) -> bool:
+        """Whether the root form has completed semantic finalization."""
+        return self._finalized
+
     def claim_initial_sync_widgets(self, requested: int) -> int:
         claimed = min(max(requested, 0), self._remaining_sync_widgets)
         self._remaining_sync_widgets -= claimed
@@ -332,6 +337,7 @@ class FormBuildTransaction:
             return
         self._finalized = True
         self.finalization_count += 1
+        self.root_manager.form_build_completed.emit()
 
 
 # ============================================================================

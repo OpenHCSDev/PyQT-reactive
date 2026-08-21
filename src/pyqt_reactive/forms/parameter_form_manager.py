@@ -187,6 +187,7 @@ class ParameterFormManager(
 
     parameter_changed = pyqtSignal(str, object)  # param_name, value
     form_build_failed = pyqtSignal(object)
+    form_build_completed = pyqtSignal()
 
     # Cross-window context change signal (simplified API)
     # Args: (scope_id, field_path) - field_path is None for bulk refresh
@@ -232,6 +233,16 @@ class ParameterFormManager(
                     {'well_filter': 2, 'enabled': True}
         """
         return ParameterFormTypeResolver.scoped_parameters(self.state, self.field_id)
+
+    @property
+    def form_build_complete(self) -> bool:
+        """Whether this manager's root form is fully materialized and finalized."""
+        return self._form_build_transaction.complete
+
+    @property
+    def form_build_failure(self) -> Exception | None:
+        """Construction failure reported by this manager's root form, if any."""
+        return self._form_build_transaction.failure
 
     @property
     def parameter_types(self) -> ParameterTypesByName:
