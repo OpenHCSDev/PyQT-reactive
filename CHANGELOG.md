@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.12
+
+- Route process termination signals through the Qt event loop so terminal
+  interrupts request a clean application exit instead of surfacing inside an
+  arbitrary Python callback.
+
 ## 0.2.11
 
 - Derive callable-default declaration semantics from python-introspect instead
