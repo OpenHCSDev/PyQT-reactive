@@ -140,9 +140,11 @@ class EditableFunctionPatternCallable:
         signature = inspect.signature(authority)
         resolved_annotations = EditableFunctionPatternCallable._resolved_annotations(authority)
         parameters = [
-            parameter.replace(annotation=resolved_annotations[name])
-            if name in resolved_annotations
-            else parameter
+            (
+                parameter.replace(annotation=resolved_annotations[name])
+                if name in resolved_annotations
+                else parameter
+            )
             for name, parameter in signature.parameters.items()
         ]
         existing = set(signature.parameters)
@@ -426,12 +428,8 @@ class FunctionPatternCodeDocumentService:
         self.seed_func_token_generator(existing_tokens)
         claimed_tokens: set[str] = set()
         if isinstance(next_pattern, dict):
-            previous_by_key = (
-                previous_pattern if isinstance(previous_pattern, dict) else {}
-            )
-            tokens_by_key = (
-                existing_tokens if isinstance(existing_tokens, dict) else {}
-            )
+            previous_by_key = previous_pattern if isinstance(previous_pattern, dict) else {}
+            tokens_by_key = existing_tokens if isinstance(existing_tokens, dict) else {}
             return {
                 str(key): self._reconcile_function_list_tokens(
                     previous_by_key.get(str(key)),
@@ -465,9 +463,7 @@ class FunctionPatternCodeDocumentService:
             previous_tokens,
             next_entries,
             same_declaration=self.same_function_declaration,
-            occurrence_authorities=lambda entry: (
-                function_pattern_authority(entry[0]),
-            ),
+            occurrence_authorities=lambda entry: (function_pattern_authority(entry[0]),),
             token_factory=self.ensure_token,
             claimed_tokens=claimed_tokens,
         )
@@ -598,7 +594,34 @@ class FunctionPatternCodeDocumentService:
         """Return whether two callable objects represent the same authority."""
         left = function_pattern_authority(left)
         right = function_pattern_authority(right)
-        return left is right or semantic_values_equal(left, right)
+        left_declaration = inspect.unwrap(left)
+        right_declaration = inspect.unwrap(right)
+        return left_declaration is right_declaration or semantic_values_equal(
+            left_declaration,
+            right_declaration,
+        )
+
+    @staticmethod
+    def canonical_declaration_kwargs(
+        func,
+        kwargs: Mapping[str, ParameterValue],
+    ) -> FunctionKwargs:
+        """Return kwargs whose values differ from callable-declared defaults."""
+
+        authority = function_pattern_authority(func)
+        try:
+            defaults = {
+                name: parameter.default
+                for name, parameter in inspect.signature(authority).parameters.items()
+                if parameter.default is not inspect.Parameter.empty
+            }
+        except (TypeError, ValueError):
+            defaults = {}
+        return {
+            name: value
+            for name, value in kwargs.items()
+            if name not in defaults or not semantic_values_equal(value, defaults[name])
+        }
 
     @classmethod
     def same_function_declaration(
@@ -608,8 +631,12 @@ class FunctionPatternCodeDocumentService:
     ) -> bool:
         """Return whether callable authority and declared kwargs are unchanged."""
 
-        return cls.same_function_authority(left[0], right[0]) and semantic_values_equal(
-            left[1], right[1]
+        return cls.same_function_authority(
+            left[0],
+            right[0],
+        ) and semantic_values_equal(
+            cls.canonical_declaration_kwargs(left[0], left[1]),
+            cls.canonical_declaration_kwargs(right[0], right[1]),
         )
 
     @classmethod

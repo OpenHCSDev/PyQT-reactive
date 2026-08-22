@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import wraps
 from types import SimpleNamespace
 
 import pytest
@@ -48,6 +49,14 @@ def sample_function(image, threshold: int = 1):
 
 def alternate_function(image, radius: int = 1):
     return image
+
+
+def _wrapped(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
 
 
 @dataclass
@@ -157,6 +166,21 @@ def test_complete_pattern_reconciliation_does_not_guess_between_duplicates() -> 
 
     assert set(tokens).isdisjoint({"func_4", "func_7"})
     assert len(set(tokens)) == 2
+
+
+def test_complete_pattern_reconciliation_preserves_wrapped_default_occurrences() -> None:
+    service = FunctionPatternCodeDocumentService()
+
+    tokens = service.reconcile_pattern_tokens(
+        [
+            (_wrapped(sample_function), {"threshold": 1}),
+            (_wrapped(sample_function), {"threshold": 1}),
+        ],
+        ["func_4", "func_7"],
+        [sample_function, sample_function],
+    )
+
+    assert tokens == ["func_4", "func_7"]
 
 
 def test_complete_pattern_reconciliation_handles_ambiguous_kwargs_equality() -> None:
