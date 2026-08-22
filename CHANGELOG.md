@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.10
+
+- Preserve function-pattern occurrence identity across equivalent callable
+  wrappers and clean documents that omit signature-default kwargs.
+
 ## 0.2.9
 
 - Expose root-form completion and failure as public lifecycle state.
