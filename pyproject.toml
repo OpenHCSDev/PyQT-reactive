@@ -33,7 +33,7 @@ dependencies = [
     "psutil>=5.9",
     "Pygments>=2.15",
     "pyzmq>=22.0",
-    "python-introspect>=0.1.9",
+    "python-introspect>=0.1.10",
     "zmqruntime>=0.1.25",
 ]
 
@@ -59,6 +59,10 @@ Issues = "https://github.com/OpenHCSDev/pyqt-reactive/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyqt_reactive"]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
 
 [tool.hatch.version]
 path = "src/pyqt_reactive/__init__.py"

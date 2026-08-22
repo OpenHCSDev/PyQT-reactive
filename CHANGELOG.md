@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.11
+
+- Derive callable-default declaration semantics from python-introspect instead
+  of maintaining a second framework-local implementation.
+
 ## 0.2.10
 
 - Preserve function-pattern occurrence identity across equivalent callable

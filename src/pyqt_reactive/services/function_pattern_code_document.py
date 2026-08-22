@@ -19,7 +19,11 @@ from objectstate import (
     patch_lazy_constructors,
     semantic_values_equal,
 )
-from python_introspect import parameter_exclusions, set_parameter_exclusions
+from python_introspect import (
+    callable_declaration_kwargs,
+    parameter_exclusions,
+    set_parameter_exclusions,
+)
 
 from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.pattern_metadata import PatternScopeToken
@@ -601,28 +605,6 @@ class FunctionPatternCodeDocumentService:
             right_declaration,
         )
 
-    @staticmethod
-    def canonical_declaration_kwargs(
-        func,
-        kwargs: Mapping[str, ParameterValue],
-    ) -> FunctionKwargs:
-        """Return kwargs whose values differ from callable-declared defaults."""
-
-        authority = function_pattern_authority(func)
-        try:
-            defaults = {
-                name: parameter.default
-                for name, parameter in inspect.signature(authority).parameters.items()
-                if parameter.default is not inspect.Parameter.empty
-            }
-        except (TypeError, ValueError):
-            defaults = {}
-        return {
-            name: value
-            for name, value in kwargs.items()
-            if name not in defaults or not semantic_values_equal(value, defaults[name])
-        }
-
     @classmethod
     def same_function_declaration(
         cls,
@@ -635,8 +617,16 @@ class FunctionPatternCodeDocumentService:
             left[0],
             right[0],
         ) and semantic_values_equal(
-            cls.canonical_declaration_kwargs(left[0], left[1]),
-            cls.canonical_declaration_kwargs(right[0], right[1]),
+            callable_declaration_kwargs(
+                function_pattern_authority(left[0]),
+                left[1],
+                values_equal=semantic_values_equal,
+            ),
+            callable_declaration_kwargs(
+                function_pattern_authority(right[0]),
+                right[1],
+                values_equal=semantic_values_equal,
+            ),
         )
 
     @classmethod
