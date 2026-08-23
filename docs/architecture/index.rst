@@ -29,6 +29,7 @@ Service Layer
    service-layer-architecture
    service_registry
    scope_window_factory
+   window_snapshot
    server_scanning_and_polling
    window_code_documents
 

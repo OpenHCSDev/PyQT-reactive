@@ -1,17 +1,19 @@
 """Sphinx configuration for pyqt_reactive."""
-import os
+
 import sys
 from pathlib import Path
 
 # Add source to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from pyqt_reactive import __version__
+
 # Project information
 project = "pyqt_reactive"
 copyright = "2024, Tristan Simas"
 author = "Tristan Simas"
-version = "0.1"
-release = "0.1.30"
+version = ".".join(__version__.split(".")[:2])
+release = __version__
 
 # General configuration
 extensions = [
