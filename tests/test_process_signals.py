@@ -42,7 +42,6 @@ def test_signal_relay_does_not_restore_over_a_newer_handler(qapp) -> None:
 def test_signal_relay_exits_qt_loop_without_keyboard_interrupt_traceback() -> None:
     source_root = Path(__file__).resolve().parents[1] / "src"
     script = textwrap.dedent("""
-        import os
         import signal
 
         from PyQt6.QtCore import QCoreApplication, QTimer
@@ -50,7 +49,7 @@ def test_signal_relay_exits_qt_loop_without_keyboard_interrupt_traceback() -> No
 
         application = QCoreApplication([])
         relay = QtProcessSignalRelay(application)
-        QTimer.singleShot(10, lambda: os.kill(os.getpid(), signal.SIGINT))
+        QTimer.singleShot(10, lambda: signal.raise_signal(signal.SIGINT))
         raise SystemExit(application.exec())
         """)
     environment = dict(os.environ)

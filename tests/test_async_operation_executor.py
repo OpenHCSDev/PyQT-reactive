@@ -9,7 +9,7 @@ import pytest
 
 from pyqt_reactive.services.async_operation_executor import (
     AsyncOperationExecutor,
-    AsyncOperationExecutorClosed,
+    AsyncOperationExecutorClosedError,
 )
 
 
@@ -75,7 +75,7 @@ def test_close_cancels_queued_work_and_rejects_new_submissions() -> None:
     executor.close()
     assert executor.active_futures() == (running,)
     assert pending.cancelled()
-    with pytest.raises(AsyncOperationExecutorClosed):
+    with pytest.raises(AsyncOperationExecutorClosedError):
         executor.submit(queued)
 
     release.set()

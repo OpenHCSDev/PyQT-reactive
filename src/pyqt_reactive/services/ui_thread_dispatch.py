@@ -15,11 +15,11 @@ class UiThreadDispatchError(RuntimeError):
     """Raised when a UI-thread operation cannot be dispatched."""
 
 
-class UiThreadDispatcherClosed(UiThreadDispatchError):
+class UiThreadDispatcherClosedError(UiThreadDispatchError):
     """Raised when dispatch is requested after shutdown begins."""
 
 
-class UiThreadDispatchTimeout(TimeoutError):
+class UiThreadDispatchTimeoutError(TimeoutError):
     """Raised when a queued UI-thread operation does not begin in time."""
 
 
@@ -29,7 +29,7 @@ class _UiThreadCall(Generic[ResultT]):
     def __init__(
         self,
         callback: Callable[[], ResultT],
-        retire: Callable[["_UiThreadCall[ResultT]"], None],
+        retire: Callable[[_UiThreadCall[ResultT]], None],
     ) -> None:
         self._callback = callback
         self._retire = retire
@@ -116,7 +116,9 @@ class UiThreadDispatcher:
             self._closed = True
             calls = tuple(self._calls)
         for call in calls:
-            call.cancel(UiThreadDispatcherClosed("UI dispatcher is shutting down."))
+            call.cancel(
+                UiThreadDispatcherClosedError("UI dispatcher is shutting down.")
+            )
 
     def call(
         self,
@@ -135,7 +137,9 @@ class UiThreadDispatcher:
         call = self._register(callback)
         self._proxy.call_requested.emit(call)
         if not call.done.wait(timeout_ms / 1000):
-            timeout = UiThreadDispatchTimeout("Timed out waiting for UI thread dispatch.")
+            timeout = UiThreadDispatchTimeoutError(
+                "Timed out waiting for UI thread dispatch."
+            )
             if call.cancel(timeout):
                 raise timeout
             call.done.wait()
@@ -160,7 +164,9 @@ class UiThreadDispatcher:
     ) -> _UiThreadCall[ResultT]:
         with self._lock:
             if self._closed:
-                raise UiThreadDispatcherClosed("UI dispatcher is shutting down.")
+                raise UiThreadDispatcherClosedError(
+                    "UI dispatcher is shutting down."
+                )
             call = _UiThreadCall(callback, self._retire)
             self._calls.add(call)
             return call
@@ -172,7 +178,9 @@ class UiThreadDispatcher:
     def _require_open(self) -> None:
         with self._lock:
             if self._closed:
-                raise UiThreadDispatcherClosed("UI dispatcher is shutting down.")
+                raise UiThreadDispatcherClosedError(
+                    "UI dispatcher is shutting down."
+                )
 
     @staticmethod
     def _is_ui_thread() -> bool:

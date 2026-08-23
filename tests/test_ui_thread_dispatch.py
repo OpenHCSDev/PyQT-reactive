@@ -9,8 +9,8 @@ import pytest
 
 from pyqt_reactive.services.ui_thread_dispatch import (
     UiThreadDispatcher,
-    UiThreadDispatcherClosed,
-    UiThreadDispatchTimeout,
+    UiThreadDispatcherClosedError,
+    UiThreadDispatchTimeoutError,
 )
 
 
@@ -23,7 +23,7 @@ def test_close_cancels_a_posted_callback_before_qt_executes_it(qapp) -> None:
     qapp.processEvents()
 
     assert calls == []
-    with pytest.raises(UiThreadDispatcherClosed):
+    with pytest.raises(UiThreadDispatcherClosedError):
         dispatcher.post(lambda: None)
 
 
@@ -45,7 +45,7 @@ def test_call_timeout_cancels_callback_still_queued_for_qt(qapp) -> None:
 
     assert not worker.is_alive()
     assert len(errors) == 1
-    assert isinstance(errors[0], UiThreadDispatchTimeout)
+    assert isinstance(errors[0], UiThreadDispatchTimeoutError)
     assert calls == []
 
 
@@ -70,7 +70,7 @@ def test_close_unblocks_worker_waiting_for_queued_call(qapp) -> None:
 
     assert not worker.is_alive()
     assert len(errors) == 1
-    assert isinstance(errors[0], UiThreadDispatcherClosed)
+    assert isinstance(errors[0], UiThreadDispatcherClosedError)
 
 
 def test_call_waits_for_atomic_callback_that_started_before_timeout(qapp, qtbot) -> None:

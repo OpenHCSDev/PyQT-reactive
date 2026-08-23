@@ -260,7 +260,7 @@ class EndpointObservationSnapshot:
 class EndpointObservationAuthority:
     """One complete scan declaration and the exact snapshot it produced."""
 
-    scan_service: "ZMQServerScanService"
+    scan_service: ZMQServerScanService
     ports: tuple[int, ...]
     snapshot: EndpointObservationSnapshot = EndpointObservationSnapshot()
 
@@ -278,7 +278,7 @@ class EndpointObservationAuthority:
 
     def with_scan_declaration(
         self,
-        scan_service: "ZMQServerScanService",
+        scan_service: ZMQServerScanService,
         ports: Sequence[int],
     ) -> EndpointObservationTransition:
         """Replace the complete declaration and retire its observations."""
@@ -292,7 +292,7 @@ class EndpointObservationAuthority:
     def _transition(
         self,
         *,
-        scan_service: "ZMQServerScanService",
+        scan_service: ZMQServerScanService,
         ports: tuple[int, ...],
         snapshot: EndpointObservationSnapshot,
     ) -> EndpointObservationTransition:

@@ -12,7 +12,7 @@ ResultT = TypeVar("ResultT")
 ParametersT = ParamSpec("ParametersT")
 
 
-class AsyncOperationExecutorClosed(RuntimeError):
+class AsyncOperationExecutorClosedError(RuntimeError):
     """Raised when work is submitted after executor shutdown begins."""
 
 
@@ -35,7 +35,9 @@ class AsyncOperationExecutor:
 
         with self._lock:
             if self._closed:
-                raise AsyncOperationExecutorClosed("Async operation executor is shutting down.")
+                raise AsyncOperationExecutorClosedError(
+                    "Async operation executor is shutting down."
+                )
             future = self._executor.submit(
                 self._run_coroutine,
                 async_callable,
