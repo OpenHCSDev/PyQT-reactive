@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.13
+
+- Keep each ZMQ browser scan tied to one immutable declaration and observation
+  authority so superseded background results cannot overwrite current state.
+- Use ZMQRuntime's typed endpoint shutdown outcomes and endpoint identities
+  instead of maintaining browser-local lifecycle policy.
+- Own background coroutine execution and Qt-thread dispatch through reusable,
+  shutdown-aware services.
+
 ## 0.2.12
 
 - Route process termination signals through the Qt event loop so terminal

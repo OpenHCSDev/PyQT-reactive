@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from abc import ABC, ABCMeta, abstractmethod
 from collections.abc import Callable
-from enum import Enum
 from pathlib import Path
 
 from objectstate import spawn_thread_with_context
@@ -18,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from zmqruntime import EndpointShutdownMode
+from zmqruntime.shutdown import EndpointShutdownService
 from zmqruntime.startup import EndpointStartupStatus
 
 from pyqt_reactive.services.coalesced_scan_requests import CoalescedScanRequests
@@ -25,7 +25,9 @@ from pyqt_reactive.services.zmq_server_info import (
     BaseServerInfo,
 )
 from pyqt_reactive.services.zmq_server_scan_service import (
+    EndpointObservationAuthority,
     EndpointObservationSnapshot,
+    EndpointObservationTransition,
     EndpointScanResult,
     StartingEndpointObservation,
     ZMQServerScanService,
@@ -44,43 +46,6 @@ logger = logging.getLogger(__name__)
 
 class _CombinedMeta(ABCMeta, type(QWidget)):
     """Combined metaclass for ABC + PyQt6 QWidget."""
-
-
-class KillOperationKind(str, Enum):
-    """Closed user-facing kill actions with member-owned execution policy."""
-
-    def __new__(
-        cls,
-        value: str,
-        shutdown_mode: EndpointShutdownMode,
-        success_message: str,
-        thread_name: str,
-    ) -> KillOperationKind:
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member.shutdown_mode = shutdown_mode
-        member.success_message = success_message
-        member.thread_name = thread_name
-        return member
-
-    GRACEFUL = (
-        "graceful",
-        EndpointShutdownMode.GRACEFUL,
-        "All servers quit successfully",
-        "kill_servers",
-    )
-    FORCE = (
-        "force",
-        EndpointShutdownMode.FORCE,
-        "All servers force killed successfully",
-        "force_kill_servers",
-    )
-
-    @classmethod
-    def from_force(cls, force: bool) -> KillOperationKind:
-        """Resolve the caller's force flag at the declaration owner."""
-
-        return cls.FORCE if force else cls.GRACEFUL
 
 
 class BrowserLifecycleState:
@@ -104,7 +69,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
     _TREE_INDENTATION_PX = 12
 
-    endpoint_terminated = pyqtSignal(int)
+    endpoint_terminated = pyqtSignal(object)
     endpoint_snapshot_changed = pyqtSignal(object)
     log_file_opened = pyqtSignal(str)
     _scan_complete = pyqtSignal(object)
@@ -127,12 +92,12 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     ) -> None:
         super().__init__(parent)
 
-        self.ports_to_scan = ports_to_scan
         self.title = title
         self.color_scheme = color_scheme
-        self._scan_service = scan_service
-
-        self._endpoint_snapshot = EndpointObservationSnapshot()
+        self._endpoint_authority = EndpointObservationAuthority(
+            scan_service,
+            tuple(ports_to_scan),
+        )
         self._scan_requests = CoalescedScanRequests()
         self._lifecycle_state = BrowserLifecycleState()
         self.destroyed.connect(
@@ -255,15 +220,47 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             return
         self._start_server_scan()
 
+    def replace_scan_declaration(
+        self,
+        *,
+        scan_service: ZMQServerScanService,
+        ports_to_scan: list[int],
+    ) -> None:
+        """Replace scan authority and invalidate rows produced by its predecessor."""
+
+        transition = self._endpoint_authority.with_scan_declaration(
+            scan_service,
+            ports_to_scan,
+        )
+        if transition.authority is self._endpoint_authority:
+            return
+        self._commit_endpoint_authority(transition)
+        self.refresh_servers()
+
+    @property
+    def _scan_service(self) -> ZMQServerScanService:
+        return self._endpoint_authority.scan_service
+
+    @property
+    def _endpoint_snapshot(self) -> EndpointObservationSnapshot:
+        return self._endpoint_authority.snapshot
+
+    @property
+    def _scan_ports(self) -> tuple[int, ...]:
+        return self._endpoint_authority.ports
+
     def _start_server_scan(self) -> None:
         """Run the active coalesced scan request."""
 
-        previous_snapshot = self._endpoint_snapshot
+        base_authority = self._endpoint_authority
+        previous_snapshot = base_authority.snapshot
+        scan_service = base_authority.scan_service
+        ports_to_scan = base_authority.ports
 
         def _scan_and_emit() -> None:
             try:
-                snapshot = self._scan_service.scan_ports(
-                    self.ports_to_scan,
+                snapshot = scan_service.scan_ports(
+                    ports_to_scan,
                     previous_snapshot=previous_snapshot,
                 )
             except Exception:
@@ -273,7 +270,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
                 self._scan_complete.emit(
                     EndpointScanResult(
                         snapshot=snapshot,
-                        base_snapshot=previous_snapshot,
+                        base_authority=base_authority,
                     )
                 )
 
@@ -285,7 +282,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         if not isinstance(result, EndpointScanResult):
             raise TypeError("ZMQ browser scan completion requires EndpointScanResult")
-        if result.base_snapshot is self._endpoint_snapshot:
+        if result.base_authority is self._endpoint_authority:
             self._commit_endpoint_snapshot(result.snapshot)
         else:
             self._scan_requests.request()
@@ -309,11 +306,23 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     ) -> None:
         """Install and publish the sole persistent endpoint observation state."""
 
-        if snapshot == self._endpoint_snapshot:
-            return
-        self._endpoint_snapshot = snapshot
-        self.render_endpoint_snapshot(snapshot)
-        self.endpoint_snapshot_changed.emit(snapshot)
+        self._commit_endpoint_authority(
+            self._endpoint_authority.with_snapshot(snapshot)
+        )
+
+    def _commit_endpoint_authority(
+        self,
+        transition: EndpointObservationTransition,
+    ) -> None:
+        """Commit one indivisible scan declaration and observation state."""
+
+        previous_snapshot = self._endpoint_authority.snapshot
+        self._endpoint_authority = transition.authority
+        if transition.authority.snapshot != previous_snapshot:
+            self.render_endpoint_snapshot(transition.authority.snapshot)
+            self.endpoint_snapshot_changed.emit(transition.authority.snapshot)
+        for endpoint in transition.terminated_endpoints:
+            self.endpoint_terminated.emit(endpoint)
 
     def render_endpoint_snapshot(
         self,
@@ -391,22 +400,28 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     def _spawn_server_kill_thread(
         self,
         ports: list[int],
-        kind: KillOperationKind,
+        mode: EndpointShutdownMode,
     ) -> None:
-        def _kill_servers() -> None:
-            def _publish_endpoint_terminated(port: int) -> None:
-                if not self._lifecycle_state.is_cleaning_up():
-                    self.endpoint_terminated.emit(port)
+        scan_service = self._scan_service
+        shutdown_service = EndpointShutdownService.for_config(scan_service.config)
 
-            success, message = self.execute_kill_operation(
+        def _kill_servers() -> None:
+            result = shutdown_service.shutdown_ports(
                 ports=ports,
-                kind=kind,
-                on_endpoint_terminated=_publish_endpoint_terminated,
+                mode=mode,
             )
             if not self._lifecycle_state.is_cleaning_up():
-                self._kill_complete.emit(success, message)
+                for port in result.terminated_ports:
+                    self.endpoint_terminated.emit(scan_service.endpoint(port))
+                self._kill_complete.emit(
+                    result.succeeded,
+                    result.message,
+                )
 
-        spawn_thread_with_context(_kill_servers, name=kind.thread_name)
+        spawn_thread_with_context(
+            _kill_servers,
+            name=f"{mode.value}_endpoint_shutdown",
+        )
 
     def quit_selected_servers(self) -> None:
         ports_to_kill = self._collect_selected_server_ports("Please select servers to quit.")
@@ -424,7 +439,10 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         if not confirmed:
             return
 
-        self._spawn_server_kill_thread(ports_to_kill, KillOperationKind.GRACEFUL)
+        self._spawn_server_kill_thread(
+            ports_to_kill,
+            EndpointShutdownMode.GRACEFUL,
+        )
 
     def force_kill_selected_servers(self) -> None:
         ports_to_kill = self._collect_selected_server_ports("Please select servers to force kill.")
@@ -443,7 +461,10 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         if not confirmed:
             return
 
-        self._spawn_server_kill_thread(ports_to_kill, KillOperationKind.FORCE)
+        self._spawn_server_kill_thread(
+            ports_to_kill,
+            EndpointShutdownMode.FORCE,
+        )
 
     def _on_item_double_clicked(self, item: QTreeWidgetItem) -> None:
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -473,16 +494,6 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     @abstractmethod
     def periodic_domain_cleanup(self) -> None:
         """Run domain-specific cleanup on timer ticks."""
-
-    @abstractmethod
-    def execute_kill_operation(
-        self,
-        *,
-        ports: list[int],
-        kind: KillOperationKind,
-        on_endpoint_terminated: Callable[[int], None],
-    ) -> tuple[bool, str]:
-        """Execute blocking kill operation for selected ports."""
 
     @abstractmethod
     def on_browser_shown(self) -> None:

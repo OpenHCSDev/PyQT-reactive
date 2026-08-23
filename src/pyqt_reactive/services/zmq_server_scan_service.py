@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.messages import PongResponse
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
-from zmqruntime.transport import request_control_ping, resolve_transport_mode
+from zmqruntime.transport import (
+    TransportEndpoint,
+    request_control_ping,
+    resolve_transport_mode,
+)
 
 
 class EndpointObservation(ABC):
@@ -238,17 +242,95 @@ class EndpointObservationSnapshot:
             )
         return observation.status
 
+    def removed_ports_since(
+        self,
+        previous: EndpointObservationSnapshot,
+    ) -> tuple[int, ...]:
+        """Return endpoints present in ``previous`` but absent from this snapshot."""
+
+        current_ports = {observation.port for observation in self.observations}
+        return tuple(
+            observation.port
+            for observation in previous.observations
+            if observation.port not in current_ports
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointObservationAuthority:
+    """One complete scan declaration and the exact snapshot it produced."""
+
+    scan_service: "ZMQServerScanService"
+    ports: tuple[int, ...]
+    snapshot: EndpointObservationSnapshot = EndpointObservationSnapshot()
+
+    def with_snapshot(
+        self,
+        snapshot: EndpointObservationSnapshot,
+    ) -> EndpointObservationTransition:
+        """Commit a derived snapshot and project removals through its producer."""
+
+        return self._transition(
+            scan_service=self.scan_service,
+            ports=self.ports,
+            snapshot=snapshot,
+        )
+
+    def with_scan_declaration(
+        self,
+        scan_service: "ZMQServerScanService",
+        ports: Sequence[int],
+    ) -> EndpointObservationTransition:
+        """Replace the complete declaration and retire its observations."""
+
+        return self._transition(
+            scan_service=scan_service,
+            ports=tuple(ports),
+            snapshot=EndpointObservationSnapshot(),
+        )
+
+    def _transition(
+        self,
+        *,
+        scan_service: "ZMQServerScanService",
+        ports: tuple[int, ...],
+        snapshot: EndpointObservationSnapshot,
+    ) -> EndpointObservationTransition:
+        replacement = type(self)(scan_service, ports, snapshot)
+        if replacement == self:
+            return EndpointObservationTransition(self)
+        removed = tuple(
+            self.scan_service.endpoint(port)
+            for port in snapshot.removed_ports_since(self.snapshot)
+        )
+        return EndpointObservationTransition(replacement, removed)
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointObservationTransition:
+    """One indivisible authority replacement and its retired endpoints."""
+
+    authority: EndpointObservationAuthority
+    terminated_endpoints: tuple[TransportEndpoint, ...] = ()
+
 
 @dataclass(frozen=True, slots=True)
 class EndpointScanResult:
     """One scan result tied to the immutable authority it began from."""
 
     snapshot: EndpointObservationSnapshot
-    base_snapshot: EndpointObservationSnapshot
+    base_authority: EndpointObservationAuthority
 
 
+@dataclass(frozen=True, slots=True, init=False)
 class ZMQServerScanService:
     """Scan server endpoints while preserving the canonical PONG type."""
+
+    config: ZMQConfig
+    host: str
+    transport_mode: TransportMode
+    timeout_ms: int
+    max_workers: int
 
     def __init__(
         self,
@@ -259,11 +341,20 @@ class ZMQServerScanService:
         timeout_ms: int = 300,
         max_workers: int = 10,
     ) -> None:
-        self.config = config
-        self.host = host
-        self.transport_mode = resolve_transport_mode(transport_mode)
-        self.timeout_ms = timeout_ms
-        self.max_workers = max_workers
+        object.__setattr__(self, "config", config)
+        object.__setattr__(self, "host", host)
+        object.__setattr__(self, "transport_mode", resolve_transport_mode(transport_mode))
+        object.__setattr__(self, "timeout_ms", timeout_ms)
+        object.__setattr__(self, "max_workers", max_workers)
+
+    def endpoint(self, port: int) -> TransportEndpoint:
+        """Resolve one endpoint through this scan declaration."""
+
+        return TransportEndpoint(
+            host=self.host,
+            port=port,
+            transport_mode=self.transport_mode,
+        )
 
     def scan_ports(
         self,
@@ -292,7 +383,10 @@ class ZMQServerScanService:
         identity = response.process_identity
         return (
             identity is not None
-            and self.transport_mode.endpoint_is_local(self.host, response.port)
+            and self.transport_mode.declaration.endpoint_is_local(
+                self.host,
+                response.port,
+            )
             and identity.is_alive() is True
         )
 

@@ -1,30 +1,49 @@
 """Lifecycle coverage for the generic ZMQ server browser."""
 
 from PyQt6.QtCore import QCoreApplication, QEvent
-from zmqruntime import ZMQConfig
+from zmqruntime import (
+    EndpointShutdownMode,
+    EndpointShutdownResult,
+    TransportMode,
+    ZMQConfig,
+)
 from zmqruntime.messages import PongResponse, ProcessIdentity, ServerRole
+from zmqruntime.shutdown import (
+    EndpointShutdownBatchResult,
+    EndpointShutdownOutcome,
+    EndpointShutdownService,
+)
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
-from zmqruntime.transport import get_default_transport_mode
+from zmqruntime.transport import TransportEndpoint, get_default_transport_mode
 
 from pyqt_reactive.services.zmq_server_scan_service import (
+    EndpointObservationAuthority,
     EndpointObservationSnapshot,
     EndpointScanResult,
     ZMQServerScanService,
 )
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
-    KillOperationKind,
     ZMQServerBrowserWidgetABC,
 )
 
 
 class _ScanService:
+    config = ZMQConfig()
+
     def scan_ports(self, _ports, *, previous_snapshot=None):
         del previous_snapshot
         return EndpointObservationSnapshot()
 
+    def endpoint(self, port: int) -> TransportEndpoint:
+        return TransportEndpoint(
+            host="localhost",
+            port=port,
+            transport_mode=get_default_transport_mode(),
+        )
 
-class _SequencedScanService:
+
+class _SequencedScanService(_ScanService):
     def __init__(self, snapshots):
         self._snapshots = iter(snapshots)
         self.previous_snapshots = []
@@ -40,15 +59,6 @@ class _Browser(ZMQServerBrowserWidgetABC):
 
     def periodic_domain_cleanup(self) -> None:
         pass
-
-    def execute_kill_operation(
-        self,
-        *,
-        ports,
-        kind: KillOperationKind,
-        on_endpoint_terminated,
-    ) -> tuple[bool, str]:
-        return True, "done"
 
     def on_browser_shown(self) -> None:
         pass
@@ -91,7 +101,7 @@ def test_endpoint_snapshot_is_the_authority_for_tree_and_status(qapp) -> None:
     browser._update_server_list(
         EndpointScanResult(
             snapshot=snapshot,
-            base_snapshot=browser._endpoint_snapshot,
+            base_authority=browser._endpoint_authority,
         )
     )
 
@@ -115,6 +125,186 @@ def test_endpoint_snapshot_is_the_authority_for_tree_and_status(qapp) -> None:
     browser.deleteLater()
     QCoreApplication.sendPostedEvents(browser, QEvent.Type.DeferredDelete)
     qapp.processEvents()
+
+
+def test_snapshot_removal_publishes_the_exact_terminated_endpoint(qapp) -> None:
+    scan_service = _ScanService()
+    browser = _Browser(
+        ports_to_scan=[5000],
+        title="Servers",
+        color_scheme=ColorScheme(),
+        scan_service=scan_service,
+    )
+    observed = []
+    browser.endpoint_terminated.connect(observed.append)
+    browser._commit_endpoint_snapshot(
+        EndpointObservationSnapshot.from_responses(
+            (
+                PongResponse(
+                    port=5000,
+                    control_port=6000,
+                    ready=True,
+                    server="ExecutionServer",
+                    server_role=ServerRole.EXECUTION,
+                ),
+            )
+        )
+    )
+
+    browser._commit_endpoint_snapshot(EndpointObservationSnapshot())
+
+    assert observed == [scan_service.endpoint(5000)]
+
+
+def test_scan_result_from_replaced_service_cannot_commit(qapp) -> None:
+    old_scan_service = _ScanService()
+    browser = _Browser(
+        ports_to_scan=[5000],
+        title="Servers",
+        color_scheme=ColorScheme(),
+        scan_service=old_scan_service,
+    )
+    stale_snapshot = EndpointObservationSnapshot.from_responses(
+        (
+            PongResponse(
+                port=5000,
+                control_port=6000,
+                ready=True,
+                server="OldServer",
+                server_role=ServerRole.GENERIC,
+            ),
+        )
+    )
+    old_authority = browser._endpoint_authority
+    browser._scan_requests.request()
+    browser._endpoint_authority = EndpointObservationAuthority(_ScanService(), (5000,))
+    follow_up_scans = []
+    browser._start_server_scan = lambda: follow_up_scans.append(True)
+
+    browser._update_server_list(
+        EndpointScanResult(
+            snapshot=stale_snapshot,
+            base_authority=old_authority,
+        )
+    )
+
+    assert browser._endpoint_snapshot == EndpointObservationSnapshot()
+    assert follow_up_scans == [True]
+
+
+def test_replacing_scan_declaration_immediately_invalidates_previous_rows(
+    qapp,
+    monkeypatch,
+) -> None:
+    original = ZMQServerScanService(
+        config=ZMQConfig(),
+        host="127.0.0.1",
+        transport_mode=TransportMode.TCP,
+    )
+    browser = _Browser(
+        ports_to_scan=[5000],
+        title="Servers",
+        color_scheme=ColorScheme(),
+        scan_service=original,
+    )
+    browser._commit_endpoint_snapshot(
+        EndpointObservationSnapshot.from_responses(
+            (
+                PongResponse(
+                    port=5000,
+                    control_port=6000,
+                    ready=True,
+                    server="OldServer",
+                    server_role=ServerRole.GENERIC,
+                ),
+            )
+        )
+    )
+    replacement = ZMQServerScanService(
+        config=ZMQConfig(),
+        host="127.0.0.2",
+        transport_mode=TransportMode.TCP,
+    )
+    refreshes: list[bool] = []
+    terminated: list[TransportEndpoint] = []
+    browser.endpoint_terminated.connect(terminated.append)
+    monkeypatch.setattr(
+        browser,
+        "refresh_servers",
+        lambda: refreshes.append(True),
+    )
+
+    browser.replace_scan_declaration(
+        scan_service=replacement,
+        ports_to_scan=[7000],
+    )
+
+    assert browser._scan_service is replacement
+    assert browser._scan_ports == (7000,)
+    assert browser._endpoint_snapshot == EndpointObservationSnapshot()
+    assert browser.server_tree.topLevelItemCount() == 0
+    assert refreshes == [True]
+    assert terminated == [
+        TransportEndpoint(
+            host=original.host,
+            port=5000,
+            transport_mode=original.transport_mode,
+        )
+    ]
+
+
+def test_kill_result_carries_the_exact_endpoint_selected_by_the_scan(
+    qapp,
+    monkeypatch,
+) -> None:
+    callbacks = []
+    monkeypatch.setattr(
+        "pyqt_reactive.widgets.shared.zmq_server_browser_widget.spawn_thread_with_context",
+        lambda callback, *, name: callbacks.append((callback, name)),
+    )
+    scan_service = ZMQServerScanService(config=ZMQConfig(), transport_mode=None)
+    browser = _Browser(
+        ports_to_scan=[5000],
+        title="Servers",
+        color_scheme=ColorScheme(),
+        scan_service=scan_service,
+    )
+    observed: list[TransportEndpoint] = []
+    browser.endpoint_terminated.connect(observed.append)
+
+    class _ShutdownService:
+        def shutdown_ports(self, *, ports, mode):
+            del mode
+            return EndpointShutdownBatchResult(
+                (
+                    EndpointShutdownOutcome(
+                        port=ports[0],
+                        result=EndpointShutdownResult(
+                            succeeded=True,
+                            endpoint_terminated=True,
+                        ),
+                    ),
+                )
+            )
+
+    monkeypatch.setattr(
+        EndpointShutdownService,
+        "for_config",
+        classmethod(lambda cls, config: _ShutdownService()),
+    )
+
+    browser._spawn_server_kill_thread([5000], EndpointShutdownMode.GRACEFUL)
+    callback, _name = callbacks.pop()
+    callback()
+
+    assert len(observed) == 1
+    assert observed == [
+        TransportEndpoint(
+            host=scan_service.host,
+            port=5000,
+            transport_mode=scan_service.transport_mode,
+        )
+    ]
 
 
 def test_startup_event_and_tree_share_the_endpoint_snapshot_authority(qapp) -> None:
@@ -364,17 +554,35 @@ def test_kill_completion_is_suppressed_after_cleanup(qapp, monkeypatch) -> None:
     terminated_ports = []
     browser._kill_complete.connect(lambda success, message: completions.append((success, message)))
     browser.endpoint_terminated.connect(terminated_ports.append)
-    browser.execute_kill_operation = lambda *, ports, kind, on_endpoint_terminated: (
-        on_endpoint_terminated(ports[0]) or (True, "done")
+
+    class _ShutdownService:
+        def shutdown_ports(self, *, ports, mode):
+            del mode
+            return EndpointShutdownBatchResult(
+                (
+                    EndpointShutdownOutcome(
+                        port=ports[0],
+                        result=EndpointShutdownResult(
+                            succeeded=True,
+                            endpoint_terminated=True,
+                        ),
+                    ),
+                )
+            )
+
+    monkeypatch.setattr(
+        EndpointShutdownService,
+        "for_config",
+        classmethod(lambda cls, config: _ShutdownService()),
     )
 
-    kind = KillOperationKind.GRACEFUL
-    browser._spawn_server_kill_thread([5000], kind)
+    mode = EndpointShutdownMode.GRACEFUL
+    browser._spawn_server_kill_thread([5000], mode)
     browser.cleanup()
     callback, name = callbacks.pop()
     callback()
 
-    assert name == kind.thread_name
+    assert name == "graceful_endpoint_shutdown"
     assert completions == []
     assert terminated_ports == []
     browser.deleteLater()

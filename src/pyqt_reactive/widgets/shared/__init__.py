@@ -179,10 +179,6 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.manager_ui_scaffold",
         "setup_vertical_manager_layout",
     ),
-    "KillOperationKind": (
-        "pyqt_reactive.widgets.shared.zmq_server_browser_widget",
-        "KillOperationKind",
-    ),
     "ZMQServerBrowserWidgetABC": (
         "pyqt_reactive.widgets.shared.zmq_server_browser_widget",
         "ZMQServerBrowserWidgetABC",
