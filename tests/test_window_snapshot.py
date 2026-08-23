@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -61,3 +63,31 @@ def test_native_desktop_pixel_capture_is_not_a_declared_scope() -> None:
     )
     with pytest.raises(ValueError, match="'native' is not a valid"):
         WindowSnapshotCaptureScope("native")
+
+
+def test_window_snapshot_declarations_are_headless_importable() -> None:
+    script = """
+import builtins
+import sys
+
+original_import = builtins.__import__
+
+def reject_pyqt(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == 'PyQt6' or name.startswith('PyQt6.'):
+        raise AssertionError(f'window snapshot declarations imported {name}')
+    return original_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = reject_pyqt
+from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
+assert tuple(scope.value for scope in WindowSnapshotCaptureScope) == ('widget', 'window')
+assert not any(name == 'PyQt6' or name.startswith('PyQt6.') for name in sys.modules)
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr

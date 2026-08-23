@@ -19,3 +19,7 @@ composition can sample unrelated desktop content.
 path, URI, dimensions, byte size, and SHA-256 digest. Product integrations own
 window discovery, authorisation, and transport DTOs; they pass the resolved
 ``QWidget`` and a ``WindowSnapshotCaptureSpec`` into this generic service.
+
+The scope and capture-spec declarations are safe to import in headless process
+boundaries. PyQt types are used for static typing and capture execution without
+eagerly importing PyQt while the declaration module is loaded.

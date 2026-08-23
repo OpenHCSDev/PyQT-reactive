@@ -9,11 +9,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QWidget
+if TYPE_CHECKING:
+    from PyQt6.QtGui import QPixmap
+    from PyQt6.QtWidgets import QWidget
 
-QtWindowCaptureCallable = Callable[[QWidget], QPixmap]
+QtWindowCaptureCallable = Callable[["QWidget"], "QPixmap"]
 
 
 def _widget_pixmap(widget: QWidget) -> QPixmap:
