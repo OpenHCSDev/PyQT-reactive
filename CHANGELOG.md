@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Derive the table-filter sidebar width from its actual controls and platform
+  scrollbar geometry so column filters remain readable without host-specific
+  sizing.
+
 ## 0.3.1
 
 - Replace structural host-provider, tree-payload, function-row, callable, and

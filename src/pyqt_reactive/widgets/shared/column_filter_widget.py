@@ -8,9 +8,8 @@ Multiple columns can be filtered simultaneously with AND logic across columns.
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -24,6 +23,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -203,7 +203,7 @@ class NonCompressingSplitter(QSplitter):
         # Flag to prevent resize event from interfering
         self._in_move = False
 
-    def moveSplitter(self, pos, index):
+    def moveSplitter(self, pos, index):  # noqa: N802 - Qt virtual method name
         """Override to grow total size instead of redistributing space."""
         # Get current sizes before any changes
         old_sizes = self.sizes()
@@ -241,7 +241,7 @@ class NonCompressingSplitter(QSplitter):
 
         self._in_move = False
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event):  # noqa: N802 - Qt virtual method name
         """Override to prevent automatic size redistribution."""
         if self._in_move:
             # During moveSplitter, don't let Qt redistribute sizes
@@ -267,7 +267,7 @@ class ColumnFilterWidget(QFrame):
         self,
         column: ColumnDef,
         unique_values: Sequence[str],
-        color_scheme: Optional[ColorScheme] = None,
+        color_scheme: ColorScheme | None = None,
         parent=None,
     ):
         """
@@ -284,7 +284,7 @@ class ColumnFilterWidget(QFrame):
         self.column_key = column.key
         self.column_name = column.name
         self.unique_values = sorted(unique_values)  # Sort for consistent display
-        self.checkboxes: Dict[str, QCheckBox] = {}
+        self.checkboxes: dict[str, QCheckBox] = {}
         self.color_scheme = color_scheme or ColorScheme()
 
         # Apply frame styling
@@ -298,7 +298,7 @@ class ColumnFilterWidget(QFrame):
         """)
 
         self._init_ui()
-    
+
     def _init_ui(self):
         """Initialize the UI with compact styling matching parameter form manager."""
         layout = QVBoxLayout(self)
@@ -396,18 +396,18 @@ class ColumnFilterWidget(QFrame):
         """)
         self._update_count_label()
         layout.addWidget(self.count_label)
-    
+
     def _on_checkbox_changed(self):
         """Handle checkbox state change."""
         self._update_count_label()
         self.filter_changed.emit()
-    
+
     def _update_count_label(self):
         """Update the count label showing selected/total."""
         selected_count = len(self.get_selected_values())
         total_count = len(self.unique_values)
         self.count_label.setText(f"{selected_count}/{total_count} selected")
-    
+
     def select_all(self, block_signals: bool = False):
         """
         Select all checkboxes.
@@ -437,12 +437,12 @@ class ColumnFilterWidget(QFrame):
 
         if block_signals:
             self._update_count_label()
-    
-    def get_selected_values(self) -> Set[str]:
+
+    def get_selected_values(self) -> set[str]:
         """Get set of selected values."""
         return {value for value, checkbox in self.checkboxes.items() if checkbox.isChecked()}
-    
-    def set_selected_values(self, values: Set[str], block_signals: bool = False):
+
+    def set_selected_values(self, values: set[str], block_signals: bool = False):
         """
         Set which values are selected.
 
@@ -478,20 +478,35 @@ class MultiColumnFilterPanel(QWidget):
 
     def __init__(
         self,
-        color_scheme: Optional[ColorScheme] = None,
+        color_scheme: ColorScheme | None = None,
         column_presentation: ColumnPresentationState | None = None,
         parent=None,
     ):
         """Initialize multi-column filter panel."""
         super().__init__(parent)
-        self.column_filters: Dict[str, ColumnFilterWidget] = {}
-        self._retained_selections: Dict[str, tuple[frozenset[str], bool]] = {}
+        self.column_filters: dict[str, ColumnFilterWidget] = {}
+        self._retained_selections: dict[str, tuple[frozenset[str], bool]] = {}
         self.color_scheme = color_scheme or ColorScheme()
         self.column_presentation = column_presentation or ColumnPresentationState(
             parent=self
         )
         self.column_presentation.changed.connect(self._apply_column_presentation)
         self._init_ui()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt virtual method name
+        """Include space for the filter body's vertical scrollbar."""
+
+        hint = super().sizeHint()
+        if self.column_filters:
+            hint.setWidth(
+                hint.width()
+                + self.style().pixelMetric(
+                    QStyle.PixelMetric.PM_ScrollBarExtent,
+                    None,
+                    self,
+                )
+            )
+        return hint
 
     def _init_ui(self):
         """Initialize the UI with vertical splitter for resizable filters in a scroll area."""
@@ -533,12 +548,12 @@ class MultiColumnFilterPanel(QWidget):
         main_layout.addWidget(self.scroll_area)
         self._sync_filter_body_visibility()
 
-    def showEvent(self, event):
+    def showEvent(self, event):  # noqa: N802 - Qt virtual method name
         """Handle show event to recalculate initial splitter heights."""
         super().showEvent(event)
         if self.column_filters:
             self._update_splitter_sizes()
-    
+
     def add_column_filter(
         self,
         column: ColumnDef,
@@ -651,7 +666,7 @@ class MultiColumnFilterPanel(QWidget):
         }
         self._update_hidden_active_label()
         self._update_splitter_sizes()
-    
+
     def _update_splitter_sizes(self):
         """Update splitter sizes based on each filter's content."""
         visible_filters = [
@@ -751,12 +766,12 @@ class MultiColumnFilterPanel(QWidget):
             self._update_hidden_active_label()
             self._update_splitter_sizes()
             self._sync_filter_body_visibility()
-    
+
     def clear_all_filters(self):
         """Remove all column filters."""
         for column_key in list(self.column_filters.keys()):
             self.remove_column_filter(column_key)
-    
+
     def _on_filter_changed(self, column_key: str):
         """Handle filter change from any column."""
         self._remember_current_selections()
@@ -815,11 +830,11 @@ class MultiColumnFilterPanel(QWidget):
             ", ".join(columns_by_key[key].name for key in hidden_active_keys)
         )
         self.hidden_active_label.setVisible(bool(hidden_active_keys))
-    
-    def get_active_filters(self) -> Dict[str, Set[str]]:
+
+    def get_active_filters(self) -> dict[str, set[str]]:
         """
         Get active filters for all columns.
-        
+
         Returns:
             Dictionary mapping stable column key to selected values.
             Only includes columns where not all values are selected.
@@ -836,21 +851,21 @@ class MultiColumnFilterPanel(QWidget):
             if len(selected) < len(filter_widget.unique_values):
                 active_filters[column_key] = selected
         return active_filters
-    
-    def apply_filters(self, data: List[Dict]) -> List[Dict]:
+
+    def apply_filters(self, data: list[dict]) -> list[dict]:
         """
         Apply filters to a list of data dictionaries.
-        
+
         Args:
             data: List of dictionaries to filter
         Returns:
             Filtered list of dictionaries
         """
         active_filters = self.get_active_filters()
-        
+
         if not active_filters:
             return data  # No filters active
-        
+
         # Filter data with AND logic across columns
         filtered_data = []
         for item in data:
@@ -862,9 +877,9 @@ class MultiColumnFilterPanel(QWidget):
                     break
             if matches:
                 filtered_data.append(item)
-        
+
         return filtered_data
-    
+
     def reset_all_filters(self):
         """Reset all filters to select all values."""
         for filter_widget in self.column_filters.values():

@@ -10,7 +10,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Generic, List, Optional, TypeVar
+from typing import Generic, TypeVar
 
 from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -48,7 +48,7 @@ class ColumnDef:
     """Declarative column configuration for table browsers."""
     name: str
     key: str
-    width: Optional[int] = None
+    width: int | None = None
     sortable: bool = True
     resizable: bool = True
     filterable: bool = False
@@ -205,7 +205,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
 
     def __init__(
         self,
-        color_scheme: Optional[ColorScheme] = None,
+        color_scheme: ColorScheme | None = None,
         selection_mode: TableSelectionMode = TableSelectionMode.SINGLE,
         column_presentation: ColumnPresentationState | None = None,
         parent=None
@@ -221,12 +221,12 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         self.column_presentation.changed.connect(self._apply_column_presentation)
 
         # Data storage
-        self.all_items: Dict[str, T] = {}
-        self._base_filtered_items: Dict[str, T] = {}
-        self.filtered_items: Dict[str, T] = {}
+        self.all_items: dict[str, T] = {}
+        self._base_filtered_items: dict[str, T] = {}
+        self.filtered_items: dict[str, T] = {}
 
         # Will be set by subclass or set_items()
-        self._search_service: Optional[SearchService[T]] = None
+        self._search_service: SearchService[T] | None = None
         self._populate_token = 0
 
         # Create UI components
@@ -238,16 +238,16 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
-        
+
         # Search input
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self.get_search_placeholder())
         layout.addWidget(self.search_input)
-        
+
         # Status label
         self.status_label = QLabel("No items loaded")
         layout.addWidget(self.status_label)
-        
+
         # Table and its column-derived controls
         self.table_widget = QTableWidget()
         self._configure_table()
@@ -284,7 +284,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         self.content_splitter.setStretchFactor(0, 0)
         self.content_splitter.setStretchFactor(1, 1)
         layout.addWidget(self.content_splitter, 1)
-        
+
         # Apply styling
         self.table_widget.setStyleSheet(
             self.color_scheme.styles.generate_table_widget_style()
@@ -312,11 +312,21 @@ class AbstractTableBrowser(QWidget, Generic[T]):
 
         self._column_filter_context_widget = widget
         if widget is None:
+            self._sync_column_filter_sidebar_width()
             return
 
         self.column_filter_splitter.insertWidget(0, widget)
         self.column_filter_splitter.setStretchFactor(0, 1)
         self.column_filter_splitter.setStretchFactor(1, 1)
+        self._sync_column_filter_sidebar_width()
+
+    def _sync_column_filter_sidebar_width(self) -> None:
+        """Keep column controls wide enough for their derived content."""
+
+        self.column_filter_sidebar.setMinimumWidth(0)
+        self.column_filter_sidebar.setMinimumWidth(
+            self.column_filter_sidebar.sizeHint().width()
+        )
 
     def _configure_table(self):
         """Configure table based on column definitions."""
@@ -332,7 +342,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         self.table_widget.setWordWrap(False)
         self.table_widget.setTextElideMode(Qt.TextElideMode.ElideRight)
 
-    def _apply_column_config(self, columns: List[ColumnDef]):
+    def _apply_column_config(self, columns: list[ColumnDef]):
         """Apply columns during initial setup and dynamic reconfiguration."""
         self.column_presentation.set_columns(columns)
         self.table_widget.setColumnCount(len(columns))
@@ -429,7 +439,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         """Handle search input changes."""
         self.set_filtered_items(self.search_items(search_term))
 
-    def search_items(self, search_term: str) -> Dict[str, T]:
+    def search_items(self, search_term: str) -> dict[str, T]:
         """Return items matching the table browser's configured search semantics."""
         if self._search_service is None:
             raise RuntimeError("Table search requires set_items() before filtering.")
@@ -463,7 +473,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         self.item_double_clicked.emit(key, item)
         self.on_item_double_clicked(key, item)
 
-    def get_selected_keys(self) -> List[str]:
+    def get_selected_keys(self) -> list[str]:
         """Return list of selected item keys. Works for both single and multi-select."""
         selected_rows = set()
         for table_item in self.table_widget.selectedItems():
@@ -479,10 +489,10 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         """Select one row by semantic item key."""
         return bool(self.select_keys([key]))
 
-    def select_keys(self, keys: List[str]) -> List[str]:
+    def select_keys(self, keys: list[str]) -> list[str]:
         """Select rows by semantic item keys and return the keys found."""
         key_set = set(keys)
-        found: List[str] = []
+        found: list[str] = []
         selection_model = self.table_widget.selectionModel()
         self.table_widget.clearSelection()
 
@@ -515,7 +525,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         filtered = len(self.filtered_items)
         self.status_label.setText(f"Showing {filtered}/{total} items")
 
-    def set_items(self, items: Dict[str, T]):
+    def set_items(self, items: dict[str, T]):
         """Set items to display in the table."""
         self.all_items = items
         self._base_filtered_items = items.copy()
@@ -532,7 +542,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         self._rebuild_column_filters()
         self._apply_column_filters()
 
-    def set_filtered_items(self, filtered_items: Dict[str, T]):
+    def set_filtered_items(self, filtered_items: dict[str, T]):
         """Set the external/base item projection and apply column filters.
 
         Use this for search, tree, folder, or other domain filters that compose
@@ -585,6 +595,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
                 ColumnFilterDef(column, tuple(sorted(unique_values)))
             )
         self.column_filter_panel.set_column_filters(filter_definitions)
+        self._sync_column_filter_sidebar_width()
 
     def _column_filter_values(
         self,
@@ -638,7 +649,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
 
         self._set_displayed_items(filtered_items)
 
-    def _set_displayed_items(self, filtered_items: Dict[str, T]) -> None:
+    def _set_displayed_items(self, filtered_items: dict[str, T]) -> None:
         """Publish and render the final composed item projection."""
         self.filtered_items = filtered_items
         self._populate_token += 1
@@ -652,7 +663,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
             self.populate_table(self.filtered_items)
         self._update_status()
 
-    def populate_table(self, items: Dict[str, T]):
+    def populate_table(self, items: dict[str, T]):
         """Populate the table with the given items."""
         sorting_enabled = self.table_widget.isSortingEnabled()
         self.table_widget.setSortingEnabled(False)
@@ -687,7 +698,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
 
     def populate_table_incremental(
         self,
-        items: Dict[str, T],
+        items: dict[str, T],
         *,
         token: int,
         batch_size: int = 200,
@@ -746,12 +757,12 @@ class AbstractTableBrowser(QWidget, Generic[T]):
     # =========================================================================
 
     @abstractmethod
-    def get_columns(self) -> List[ColumnDef]:
+    def get_columns(self) -> list[ColumnDef]:
         """Return column definitions for the table."""
         raise NotImplementedError
 
     @abstractmethod
-    def extract_row_data(self, item: T) -> List[str]:
+    def extract_row_data(self, item: T) -> list[str]:
         """Extract display values for a table row from an item."""
         raise NotImplementedError
 
@@ -772,7 +783,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         """Called when an item is selected (single-select mode). Override to handle."""
         pass
 
-    def on_items_selected(self, keys: List[str]):
+    def on_items_selected(self, keys: list[str]):
         """Called when items are selected (multi-select mode). Override to handle."""
         pass
 

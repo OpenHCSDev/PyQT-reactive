@@ -211,6 +211,44 @@ def test_function_table_browser_acquires_scalar_and_multivalue_filters(qapp) -> 
     assert tuple(browser.filtered_items) == ("core",)
 
 
+def test_function_table_browser_sizes_filter_sidebar_from_derived_controls(
+    qapp,
+) -> None:
+    browser = FunctionTableBrowser()
+    browser.resize(960, 600)
+    browser.show()
+    qapp.processEvents()
+    compressed_width = browser.column_filter_sidebar.width()
+
+    try:
+        browser.set_items(
+            {
+                "core": FunctionTableRow(
+                    "core",
+                    "pkg.core",
+                    "core",
+                    ("segmentation", "shared"),
+                    "Core function",
+                ),
+                "plugin": FunctionTableRow(
+                    "plugin",
+                    "pkg.plugin",
+                    "plugin",
+                    ("measurement", "shared"),
+                    "Plugin function",
+                ),
+            }
+        )
+        qapp.processEvents()
+
+        sidebar = browser.column_filter_sidebar
+        assert sidebar.width() > compressed_width
+        assert sidebar.minimumWidth() == sidebar.sizeHint().width()
+        assert browser.content_splitter.sizes()[0] == sidebar.width()
+    finally:
+        browser.close()
+
+
 def test_semantic_filter_keys_survive_hidden_active_projection_and_rebuild(qapp) -> None:
     state = ColumnPresentationState()
     state.set_columns(_columns())
