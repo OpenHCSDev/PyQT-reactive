@@ -1,64 +1,66 @@
 """
-Widget protocol definitions and adapters.
+Widget contract definitions and adapters.
 
 ABC-based widget contracts that eliminate duck typing in favor of
 explicit, fail-loud inheritance-based architecture.
 """
 
+from .codegen_provider import (
+    CodegenProviderABC,
+    get_codegen_provider,
+    register_codegen_provider,
+)
+from .component_selection import (
+    ComponentSelectionProviderABC,
+    FunctionSelectionProviderABC,
+    get_component_selection_provider,
+    get_function_selection_provider,
+    register_component_selection_provider,
+    register_function_selection_provider,
+)
+from .form_config import FormGenConfig, get_form_config, set_form_config
+from .log_providers import (
+    LogDiscoveryProviderABC,
+    ServerScanProviderABC,
+    get_log_discovery_provider,
+    get_server_scan_provider,
+    register_log_discovery_provider,
+    register_server_scan_provider,
+)
+from .preview_formatter import PreviewFormatterRegistry, register_preview_formatter
+from .widget_adapters import (
+    CheckBoxAdapter,
+    ComboBoxAdapter,
+    DoubleSpinBoxAdapter,
+    KeySequenceEditAdapter,
+    LineEditAdapter,
+    PlaceholderStateMixin,
+    PyQtWidgetMeta,
+    SpinBoxAdapter,
+)
 from .widget_protocols import (
-    ValueGettable,
-    ValueSettable,
-    CurrentValueValidatable,
-    DirtyMarkerSettable,
-    ResolvedValuePreviewSettable,
-    RawResolvedValueSettable,
+    ChangeSignalEmitter,
     ChildFieldChromeRefreshable,
-    ChildFieldSemanticChromeRefreshable,
     ChildFieldIdentityProvider,
     ChildFieldNavigationTargetProvider,
+    ChildFieldSemanticChromeRefreshable,
     ChildSubfieldNavigationTargetProvider,
+    CurrentValueValidatable,
+    DirtyMarkerSettable,
+    EnumSelectable,
     InlineDataclassGroupBoxChromeProvider,
     InlineDataclassRootResettable,
     PlaceholderCapable,
     PlaceholderStateTrackable,
+    RangeConfigurable,
+    RawResolvedValueSettable,
+    ResolvedValuePreviewSettable,
+    ValueGettable,
+    ValueSettable,
     WidgetCapability,
     WidgetCapabilityTagged,
     widget_capability_tags,
     widget_supports_capability,
-    RangeConfigurable,
-    EnumSelectable,
-    ChangeSignalEmitter,
-)
-from .widget_adapters import (
-    LineEditAdapter,
-    KeySequenceEditAdapter,
-    SpinBoxAdapter,
-    DoubleSpinBoxAdapter,
-    ComboBoxAdapter,
-    CheckBoxAdapter,
-    PlaceholderStateMixin,
-    PyQtWidgetMeta,
-)
-from .function_registry import FunctionRegistryProtocol, register_function_registry, get_function_registry
-from .preview_formatter import PreviewFormatterRegistry, register_preview_formatter
-from .form_config import FormGenConfig, set_form_config, get_form_config
-from .codegen_provider import CodegenProviderABC, register_codegen_provider, get_codegen_provider
-from .log_providers import (
-    LogDiscoveryProvider,
-    ServerScanProvider,
-    register_log_discovery_provider,
-    get_log_discovery_provider,
-    register_server_scan_provider,
-    get_server_scan_provider,
-)
-from .window_factory import WindowFactoryProtocol, WindowFactoryABC, register_window_factory, get_window_factory
-from .component_selection import (
-    ComponentSelectionProvider,
-    FunctionSelectionProvider,
-    register_component_selection_provider,
-    get_component_selection_provider,
-    register_function_selection_provider,
-    get_function_selection_provider,
 )
 
 __all__ = [
@@ -92,9 +94,6 @@ __all__ = [
     "CheckBoxAdapter",
     "PlaceholderStateMixin",
     "PyQtWidgetMeta",
-    "FunctionRegistryProtocol",
-    "register_function_registry",
-    "get_function_registry",
     "PreviewFormatterRegistry",
     "register_preview_formatter",
     "FormGenConfig",
@@ -103,18 +102,14 @@ __all__ = [
     "CodegenProviderABC",
     "register_codegen_provider",
     "get_codegen_provider",
-    "LogDiscoveryProvider",
-    "ServerScanProvider",
+    "LogDiscoveryProviderABC",
+    "ServerScanProviderABC",
     "register_log_discovery_provider",
     "get_log_discovery_provider",
     "register_server_scan_provider",
     "get_server_scan_provider",
-    "WindowFactoryProtocol",
-    "WindowFactoryABC",
-    "register_window_factory",
-    "get_window_factory",
-    "ComponentSelectionProvider",
-    "FunctionSelectionProvider",
+    "ComponentSelectionProviderABC",
+    "FunctionSelectionProviderABC",
     "register_component_selection_provider",
     "get_component_selection_provider",
     "register_function_selection_provider",

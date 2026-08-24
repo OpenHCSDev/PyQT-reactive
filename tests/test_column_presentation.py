@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
@@ -17,7 +16,10 @@ from pyqt_reactive.widgets.shared.column_filter_widget import (
     ColumnPresentationDialog,
     MultiColumnFilterPanel,
 )
-from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
+from pyqt_reactive.widgets.shared.function_table_browser import (
+    FunctionTableBrowser,
+    FunctionTableRow,
+)
 from pyqt_reactive.widgets.shared.image_table_browser import ImageTableBrowser
 
 
@@ -98,8 +100,7 @@ def test_table_header_and_filter_panels_share_keyed_order_and_visibility(qapp) -
         header = browser.table_widget.horizontalHeader()
         columns = state.columns
         assert tuple(
-            columns[header.logicalIndex(index)].key
-            for index in range(header.count())
+            columns[header.logicalIndex(index)].key for index in range(header.count())
         ) == ("channel", "filename", "ome_UUID")
         assert browser.table_widget.isColumnHidden(1)
         assert tuple(panel.column_filters) == ("channel", "ome_UUID")
@@ -121,9 +122,7 @@ def test_abstract_browser_composes_column_filters_with_external_projection(qapp)
     assert browser.set_column_filter_selection("ome_UUID", ("plate-A",))
     assert tuple(browser.filtered_items) == ("a", "c")
 
-    browser.set_filtered_items(
-        {"b": browser.all_items["b"], "c": browser.all_items["c"]}
-    )
+    browser.set_filtered_items({"b": browser.all_items["b"], "c": browser.all_items["c"]})
     assert tuple(browser.filtered_items) == ("c",)
 
 
@@ -177,27 +176,18 @@ def test_image_table_browser_acquires_dynamic_filters_from_column_declarations(
     assert tuple(browser.filtered_items) == ("a",)
 
 
-@dataclass(frozen=True)
-class _FunctionRow:
-    name: str
-    module: str
-    library: str
-    backend_tags: tuple[str, ...]
-    summary: str
-
-
 def test_function_table_browser_acquires_scalar_and_multivalue_filters(qapp) -> None:
     browser = FunctionTableBrowser()
     browser.set_items(
         {
-            "core": _FunctionRow(
+            "core": FunctionTableRow(
                 "core",
                 "pkg.core",
                 "core",
                 ("segmentation", "shared"),
                 "Core function",
             ),
-            "plugin": _FunctionRow(
+            "plugin": FunctionTableRow(
                 "plugin",
                 "pkg.plugin",
                 "plugin",

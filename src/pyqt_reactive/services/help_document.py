@@ -6,9 +6,9 @@ import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import PurePath
-from typing import Protocol
 
 from docutils.core import publish_parts
+from python_introspect import DocstringInfo
 
 DEFAULT_HELP_DOCUMENT_MAX_CHARS = 50_000
 
@@ -31,16 +31,6 @@ class HelpDocumentFormat(StrEnum):
         return cls.PLAIN_TEXT
 
 
-class DocstringInfoLike(Protocol):
-    """Structured callable/class documentation consumed by the renderer."""
-
-    summary: str | None
-    description: str | None
-    parameters: dict[str, str] | None
-    returns: str | None
-    examples: str | None
-
-
 @dataclass(frozen=True, slots=True)
 class HelpDocument:
     """One renderer-ready help document with explicit markup provenance."""
@@ -53,7 +43,7 @@ class HelpDocument:
     @classmethod
     def from_docstring_info(
         cls,
-        docstring_info: DocstringInfoLike,
+        docstring_info: DocstringInfo,
         *,
         title: str | None = None,
     ) -> HelpDocument:
@@ -77,8 +67,7 @@ class HelpDocument:
         if docstring_info.examples:
             fence = _code_fence(docstring_info.examples)
             sections.append(
-                f"## Examples\n\n{fence}python\n"
-                f"{docstring_info.examples.rstrip()}\n{fence}"
+                f"## Examples\n\n{fence}python\n" f"{docstring_info.examples.rstrip()}\n{fence}"
             )
         return cls(
             content="\n\n".join(section for section in sections if section),
@@ -111,9 +100,7 @@ class HelpDocument:
     def rendered_html(self) -> str:
         """Render reStructuredText safely for Qt's rich-text engine."""
         if self.markup is not HelpDocumentFormat.RESTRUCTURED_TEXT:
-            raise ValueError(
-                "rendered_html() is only valid for reStructuredText documents"
-            )
+            raise ValueError("rendered_html() is only valid for reStructuredText documents")
         parts = publish_parts(
             self.content,
             writer_name="html5",
@@ -156,10 +143,7 @@ class HelpDocument:
 
         if self.markup is HelpDocumentFormat.MARKDOWN:
             match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", lines[first_content_index])
-            if (
-                match is None
-                or _normalized_heading(match.group(1)) != normalized_expected
-            ):
+            if match is None or _normalized_heading(match.group(1)) != normalized_expected:
                 return self
             del lines[first_content_index]
         elif self.markup is HelpDocumentFormat.RESTRUCTURED_TEXT:

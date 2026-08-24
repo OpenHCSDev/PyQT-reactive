@@ -10,6 +10,8 @@ from zmqruntime.messages import ProcessIdentity
 
 from pyqt_reactive.core.log_utils import LogType
 from pyqt_reactive.protocols import (
+    LogDiscoveryProviderABC,
+    ServerScanProviderABC,
     register_log_discovery_provider,
     register_server_scan_provider,
 )
@@ -38,17 +40,12 @@ def test_log_delegate_uses_pyqt6_item_data_role(qtbot) -> None:
     hint = delegate.sizeHint(QStyleOptionViewItem(), model.index(1, 0))
 
     assert delegate._search_match_rows == {1}
-    assert (
-        model.data(model.index(1, 0), Qt.ItemDataRole.DisplayRole)
-        == "matching line"
-    )
+    assert model.data(model.index(1, 0), Qt.ItemDataRole.DisplayRole) == "matching line"
     assert hint.isValid()
 
 
 def test_log_line_html_uses_authoritative_highlight_segments() -> None:
-    rendered = build_log_line_html(
-        "2026-07-29 20:00:00,000 - worker - ERROR - value < 2"
-    )
+    rendered = build_log_line_html("2026-07-29 20:00:00,000 - worker - ERROR - value < 2")
 
     assert "ERROR" in rendered
     assert "font-weight: 700" in rendered
@@ -56,7 +53,7 @@ def test_log_line_html_uses_authoritative_highlight_segments() -> None:
     assert ">2</span>" in rendered
 
 
-class _LogDiscoveryProvider:
+class _LogDiscoveryProvider(LogDiscoveryProviderABC):
     def __init__(self, main_log_path: Path) -> None:
         self.main_log_path = main_log_path
 
@@ -74,7 +71,7 @@ class _LogDiscoveryProvider:
         return [LogFileInfo(path=self.main_log_path, log_type=LogType.MAIN)]
 
 
-class _SequencedServerScanProvider:
+class _SequencedServerScanProvider(ServerScanProviderABC):
     def __init__(self, scans: list[list[LogFileInfo]]) -> None:
         self._scans = iter(scans)
 
@@ -97,9 +94,7 @@ def test_log_file_detector_classifies_new_path_through_injected_provider(
     main_log_path.write_text("started\n", encoding="utf-8")
     detector._on_directory_changed(str(tmp_path))
 
-    assert discovered == [
-        LogFileInfo(path=main_log_path, log_type=LogType.MAIN)
-    ]
+    assert discovered == [LogFileInfo(path=main_log_path, log_type=LogType.MAIN)]
 
 
 def test_visible_log_viewer_discovers_server_started_after_initial_scan(
@@ -145,8 +140,7 @@ def test_visible_log_viewer_discovers_server_started_after_initial_scan(
         refresh_scan()
 
         discovered_paths = {
-            viewer.log_selector.itemData(index).path
-            for index in range(viewer.log_selector.count())
+            viewer.log_selector.itemData(index).path for index in range(viewer.log_selector.count())
         }
         assert discovered_paths == {main_log_path, server_log_path}
 
@@ -241,8 +235,7 @@ def test_rapid_log_switching_retires_workers_without_qt_lifecycle_failure(
         assert not [
             message
             for message in qt_messages
-            if "Destroyed while process" in message
-            or "Destroyed while thread" in message
+            if "Destroyed while process" in message or "Destroyed while thread" in message
         ]
     finally:
         viewer.cleanup()
@@ -348,10 +341,7 @@ def test_live_filter_requires_confirmed_pid_reuse_safe_liveness(
 
         assert viewer._is_log_from_alive_process(live)
         assert not viewer._is_log_from_alive_process(reused)
-        assert (
-            viewer.process_tracker.log_liveness(pid_only)
-            is ProcessLiveness.UNKNOWN
-        )
+        assert viewer.process_tracker.log_liveness(pid_only) is ProcessLiveness.UNKNOWN
         assert not viewer._is_log_from_alive_process(pid_only)
         assert not viewer._is_log_from_alive_process(unknown)
     finally:

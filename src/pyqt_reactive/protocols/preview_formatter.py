@@ -1,15 +1,11 @@
-"""Preview formatter registry for customizable list item previews.
+"""Host registrations for application-specific config preview formatting."""
 
-Allows applications to register custom formatters for specific config types
-to control how they appear in list item previews.
-"""
-
-from typing import Callable, Any, Dict, Type, Optional
-
+from collections.abc import Callable
+from typing import TypeAlias
 
 # Type alias for formatter functions
 # Takes (config_instance, field_name) -> formatted_string
-PreviewFormatter = Callable[[Any, str], str]
+PreviewFormatter: TypeAlias = Callable[[object, str], str | None]
 
 
 class PreviewFormatterRegistry:
@@ -29,10 +25,14 @@ class PreviewFormatterRegistry:
         PreviewFormatterRegistry.register(ZarrConfig, format_zarr_config)
     """
 
-    _formatters: Dict[Type, PreviewFormatter] = {}
+    _formatters: dict[type[object], PreviewFormatter] = {}
 
     @classmethod
-    def register(cls, config_type: Type, formatter: PreviewFormatter) -> None:
+    def register(
+        cls,
+        config_type: type[object],
+        formatter: PreviewFormatter,
+    ) -> None:
         """Register a formatter for a config type.
 
         Args:
@@ -42,7 +42,7 @@ class PreviewFormatterRegistry:
         cls._formatters[config_type] = formatter
 
     @classmethod
-    def get_formatter(cls, config_type: Type) -> Optional[PreviewFormatter]:
+    def get_formatter(cls, config_type: type[object]) -> PreviewFormatter | None:
         """Get formatter for a config type.
 
         Args:
@@ -52,19 +52,19 @@ class PreviewFormatterRegistry:
             Formatter function if registered, None otherwise
         """
         formatter = cls._formatters.get(config_type)
-        if formatter:
+        if formatter is not None:
             return formatter
 
         # Check base classes (for shared config bases)
-        for base in getattr(config_type, "__mro__", ())[1:]:
+        for base in config_type.__mro__[1:]:
             formatter = cls._formatters.get(base)
-            if formatter:
+            if formatter is not None:
                 return formatter
 
         return None
 
     @classmethod
-    def format_field(cls, config: Any, field_name: str) -> Optional[str]:
+    def format_field(cls, config: object, field_name: str) -> str | None:
         """Format a field using registered formatter if available.
 
         Args:
@@ -75,16 +75,16 @@ class PreviewFormatterRegistry:
             Formatted string if formatter available, None otherwise
         """
         formatter = cls.get_formatter(type(config))
-        if formatter:
-            try:
-                return formatter(config, field_name)
-            except Exception:
-                return None
-        return None
+        if formatter is None:
+            return None
+        return formatter(config, field_name)
 
 
 # Convenience function for registration
-def register_preview_formatter(config_type: Type, formatter: PreviewFormatter) -> None:
+def register_preview_formatter(
+    config_type: type[object],
+    formatter: PreviewFormatter,
+) -> None:
     """Register a preview formatter for a config type.
 
     Args:

@@ -2,19 +2,25 @@
 Enhanced Path Widget for PyQt6 GUI
 
 Provides intelligent path selection with browse button functionality.
-Uses standard Qt dialogs for consistency with the rest of OpenHCS.
+Uses standard Qt dialogs for consistency with the host application.
 """
 
 import logging
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, List, Optional
 
-from PyQt6.QtWidgets import QWidget, QLineEdit, QPushButton, QHBoxLayout, QFileDialog
 from PyQt6.QtCore import QSize, pyqtSignal
+from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLineEdit, QPushButton, QWidget
+from python_introspect import ParameterInfo
 
+from pyqt_reactive.core.path_cache import (
+    PathCacheKey,
+    cache_dialog_path,
+    get_cached_dialog_path,
+)
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
     PlaceholderStateMixin,
@@ -24,37 +30,29 @@ from pyqt_reactive.protocols import (
 )
 from pyqt_reactive.theming import ColorScheme
 
-# Optional path cache - stub if not available
-try:
-    from pyqt_reactive.core.path_cache import PathCacheKey, get_cached_dialog_path, cache_dialog_path
-except ImportError:
-    PathCacheKey = None  # type: ignore
-    get_cached_dialog_path = lambda *args, **kwargs: None  # type: ignore
-    cache_dialog_path = lambda *args, **kwargs: None  # type: ignore
-
-from python_introspect import ParameterInfo
-
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PathBehavior:
     """Defines behavior for path widget based on parameter analysis."""
+
     is_directory: bool = False
-    extensions: Optional[List[str]] = None
+    extensions: tuple[str, ...] | None = None
     cache_key: PathCacheKey = PathCacheKey.GENERAL
     description: str = "path"
 
     @classmethod
-    def from_extensions(cls, extensions: List[str]) -> "PathBehavior":
-        if len(extensions) == 1:
-            description = f"{extensions[0].upper()} file"
+    def from_extensions(cls, extensions: Sequence[str]) -> "PathBehavior":
+        declared_extensions = tuple(extensions)
+        if len(declared_extensions) == 1:
+            description = f"{declared_extensions[0].upper()} file"
         else:
-            description = f"file ({', '.join(ext.upper() for ext in extensions)})"
+            description = f"file ({', '.join(ext.upper() for ext in declared_extensions)})"
 
         return cls(
             is_directory=False,
-            extensions=extensions,
+            extensions=declared_extensions,
             cache_key=PathCacheKey.FILE_SELECTION,
             description=description,
         )
@@ -97,7 +95,10 @@ class PathBehaviorDetector:
     """Detects appropriate path behavior from parameter names and docstring hints."""
 
     @staticmethod
-    def detect_behavior(param_name: str, param_info: Optional[ParameterInfo] = None) -> PathBehavior:
+    def detect_behavior(
+        param_name: str,
+        param_info: ParameterInfo | None = None,
+    ) -> PathBehavior:
         """
         Detect path behavior from parameter name and optional parameter info.
 
@@ -125,20 +126,23 @@ class PathBehaviorDetector:
         return DEFAULT_PATH_BEHAVIOR
 
     @staticmethod
-    def _parse_docstring_hints(description: str) -> Optional[PathBehavior]:
+    def _parse_docstring_hints(description: str) -> PathBehavior | None:
         """Parse docstring for path behavior hints."""
         desc_lower = description.lower()
 
-        # Directory specification
-        if any(pattern in desc_lower for pattern in ["directory only", "folder only", "dir only"]):
-            return DIRECTORY_PATH_BEHAVIOR
+        # Directory specification derives its accepted words from the role owner.
+        if any(
+            f"{token} only" in desc_lower for token in PathNameRole.DIRECTORY.tokens
+        ):
+            return PathNameRole.DIRECTORY.behavior
 
         # Extension patterns: (.ext only), (.ext1, .ext2), (.ext1/.ext2), etc.
         patterns = [
-            r'\(\.([a-zA-Z0-9]+(?:\s*[,/]\s*\.?[a-zA-Z0-9]+)*)\)',  # (.json, .yaml) or (.json/.yaml)
-            r'\(\.([a-zA-Z0-9]+)\s+only\)',                         # (.tiff only)
-            r'\(([a-zA-Z0-9]+)\s+only\)',                           # (tiff only)
-            r'\.([a-zA-Z0-9]+)\s+only',                             # .tiff only
+            # (.json, .yaml) or (.json/.yaml)
+            r"\(\.([a-zA-Z0-9]+(?:\s*[,/]\s*\.?[a-zA-Z0-9]+)*)\)",
+            r"\(\.([a-zA-Z0-9]+)\s+only\)",  # (.tiff only)
+            r"\(([a-zA-Z0-9]+)\s+only\)",  # (tiff only)
+            r"\.([a-zA-Z0-9]+)\s+only",  # .tiff only
         ]
 
         for pattern in patterns:
@@ -146,7 +150,7 @@ class PathBehaviorDetector:
             if match:
                 ext_string = match.group(1)
                 # Split by comma or slash and clean up
-                raw_exts = re.split(r'[,/]', ext_string)
+                raw_exts = re.split(r"[,/]", ext_string)
                 extensions = [f".{ext.strip().lstrip('.')}" for ext in raw_exts if ext.strip()]
 
                 if extensions:
@@ -155,30 +159,87 @@ class PathBehaviorDetector:
         return None
 
     @staticmethod
-    def _detect_from_parameter_name(param_name: str) -> Optional[PathBehavior]:
+    def _detect_from_parameter_name(param_name: str) -> PathBehavior | None:
         """Detect behavior from parameter name patterns."""
         tokens = PathParameterNameTokens.parse(param_name)
-        role_spec = PATH_NAME_ROLE_CLASSIFIER.classify(tokens)
-        if role_spec is None:
+        role = PATH_NAME_ROLE_CLASSIFIER.classify(tokens)
+        if role is None:
             return None
-        return role_spec.behavior
+        return role.behavior
 
 
 class PathNameRole(Enum):
     """Nominal path behavior roles inferred from parameter-name tokens."""
 
-    DIRECTORY = "directory"
-    FILE = "file"
-    PIPELINE = "pipeline"
-    STEP = "step"
-    FUNCTION = "function"
+    DIRECTORY = (
+        "directory",
+        frozenset({"dir", "directory", "folder"}),
+        PathBehavior(
+            is_directory=True,
+            cache_key=PathCacheKey.DIRECTORY_SELECTION,
+            description="directory",
+        ),
+    )
+    FILE = (
+        "file",
+        frozenset({"file", "filepath", "filename"}),
+        PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.FILE_SELECTION,
+            description="file",
+        ),
+    )
+    PIPELINE = (
+        "pipeline",
+        frozenset({"pipeline"}),
+        PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.PIPELINE_FILES,
+            description="pipeline file",
+        ),
+    )
+    STEP = (
+        "step",
+        frozenset({"step"}),
+        PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.STEP_SETTINGS,
+            description="step file",
+        ),
+    )
+    FUNCTION = (
+        "function",
+        frozenset({"function", "func"}),
+        PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.FUNCTION_PATTERNS,
+            description="function file",
+        ),
+    )
+
+    def __new__(
+        cls,
+        value: str,
+        tokens: frozenset[str],
+        behavior: PathBehavior,
+    ) -> "PathNameRole":
+        member = object.__new__(cls)
+        member._value_ = value
+        member._tokens = tokens
+        member._behavior = behavior
+        return member
+
+    @property
+    def tokens(self) -> frozenset[str]:
+        """Parameter-name tokens that declare this role."""
+        return self._tokens
+
+    @property
+    def behavior(self) -> PathBehavior:
+        """Path selection behavior owned by this role."""
+        return self._behavior
 
 
-DIRECTORY_PATH_BEHAVIOR = PathBehavior(
-    is_directory=True,
-    cache_key=PathCacheKey.DIRECTORY_SELECTION,
-    description="directory",
-)
 DEFAULT_PATH_BEHAVIOR = PathBehavior(
     is_directory=False,
     extensions=None,
@@ -187,61 +248,7 @@ DEFAULT_PATH_BEHAVIOR = PathBehavior(
 )
 
 
-@dataclass(frozen=True)
-class PathNameRoleSpec:
-    """One authoritative row for parameter-name path behavior inference."""
-
-    role: PathNameRole
-    tokens: frozenset[str]
-    behavior: PathBehavior
-
-
-PATH_NAME_ROLE_SPECS = (
-    PathNameRoleSpec(
-        role=PathNameRole.DIRECTORY,
-        tokens=frozenset({"dir", "directory", "folder"}),
-        behavior=DIRECTORY_PATH_BEHAVIOR,
-    ),
-    PathNameRoleSpec(
-        role=PathNameRole.FILE,
-        tokens=frozenset({"file", "filepath", "filename"}),
-        behavior=PathBehavior(
-            is_directory=False,
-            cache_key=PathCacheKey.FILE_SELECTION,
-            description="file",
-        ),
-    ),
-    PathNameRoleSpec(
-        role=PathNameRole.PIPELINE,
-        tokens=frozenset({"pipeline"}),
-        behavior=PathBehavior(
-            is_directory=False,
-            cache_key=PathCacheKey.PIPELINE_FILES,
-            description="pipeline file",
-        ),
-    ),
-    PathNameRoleSpec(
-        role=PathNameRole.STEP,
-        tokens=frozenset({"step"}),
-        behavior=PathBehavior(
-            is_directory=False,
-            cache_key=PathCacheKey.STEP_SETTINGS,
-            description="step file",
-        ),
-    ),
-    PathNameRoleSpec(
-        role=PathNameRole.FUNCTION,
-        tokens=frozenset({"function", "func"}),
-        behavior=PathBehavior(
-            is_directory=False,
-            cache_key=PathCacheKey.FUNCTION_PATTERNS,
-            description="function file",
-        ),
-    ),
-)
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PathParameterNameTokens:
     """Boundary parse of external parameter names into exact tokens."""
 
@@ -259,10 +266,10 @@ class PathParameterNameTokens:
 class PathNameRoleClassifier:
     """Classify parsed path-name tokens into a nominal behavior role."""
 
-    def classify(self, tokens: PathParameterNameTokens) -> PathNameRoleSpec | None:
-        for role_spec in PATH_NAME_ROLE_SPECS:
-            if tokens.contains_any(role_spec.tokens):
-                return role_spec
+    def classify(self, tokens: PathParameterNameTokens) -> PathNameRole | None:
+        for role in PathNameRole:
+            if tokens.contains_any(role.tokens):
+                return role
         return None
 
 
@@ -285,7 +292,7 @@ class EnhancedPathWidget(
         self,
         param_name: str,
         current_value: Path | str | None,
-        param_info: Optional[ParameterInfo] = None,
+        param_info: ParameterInfo | None = None,
         color_scheme=None,
     ):
         """
@@ -330,10 +337,14 @@ class EnhancedPathWidget(
             + margins.left()
             + margins.right()
         )
-        height = max(
-            self.path_input.minimumSizeHint().height(),
-            self.browse_button.minimumSizeHint().height(),
-        ) + margins.top() + margins.bottom()
+        height = (
+            max(
+                self.path_input.minimumSizeHint().height(),
+                self.browse_button.minimumSizeHint().height(),
+            )
+            + margins.top()
+            + margins.bottom()
+        )
         return QSize(width, height)
 
     def _apply_styling(self):
@@ -419,17 +430,12 @@ class EnhancedPathWidget(
             if self.behavior.is_directory:
                 # Use directory dialog
                 selected_path = QFileDialog.getExistingDirectory(
-                    parent,
-                    self.behavior.title,
-                    initial_dir
+                    parent, self.behavior.title, initial_dir
                 )
             else:
                 # Use file dialog
                 selected_path, _ = QFileDialog.getOpenFileName(
-                    parent,
-                    self.behavior.title,
-                    initial_dir,
-                    self.behavior.file_filter
+                    parent, self.behavior.title, initial_dir, self.behavior.file_filter
                 )
 
             if selected_path:
@@ -443,9 +449,3 @@ class EnhancedPathWidget(
 
         except Exception as e:
             logger.error(f"Failed to open dialog: {e}")
-
-
-# Register EnhancedPathWidget as implementing ValueGettable and ValueSettable
-from pyqt_reactive.protocols import ValueGettable, ValueSettable
-ValueGettable.register(EnhancedPathWidget)
-ValueSettable.register(EnhancedPathWidget)

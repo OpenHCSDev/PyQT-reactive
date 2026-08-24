@@ -12,7 +12,6 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
-from typing import Dict, List, Optional, Set, Tuple
 
 from objectstate import spawn_thread_with_context
 from pygments.token import Token
@@ -65,7 +64,7 @@ from PyQt6.QtWidgets import (
 
 from pyqt_reactive.core.log_utils import LogFileInfo, LogType
 from pyqt_reactive.protocols import (
-    LogDiscoveryProvider,
+    LogDiscoveryProviderABC,
     get_log_discovery_provider,
     get_server_scan_provider,
 )
@@ -84,7 +83,7 @@ logger = logging.getLogger(__name__)
 
 
 def _classify_log_path(
-    log_discovery_provider: LogDiscoveryProvider,
+    log_discovery_provider: LogDiscoveryProviderABC,
     file_path: Path,
 ) -> LogFileInfo:
     """Project one discovered path through the host-owned log authority."""
@@ -104,12 +103,12 @@ def _classify_log_path(
 
 # Pre-compiled regex patterns for syntax highlighting (HUGE performance boost)
 # These are compiled once at module load and reused for all log lines
-_TIMESTAMP_RE = re.compile(r'^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}')
-_LOG_LEVEL_RE = re.compile(r'\b(ERROR|WARNING|INFO|DEBUG|CRITICAL)\b')
-_LOGGER_NAME_RE = re.compile(r' - ([\w\.]+) - ')
-_FILE_PATH_RE = re.compile(r'(?:/[\w\-\.]+)+\.py')
+_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}")
+_LOG_LEVEL_RE = re.compile(r"\b(ERROR|WARNING|INFO|DEBUG|CRITICAL)\b")
+_LOGGER_NAME_RE = re.compile(r" - ([\w\.]+) - ")
+_FILE_PATH_RE = re.compile(r"(?:/[\w\-\.]+)+\.py")
 _PYTHON_STRING_RE = re.compile(r'["\'](?:[^"\'\\]|\\.)*["\']')
-_NUMBER_RE = re.compile(r'\b\d+(?:\.\d+)?\b')
+_NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
 
 
 @dataclass
@@ -122,52 +121,64 @@ class LogColorScheme:
     """
 
     # Log level colors with semantic meaning (WCAG 4.5:1 compliant)
-    log_critical_fg: Tuple[int, int, int] = (255, 255, 255)  # White text
-    log_critical_bg: Tuple[int, int, int] = (139, 0, 0)      # Dark red background
-    log_error_color: Tuple[int, int, int] = (255, 85, 85)    # Brighter red - WCAG compliant
-    log_warning_color: Tuple[int, int, int] = (255, 140, 0)  # Dark orange - attention grabbing
-    log_info_color: Tuple[int, int, int] = (100, 160, 210)   # Brighter steel blue - WCAG compliant
-    log_debug_color: Tuple[int, int, int] = (160, 160, 160)  # Lighter gray - better contrast
+    log_critical_fg: tuple[int, int, int] = (255, 255, 255)  # White text
+    log_critical_bg: tuple[int, int, int] = (139, 0, 0)  # Dark red background
+    log_error_color: tuple[int, int, int] = (255, 85, 85)  # Brighter red - WCAG compliant
+    log_warning_color: tuple[int, int, int] = (255, 140, 0)  # Dark orange - attention grabbing
+    log_info_color: tuple[int, int, int] = (100, 160, 210)  # Brighter steel blue - WCAG compliant
+    log_debug_color: tuple[int, int, int] = (160, 160, 160)  # Lighter gray - better contrast
 
     # Metadata and structural colors
-    timestamp_color: Tuple[int, int, int] = (105, 105, 105)      # Dim gray - unobtrusive
-    logger_name_color: Tuple[int, int, int] = (147, 112, 219)   # Medium slate blue - distinctive
-    memory_address_color: Tuple[int, int, int] = (255, 182, 193) # Light pink - technical data
-    file_path_color: Tuple[int, int, int] = (34, 139, 34)       # Forest green - file system
+    timestamp_color: tuple[int, int, int] = (105, 105, 105)  # Dim gray - unobtrusive
+    logger_name_color: tuple[int, int, int] = (147, 112, 219)  # Medium slate blue - distinctive
+    memory_address_color: tuple[int, int, int] = (255, 182, 193)  # Light pink - technical data
+    file_path_color: tuple[int, int, int] = (34, 139, 34)  # Forest green - file system
 
     # Python syntax colors (following VS Code dark theme conventions)
-    python_keyword_color: Tuple[int, int, int] = (86, 156, 214)    # Blue - language keywords
-    python_string_color: Tuple[int, int, int] = (206, 145, 120)    # Orange - string literals
-    python_number_color: Tuple[int, int, int] = (181, 206, 168)    # Light green - numeric values
-    python_operator_color: Tuple[int, int, int] = (212, 212, 212)  # Light gray - operators/punctuation
-    python_name_color: Tuple[int, int, int] = (156, 220, 254)      # Light blue - identifiers
-    python_function_color: Tuple[int, int, int] = (220, 220, 170)  # Yellow - function names
-    python_class_color: Tuple[int, int, int] = (78, 201, 176)      # Teal - class names
-    python_builtin_color: Tuple[int, int, int] = (86, 156, 214)    # Blue - built-in functions
-    python_comment_color: Tuple[int, int, int] = (106, 153, 85)    # Green - comments
+    python_keyword_color: tuple[int, int, int] = (86, 156, 214)  # Blue - language keywords
+    python_string_color: tuple[int, int, int] = (206, 145, 120)  # Orange - string literals
+    python_number_color: tuple[int, int, int] = (181, 206, 168)  # Light green - numeric values
+    python_operator_color: tuple[int, int, int] = (
+        212,
+        212,
+        212,
+    )  # Light gray - operators/punctuation
+    python_name_color: tuple[int, int, int] = (156, 220, 254)  # Light blue - identifiers
+    python_function_color: tuple[int, int, int] = (220, 220, 170)  # Yellow - function names
+    python_class_color: tuple[int, int, int] = (78, 201, 176)  # Teal - class names
+    python_builtin_color: tuple[int, int, int] = (86, 156, 214)  # Blue - built-in functions
+    python_comment_color: tuple[int, int, int] = (106, 153, 85)  # Green - comments
 
     # Special highlighting colors
-    exception_color: Tuple[int, int, int] = (255, 69, 0)       # Red orange - error types
-    function_call_color: Tuple[int, int, int] = (255, 215, 0)  # Gold - function invocations
-    boolean_color: Tuple[int, int, int] = (86, 156, 214)       # Blue - True/False/None
+    exception_color: tuple[int, int, int] = (255, 69, 0)  # Red orange - error types
+    function_call_color: tuple[int, int, int] = (255, 215, 0)  # Gold - function invocations
+    boolean_color: tuple[int, int, int] = (86, 156, 214)  # Blue - True/False/None
 
     # Enhanced syntax colors (Phase 1 additions)
-    tuple_parentheses_color: Tuple[int, int, int] = (255, 215, 0)     # Gold - tuple delimiters
-    set_braces_color: Tuple[int, int, int] = (255, 140, 0)            # Dark orange - set delimiters
-    class_representation_color: Tuple[int, int, int] = (78, 201, 176) # Teal - <class 'name'>
-    function_representation_color: Tuple[int, int, int] = (220, 220, 170) # Yellow - <function name>
-    module_path_color: Tuple[int, int, int] = (147, 112, 219)         # Medium slate blue - module.path
-    hex_number_color: Tuple[int, int, int] = (181, 206, 168)          # Light green - 0xFF
-    scientific_notation_color: Tuple[int, int, int] = (181, 206, 168) # Light green - 1.23e-4
-    binary_number_color: Tuple[int, int, int] = (181, 206, 168)       # Light green - 0b1010
-    octal_number_color: Tuple[int, int, int] = (181, 206, 168)        # Light green - 0o755
-    python_special_color: Tuple[int, int, int] = (255, 20, 147)       # Deep pink - __name__
-    single_quoted_string_color: Tuple[int, int, int] = (206, 145, 120) # Orange - 'string'
-    list_comprehension_color: Tuple[int, int, int] = (156, 220, 254)  # Light blue - [x for x in y]
-    generator_expression_color: Tuple[int, int, int] = (156, 220, 254) # Light blue - (x for x in y)
+    tuple_parentheses_color: tuple[int, int, int] = (255, 215, 0)  # Gold - tuple delimiters
+    set_braces_color: tuple[int, int, int] = (255, 140, 0)  # Dark orange - set delimiters
+    class_representation_color: tuple[int, int, int] = (78, 201, 176)  # Teal - <class 'name'>
+    function_representation_color: tuple[int, int, int] = (
+        220,
+        220,
+        170,
+    )  # Yellow - <function name>
+    module_path_color: tuple[int, int, int] = (147, 112, 219)  # Medium slate blue - module.path
+    hex_number_color: tuple[int, int, int] = (181, 206, 168)  # Light green - 0xFF
+    scientific_notation_color: tuple[int, int, int] = (181, 206, 168)  # Light green - 1.23e-4
+    binary_number_color: tuple[int, int, int] = (181, 206, 168)  # Light green - 0b1010
+    octal_number_color: tuple[int, int, int] = (181, 206, 168)  # Light green - 0o755
+    python_special_color: tuple[int, int, int] = (255, 20, 147)  # Deep pink - __name__
+    single_quoted_string_color: tuple[int, int, int] = (206, 145, 120)  # Orange - 'string'
+    list_comprehension_color: tuple[int, int, int] = (156, 220, 254)  # Light blue - [x for x in y]
+    generator_expression_color: tuple[int, int, int] = (
+        156,
+        220,
+        254,
+    )  # Light blue - (x for x in y)
 
     @classmethod
-    def create_dark_theme(cls) -> 'LogColorScheme':
+    def create_dark_theme(cls) -> "LogColorScheme":
         """
         Create a dark theme variant with adjusted colors for dark backgrounds.
 
@@ -176,16 +187,16 @@ class LogColorScheme:
         """
         return cls(
             # Enhanced colors for dark backgrounds with better contrast
-            log_error_color=(255, 100, 100),    # Brighter red
-            log_info_color=(120, 180, 230),     # Brighter steel blue
-            timestamp_color=(160, 160, 160),    # Lighter gray
-            python_string_color=(236, 175, 150), # Brighter orange
-            python_number_color=(200, 230, 190), # Brighter green
+            log_error_color=(255, 100, 100),  # Brighter red
+            log_info_color=(120, 180, 230),  # Brighter steel blue
+            timestamp_color=(160, 160, 160),  # Lighter gray
+            python_string_color=(236, 175, 150),  # Brighter orange
+            python_number_color=(200, 230, 190),  # Brighter green
             # Other colors remain the same as they work well on dark backgrounds
         )
 
     @classmethod
-    def create_light_theme(cls) -> 'LogColorScheme':
+    def create_light_theme(cls) -> "LogColorScheme":
         """
         Create a light theme variant with adjusted colors for light backgrounds.
 
@@ -194,20 +205,20 @@ class LogColorScheme:
         """
         return cls(
             # Darker colors for light backgrounds with WCAG compliance
-            log_error_color=(180, 20, 40),       # Darker red
-            log_info_color=(30, 80, 130),        # Darker steel blue
-            log_warning_color=(200, 100, 0),     # Darker orange
-            timestamp_color=(60, 60, 60),        # Darker gray
-            logger_name_color=(100, 60, 160),    # Darker slate blue
-            python_string_color=(150, 80, 60),   # Darker orange
-            python_number_color=(120, 140, 100), # Darker green
-            memory_address_color=(200, 120, 140), # Darker pink
-            file_path_color=(20, 100, 20),       # Darker forest green
-            exception_color=(200, 40, 0),        # Darker red orange
+            log_error_color=(180, 20, 40),  # Darker red
+            log_info_color=(30, 80, 130),  # Darker steel blue
+            log_warning_color=(200, 100, 0),  # Darker orange
+            timestamp_color=(60, 60, 60),  # Darker gray
+            logger_name_color=(100, 60, 160),  # Darker slate blue
+            python_string_color=(150, 80, 60),  # Darker orange
+            python_number_color=(120, 140, 100),  # Darker green
+            memory_address_color=(200, 120, 140),  # Darker pink
+            file_path_color=(20, 100, 20),  # Darker forest green
+            exception_color=(200, 40, 0),  # Darker red orange
             # Adjust other colors for light background contrast
         )
 
-    def to_qcolor(self, color_tuple: Tuple[int, int, int]) -> QColor:
+    def to_qcolor(self, color_tuple: tuple[int, int, int]) -> QColor:
         """Convert RGB tuple to QColor object.
 
         Args:
@@ -219,6 +230,7 @@ class LogColorScheme:
         r, g, b = color_tuple
         return QColor(r, g, b)
 
+
 class LogListModel(QAbstractListModel):
     """Lightweight list model storing log lines in a bounded ring buffer.
 
@@ -228,10 +240,10 @@ class LogListModel(QAbstractListModel):
 
     MAX_LINES = 100_000
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self._lines: List[str] = []
-        self._html_lines: List[Optional[str]] = []
+        self._lines: list[str] = []
+        self._html_lines: list[str | None] = []
         self._max_line_width: int = 0
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # type: ignore[override]
@@ -259,7 +271,7 @@ class LogListModel(QAbstractListModel):
         self._max_line_width = 0
         self.endResetModel()
 
-    def append_lines(self, lines: List) -> None:
+    def append_lines(self, lines: list) -> None:
         """Append new lines, enforcing the MAX_LINES ring buffer constraint."""
         if not lines:
             return
@@ -287,9 +299,7 @@ class LogListModel(QAbstractListModel):
 
             # Drop oldest lines.
             removed_lines = self._lines[:remove_count]
-            removed_had_max_width = any(
-                len(line) == self._max_line_width for line in removed_lines
-            )
+            removed_had_max_width = any(len(line) == self._max_line_width for line in removed_lines)
             self.beginRemoveRows(QModelIndex(), 0, remove_count - 1)
             del self._lines[:remove_count]
             del self._html_lines[:remove_count]
@@ -312,12 +322,12 @@ class LogListModel(QAbstractListModel):
     def max_line_width(self) -> int:
         return self._max_line_width
 
-    def html_for_row(self, row: int) -> Optional[str]:
+    def html_for_row(self, row: int) -> str | None:
         if row < 0 or row >= len(self._html_lines):
             return None
         return self._html_lines[row]
 
-    def iter_lines(self) -> List[str]:
+    def iter_lines(self) -> list[str]:
         """Expose lines for read-only access (e.g., search)."""
         return self._lines
 
@@ -325,9 +335,10 @@ class LogListModel(QAbstractListModel):
 @dataclass
 class HighlightedSegment:
     """A segment of text with formatting information."""
+
     start: int
     length: int
-    color: Tuple[int, int, int]
+    color: tuple[int, int, int]
     bold: bool = False
     italic: bool = False
 
@@ -342,7 +353,7 @@ class SelectableDocument(QTextDocument):
     Based on Qt Forum solution for interactive elements in delegates.
     """
 
-    def __init__(self, parent: Optional[QObject] = None) -> None:
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.setDocumentMargin(0)
         self._text_cursor = QTextCursor(self)
@@ -364,7 +375,9 @@ class SelectableDocument(QTextDocument):
         """Get the end position of the current selection."""
         return self._text_cursor.selectionEnd()
 
-    def setCursorPosition(self, pos: int, mode: QTextCursor.MoveMode = QTextCursor.MoveMode.MoveAnchor) -> None:
+    def set_cursor_position(
+        self, pos: int, mode: QTextCursor.MoveMode = QTextCursor.MoveMode.MoveAnchor
+    ) -> None:
         """
         Set cursor position and update selection highlighting.
 
@@ -376,7 +389,7 @@ class SelectableDocument(QTextDocument):
         max_pos = max(0, self.characterCount() - 1)
         if pos < 0 or pos > max_pos:
             logger.debug(
-                "SelectableDocument.setCursorPosition out-of-range pos=%d max=%d mode=%s",
+                "SelectableDocument.set_cursor_position out-of-range pos=%d max=%d mode=%s",
                 pos,
                 max_pos,
                 mode,
@@ -398,7 +411,7 @@ class SelectableDocument(QTextDocument):
         self,
         op: QTextCursor.MoveOperation,
         mode: QTextCursor.MoveMode = QTextCursor.MoveMode.MoveAnchor,
-        n: int = 1
+        n: int = 1,
     ) -> bool:
         """
         Move cursor by operation and update highlighting.
@@ -541,6 +554,7 @@ class SelectableDocument(QTextDocument):
 
 class HighlightSignals(QObject):
     """Signals for background highlighting worker."""
+
     finished = pyqtSignal(object, object)  # (cache_key, List[HighlightedSegment])
 
 
@@ -552,8 +566,13 @@ class HighlightWorker(QRunnable):
     The main thread then applies this to a QTextDocument.
     """
 
-    def __init__(self, text: str, cache_key: Tuple[str, str, int],
-                 color_scheme: LogColorScheme, signals: HighlightSignals):
+    def __init__(
+        self,
+        text: str,
+        cache_key: tuple[str, str, int],
+        color_scheme: LogColorScheme,
+        signals: HighlightSignals,
+    ):
         super().__init__()
         self.text = text
         self.cache_key = cache_key
@@ -599,8 +618,8 @@ class LogItemDelegate(QStyledItemDelegate):
 
     def __init__(
         self,
-        color_scheme: Optional[LogColorScheme] = None,
-        parent: Optional[QWidget] = None,
+        color_scheme: LogColorScheme | None = None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._color_scheme = color_scheme or LogColorScheme.create_dark_theme()
@@ -608,7 +627,7 @@ class LogItemDelegate(QStyledItemDelegate):
         self._case_sensitive: bool = False
 
         # Pre-computed search match cache: set of row indices that match search
-        self._search_match_rows: Set[int] = set()
+        self._search_match_rows: set[int] = set()
 
         # Thread pool for background highlighting
         self._thread_pool = QThreadPool.globalInstance()
@@ -620,25 +639,27 @@ class LogItemDelegate(QStyledItemDelegate):
 
         # Cache: maps (text, font_family, font_size) -> List[HighlightedSegment]
         # Stores the parsed formatting information from background thread
-        self._segment_cache: Dict[Tuple[str, str, int], List[HighlightedSegment]] = {}
-        self._cache_access_order: List[Tuple[str, str, int]] = []  # LRU tracking
+        self._segment_cache: dict[tuple[str, str, int], list[HighlightedSegment]] = {}
+        self._cache_access_order: list[tuple[str, str, int]] = []  # LRU tracking
 
         # Track which lines are being highlighted in background
-        self._pending_highlights: Set[Tuple[str, str, int]] = set()
+        self._pending_highlights: set[tuple[str, str, int]] = set()
 
         # Text selection state - support multi-line selection
-        self._interactive_documents: Dict[int, SelectableDocument] = {}  # Map row -> document with selection
-        self._log_model: Optional[LogListModel] = None
+        self._interactive_documents: dict[int, SelectableDocument] = (
+            {}
+        )  # Map row -> document with selection
+        self._log_model: LogListModel | None = None
         self._current_render_row = -1
 
         # QTextDocument cache: maps (text, font_family, font_size, width) -> QTextDocument
         # Stores rendered documents to avoid recreation on every paint
-        self._document_cache: Dict[Tuple[str, str, int, int], QTextDocument] = {}
-        self._doc_cache_access_order: List[Tuple[str, str, int, int]] = []
+        self._document_cache: dict[tuple[str, str, int, int], QTextDocument] = {}
+        self._doc_cache_access_order: list[tuple[str, str, int, int]] = []
         self.MAX_DOC_CACHE_SIZE = 500  # Cache fewer documents (they're heavier than segments)
 
         # sizeHint cache: maps (text, font_family, font_size, width) -> QSize
-        self._size_hint_cache: Dict[Tuple[str, str, int, int], QSize] = {}
+        self._size_hint_cache: dict[tuple[str, str, int, int], QSize] = {}
 
         # Debounce timer for viewport updates
         self._viewport_update_timer = QTimer()
@@ -646,7 +667,7 @@ class LogItemDelegate(QStyledItemDelegate):
         self._viewport_update_timer.setInterval(16)  # ~60fps
         self._viewport_update_timer.timeout.connect(self._do_viewport_update)
         self._viewport_needs_update = False
-        self._fixed_row_height: Optional[int] = None
+        self._fixed_row_height: int | None = None
 
     def set_fixed_row_height(self, height: int) -> None:
         self._fixed_row_height = height if height > 0 else None
@@ -683,7 +704,7 @@ class LogItemDelegate(QStyledItemDelegate):
         """Check if a row has an interactive document with selection."""
         return row in self._interactive_documents
 
-    def getInteractiveDocument(self, row: int) -> Optional[SelectableDocument]:
+    def get_interactive_document(self, row: int) -> SelectableDocument | None:
         """Get the interactive document for a specific row."""
         return self._interactive_documents.get(row)
 
@@ -695,7 +716,9 @@ class LogItemDelegate(QStyledItemDelegate):
         """Clear all interactive documents."""
         self._interactive_documents.clear()
 
-    def createInteractiveDocument(self, text: str, font: QFont, width: int = 0) -> SelectableDocument:
+    def create_interactive_document(
+        self, text: str, font: QFont, width: int = 0
+    ) -> SelectableDocument:
         """
         Create a SelectableDocument with syntax highlighting applied.
 
@@ -728,8 +751,9 @@ class LogItemDelegate(QStyledItemDelegate):
 
         return doc
 
-    def _on_highlighting_finished(self, cache_key: Tuple[str, str, int],
-                                   segments: List[HighlightedSegment]) -> None:
+    def _on_highlighting_finished(
+        self, cache_key: tuple[str, str, int], segments: list[HighlightedSegment]
+    ) -> None:
         """
         Cache formatting segments when background parsing completes.
 
@@ -752,8 +776,11 @@ class LogItemDelegate(QStyledItemDelegate):
         # CRITICAL: Invalidate any cached documents for this text+font combo
         # so they get recreated with the new highlighting
         text, font_family, font_size = cache_key
-        keys_to_remove = [k for k in self._document_cache.keys()
-                         if k[0] == text and k[1] == font_family and k[2] == font_size]
+        keys_to_remove = [
+            k
+            for k in self._document_cache.keys()
+            if k[0] == text and k[1] == font_family and k[2] == font_size
+        ]
         for key in keys_to_remove:
             del self._document_cache[key]
             if key in self._doc_cache_access_order:
@@ -764,7 +791,9 @@ class LogItemDelegate(QStyledItemDelegate):
         if not self._viewport_update_timer.isActive():
             self._viewport_update_timer.start()
 
-    def _get_or_request_segments(self, text: str, font: QFont) -> Optional[List[HighlightedSegment]]:
+    def _get_or_request_segments(
+        self, text: str, font: QFont
+    ) -> list[HighlightedSegment] | None:
         """
         Get cached formatting segments or start async parsing.
 
@@ -801,7 +830,9 @@ class LogItemDelegate(QStyledItemDelegate):
         # Return None - caller will paint plain text until parsing completes
         return None
 
-    def _apply_segments_to_document(self, doc: QTextDocument, segments: List[HighlightedSegment]) -> None:
+    def _apply_segments_to_document(
+        self, doc: QTextDocument, segments: list[HighlightedSegment]
+    ) -> None:
         """
         Apply formatting segments to a QTextDocument (on main thread).
 
@@ -915,7 +946,7 @@ class LogItemDelegate(QStyledItemDelegate):
         row = index.row()
         self._current_render_row = row
 
-        # Draw simple background - skip Qt's drawControl entirely to avoid any focus/hover/selection styling
+        # Draw a plain background without Qt focus, hover, or selection styling.
         painter.save()
 
         # Apply search highlight background if this row matches
@@ -927,7 +958,7 @@ class LogItemDelegate(QStyledItemDelegate):
         # Check if this row has an interactive document with text selection
         if self.hasInteractiveDocument(row):
             # Use the interactive document which has selection state
-            doc = self.getInteractiveDocument(row)
+            doc = self.get_interactive_document(row)
             if doc is None:
                 # Fallback to cached document rendering
                 doc = self._get_or_create_document(text, opt.font, opt.rect.width())
@@ -1025,7 +1056,7 @@ class LogListView(QListView):
     Based on Qt Forum solution for interactive elements in delegates.
     """
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
         # State for tracking text selection
@@ -1039,7 +1070,9 @@ class LogListView(QListView):
         # Auto-scroll when dragging selection past edges
         self._auto_scroll_timer = QTimer()
         self._auto_scroll_timer.timeout.connect(self._auto_scroll_during_selection)
-        self._auto_scroll_distance = 0  # Distance from edge in pixels (negative = up, positive = down)
+        self._auto_scroll_distance = (
+            0  # Distance from edge in pixels (negative = up, positive = down)
+        )
         self._last_mouse_pos = QPoint()  # Track mouse position for auto-scroll
 
         # Enable mouse tracking for cursor changes
@@ -1085,13 +1118,16 @@ class LogListView(QListView):
         tempDoc.setPlainText(str(text))
         # Keep hit testing on an unwrapped line to match visual rendering.
         tempDoc.setTextWidth(-1)
-        charPos = tempDoc.documentLayout().hitTest(relativePosF, Qt.HitTestAccuracy.FuzzyHit)
+        char_position = tempDoc.documentLayout().hitTest(
+            relativePosF,
+            Qt.HitTestAccuracy.FuzzyHit,
+        )
 
         # Start selection
         self._selection_start_index = clickedIndex
         self._selection_end_index = clickedIndex
-        self._selection_start_pos = charPos
-        self._selection_end_pos = charPos
+        self._selection_start_pos = char_position
+        self._selection_end_pos = char_position
         self._is_selecting = True
         self._word_selection = False
 
@@ -1108,7 +1144,10 @@ class LogListView(QListView):
 
         # Update cursor icon based on whether we're over a valid item
         if self.indexAt(mousePos).isValid():
-            if not QApplication.overrideCursor() or QApplication.overrideCursor().shape() != Qt.CursorShape.IBeamCursor:
+            if (
+                not QApplication.overrideCursor()
+                or QApplication.overrideCursor().shape() != Qt.CursorShape.IBeamCursor
+            ):
                 QApplication.setOverrideCursor(Qt.CursorShape.IBeamCursor)
         else:
             QApplication.restoreOverrideCursor()
@@ -1174,11 +1213,14 @@ class LogListView(QListView):
             tempDoc.setDefaultFont(self.font())
             tempDoc.setPlainText(str(text))
             tempDoc.setTextWidth(-1)
-            charPos = tempDoc.documentLayout().hitTest(relativePosF, Qt.HitTestAccuracy.FuzzyHit)
+            char_position = tempDoc.documentLayout().hitTest(
+                relativePosF,
+                Qt.HitTestAccuracy.FuzzyHit,
+            )
 
             # Update selection end
             self._selection_end_index = currentIndex
-            self._selection_end_pos = charPos
+            self._selection_end_pos = char_position
 
             # Update display
             self._updateSelection()
@@ -1254,7 +1296,9 @@ class LogListView(QListView):
             # Outside viewport - faster scroll proportional to distance
             # Map distance to speed multiplier (50-200px → 1x-10x)
             distance_outside = abs(self._auto_scroll_distance) - 50
-            multiplier = min(max_speed_multiplier, 1 + (distance_outside / 150) * (max_speed_multiplier - 1))
+            multiplier = min(
+                max_speed_multiplier, 1 + (distance_outside / 150) * (max_speed_multiplier - 1)
+            )
             scroll_pixels = base_speed * multiplier
 
         # Apply direction
@@ -1281,10 +1325,12 @@ class LogListView(QListView):
                     tempDoc.setDefaultFont(self.font())
                     tempDoc.setPlainText(str(text))
                     tempDoc.setTextWidth(-1)
-                    charPos = tempDoc.documentLayout().hitTest(relativePosF, Qt.HitTestAccuracy.FuzzyHit)
+                    char_position = tempDoc.documentLayout().hitTest(
+                        relativePosF, Qt.HitTestAccuracy.FuzzyHit
+                    )
 
                     self._selection_end_index = currentIndex
-                    self._selection_end_pos = charPos
+                    self._selection_end_pos = char_position
                     self._updateSelection()
 
     def _clearSelection(self) -> None:
@@ -1329,7 +1375,9 @@ class LogListView(QListView):
         endRow = self._selection_end_index.row()
 
         # Determine forward or backward selection
-        if startRow < endRow or (startRow == endRow and self._selection_start_pos <= self._selection_end_pos):
+        if startRow < endRow or (
+            startRow == endRow and self._selection_start_pos <= self._selection_end_pos
+        ):
             # Forward selection
             firstRow = startRow
             firstPos = self._selection_start_pos
@@ -1354,7 +1402,7 @@ class LogListView(QListView):
             width = itemRect.width() if itemRect.width() > 0 else self.viewport().width()
 
             # Create SelectableDocument with wrapping and proper width
-            doc = delegate.createInteractiveDocument(str(text), self.font(), width)
+            doc = delegate.create_interactive_document(str(text), self.font(), width)
             max_pos = max(0, doc.characterCount() - 1)
 
             def clamp_pos(pos: int) -> int:
@@ -1362,20 +1410,28 @@ class LogListView(QListView):
 
             if row == firstRow and row == lastRow:
                 # Single-line selection
-                doc.setCursorPosition(clamp_pos(firstPos))
-                doc.setCursorPosition(clamp_pos(lastPos), QTextCursor.MoveMode.KeepAnchor)
+                doc.set_cursor_position(clamp_pos(firstPos))
+                doc.set_cursor_position(
+                    clamp_pos(lastPos), QTextCursor.MoveMode.KeepAnchor
+                )
             elif row == firstRow:
                 # First line - select from start position to end
-                doc.setCursorPosition(clamp_pos(firstPos))
-                doc.setCursorPosition(clamp_pos(len(str(text))), QTextCursor.MoveMode.KeepAnchor)
+                doc.set_cursor_position(clamp_pos(firstPos))
+                doc.set_cursor_position(
+                    clamp_pos(len(str(text))), QTextCursor.MoveMode.KeepAnchor
+                )
             elif row == lastRow:
                 # Last line - select from beginning to end position
-                doc.setCursorPosition(0)
-                doc.setCursorPosition(clamp_pos(lastPos), QTextCursor.MoveMode.KeepAnchor)
+                doc.set_cursor_position(0)
+                doc.set_cursor_position(
+                    clamp_pos(lastPos), QTextCursor.MoveMode.KeepAnchor
+                )
             else:
                 # Middle lines - select entire line
-                doc.setCursorPosition(0)
-                doc.setCursorPosition(clamp_pos(len(str(text))), QTextCursor.MoveMode.KeepAnchor)
+                doc.set_cursor_position(0)
+                doc.set_cursor_position(
+                    clamp_pos(len(str(text))), QTextCursor.MoveMode.KeepAnchor
+                )
 
             # Store document for this row
             delegate.setInteractiveDocument(row, doc)
@@ -1403,7 +1459,9 @@ class LogListView(QListView):
         else:
             # Multi-line selection
             # Determine if we're selecting forward or backward
-            if startRow < endRow or (startRow == endRow and self._selection_start_pos < self._selection_end_pos):
+            if startRow < endRow or (
+                startRow == endRow and self._selection_start_pos < self._selection_end_pos
+            ):
                 # Forward selection
                 firstRow = startRow
                 firstPos = self._selection_start_pos
@@ -1500,7 +1558,7 @@ class LogFileDetector(QObject):
         self,
         base_log_path: str | None = None,
         *,
-        log_discovery_provider: LogDiscoveryProvider | None = None,
+        log_discovery_provider: LogDiscoveryProviderABC | None = None,
     ):
         """
         Initialize LogFileDetector.
@@ -1511,18 +1569,16 @@ class LogFileDetector(QObject):
         """
         super().__init__()
         self._base_log_path = base_log_path
-        self._log_discovery_provider = (
-            log_discovery_provider or get_log_discovery_provider()
-        )
+        self._log_discovery_provider = log_discovery_provider or get_log_discovery_provider()
         if self._log_discovery_provider is None:
             raise RuntimeError(
                 "No log discovery provider registered. "
                 "Call register_log_discovery_provider(...)."
             )
-        self._previous_files: Set[Path] = set()
+        self._previous_files: set[Path] = set()
         self._watcher = QFileSystemWatcher()
         self._watcher.directoryChanged.connect(self._on_directory_changed)
-        self._watching_directory: Optional[Path] = None
+        self._watching_directory: Path | None = None
 
         logger.debug(f"LogFileDetector initialized with base_log_path: {base_log_path}")
 
@@ -1559,7 +1615,7 @@ class LogFileDetector(QObject):
             self._previous_files.clear()
             logger.debug("Stopped file watching")
 
-    def scan_directory(self, directory: Path) -> Set[Path]:
+    def scan_directory(self, directory: Path) -> set[Path]:
         """
         Scan directory for .log files.
 
@@ -1577,7 +1633,7 @@ class LogFileDetector(QObject):
             logger.warning(f"Error scanning directory {directory}: {e}")
             return set()
 
-    def detect_new_files(self, current_files: Set[Path]) -> Set[Path]:
+    def detect_new_files(self, current_files: set[Path]) -> set[Path]:
         """
         Use set.difference() to find new files efficiently.
 
@@ -1661,20 +1717,16 @@ class LogHighlighter(QSyntaxHighlighter):
         # Create a mapping from Pygments tokens to Qt text formats
         self.token_formats = {
             # Log levels with distinct colors and backgrounds
-            'log_critical': self._create_format(
-                cs.to_qcolor(cs.log_critical_fg),
-                cs.to_qcolor(cs.log_critical_bg),
-                bold=True
+            "log_critical": self._create_format(
+                cs.to_qcolor(cs.log_critical_fg), cs.to_qcolor(cs.log_critical_bg), bold=True
             ),
-            'log_error': self._create_format(cs.to_qcolor(cs.log_error_color), bold=True),
-            'log_warning': self._create_format(cs.to_qcolor(cs.log_warning_color), bold=True),
-            'log_info': self._create_format(cs.to_qcolor(cs.log_info_color), bold=True),
-            'log_debug': self._create_format(cs.to_qcolor(cs.log_debug_color)),
-
+            "log_error": self._create_format(cs.to_qcolor(cs.log_error_color), bold=True),
+            "log_warning": self._create_format(cs.to_qcolor(cs.log_warning_color), bold=True),
+            "log_info": self._create_format(cs.to_qcolor(cs.log_info_color), bold=True),
+            "log_debug": self._create_format(cs.to_qcolor(cs.log_debug_color)),
             # Timestamps and metadata
-            'timestamp': self._create_format(cs.to_qcolor(cs.timestamp_color)),
-            'logger_name': self._create_format(cs.to_qcolor(cs.logger_name_color), bold=True),
-
+            "timestamp": self._create_format(cs.to_qcolor(cs.timestamp_color)),
+            "logger_name": self._create_format(cs.to_qcolor(cs.logger_name_color), bold=True),
             # Python syntax highlighting (for complex data structures)
             Token.Keyword: self._create_format(cs.to_qcolor(cs.python_keyword_color), bold=True),
             Token.String: self._create_format(cs.to_qcolor(cs.python_string_color)),
@@ -1689,37 +1741,47 @@ class LogHighlighter(QSyntaxHighlighter):
             Token.Operator: self._create_format(cs.to_qcolor(cs.python_operator_color)),
             Token.Punctuation: self._create_format(cs.to_qcolor(cs.python_operator_color)),
             Token.Name: self._create_format(cs.to_qcolor(cs.python_name_color)),
-            Token.Name.Function: self._create_format(cs.to_qcolor(cs.python_function_color), bold=True),
+            Token.Name.Function: self._create_format(
+                cs.to_qcolor(cs.python_function_color), bold=True
+            ),
             Token.Name.Class: self._create_format(cs.to_qcolor(cs.python_class_color), bold=True),
             Token.Name.Builtin: self._create_format(cs.to_qcolor(cs.python_builtin_color)),
             Token.Comment: self._create_format(cs.to_qcolor(cs.python_comment_color)),
             Token.Literal: self._create_format(cs.to_qcolor(cs.python_number_color)),
-
             # Special patterns for log content
-            'memory_address': self._create_format(cs.to_qcolor(cs.memory_address_color)),
-            'file_path': self._create_format(cs.to_qcolor(cs.file_path_color)),
-            'exception': self._create_format(cs.to_qcolor(cs.exception_color), bold=True),
-            'function_call': self._create_format(cs.to_qcolor(cs.function_call_color)),
-            'dict_key': self._create_format(cs.to_qcolor(cs.python_name_color)),
-            'boolean': self._create_format(cs.to_qcolor(cs.boolean_color), bold=True),
-
+            "memory_address": self._create_format(cs.to_qcolor(cs.memory_address_color)),
+            "file_path": self._create_format(cs.to_qcolor(cs.file_path_color)),
+            "exception": self._create_format(cs.to_qcolor(cs.exception_color), bold=True),
+            "function_call": self._create_format(cs.to_qcolor(cs.function_call_color)),
+            "dict_key": self._create_format(cs.to_qcolor(cs.python_name_color)),
+            "boolean": self._create_format(cs.to_qcolor(cs.boolean_color), bold=True),
             # Enhanced Python syntax elements (Phase 1)
-            'tuple_parentheses': self._create_format(cs.to_qcolor(cs.tuple_parentheses_color)),
-            'set_braces': self._create_format(cs.to_qcolor(cs.set_braces_color)),
-            'class_representation': self._create_format(cs.to_qcolor(cs.class_representation_color), bold=True),
-            'function_representation': self._create_format(cs.to_qcolor(cs.function_representation_color), bold=True),
-            'module_path': self._create_format(cs.to_qcolor(cs.module_path_color)),
-            'hex_number': self._create_format(cs.to_qcolor(cs.hex_number_color)),
-            'scientific_notation': self._create_format(cs.to_qcolor(cs.scientific_notation_color)),
-            'binary_number': self._create_format(cs.to_qcolor(cs.binary_number_color)),
-            'octal_number': self._create_format(cs.to_qcolor(cs.octal_number_color)),
-            'python_special': self._create_format(cs.to_qcolor(cs.python_special_color), bold=True),
-            'single_quoted_string': self._create_format(cs.to_qcolor(cs.single_quoted_string_color)),
-            'list_comprehension': self._create_format(cs.to_qcolor(cs.list_comprehension_color)),
-            'generator_expression': self._create_format(cs.to_qcolor(cs.generator_expression_color)),
+            "tuple_parentheses": self._create_format(cs.to_qcolor(cs.tuple_parentheses_color)),
+            "set_braces": self._create_format(cs.to_qcolor(cs.set_braces_color)),
+            "class_representation": self._create_format(
+                cs.to_qcolor(cs.class_representation_color), bold=True
+            ),
+            "function_representation": self._create_format(
+                cs.to_qcolor(cs.function_representation_color), bold=True
+            ),
+            "module_path": self._create_format(cs.to_qcolor(cs.module_path_color)),
+            "hex_number": self._create_format(cs.to_qcolor(cs.hex_number_color)),
+            "scientific_notation": self._create_format(cs.to_qcolor(cs.scientific_notation_color)),
+            "binary_number": self._create_format(cs.to_qcolor(cs.binary_number_color)),
+            "octal_number": self._create_format(cs.to_qcolor(cs.octal_number_color)),
+            "python_special": self._create_format(cs.to_qcolor(cs.python_special_color), bold=True),
+            "single_quoted_string": self._create_format(
+                cs.to_qcolor(cs.single_quoted_string_color)
+            ),
+            "list_comprehension": self._create_format(cs.to_qcolor(cs.list_comprehension_color)),
+            "generator_expression": self._create_format(
+                cs.to_qcolor(cs.generator_expression_color)
+            ),
         }
 
-    def _create_format(self, fg_color: QColor, bg_color: QColor = None, bold: bool = False) -> QTextCharFormat:
+    def _create_format(
+        self, fg_color: QColor, bg_color: QColor = None, bold: bool = False
+    ) -> QTextCharFormat:
         """Create a QTextCharFormat with specified properties."""
         format = QTextCharFormat()
         format.setForeground(fg_color)
@@ -1735,11 +1797,11 @@ class LogHighlighter(QSyntaxHighlighter):
 
         # Log level patterns (highest priority)
         log_levels = [
-            ("CRITICAL", self.token_formats['log_critical']),
-            ("ERROR", self.token_formats['log_error']),
-            ("WARNING", self.token_formats['log_warning']),
-            ("INFO", self.token_formats['log_info']),
-            ("DEBUG", self.token_formats['log_debug']),
+            ("CRITICAL", self.token_formats["log_critical"]),
+            ("ERROR", self.token_formats["log_error"]),
+            ("WARNING", self.token_formats["log_warning"]),
+            ("INFO", self.token_formats["log_info"]),
+            ("DEBUG", self.token_formats["log_debug"]),
         ]
 
         for level, format in log_levels:
@@ -1748,69 +1810,85 @@ class LogHighlighter(QSyntaxHighlighter):
 
         # Timestamp pattern: YYYY-MM-DD HH:MM:SS,mmm
         timestamp_pattern = QRegularExpression(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}")
-        self.highlighting_rules.append((timestamp_pattern, self.token_formats['timestamp']))
+        self.highlighting_rules.append((timestamp_pattern, self.token_formats["timestamp"]))
 
         # Logger names (module paths)
-        logger_pattern = QRegularExpression(r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+\b")
-        self.highlighting_rules.append((logger_pattern, self.token_formats['logger_name']))
+        logger_pattern = QRegularExpression(
+            r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+\b"
+        )
+        self.highlighting_rules.append((logger_pattern, self.token_formats["logger_name"]))
 
         # Memory addresses (e.g., 0x7f1640dd8e00)
         memory_pattern = QRegularExpression(r"0x[0-9a-fA-F]+")
-        self.highlighting_rules.append((memory_pattern, self.token_formats['memory_address']))
+        self.highlighting_rules.append((memory_pattern, self.token_formats["memory_address"]))
 
         # File paths in tracebacks
         filepath_pattern = QRegularExpression(r'["\']?/[^"\'\s]+\.py["\']?')
-        self.highlighting_rules.append((filepath_pattern, self.token_formats['file_path']))
+        self.highlighting_rules.append((filepath_pattern, self.token_formats["file_path"]))
 
         # Exception names
-        exception_pattern = QRegularExpression(r'\b[A-Z][a-zA-Z]*Error\b|\b[A-Z][a-zA-Z]*Exception\b')
-        self.highlighting_rules.append((exception_pattern, self.token_formats['exception']))
+        exception_pattern = QRegularExpression(
+            r"\b[A-Z][a-zA-Z]*Error\b|\b[A-Z][a-zA-Z]*Exception\b"
+        )
+        self.highlighting_rules.append((exception_pattern, self.token_formats["exception"]))
 
         # Function calls with parentheses
-        function_pattern = QRegularExpression(r'\b[a-zA-Z_][a-zA-Z0-9_]*\(\)')
-        self.highlighting_rules.append((function_pattern, self.token_formats['function_call']))
+        function_pattern = QRegularExpression(r"\b[a-zA-Z_][a-zA-Z0-9_]*\(\)")
+        self.highlighting_rules.append((function_pattern, self.token_formats["function_call"]))
 
         # Boolean values
-        boolean_pattern = QRegularExpression(r'\b(True|False|None)\b')
-        self.highlighting_rules.append((boolean_pattern, self.token_formats['boolean']))
+        boolean_pattern = QRegularExpression(r"\b(True|False|None)\b")
+        self.highlighting_rules.append((boolean_pattern, self.token_formats["boolean"]))
 
         # Enhanced Python syntax elements
 
         # Single-quoted strings (complement to double-quoted)
         single_quote_pattern = QRegularExpression(r"'[^']*'")
-        self.highlighting_rules.append((single_quote_pattern, self.token_formats['single_quoted_string']))
+        self.highlighting_rules.append(
+            (single_quote_pattern, self.token_formats["single_quoted_string"])
+        )
 
         # Class representations: <class 'module.ClassName'>
         class_repr_pattern = QRegularExpression(r"<class '[^']*'>")
-        self.highlighting_rules.append((class_repr_pattern, self.token_formats['class_representation']))
+        self.highlighting_rules.append(
+            (class_repr_pattern, self.token_formats["class_representation"])
+        )
 
         # Function representations: <function name at 0xaddress>
         function_repr_pattern = QRegularExpression(r"<function [^>]+ at 0x[0-9a-fA-F]+>")
-        self.highlighting_rules.append((function_repr_pattern, self.token_formats['function_representation']))
+        self.highlighting_rules.append(
+            (function_repr_pattern, self.token_formats["function_representation"])
+        )
 
         # Extended module paths
-        module_path_pattern = QRegularExpression(r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*){2,}")
-        self.highlighting_rules.append((module_path_pattern, self.token_formats['module_path']))
+        module_path_pattern = QRegularExpression(
+            r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*){2,}"
+        )
+        self.highlighting_rules.append((module_path_pattern, self.token_formats["module_path"]))
 
         # Hexadecimal numbers (beyond memory addresses): 0xFF, 0x1A2B
         hex_number_pattern = QRegularExpression(r"\b0[xX][0-9a-fA-F]+\b")
-        self.highlighting_rules.append((hex_number_pattern, self.token_formats['hex_number']))
+        self.highlighting_rules.append((hex_number_pattern, self.token_formats["hex_number"]))
 
         # Scientific notation: 1.23e-4, 5.67E+10
         scientific_pattern = QRegularExpression(r"\b\d+\.?\d*[eE][+-]?\d+\b")
-        self.highlighting_rules.append((scientific_pattern, self.token_formats['scientific_notation']))
+        self.highlighting_rules.append(
+            (scientific_pattern, self.token_formats["scientific_notation"])
+        )
 
         # Binary literals: 0b1010
         binary_pattern = QRegularExpression(r"\b0[bB][01]+\b")
-        self.highlighting_rules.append((binary_pattern, self.token_formats['binary_number']))
+        self.highlighting_rules.append((binary_pattern, self.token_formats["binary_number"]))
 
         # Octal literals: 0o755
         octal_pattern = QRegularExpression(r"\b0[oO][0-7]+\b")
-        self.highlighting_rules.append((octal_pattern, self.token_formats['octal_number']))
+        self.highlighting_rules.append((octal_pattern, self.token_formats["octal_number"]))
 
         # Python special constants: __name__, __main__, __file__, etc.
         python_special_pattern = QRegularExpression(r"\b__[a-zA-Z_][a-zA-Z0-9_]*__\b")
-        self.highlighting_rules.append((python_special_pattern, self.token_formats['python_special']))
+        self.highlighting_rules.append(
+            (python_special_pattern, self.token_formats["python_special"])
+        )
 
         logger.debug(f"Setup {len(self.highlighting_rules)} highlighting rules")
 
@@ -1850,13 +1928,14 @@ class LogHighlighter(QSyntaxHighlighter):
         if config_path and Path(config_path).exists():
             try:
                 import json
-                with open(config_path, 'r') as f:
+
+                with open(config_path) as f:
                     config = json.load(f)
 
                 # Create color scheme from config
                 scheme_kwargs = {}
                 for key, value in config.items():
-                    if key.endswith('_color') or key.endswith('_fg') or key.endswith('_bg'):
+                    if key.endswith("_color") or key.endswith("_fg") or key.endswith("_bg"):
                         if isinstance(value, list) and len(value) == 3:
                             scheme_kwargs[key] = tuple(value)
 
@@ -1897,7 +1976,7 @@ class LogFileLoader(QThread):
         log_path: Path,
         tail_lines: int = 100_000,
         chunk_lines: int = 1000,
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
     ):
         super().__init__(parent)
         self.log_path = log_path
@@ -1912,7 +1991,7 @@ class LogFileLoader(QThread):
                 return
 
             lines: deque[str] = deque(maxlen=self.tail_lines)
-            with open(self.log_path, "r", encoding="utf-8", errors="replace") as handle:
+            with open(self.log_path, encoding="utf-8", errors="replace") as handle:
                 for line in handle:
                     if self.isInterruptionRequested():
                         return
@@ -1969,15 +2048,15 @@ class LogTailer(QThread):
 
                 # Read new content if file grew
                 if current_size > self.file_position:
-                    with open(self.log_path, 'rb') as f:
+                    with open(self.log_path, "rb") as f:
                         f.seek(self.file_position)
                         new_data = f.read(current_size - self.file_position)
 
                     # Decode new content
                     try:
-                        new_content = new_data.decode('utf-8', errors='replace')
+                        new_content = new_data.decode("utf-8", errors="replace")
                     except UnicodeDecodeError:
-                        new_content = new_data.decode('latin-1', errors='replace')
+                        new_content = new_data.decode("latin-1", errors="replace")
 
                     if new_content:
                         self.new_content.emit(new_content, current_size)
@@ -2009,10 +2088,12 @@ class LogViewerWindow(QMainWindow):
         self._log_discovery_provider = get_log_discovery_provider()
         self._server_scan_provider = get_server_scan_provider()
         if self._log_discovery_provider is None:
-            raise RuntimeError("No log discovery provider registered. Call register_log_discovery_provider(...).")
+            raise RuntimeError(
+                "No log discovery provider registered. Call register_log_discovery_provider(...)."
+            )
 
         # State
-        self.current_log_path: Optional[Path] = None
+        self.current_log_path: Path | None = None
         self.current_file_position: int = 0
         self.auto_scroll_enabled: bool = True
         self.tailing_paused: bool = False
@@ -2021,11 +2102,11 @@ class LogViewerWindow(QMainWindow):
         # Search state
         self.current_search_text: str = ""
         self._search_case_sensitive: bool = False
-        self._search_matches: List[int] = []
+        self._search_matches: list[int] = []
         self._search_match_cursor: int = -1
 
         # Update throttling to reduce UI load
-        self._pending_lines: List[str] = []  # Buffer for pending log lines
+        self._pending_lines: list[str] = []  # Buffer for pending log lines
         self._update_timer = QTimer(self)
         self._update_timer.setSingleShot(True)
         self._update_timer.timeout.connect(self._flush_pending_lines)
@@ -2036,19 +2117,19 @@ class LogViewerWindow(QMainWindow):
         self.log_selector: QComboBox = None
         self.search_toolbar: QToolBar = None
         self.log_view: QListView = None
-        self.log_model: Optional[LogListModel] = None
-        self.log_delegate: Optional[LogItemDelegate] = None
+        self.log_model: LogListModel | None = None
+        self.log_delegate: LogItemDelegate | None = None
         self.file_detector: LogFileDetector = None
         self.tail_timer: QTimer = None  # Deprecated - kept for compatibility
-        self.log_tailer: Optional[LogTailer] = None  # Async log tailer thread
-        self.highlighter: Optional[LogHighlighter] = None
-        self.file_loader: Optional[LogFileLoader] = None  # Async file loader
+        self.log_tailer: LogTailer | None = None  # Async log tailer thread
+        self.highlighter: LogHighlighter | None = None
+        self.file_loader: LogFileLoader | None = None  # Async file loader
         self._file_loaders: set[LogFileLoader] = set()
         self._server_scan_requests = CoalescedScanRequests()
         self.server_scan_timer = QTimer(self)
         self.server_scan_timer.setInterval(5000)
         self.server_scan_timer.timeout.connect(self._request_server_scan)
-        self._pending_log_to_load: Optional[Path] = None  # Log to load when window is shown
+        self._pending_log_to_load: Path | None = None  # Log to load when window is shown
         self._cleaned_up = False
 
         # Process tracking for alive/dead process indication
@@ -2058,7 +2139,7 @@ class LogViewerWindow(QMainWindow):
 
         # Master list of all discovered logs (single source of truth)
         # Dropdown is a filtered VIEW of this list
-        self._all_discovered_logs: List[LogFileInfo] = []
+        self._all_discovered_logs: list[LogFileInfo] = []
 
         # Track session start time to filter out old logs from previous sessions
         # Use current process start time, not log viewer init time
@@ -2146,12 +2227,16 @@ class LogViewerWindow(QMainWindow):
 
         self.clear_btn = QPushButton("Clear")
         self.reset_memory_btn = QPushButton("Reset Memory")
-        self.reset_memory_btn.setToolTip("Clear display and reset memory usage (reloads current log from disk)")
+        self.reset_memory_btn.setToolTip(
+            "Clear display and reset memory usage (reloads current log from disk)"
+        )
         self.bottom_btn = QPushButton("Bottom")
 
         # Process filter checkbox
         self.show_alive_only_cb = QCheckBox("Show only running processes")
-        self.show_alive_only_cb.setToolTip("Filter logs to show only those from currently running processes")
+        self.show_alive_only_cb.setToolTip(
+            "Filter logs to show only those from currently running processes"
+        )
 
         control_layout.addWidget(self.auto_scroll_btn)
         control_layout.addWidget(self.pause_btn)
@@ -2259,6 +2344,7 @@ class LogViewerWindow(QMainWindow):
 
     def _scan_subprocess_logs_async(self) -> None:
         """Scan for existing subprocess logs in background thread (non-blocking)."""
+
         def scan_and_update():
             """Background thread function."""
             subprocess_logs = self._scan_for_subprocess_logs()
@@ -2280,6 +2366,7 @@ class LogViewerWindow(QMainWindow):
 
     def _scan_servers_async(self) -> None:
         """Scan for ZMQ servers in background thread (non-blocking)."""
+
         def scan_and_update():
             """Background thread function."""
             server_logs = self._scan_for_server_logs()
@@ -2291,7 +2378,7 @@ class LogViewerWindow(QMainWindow):
         logger.debug("Started async server scan in background")
 
     @pyqtSlot(list)
-    def _on_subprocess_scan_complete(self, subprocess_logs: List[LogFileInfo]) -> None:
+    def _on_subprocess_scan_complete(self, subprocess_logs: list[LogFileInfo]) -> None:
         """Handle subprocess scan completion on UI thread."""
         if not subprocess_logs:
             logger.debug("No subprocess logs found during scan")
@@ -2308,17 +2395,18 @@ class LogViewerWindow(QMainWindow):
         # Repopulate dropdown from master list
         self.populate_log_dropdown(self._all_discovered_logs)
 
-        logger.info(f"Added {new_logs_added} subprocess logs from current session "
-                   f"(scanned {len(subprocess_logs)} total)")
+        logger.info(
+            f"Added {new_logs_added} subprocess logs from current session "
+            f"(scanned {len(subprocess_logs)} total)"
+        )
 
     @pyqtSlot(list)
-    def _on_server_scan_complete(self, server_logs: List[LogFileInfo]) -> None:
+    def _on_server_scan_complete(self, server_logs: list[LogFileInfo]) -> None:
         """Handle server scan completion on UI thread."""
         if server_logs:
             # Add server logs to master list (avoid duplicates by path)
             existing_indices = {
-                log.path: index
-                for index, log in enumerate(self._all_discovered_logs)
+                log.path: index for index, log in enumerate(self._all_discovered_logs)
             }
             new_logs_added = 0
             catalog_changed = False
@@ -2350,7 +2438,7 @@ class LogViewerWindow(QMainWindow):
         if self._server_scan_requests.complete() and not self._cleaned_up:
             self._scan_servers_async()
 
-    def _scan_for_subprocess_logs(self) -> List[LogFileInfo]:
+    def _scan_for_subprocess_logs(self) -> list[LogFileInfo]:
         """
         Efficiently scan log directory for subprocess logs from current session.
         Uses os.scandir() and filters by mtime FIRST before parsing.
@@ -2379,7 +2467,7 @@ class LogViewerWindow(QMainWindow):
             logger.warning(f"Error scanning for subprocess logs: {e}")
             return []
 
-    def _scan_for_server_logs(self) -> List[LogFileInfo]:
+    def _scan_for_server_logs(self) -> list[LogFileInfo]:
         """
         Scan for running ZMQ servers and Napari viewers by pinging common ports.
         Returns list of LogFileInfo for discovered server log files.
@@ -2394,7 +2482,7 @@ class LogViewerWindow(QMainWindow):
             return []
 
     # Dropdown Management Methods
-    def populate_log_dropdown(self, log_files: List[LogFileInfo]) -> None:
+    def populate_log_dropdown(self, log_files: list[LogFileInfo]) -> None:
         """
         Populate QComboBox with log files with process status indicators.
 
@@ -2415,8 +2503,7 @@ class LogViewerWindow(QMainWindow):
         # Filter if "show alive only" is enabled
         if self.show_alive_only:
             sorted_logs = [
-                log_info for log_info in sorted_logs
-                if self._is_log_from_alive_process(log_info)
+                log_info for log_info in sorted_logs if self._is_log_from_alive_process(log_info)
             ]
 
         with QSignalBlocker(self.log_selector):
@@ -2438,7 +2525,11 @@ class LogViewerWindow(QMainWindow):
             if selected_index >= 0:
                 self.log_selector.setCurrentIndex(selected_index)
 
-        logger.debug(f"Populated dropdown with {len(sorted_logs)} log files (filtered: {self.show_alive_only})")
+        logger.debug(
+            "Populated dropdown with %d log files (filtered: %s)",
+            len(sorted_logs),
+            self.show_alive_only,
+        )
 
     def _log_sort_key(self, log_info: LogFileInfo) -> tuple:
         """
@@ -2519,10 +2610,7 @@ class LogViewerWindow(QMainWindow):
         """
         try:
             log_path = Path(log_path)
-            if not any(
-                log_info.path == log_path
-                for log_info in self._all_discovered_logs
-            ):
+            if not any(log_info.path == log_path for log_info in self._all_discovered_logs):
                 self._all_discovered_logs.append(
                     _classify_log_path(self._log_discovery_provider, log_path)
                 )
@@ -2569,9 +2657,7 @@ class LogViewerWindow(QMainWindow):
             self.file_loader.load_finished.connect(self._on_file_load_finished)
             self.file_loader.load_failed.connect(self._on_file_load_failed)
             self.file_loader.finished.connect(
-                lambda loader=self.file_loader: self._release_retired_file_loader(
-                    loader
-                )
+                lambda loader=self.file_loader: self._release_retired_file_loader(loader)
             )
             self.file_loader.start()
 
@@ -2579,7 +2665,7 @@ class LogViewerWindow(QMainWindow):
             logger.error(f"Error switching to log {log_path}: {e}")
             raise
 
-    def _retire_file_loader(self, loader: Optional[LogFileLoader]) -> None:
+    def _retire_file_loader(self, loader: LogFileLoader | None) -> None:
         """Interrupt a superseded loader while retaining its QObject lifetime."""
         if loader is None:
             return
@@ -2625,7 +2711,7 @@ class LogViewerWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Error finalizing loaded content: {e}")
 
-    def _batch_insert_lines(self, lines: List[str], chunk_size: int = 1000) -> None:
+    def _batch_insert_lines(self, lines: list[str], chunk_size: int = 1000) -> None:
         """
         Insert lines in batches to prevent UI freeze.
 
@@ -2710,10 +2796,7 @@ class LogViewerWindow(QMainWindow):
         case_sensitive = self.case_sensitive_cb.isChecked()
 
         # Rebuild match list if query or case sensitivity changed.
-        if (
-            search_text != self.current_search_text
-            or case_sensitive != self._search_case_sensitive
-        ):
+        if search_text != self.current_search_text or case_sensitive != self._search_case_sensitive:
             self.current_search_text = search_text
             self._search_case_sensitive = case_sensitive
             self._search_matches = []
@@ -2734,7 +2817,9 @@ class LogViewerWindow(QMainWindow):
 
             # Update delegate highlighting state and pre-compute match rows for fast paint
             if self.log_delegate is not None:
-                self.log_delegate.set_search_state(self.current_search_text, self._search_case_sensitive)
+                self.log_delegate.set_search_state(
+                    self.current_search_text, self._search_case_sensitive
+                )
                 # Pre-populate search match rows for O(1) lookup during paint
                 self.log_delegate._search_match_rows = set(self._search_matches)
             if self.log_view is not None:
@@ -2747,7 +2832,9 @@ class LogViewerWindow(QMainWindow):
         if self._search_match_cursor == -1:
             self._search_match_cursor = 0 if step >= 0 else len(self._search_matches) - 1
         else:
-            self._search_match_cursor = (self._search_match_cursor + step) % len(self._search_matches)
+            self._search_match_cursor = (self._search_match_cursor + step) % len(
+                self._search_matches
+            )
 
         target_row = self._search_matches[self._search_match_cursor]
         index = self.log_model.index(target_row, 0)
@@ -2836,8 +2923,6 @@ class LogViewerWindow(QMainWindow):
         """Scroll log view to bottom."""
         self.log_view.scrollToBottom()
 
-
-
     # Real-time Tailing Methods
     def start_log_tailing(self, log_path: Path) -> None:
         """
@@ -2922,7 +3007,9 @@ class LogViewerWindow(QMainWindow):
             if self.auto_scroll_enabled and self._last_scroll_state:
                 self.scroll_to_bottom()
 
-    def _batch_insert_lines_for_tailing(self, lines: List[str], was_at_bottom: bool, chunk_size: int = 500) -> None:
+    def _batch_insert_lines_for_tailing(
+        self, lines: list[str], was_at_bottom: bool, chunk_size: int = 500
+    ) -> None:
         """
         Batch insert lines during tailing to prevent UI freeze on large bursts.
 
@@ -2949,8 +3036,10 @@ class LogViewerWindow(QMainWindow):
 
         if remaining:
             # Schedule next batch on event loop (yields to UI)
-            QTimer.singleShot(0, lambda: self._batch_insert_lines_for_tailing(remaining, was_at_bottom, chunk_size))
-
+            QTimer.singleShot(
+                0,
+                lambda: self._batch_insert_lines_for_tailing(remaining, was_at_bottom, chunk_size),
+            )
 
     def _on_log_rotated(self) -> None:
         """Handle log rotation detected by async tailer."""
@@ -2966,11 +3055,13 @@ class LogViewerWindow(QMainWindow):
         # Check if file was deleted
         if self.current_log_path and not self.current_log_path.exists():
             logger.info(f"Log file deleted: {self.current_log_path}")
-            self.log_model.append_lines([
-                "",
-                f"--- Log file deleted: {self.current_log_path} ---",
-                "",
-            ])
+            self.log_model.append_lines(
+                [
+                    "",
+                    f"--- Log file deleted: {self.current_log_path} ---",
+                    "",
+                ]
+            )
             # Try to reconnect after a delay
             QTimer.singleShot(1000, self._attempt_reconnection)
 
@@ -2984,15 +3075,17 @@ class LogViewerWindow(QMainWindow):
             logger.info(f"Log file recreated, reconnecting: {self.current_log_path}")
             self.current_file_position = 0
             self._pending_partial_line = ""
-            self.log_model.append_lines([
-                "",
-                f"--- Reconnected to: {self.current_log_path} ---",
-                "",
-            ])
+            self.log_model.append_lines(
+                [
+                    "",
+                    f"--- Reconnected to: {self.current_log_path} ---",
+                    "",
+                ]
+            )
             # File will be read on next timer tick
 
     # External Integration Methods
-    def start_monitoring(self, base_log_path: Optional[str] = None) -> None:
+    def start_monitoring(self, base_log_path: str | None = None) -> None:
         """Start monitoring for new logs."""
         if self.file_detector:
             self.file_detector.stop_watching()
@@ -3033,12 +3126,10 @@ class LogViewerWindow(QMainWindow):
 
         logger.debug("Started process tracking")
 
-    def _tracked_log_pids(self, log_files: Optional[List[LogFileInfo]] = None) -> set[int]:
+    def _tracked_log_pids(self, log_files: list[LogFileInfo] | None = None) -> set[int]:
         """Return PIDs represented by the current discovered log list."""
         pids = set()
-        tracked_logs = (
-            log_files if log_files is not None else self._all_discovered_logs
-        )
+        tracked_logs = log_files if log_files is not None else self._all_discovered_logs
         for log_info in tracked_logs:
             identity = log_info.process_identity
             pid = (
@@ -3050,7 +3141,7 @@ class LogViewerWindow(QMainWindow):
                 pids.add(pid)
         return pids
 
-    def _update_tracked_processes(self, log_files: Optional[List[LogFileInfo]] = None) -> bool:
+    def _update_tracked_processes(self, log_files: list[LogFileInfo] | None = None) -> bool:
         """Refresh process status for only the PIDs represented in the UI."""
         return self.process_tracker.update(self._tracked_log_pids(log_files))
 
@@ -3077,12 +3168,14 @@ class LogViewerWindow(QMainWindow):
             import os
 
             import psutil
+
             process = psutil.Process(os.getpid())
             return process.create_time()
         except Exception as e:
             logger.warning(f"Failed to get process start time: {e}")
             # Fallback to current time
             import time
+
             return time.time()
 
     def _is_log_from_current_session(self, log_info: LogFileInfo) -> bool:
@@ -3114,10 +3207,7 @@ class LogViewerWindow(QMainWindow):
         Returns:
             bool: True only when the log's process is confirmed alive
         """
-        return (
-            self.process_tracker.log_liveness(log_info)
-            is ProcessLiveness.RUNNING
-        )
+        return self.process_tracker.log_liveness(log_info) is ProcessLiveness.RUNNING
 
     def on_filter_changed(self, state: int) -> None:
         """
@@ -3126,7 +3216,7 @@ class LogViewerWindow(QMainWindow):
         Args:
             state: Qt.CheckState value
         """
-        self.show_alive_only = (state == Qt.CheckState.Checked.value)
+        self.show_alive_only = state == Qt.CheckState.Checked.value
 
         # Refresh dropdown with filter applied
         # Always use master list as source, not the current dropdown

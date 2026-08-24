@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLab
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from pyqt_reactive.protocols import (
-    get_function_registry,
     get_component_selection_provider,
     get_function_selection_provider,
 )
@@ -204,7 +203,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         self._action_buttons_container.add_button(self.next_key_btn)
 
         # Initialize services (reuse existing business logic)
-        self.function_registry = get_function_registry()
         self.component_selection_provider = get_component_selection_provider()
         self.function_selection_provider = get_function_selection_provider()
         if self.component_selection_provider is None:
@@ -936,9 +934,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
         if self._button_style:
-            return self.theme.scheme.styles.require_config_button_style(
-                self._button_style
-            )
+            return self.theme.scheme.styles.require_config_button_style(self._button_style)
 
         return f"""
             QPushButton {{

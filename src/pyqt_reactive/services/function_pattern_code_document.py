@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, get_type_hints
+from typing import Any, ClassVar, get_type_hints
 
 from objectstate import (
     ObjectState,
@@ -51,18 +51,8 @@ def function_pattern_authority(func):
     return getattr(func, FUNCTION_PATTERN_AUTHORITY_ATTR, func)
 
 
-class FunctionAuthority(Protocol):
-    """Callable identity owned by a function pattern entry."""
-
-    __name__: str
-    __module__: str
-
-    def __call__(
-        self,
-        *args: ParameterValue,
-        **kwargs: ParameterValue,
-    ) -> ParameterValue:
-        """Invoke the function with its declared backend signature."""
+FunctionAuthority = Callable[..., ParameterValue]
+"""Callable identity owned by a function-pattern entry."""
 
 
 FunctionKwargs = dict[str, ParameterValue]

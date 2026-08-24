@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidgetItem
+
+from pyqt_reactive.services.tree_item_key import TreeItemKeyProviderABC
 
 
 @dataclass
@@ -18,11 +19,11 @@ class TreeNode:
     label: str
     status: str
     info: str
-    children: List["TreeNode"] = field(default_factory=list)
+    children: list[TreeNode] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
-class TreeNodeIdentity:
+class TreeNodeIdentity(TreeItemKeyProviderABC):
     """Stable typed identity stored in a Qt tree item."""
 
     node_type: str
@@ -35,7 +36,11 @@ class TreeNodeIdentity:
 class TreeSyncAdapter:
     """Sync typed node trees to QTreeWidgetItem hierarchies."""
 
-    def sync_children(self, parent_item: QTreeWidgetItem, nodes: List[TreeNode]) -> None:
+    def sync_children(
+        self,
+        parent_item: QTreeWidgetItem,
+        nodes: list[TreeNode],
+    ) -> None:
         seen: set[TreeNodeIdentity] = set()
         for node in nodes:
             identity = TreeNodeIdentity(node_type=node.node_type, node_id=node.node_id)

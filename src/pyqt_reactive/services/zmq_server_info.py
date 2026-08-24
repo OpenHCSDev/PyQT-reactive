@@ -15,9 +15,11 @@ from zmqruntime.messages import (
     WorkerState,
 )
 
+from pyqt_reactive.services.tree_item_key import EndpointPortProviderABC
+
 
 @dataclass(frozen=True, slots=True)
-class BaseServerInfo(ABC, metaclass=AutoRegisterMeta):
+class BaseServerInfo(EndpointPortProviderABC, ABC, metaclass=AutoRegisterMeta):
     """Base presentation view over the authoritative PONG response."""
 
     __registry_key__ = "_server_role"
@@ -47,10 +49,6 @@ class BaseServerInfo(ABC, metaclass=AutoRegisterMeta):
     @property
     def server_name(self) -> str:
         return self.response.server
-
-    def tree_item_key(self) -> str:
-        return f"port:{self.port}"
-
 
 @dataclass(frozen=True, slots=True)
 class ExecutionServerInfo(BaseServerInfo):

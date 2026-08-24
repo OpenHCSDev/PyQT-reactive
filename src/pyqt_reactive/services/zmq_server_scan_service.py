@@ -16,8 +16,10 @@ from zmqruntime.transport import (
     resolve_transport_mode,
 )
 
+from pyqt_reactive.services.tree_item_key import EndpointPortProviderABC
 
-class EndpointObservation(ABC):
+
+class EndpointObservation(EndpointPortProviderABC, ABC):
     """One nominal observation occupying one endpoint port in a snapshot."""
 
     @property
@@ -300,8 +302,7 @@ class EndpointObservationAuthority:
         if replacement == self:
             return EndpointObservationTransition(self)
         removed = tuple(
-            self.scan_service.endpoint(port)
-            for port in snapshot.removed_ports_since(self.snapshot)
+            self.scan_service.endpoint(port) for port in snapshot.removed_ports_since(self.snapshot)
         )
         return EndpointObservationTransition(replacement, removed)
 

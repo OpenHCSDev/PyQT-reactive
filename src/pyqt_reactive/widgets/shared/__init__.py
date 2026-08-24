@@ -147,9 +147,9 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.tree_state_adapter",
         "TypedPayloadTreeItemKeyBuilder",
     ),
-    "TreeItemKeyProvider": (
-        "pyqt_reactive.widgets.shared.tree_state_adapter",
-        "TreeItemKeyProvider",
+    "TreeItemKeyProviderABC": (
+        "pyqt_reactive.services.tree_item_key",
+        "TreeItemKeyProviderABC",
     ),
     "TreeStateAdapter": (
         "pyqt_reactive.widgets.shared.tree_state_adapter",

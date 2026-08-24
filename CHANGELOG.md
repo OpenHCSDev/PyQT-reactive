@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+- Replace structural host-provider, tree-payload, function-row, callable, and
+  docstring shapes with nominal ABCs, concrete presentation declarations, or
+  their actual callable and introspection authorities.
+- Make each inferred path-name role own its tokens and selection behavior
+  instead of maintaining a parallel role-specification table.
+- Remove the unused function/window registries and legacy I/O package that
+  duplicated the active scope-window and host-owned storage systems.
+- Validate releases against the actual Hatchling metadata and trusted-publishing
+  workflow, then build and check both distribution artifacts.
+
 ## 0.3.0
 
 - Remove the embedded LLM chat panel and global LLM service registry so host

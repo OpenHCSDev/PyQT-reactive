@@ -37,3 +37,14 @@ def test_subtree_expansion_restores_known_items_and_defaults_new_items(qapp) -> 
 
     assert not known.isExpanded()
     assert introduced.isExpanded()
+
+
+def test_default_tree_key_builder_rejects_structural_payload_identity(qapp) -> None:
+    class StructuralPayload:
+        def tree_item_key(self) -> str:
+            return "structural:key"
+
+    item = QTreeWidgetItem(["visible text"])
+    item.setData(0, Qt.ItemDataRole.UserRole, StructuralPayload())
+
+    assert TreeStateAdapter.default().item_tree_key(item) == "text:visible text"

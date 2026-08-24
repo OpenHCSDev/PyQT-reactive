@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
-from typing import Protocol, runtime_checkable
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
+
+from pyqt_reactive.services.tree_item_key import TreeItemKeyProviderABC
 
 
 class TreeItemKeyBuilderABC(ABC):
@@ -18,20 +19,12 @@ class TreeItemKeyBuilderABC(ABC):
         """Return one path segment for an item."""
 
 
-@runtime_checkable
-class TreeItemKeyProvider(Protocol):
-    """Typed Qt item payload that owns its stable tree key."""
-
-    def tree_item_key(self) -> str:
-        """Return the stable key segment for this payload."""
-
-
 class TypedPayloadTreeItemKeyBuilder(TreeItemKeyBuilderABC):
     """Default key builder for nominal item payloads."""
 
     def item_segment_key(self, item: QTreeWidgetItem) -> str:
         data = item.data(0, Qt.ItemDataRole.UserRole)
-        if isinstance(data, TreeItemKeyProvider):
+        if isinstance(data, TreeItemKeyProviderABC):
             return data.tree_item_key()
         return f"text:{item.text(0)}"
 

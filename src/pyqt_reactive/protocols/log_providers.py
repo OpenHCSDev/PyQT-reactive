@@ -1,58 +1,64 @@
-"""Protocols for log discovery and server scanning."""
+"""Nominal host contracts for log discovery and server scanning."""
 
-from typing import Protocol, Optional, List
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 from pyqt_reactive.core.log_utils import LogFileInfo
 
 
-class LogDiscoveryProvider(Protocol):
-    """Protocol for discovering log files and current log path."""
+class LogDiscoveryProviderABC(ABC):
+    """Host-owned source of application log files."""
 
+    @abstractmethod
     def get_current_log_path(self) -> Path:
         """Return current log file path."""
-        ...
+        raise NotImplementedError
 
+    @abstractmethod
     def discover_logs(
         self,
-        base_log_path: Optional[str] = None,
+        base_log_path: str | None = None,
         include_main_log: bool = True,
-        log_directory: Optional[Path] = None,
-    ) -> List[LogFileInfo]:
+        log_directory: Path | None = None,
+    ) -> list[LogFileInfo]:
         """Return discovered logs."""
-        ...
+        raise NotImplementedError
 
 
-class ServerScanProvider(Protocol):
-    """Protocol for discovering server logs (e.g., via port scans)."""
+class ServerScanProviderABC(ABC):
+    """Host-owned source of logs advertised by live servers."""
 
-    def scan_for_server_logs(self) -> List[LogFileInfo]:
+    @abstractmethod
+    def scan_for_server_logs(self) -> list[LogFileInfo]:
         """Return logs discovered from live servers."""
-        ...
+        raise NotImplementedError
 
 
-_log_discovery_provider: Optional[LogDiscoveryProvider] = None
-_server_scan_provider: Optional[ServerScanProvider] = None
+_log_discovery_provider: LogDiscoveryProviderABC | None = None
+_server_scan_provider: ServerScanProviderABC | None = None
 
 
-def register_log_discovery_provider(provider: LogDiscoveryProvider) -> None:
+def register_log_discovery_provider(provider: LogDiscoveryProviderABC) -> None:
     """Register a global log discovery provider."""
+    if not isinstance(provider, LogDiscoveryProviderABC):
+        raise TypeError("Log discovery providers must inherit LogDiscoveryProviderABC.")
     global _log_discovery_provider
     _log_discovery_provider = provider
 
 
-def get_log_discovery_provider() -> Optional[LogDiscoveryProvider]:
+def get_log_discovery_provider() -> LogDiscoveryProviderABC | None:
     """Get the registered log discovery provider."""
     return _log_discovery_provider
 
 
-def register_server_scan_provider(provider: ServerScanProvider) -> None:
+def register_server_scan_provider(provider: ServerScanProviderABC) -> None:
     """Register a global server scan provider."""
+    if not isinstance(provider, ServerScanProviderABC):
+        raise TypeError("Server scan providers must inherit ServerScanProviderABC.")
     global _server_scan_provider
     _server_scan_provider = provider
 
 
-def get_server_scan_provider() -> Optional[ServerScanProvider]:
+def get_server_scan_provider() -> ServerScanProviderABC | None:
     """Get the registered server scan provider."""
     return _server_scan_provider
-

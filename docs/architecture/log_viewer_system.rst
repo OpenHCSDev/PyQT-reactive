@@ -28,12 +28,15 @@ Host-owned discovery
 --------------------
 
 Log discovery is an application boundary.  A host implements
-``LogDiscoveryProvider`` and registers it before creating the window.  It may
-also register a ``ServerScanProvider`` when server-log discovery is available.
+``LogDiscoveryProviderABC`` and registers it before creating the window.  It
+may also register a ``ServerScanProviderABC`` when server-log discovery is
+available.
 
 .. code-block:: python
 
    from pyqt_reactive.protocols.log_providers import (
+       LogDiscoveryProviderABC,
+       ServerScanProviderABC,
        register_log_discovery_provider,
        register_server_scan_provider,
    )
@@ -48,8 +51,8 @@ also register a ``ServerScanProvider`` when server-log discovery is available.
    )
    viewer.show()
 
-``LogDiscoveryProvider`` supplies ``get_current_log_path()`` and
-``discover_logs(...)``.  ``ServerScanProvider`` supplies
+``LogDiscoveryProviderABC`` supplies ``get_current_log_path()`` and
+``discover_logs(...)``.  ``ServerScanProviderABC`` supplies
 ``scan_for_server_logs()``.  The host also owns the ``file_manager`` and
 ``service_adapter`` dependencies passed to the window.  Construction fails
 loudly if no log discovery provider has been registered.
@@ -60,7 +63,7 @@ coalesced so a slow provider never creates overlapping background scans.
 Ownership boundary
 ------------------
 
-pyqt-reactive owns log presentation and the generic provider protocols.  The
+pyqt-reactive owns log presentation and the generic nominal provider contracts.  The
 host owns concrete paths, log naming, service discovery, and any domain-specific
-status.  Add new discovery behavior by implementing the protocol at the host
+status.  Add new discovery behavior by subclassing the relevant ABC at the host
 boundary rather than teaching the viewer concrete application names.

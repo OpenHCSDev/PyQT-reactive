@@ -1,8 +1,7 @@
 """Tests for the generic typed help-document model."""
 
-from types import SimpleNamespace
-
 import pytest
+from python_introspect import DocstringInfo
 
 from pyqt_reactive.services.help_document import (
     DEFAULT_HELP_DOCUMENT_MAX_CHARS,
@@ -30,7 +29,7 @@ def test_help_document_format_is_derived_from_declared_source_suffix(
 
 def test_docstring_projection_preserves_structured_sections_and_code() -> None:
     document = HelpDocument.from_docstring_info(
-        SimpleNamespace(
+        DocstringInfo(
             summary="Normalize *one* stack.",
             description="Uses a [documented](https://example.com) algorithm.",
             parameters={
