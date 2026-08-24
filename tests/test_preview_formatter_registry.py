@@ -1,6 +1,9 @@
 """Preview formatter registration behavior."""
 
+from dataclasses import dataclass
+
 import pytest
+from objectstate.lazy_factory import LazyDataclassFactory
 
 from pyqt_reactive.protocols.preview_formatter import PreviewFormatterRegistry
 
@@ -31,3 +34,24 @@ def test_preview_formatter_does_not_hide_host_formatter_failures() -> None:
 
     with pytest.raises(RuntimeError, match="formatter failed"):
         PreviewFormatterRegistry.format_field(BrokenConfig(), "value")
+
+
+def test_preview_formatter_ignores_lazy_wrapper_registration() -> None:
+    @dataclass
+    class BaseConfig:
+        value: int = 0
+
+    lazy_type = LazyDataclassFactory.make_lazy_simple(
+        BaseConfig,
+        "LazyPreviewFormatterRegistryBaseConfig",
+    )
+    PreviewFormatterRegistry.register(
+        BaseConfig,
+        lambda _config, _field_name: "base",
+    )
+    PreviewFormatterRegistry.register(
+        lazy_type,
+        lambda _config, _field_name: "copied",
+    )
+
+    assert PreviewFormatterRegistry.format_field(lazy_type(), "value") == "base"

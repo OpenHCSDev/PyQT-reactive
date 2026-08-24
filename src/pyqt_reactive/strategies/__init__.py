@@ -1,37 +1,33 @@
-"""Preview formatting strategies."""
+"""Reusable presentation declarations and services."""
 
 from .preview_formatting import (
     FormattingConfig,
-    PreviewGroup,
-    PreviewSegmentBuilder,
-    PreviewFormattingStrategy,
-    DefaultPreviewFormattingStrategy,
+    ObjectStatePreviewFormattingService,
+    PreviewSegment,
 )
 from .status_presentation import (
+    DefaultStatusPresentationStrategy,
     StatusPresentationInput,
     StatusPresentationResult,
     StatusPresentationStrategyABC,
-    DefaultStatusPresentationStrategy,
 )
 from .tree_aggregation import (
-    TreeAggregationPolicyABC,
-    MeanTreeAggregationPolicy,
     ExplicitPercentTreeAggregationPolicy,
+    MeanTreeAggregationPolicy,
+    TreeAggregationPolicyABC,
     TreeAggregationPolicyRegistry,
 )
 
 __all__ = [
-    'FormattingConfig',
-    'PreviewGroup',
-    'PreviewSegmentBuilder',
-    'PreviewFormattingStrategy',
-    'DefaultPreviewFormattingStrategy',
-    'StatusPresentationInput',
-    'StatusPresentationResult',
-    'StatusPresentationStrategyABC',
-    'DefaultStatusPresentationStrategy',
-    'TreeAggregationPolicyABC',
-    'MeanTreeAggregationPolicy',
-    'ExplicitPercentTreeAggregationPolicy',
-    'TreeAggregationPolicyRegistry',
+    "FormattingConfig",
+    "ObjectStatePreviewFormattingService",
+    "PreviewSegment",
+    "StatusPresentationInput",
+    "StatusPresentationResult",
+    "StatusPresentationStrategyABC",
+    "DefaultStatusPresentationStrategy",
+    "TreeAggregationPolicyABC",
+    "MeanTreeAggregationPolicy",
+    "ExplicitPercentTreeAggregationPolicy",
+    "TreeAggregationPolicyRegistry",
 ]

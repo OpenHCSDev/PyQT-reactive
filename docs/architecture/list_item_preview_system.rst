@@ -24,7 +24,7 @@ fields:
    * - ``detail_line_field``
      - Optional field path used as the detail line.
    * - ``formatters``
-     - Per-path format strings or callables.
+     - Per-path callables that project resolved values into text.
    * - ``append_signature_diff_fields``
      - Whether fields that differ from their callable signature are appended.
 
@@ -49,7 +49,7 @@ fields:
        )
 
 There is no ``show_config_indicators`` field.  Domain-specific indicators are
-ordinary segments supplied by the owning manager or formatting strategy.
+ordinary segments supplied by the owning manager or formatting service.
 
 Rendering flow
 --------------
@@ -64,6 +64,15 @@ metadata.  When ``append_signature_diff_fields`` is enabled, it appends missing
 signature-difference paths while avoiding fields already represented by a
 parent or child path.
 
+For each resolved field, ObjectState supplies the type or callable that declares
+its path.  The formatting service carries that declaration as
+``PreviewFieldFormatRequest.field_owner``;
+field abbreviations are resolved only through the canonical declaration's MRO.
+The formatter never searches unrelated registrations for a matching field
+name.  Generated lazy wrappers are normalised before preview labels, field
+abbreviations, group abbreviations, always-viewable fields, or registered host
+formatters are resolved.
+
 ObjectState config declarations can own a compact ``preview_label``.
 ``pyqt_reactive.utils.resolve_preview_label`` first resolves a generated lazy
 wrapper to its authored config type, then follows that declaration's MRO.  Its
@@ -76,10 +85,10 @@ Ownership boundary
 ------------------
 
 pyqt-reactive owns structured row construction and painting.  ObjectState owns
-field values and lazy metadata.  The host manager owns which semantic fields to
-show, field abbreviations, status prefixes, and custom formatters.  Keep those
-declarations on the manager or domain type instead of adding concrete names to
-the generic builder.
+field values, their declaring types, and lazy metadata.  Domain config
+declarations own preview labels and abbreviations.  The host manager owns which
+semantic fields to show, status prefixes, and explicit value-projection
+callables.  Concrete domain names do not belong in the generic builder.
 
 See also :doc:`abstract_manager_widget` and
 :doc:`gui_performance_patterns`.

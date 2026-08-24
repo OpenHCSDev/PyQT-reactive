@@ -1,338 +1,213 @@
-"""
-Preview Formatting Strategy Pattern
+"""Declaration-driven formatting for manager list-item previews."""
 
-Provides pluggable formatting strategies for list item previews.
-Separates data collection from presentation using builder pattern and config-driven styling.
-"""
+from __future__ import annotations
 
-import logging
-from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Callable, TYPE_CHECKING, Dict, Any, Type, Union
+from typing import TYPE_CHECKING, TypeAlias
+
+from objectstate import DottedFieldPath, ParameterOwner
+
+from pyqt_reactive.utils.preview_formatters import (
+    PreviewFieldFormatRequest,
+    canonical_declaration_mro,
+)
 
 if TYPE_CHECKING:
     from objectstate import ObjectState
 
-from pyqt_reactive.widgets.shared.list_item_delegate import Segment
+PreviewSegment: TypeAlias = tuple[str, str | None, str | None]
+PreviewValueFormatter: TypeAlias = Callable[[PreviewFieldFormatRequest], str | None]
+ItemValueFormatter: TypeAlias = Callable[[object], str | None]
 
-logging.getLogger(__name__).setLevel(logging.WARNING)
 
-
-def get_group_abbreviation(config_type: Union[str, type]) -> str:
-    """Look up group abbreviation from GROUP_ABBREVIATIONS_REGISTRY.
-
-    Handles both type objects and type name strings.
-
-    Args:
-        config_type: Config class or type name to get abbreviation for
-
-    Returns:
-        Abbreviation string if found, otherwise falls back to class name prefix
-    """
+def get_group_abbreviation(config_type: type) -> str:
+    """Resolve a group abbreviation from the canonical declaration MRO."""
     from objectstate.lazy_factory import GROUP_ABBREVIATIONS_REGISTRY
 
-    if isinstance(config_type, str):
-        return config_type.split('_')[0] if config_type else "root"
-
-    if config_type in GROUP_ABBREVIATIONS_REGISTRY:
-        return GROUP_ABBREVIATIONS_REGISTRY[config_type]
-
-    for base in config_type.__mro__[1:]:
-        if base in GROUP_ABBREVIATIONS_REGISTRY:
-            return GROUP_ABBREVIATIONS_REGISTRY[base]
-
-    return config_type.__name__.split('_')[0]
+    for declaration_type in canonical_declaration_mro(config_type):
+        abbreviation = GROUP_ABBREVIATIONS_REGISTRY.get(declaration_type)
+        if abbreviation is not None:
+            return abbreviation
+    return config_type.__name__.split("_", 1)[0]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FormattingConfig:
-    """Presentation rules for preview formatting."""
+    """Presentation rules for preview grouping and separators."""
 
-    # Group configuration
     show_group_labels: bool = True
     group_separator: str = " | "
-
-    # Field configuration
-    # First field separator: empty for "{{" format (already in label)
-    first_field_separator: str = ""
     field_separator: str = ", "
-    closing_brace_separator: str = ""  # Separator after closing brace
-
-    # Abbreviation strategy - looks up from GROUP_ABBREVIATIONS_REGISTRY
-    container_abbr_func: Callable[[Union[str, type]], str] = get_group_abbreviation
-
-    # Group label format
-    # Format: "{abbr}{{" - abbreviation with opening brace
-    # Example: "{abbr}{{" produces "wf{well_filter=2}"
-    group_label_format: str = "{abbr}{{"  # e.g., "wf{" or "planning{"
+    closing_brace_separator: str = ""
+    container_abbr_func: Callable[[type], str] = get_group_abbreviation
 
 
-@dataclass
-class PreviewGroup:
-    """A group of fields from the same config type."""
-    container_type: type
-    field_data: List[Tuple[str, Any, str]]  # (field_path, value, label)
-    container_key: str  # Store container key once to avoid recomputing
+@dataclass(frozen=True, slots=True)
+class _PreviewField:
+    """One rendered field in a preview group."""
 
-    def __post_init__(self):
-        """Validate container_type."""
-        if self.container_type is None:
-            raise ValueError("container_type cannot be None")
+    field_path: str
+    label: str
 
 
-class PreviewSegmentBuilder:
-    """Builds preview segments by grouping fields by their config type."""
+@dataclass(slots=True)
+class _PreviewGroup:
+    """Fields sharing one authoritative ObjectState container path."""
 
-    def __init__(self, formatting_config: FormattingConfig, state: Optional['ObjectState'] = None):
-        self.config = formatting_config
-        self.state = state
-        self.groups: Dict[str, PreviewGroup] = {}
-        self.group_order: List[str] = []  # Preserve insertion order
+    container_path: DottedFieldPath
+    owner: ParameterOwner
+    fields: list[_PreviewField] = field(default_factory=list)
 
-    def add_field(self, field_path: str, value: Any, label: str, container_type: type):
-        """Add a field to its config type's group.
+    def add(self, field_path: str, label: str) -> None:
+        """Append one field to this render-cycle projection."""
+        self.fields.append(_PreviewField(field_path=field_path, label=label))
 
-        Groups all fields by their container type.
-        - Dataclass configs: use type name as group (e.g., 'PathPlanningConfig')
-        - Primitive types (int, str, etc.): group as 'root'
-
-        This ensures consistent grouping behavior for all fields.
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-        from dataclasses import is_dataclass
-
-        logger.info(f"add_field: field_path={field_path}, container_type={container_type.__name__ if container_type else None}")
-
-        # Use config type name for dataclass configs, 'root' for primitives
-        if is_dataclass(container_type):
-            container_key = container_type.__name__
-            logger.info(f"  Decision: is_dataclass -> container_key='{container_key}'")
-        else:
-            container_key = "root"
-            logger.info(f"  Decision: NOT is_dataclass -> container_key='root'")
-
-        if container_key not in self.groups:
-            self.groups[container_key] = PreviewGroup(
-                container_type=container_type,
-                field_data=[],
-                container_key=container_key
+    def heading(self, config: FormattingConfig) -> tuple[str, str | None]:
+        """Derive the heading from the ObjectState container path and owner."""
+        if not self.container_path.parts:
+            return "root", None
+        if not isinstance(self.owner, type):
+            raise TypeError(
+                f"Preview container {self.container_path.value!r} requires a type declaration"
             )
-            self.group_order.append(container_key)
-            logger.info(f"  Created new group: '{container_key}' (total groups: {len(self.groups)})")
-        else:
-            logger.info(f"  Using existing group: '{container_key}'")
+        return (
+            config.container_abbr_func(self.owner),
+            self.container_path.value,
+        )
 
-        self.groups[container_key].field_data.append((field_path, value, label))
-        logger.info(f"  Added field to group '{container_key}' (now has {len(self.groups[container_key].field_data)} fields)")
 
-    def build(self) -> List[Tuple[str, str, Optional[str]]]:
-        """Render all groups using formatting config."""
-        import logging
-        logger = logging.getLogger(__name__)
+class _PreviewSegmentBuilder:
+    """Group formatted fields without copying their declaration metadata."""
 
-        logger.info("=" * 60)
-        logger.info(f"BUILD: Rendering {len(self.group_order)} groups")
-        logger.info(f"group_order={self.group_order}")
+    def __init__(self, formatting_config: FormattingConfig) -> None:
+        self.config = formatting_config
+        self._groups: dict[DottedFieldPath, _PreviewGroup] = {}
 
-        segments = []
+    def add_field(
+        self,
+        field_path: str,
+        label: str,
+        container_path: DottedFieldPath,
+        container_owner: ParameterOwner,
+    ) -> None:
+        """Add a formatted field to its declaration-owned presentation group."""
+        group = self._groups.get(container_path)
+        if group is None:
+            group = _PreviewGroup(
+                container_path=container_path,
+                owner=container_owner,
+            )
+            self._groups[container_path] = group
+        elif group.owner is not container_owner:
+            raise TypeError(
+                f"Preview container {container_path.value!r} has inconsistent declarations"
+            )
+        group.add(field_path, label)
 
-        for i, container_key in enumerate(self.group_order):
-            group = self.groups[container_key]
-            logger.info(f"--- Rendering group {i+1}/{len(self.group_order)}: '{container_key}' ---")
-            logger.info(f"  container_type={group.container_type.__name__ if group.container_type else None}")
-            logger.info(f"  field_count={len(group.field_data)}")
-
-            # Render group
-            group_segments = self._render_group(group, i == 0)
-            logger.info(f"  Generated {len(group_segments)} segments")
-            segments.extend(group_segments)
-
-        logger.info(f"BUILD COMPLETE: Total {len(segments)} segments")
+    def build(self) -> list[PreviewSegment]:
+        """Render groups in the order their first field was added."""
+        segments: list[PreviewSegment] = []
+        for index, group in enumerate(self._groups.values()):
+            segments.extend(self._render_group(group, is_first_group=index == 0))
         return segments
 
-    def _render_group(self, group: PreviewGroup, is_first_group: bool) -> List[Tuple]:
-        """Render a single group using config.
-
-        Root group (primitive types) is rendered without braces or labels.
-        Dataclass groups use abbreviation with braces.
-
-        Uses stored container_key from PreviewGroup to avoid recomputing.
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-
-        segments = []
-        is_root_group = group.container_key == "root"  # Use stored key
-
-        logger.info(f"  container_key='{group.container_key}', is_root_group={is_root_group}")
-        logger.info(f"  show_group_labels={self.config.show_group_labels}, is_first_group={is_first_group}")
-
-        # Group separator BEFORE abbreviation (not after)
-        group_sep_before_abbr = "" if is_first_group else self.config.group_separator
-        logger.info(f"  group_sep_before_abbr='{group_sep_before_abbr}'")
-
-        # Group opening label (if configured)
+    def _render_group(
+        self,
+        group: _PreviewGroup,
+        *,
+        is_first_group: bool,
+    ) -> list[PreviewSegment]:
+        segments: list[PreviewSegment] = []
         if self.config.show_group_labels:
-            if is_root_group:
-                # Root group gets 'root' label
-                abbr = "root"
-                abbr_field_path = None  # Root fields have varied paths, no single prefix
-                logger.info(f"  Adding root abbr with field_path={abbr_field_path}")
+            abbreviation, abbreviation_path = group.heading(self.config)
+            if is_first_group:
+                group_separator = ""
             else:
-                # Config groups get their abbreviation
-                abbr = self.config.container_abbr_func(group.container_type)
-                
-                # Extract the field prefix from the first field in the group
-                # e.g., from 'path_planning_config.sub_dir' -> 'path_planning_config'
-                # This matches the format used by dirty_fields/sig_diff_fields
-                if group.field_data:
-                    first_field_path = group.field_data[0][0]
-                    abbr_field_path = first_field_path.split('.')[0] if '.' in first_field_path else first_field_path
+                group_separator = self.config.group_separator
+            segments.extend(
+                (
+                    (abbreviation, abbreviation_path, group_separator),
+                    ("{", None, ""),
+                )
+            )
+
+        for index, preview_field in enumerate(group.fields):
+            if index == 0:
+                if self.config.show_group_labels:
+                    separator = ""
                 else:
-                    abbr_field_path = None
-                
-                logger.info(f"  Adding abbr '{abbr}' with field_path={abbr_field_path}")
-            
-            segments.append((abbr, abbr_field_path, group_sep_before_abbr))
-            
-            # Add opening brace (no separator before or after)
-            segments.append(("{", None, ""))
-            logger.info(f"  Added opening brace")
-        else:
-            logger.info(f"  SKIPPING abbr/brace: show_group_labels={self.config.show_group_labels}")
-
-        # Fields in group
-        logger.info(f"  Rendering {len(group.field_data)} fields")
-        for j, (field_path, value, label) in enumerate(group.field_data):
-            if self.config.show_group_labels:
-                # First field: no separator (already in group label format "*{")
-                # Subsequent fields: comma separator
-                field_sep = "" if j == 0 else ", "
+                    separator = None
             else:
-                # No group labels: use default separator between all fields
-                field_sep = None if j == 0 else self.config.field_separator
+                separator = self.config.field_separator
+            segments.append((preview_field.label, preview_field.field_path, separator))
 
-            logger.info(f"    Field {j+1}: {field_path}, sep_before='{field_sep}'")
-            segments.append((label, field_path, field_sep))
-
-        # Closing brace for group (if showing group labels) - no styling
-        if self.config.show_group_labels and group.field_data:
+        if self.config.show_group_labels:
             segments.append(("}", None, self.config.closing_brace_separator))
-            logger.info(f"  Added closing brace")
-        else:
-            if not self.config.show_group_labels:
-                logger.info(f"  SKIPPING closing brace: show_group_labels=False")
-            elif not group.field_data:
-                logger.info(f"  SKIPPING closing brace: no fields")
-
-        logger.info(f"  Total segments from this group: {len(segments)}")
         return segments
 
 
-class PreviewFormattingStrategy(ABC):
-    """Abstract strategy for preview formatting."""
+class ObjectStatePreviewFormattingService:
+    """Format resolved ObjectState values using their recorded declarations."""
 
-    def __init__(self, config: FormattingConfig, widget: Any = None):
+    def __init__(self, config: FormattingConfig) -> None:
         self.config = config
-        self.widget = widget  # Widget instance for method lookups
-
-    @abstractmethod
-    def collect_and_render(
-        self,
-        state: Optional['ObjectState'],
-        field_paths: List[str],
-        formatters: dict,
-        field_value_formatter: callable,
-    ) -> List[Tuple[str, str, Optional[str]]]:
-        """
-        Collect field data and render segments.
-
-        Returns:
-            List of (label_text, field_path, sep_before) tuples
-        """
-        pass
-
-
-class DefaultPreviewFormattingStrategy(PreviewFormattingStrategy):
-    """Default strategy with grouping by config type."""
 
     def collect_and_render(
         self,
-        state: Optional['ObjectState'],
-        field_paths: List[str],
-        formatters: dict,
-        field_value_formatter: callable,
-    ) -> List[Tuple[str, str, Optional[str]]]:
-        """
-        Collect field data using builder, then render.
-
-        Returns:
-            List of (label_text, field_path, sep_before) tuples
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-
+        state: ObjectState | None,
+        field_paths: Sequence[str],
+        formatters: Mapping[str, ItemValueFormatter],
+        field_value_formatter: PreviewValueFormatter,
+    ) -> list[PreviewSegment]:
+        """Collect declared fields and return their rendered segments."""
         if state is None:
-            logger.debug(f"📐 PREVIEW_FORMAT: state is None, returning []")
             return []
 
-        # Phase 1: Collect data using builder
-        builder = PreviewSegmentBuilder(self.config, state)
-
-        logger.info("=" * 60)
-        logger.info(f"PREVIEW STRATEGY: Processing {len(field_paths)} field_paths")
-        logger.info(f"show_group_labels={self.config.show_group_labels}")
-
-        for i, field_path in enumerate(field_paths):
-            logger.info(f"--- Field {i+1}/{len(field_paths)}: {field_path} ---")
-
+        builder = _PreviewSegmentBuilder(self.config)
+        for field_path in field_paths:
             value = state.get_resolved_value(field_path)
             if value is None:
-                logger.info(f"  ⏭️  SKIPPED: value is None")
                 continue
 
-            logger.info(f"  Value type: {type(value).__name__}, value={value}")
-
-            # Get container type from state
-            container_path = field_path.rsplit('.', 1)[0] if '.' in field_path else ""
-            logger.info(f"  container_path='{container_path}'")
-            logger.info(f"  state._path_to_type.keys()={list(state._path_to_type.keys())[:10]}")
-
-            container_type = state._path_to_type.get(container_path, type(value))
-            if container_type is None:
-                container_type = type(value)
-                logger.info(f"  ⚠️  FALLBACK: Container type from type(value)={container_type.__name__}")
+            field_owner = self._field_owner_for_path(state, field_path)
+            formatter = formatters.get(field_path)
+            if formatter is None:
+                label = field_value_formatter(
+                    PreviewFieldFormatRequest(
+                        field_path=field_path,
+                        value=value,
+                        field_owner=field_owner,
+                    )
+                )
             else:
-                logger.info(f"  ✓ LOOKUP: Container type from state={container_type.__name__}")
+                label = formatter(value)
+            if not label:
+                continue
 
-            # Get label
-            if field_path in formatters:
-                label = self._apply_formatter(formatters[field_path], value, state, field_path)
-                logger.info(f"  Using formatter for {field_path}: {label}")
-            else:
-                label = field_value_formatter(field_path, value)
-                logger.info(f"  Using field_value_formatter for {field_path}: {label}")
+            container_path = self._container_path(field_path)
+            builder.add_field(
+                field_path,
+                label,
+                container_path,
+                self._field_owner_for_path(state, container_path.value),
+            )
+        return builder.build()
 
-            if label:
-                logger.info(f"  ✓ CALLING builder.add_field({field_path}, {type(value).__name__}, {container_type.__name__})")
-                builder.add_field(field_path, value, label, container_type)
+    @staticmethod
+    def _field_owner_for_path(
+        state: ObjectState,
+        field_path: str,
+    ) -> ParameterOwner:
+        declaration = state.type_for_path(field_path)
+        if not isinstance(declaration, type) and not callable(declaration):
+            raise TypeError(
+                f"Preview field {field_path!r} requires a nominal type or callable declaration"
+            )
+        return declaration
 
-        # Phase 2: Render
-        segments = builder.build()
-        logger.debug(f"📐 PREVIEW_FORMAT: {len(segments)} segments: {[(s[0][:30], s[1][:30] if len(s)>1 and s[1] else '') for s in segments[:5]]}")
-        return segments
-
-    def _apply_formatter(self, formatter, value, state, field_path):
-        """Apply formatter to value."""
-        if isinstance(formatter, str):
-            # Look up method on widget, not self (strategy)
-            formatter_method = getattr(self.widget, formatter, None)
-            if formatter_method:
-                import inspect
-                sig = inspect.signature(formatter_method)
-                if len(sig.parameters) >= 2:
-                    return formatter_method(value, state)
-                return formatter_method(value)
-            return None  # Method not found - skip this field
-        return formatter(value)  # formatter is callable - invoke it
+    @staticmethod
+    def _container_path(field_path: str) -> DottedFieldPath:
+        if "." not in field_path:
+            return DottedFieldPath("")
+        return DottedFieldPath(field_path.rsplit(".", 1)[0])

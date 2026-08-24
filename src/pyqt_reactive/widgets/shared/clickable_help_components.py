@@ -679,12 +679,6 @@ class ProvenanceNavigationMixin:
                 f"no ObjectState registered for scope {source_scope_id!r}"
             )
 
-        # Debug: log the available types in target state
-        logger.debug(f"Target state _path_to_type keys: {list(target_state._path_to_type.keys())}")
-        for path, typ in target_state._path_to_type.items():
-            if '.' not in path:
-                logger.debug(f"  {path} -> {typ.__name__}")
-
         target_path = target_state.project_ui_visible_field_path(source_type, field_name)
         if target_path is None:
             raise ProvenanceNavigationUnavailable(

@@ -42,7 +42,7 @@ from pyqt_reactive.widgets.mixins import (
 )
 from pyqt_reactive.strategies import (
     FormattingConfig,
-    DefaultPreviewFormattingStrategy,
+    ObjectStatePreviewFormattingService,
 )
 from objectstate import LiveContextResolver
 from pyqt_reactive.animation import FlashMixin
@@ -693,7 +693,7 @@ class AbstractManagerWidget(
         )
         self._init_visual_update_mixin()  # Initialize VisualUpdateMixin state
 
-        # Create preview formatting strategy
+        # Create the ObjectState-backed preview formatting service
         # Handle field(default_factory=FormattingConfig) pattern
         from dataclasses import Field
         if isinstance(self.PREVIEW_FORMATTING_CONFIG, Field):
@@ -703,10 +703,10 @@ class AbstractManagerWidget(
             config = self.PREVIEW_FORMATTING_CONFIG()
         else:
             config = self.PREVIEW_FORMATTING_CONFIG
-        self._preview_formatting_strategy = DefaultPreviewFormattingStrategy(config, widget=self)
+        self._preview_formatter = ObjectStatePreviewFormattingService(config)
         self._preview_field_formatter = ManagerPreviewFieldFormatter()
         self._item_display_builder = _ManagerItemDisplayBuilder(
-            preview_formatting_strategy=self._preview_formatting_strategy,
+            preview_formatter=self._preview_formatter,
             field_formatter=self._preview_field_formatter.format_field,
             signature_diff_fields=self._list_visual_state.signature_diff_fields,
             scope_for_item=self._item_access.scope_for_item,

@@ -51,13 +51,10 @@ class PreviewFormatterRegistry:
         Returns:
             Formatter function if registered, None otherwise
         """
-        formatter = cls._formatters.get(config_type)
-        if formatter is not None:
-            return formatter
+        from pyqt_reactive.utils.preview_formatters import canonical_declaration_mro
 
-        # Check base classes (for shared config bases)
-        for base in config_type.__mro__[1:]:
-            formatter = cls._formatters.get(base)
+        for declaration_type in canonical_declaration_mro(config_type):
+            formatter = cls._formatters.get(declaration_type)
             if formatter is not None:
                 return formatter
 

@@ -1,109 +1,47 @@
 """Preview field formatting for manager list items."""
 
-from dataclasses import dataclass, is_dataclass
-from enum import Enum
-from typing import Any
+from dataclasses import is_dataclass
 
 from pyqt_reactive.utils.preview_formatters import (
+    PreviewFieldFormatRequest,
     check_enabled_field,
+    format_preview_value,
+    resolve_field_abbreviation,
     resolve_preview_label,
 )
-
-
-@dataclass(frozen=True)
-class PreviewFieldFormatRequest:
-    """Request to render one preview field value."""
-
-    field_path: str
-    value: Any
-
-    @property
-    def field_name(self) -> str:
-        return self.field_path.split(".")[-1]
-
-
-@dataclass(frozen=True)
-class PreviewFieldFormatResult:
-    """Typed optional carrier for preview text."""
-
-    text: str | None
 
 
 class ManagerPreviewFieldFormatter:
     """Formats field values for AbstractManagerWidget preview segments."""
 
-    def format_field(self, field_path: str, value: Any) -> str | None:
-        request = PreviewFieldFormatRequest(field_path=field_path, value=value)
-        return self.resolve(request).text
-
-    def resolve(self, request: PreviewFieldFormatRequest) -> PreviewFieldFormatResult:
+    def format_field(self, request: PreviewFieldFormatRequest) -> str | None:
+        """Format a value using metadata from its actual declaring type."""
         if request.value is None:
-            return PreviewFieldFormatResult(text=None)
-
-        abbrev = self._field_abbreviation(request.field_name, type(request.value))
+            return None
 
         if is_dataclass(request.value) and not isinstance(request.value, type):
             return self._format_dataclass_value(request)
 
-        formatted = self._format_preview_value(request.value)
+        formatted = format_preview_value(request.value)
         if formatted is None:
-            return PreviewFieldFormatResult(text=None)
-        return PreviewFieldFormatResult(text=f"{abbrev}:{formatted}")
+            return None
+        abbreviation = resolve_field_abbreviation(
+            request.field_owner,
+            request.field_name,
+        )
+        abbrev = abbreviation.abbreviation if abbreviation is not None else request.field_name
+        return f"{abbrev}:{formatted}"
 
-    def _format_dataclass_value(
-        self,
-        request: PreviewFieldFormatRequest,
-    ) -> PreviewFieldFormatResult:
+    def _format_dataclass_value(self, request: PreviewFieldFormatRequest) -> str | None:
         from pyqt_reactive.protocols import PreviewFormatterRegistry
 
         formatted = PreviewFormatterRegistry.format_field(request.value, request.field_name)
         if formatted is None:
             formatted = self._preview_label_for_config(request.value)
-        return PreviewFieldFormatResult(text=formatted)
+        return formatted
 
-    def _format_preview_value(self, value: Any) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, Enum):
-            if value.value is None:
-                return None
-            return value.name
-        if isinstance(value, list):
-            if not value:
-                return None
-            if isinstance(value[0], Enum):
-                return ",".join(v.value for v in value)
-            return f"[{len(value)}]"
-        if callable(value) and not isinstance(value, type):
-            return getattr(value, "__name__", str(value))
-        return str(value)
-
-    def _preview_label_for_config(self, config_obj: Any) -> str | None:
+    def _preview_label_for_config(self, config_obj: object) -> str | None:
         if not check_enabled_field(config_obj):
             return None
         resolution = resolve_preview_label(config_obj)
         return resolution.label if resolution is not None else None
-
-    def _field_abbreviation(
-        self,
-        field_name: str,
-        config_type: type | None = None,
-    ) -> str:
-        from objectstate.lazy_factory import FIELD_ABBREVIATIONS_REGISTRY
-
-        if config_type is not None:
-            if config_type in FIELD_ABBREVIATIONS_REGISTRY:
-                abbrevs = FIELD_ABBREVIATIONS_REGISTRY[config_type]
-                if field_name in abbrevs:
-                    return abbrevs[field_name]
-            for base in config_type.__mro__[1:]:
-                if base in FIELD_ABBREVIATIONS_REGISTRY:
-                    abbrevs = FIELD_ABBREVIATIONS_REGISTRY[base]
-                    if field_name in abbrevs:
-                        return abbrevs[field_name]
-
-        for abbrevs in FIELD_ABBREVIATIONS_REGISTRY.values():
-            if field_name in abbrevs:
-                return abbrevs[field_name]
-
-        return field_name

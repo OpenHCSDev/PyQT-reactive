@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.5
+
+- Carry ObjectState's field declaration into manager-preview formatting so
+  abbreviations resolve through that declaration rather than a global registry
+  scan.
+- Normalise lazy declaration provenance for all preview metadata, require
+  explicit callable value formatters, and remove duplicated grouping state and
+  diagnostic logging from the preview pipeline.
+- Group previews by ObjectState container path so separate fields with the same
+  config declaration remain distinct. ObjectState 1.1.4 supplies the shared
+  parameter-owner authority used by this projection.
+
 ## 0.3.4
 
 - Resolve preview labels from canonical ObjectState declarations so generated
