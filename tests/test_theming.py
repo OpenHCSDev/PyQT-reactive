@@ -405,12 +405,9 @@ def test_theme_manager_renders_message_box_buttons_from_shared_style(qapp):
         qapp.setPalette(original_palette)
 
 
-def test_qscintilla_editor_uses_shared_borderless_button_style(qapp, monkeypatch):
+def test_qscintilla_editor_uses_shared_borderless_button_style(qapp):
     """The code editor must not restore its former outlined button mirror."""
-    from types import SimpleNamespace
-
     from pyqt_reactive.theming import ColorScheme, ThemeManager
-    from pyqt_reactive.widgets import llm_chat_panel
     from pyqt_reactive.widgets.editors.simple_code_editor import (
         QSCINTILLA_AVAILABLE,
         QScintillaCodeEditorDialog,
@@ -421,11 +418,6 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(qapp, monkeypatch
 
     original_palette = QPalette(qapp.palette())
     original_stylesheet = qapp.styleSheet()
-    monkeypatch.setattr(
-        llm_chat_panel,
-        "get_llm_service",
-        lambda: SimpleNamespace(test_connection=lambda: True),
-    )
     dialog = None
     try:
         scheme = ColorScheme()
@@ -440,7 +432,7 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(qapp, monkeypatch
             f"border: 1px solid {scheme.to_hex(scheme.border_light)}"
         )
         assert former_outline not in dialog.styleSheet()
-        for button in (dialog.llm_assist_btn, dialog.save_btn, dialog.cancel_btn):
+        for button in (dialog.save_btn, dialog.cancel_btn):
             assert button.styleSheet() == ""
             rendered_colors = {
                 button.grab().toImage().pixelColor(x, y).name()

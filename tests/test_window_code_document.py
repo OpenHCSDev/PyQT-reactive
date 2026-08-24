@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyqt_reactive.protocols import codegen_provider
+from pyqt_reactive.protocols import CodegenProviderABC, codegen_provider
 from pyqt_reactive.services.window_code_document import (
     WindowCodeDocument,
     WindowCodeDocumentDriver,
@@ -44,7 +44,17 @@ def test_default_revision_tracks_document_content_not_rejected_validation() -> N
 def test_declaration_backed_source_comparison_uses_codegen_normalization(
     monkeypatch,
 ) -> None:
-    class NormalizingCodegenProvider:
+    class NormalizingCodegenProvider(CodegenProviderABC):
+        def render_assignment(
+            self,
+            value: object,
+            *,
+            assignment_name: str,
+            header: str,
+            clean_mode: bool,
+        ) -> str:
+            raise AssertionError("source comparison must not render assignments")
+
         def normalize_source(
             self,
             source: str,
@@ -77,3 +87,22 @@ def test_declaration_backed_source_comparison_uses_codegen_normalization(
     assert driver.source_is_current("value = int(1)\n")
     assert not driver.source_is_current("value = 2\n")
     assert not driver.source_is_current("unsupported source")
+
+
+def test_codegen_registration_requires_nominal_contract(monkeypatch) -> None:
+    class StructuralProvider:
+        def render_assignment(self, *args, **kwargs) -> str:
+            return ""
+
+        def normalize_source(self, *args, **kwargs) -> str:
+            return ""
+
+    monkeypatch.setattr(codegen_provider, "_codegen_provider", None)
+
+    with pytest.raises(TypeError):
+        CodegenProviderABC()
+
+    with pytest.raises(TypeError, match="inherit CodegenProviderABC"):
+        codegen_provider.register_codegen_provider(StructuralProvider())
+
+    assert codegen_provider.get_codegen_provider() is None

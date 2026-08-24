@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Remove the embedded LLM chat panel and global LLM service registry so host
+  applications can expose agent workflows through their own supported boundary.
+- Keep the generic code editor focused on declaration-backed editing, validation,
+  clean-mode normalization, and revision-aware window documents.
+- Replace the structural code-generation provider with the fail-loud
+  `CodegenProviderABC` nominal contract. Host providers must inherit the ABC.
+
 ## 0.2.13
 
 - Keep each ZMQ browser scan tied to one immutable declaration and observation

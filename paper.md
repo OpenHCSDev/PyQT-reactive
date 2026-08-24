@@ -100,9 +100,9 @@ Forms integrate with ObjectState [@objectstate] for dual-axis inheritance. Value
 
 The key insight: `None` means "inherit." Placeholder text shows the inherited value in real-time. Users see what they'll get. Clear a field to restore inheritance. Type a value to override. The UI model and data model are unified—no synchronization bugs, no hidden state.
 
-## Protocol-Based Extensibility
+## Registered Extensibility
 
-The framework knows nothing about your domain. Protocol classes (`FunctionRegistryProtocol`, `LLMServiceProtocol`, `CodegenProvider`, `PreviewFormatterRegistry`) define integration points. Register implementations at startup; the framework calls them without knowing concrete types. Swap AI providers, function registries, or code generators without touching framework code.
+The framework knows nothing about the host application's domain. Registered service contracts such as `CodegenProviderABC` and declaration registries such as `PreviewFormatterRegistry` define integration points. Host applications register their implementations at startup, and the generic widgets consume those nominal boundaries without importing domain types.
 
 ## Flash Animation Architecture
 

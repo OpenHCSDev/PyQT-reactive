@@ -42,8 +42,7 @@ from .widget_adapters import (
 from .function_registry import FunctionRegistryProtocol, register_function_registry, get_function_registry
 from .preview_formatter import PreviewFormatterRegistry, register_preview_formatter
 from .form_config import FormGenConfig, set_form_config, get_form_config
-from .llm_service import LLMServiceProtocol, register_llm_service, get_llm_service
-from .codegen_provider import CodegenProvider, register_codegen_provider, get_codegen_provider
+from .codegen_provider import CodegenProviderABC, register_codegen_provider, get_codegen_provider
 from .log_providers import (
     LogDiscoveryProvider,
     ServerScanProvider,
@@ -101,10 +100,7 @@ __all__ = [
     "FormGenConfig",
     "set_form_config",
     "get_form_config",
-    "LLMServiceProtocol",
-    "register_llm_service",
-    "get_llm_service",
-    "CodegenProvider",
+    "CodegenProviderABC",
     "register_codegen_provider",
     "get_codegen_provider",
     "LogDiscoveryProvider",
