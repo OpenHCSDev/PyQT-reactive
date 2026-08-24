@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3
+
+- Keep repeated status polling out of application INFO logs while retaining the
+  external lifecycle observation as the sole connection-state authority.
+
 ## 0.3.2
 
 - Derive the table-filter sidebar width from its actual controls and platform

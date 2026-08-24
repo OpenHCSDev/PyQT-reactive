@@ -7,10 +7,10 @@ from functools import partialmethod
 
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from zmqruntime.startup import EndpointStartupPresentationTarget
 
 from pyqt_reactive.core import BackgroundTaskManager
 from pyqt_reactive.theming import ColorScheme, StatusColorRole
-from zmqruntime.startup import EndpointStartupPresentationTarget
 
 # --- Module-level constants ---
 DEFAULT_DEBOUNCE_MS = 2000  # Debounce for connection checks
@@ -107,11 +107,7 @@ class StatusIndicator(
 
     def set_state(self, state: StatusState, message: str | None = None) -> None:
         """Update visual state."""
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"StatusIndicator.set_state: state={state}, message={message}")
         color = state.color_role.color_hex(self._color_scheme)
-        logger.info(f"StatusIndicator.set_state: color={color}")
         self._dot.setStyleSheet(f"color: {color};")
         self._label.setText(message or state.default_message or "")
 
@@ -140,24 +136,20 @@ class StatusIndicator(
 
     def _on_check_complete(self, result: tuple[bool, str]):
         """Handle check result."""
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"StatusIndicator._on_check_complete received: {result}")
         is_ok, message = result
         state = StatusState.CONNECTED if is_ok else StatusState.DISCONNECTED
-        logger.info(f"StatusIndicator setting state to: {state}, message: {message}")
         self.set_state(state, message)
 
     def _on_check_error(self, error: Exception):
         """Handle check error."""
         self.set_state(StatusState.DISCONNECTED, f"Error: {str(error)}")
 
-    def showEvent(self, event):
+    def showEvent(self, event):  # noqa: N802 - Qt virtual method name
         """Auto-refresh on show (no debounce for initial check)."""
         super().showEvent(event)
         self.refresh(force=True)
 
-    def closeEvent(self, event):
+    def closeEvent(self, event):  # noqa: N802 - Qt virtual method name
         """Cleanup on close."""
         self._task_manager.cleanup()
         super().closeEvent(event)
