@@ -1,14 +1,38 @@
-"""
-Generic preview formatting helpers.
+"""Generic preview formatting helpers."""
 
-These utilities are framework-agnostic and avoid OpenHCS-specific imports.
-"""
-
+from collections.abc import Callable
+from dataclasses import dataclass
 from types import FunctionType, MethodType
-from typing import Any, Optional, Callable
 
 
-def check_enabled_field(config: Any, resolve_attr: Optional[Callable] = None) -> bool:
+@dataclass(frozen=True, slots=True)
+class PreviewLabelResolution:
+    """Preview label together with the config declaration that owns it."""
+
+    owner: type
+    label: str
+
+
+def resolve_preview_label(config: object) -> PreviewLabelResolution | None:
+    """Resolve preview metadata from the canonical config declaration MRO."""
+    from objectstate.lazy_factory import (
+        PREVIEW_LABEL_REGISTRY,
+        get_base_type_for_lazy,
+    )
+
+    config_type = type(config)
+    declaration_type = get_base_type_for_lazy(config_type) or config_type
+    for candidate in declaration_type.__mro__:
+        label = PREVIEW_LABEL_REGISTRY.get(candidate)
+        if label is not None:
+            return PreviewLabelResolution(owner=candidate, label=label)
+    return None
+
+
+def check_enabled_field(
+    config: object,
+    resolve_attr: Callable[..., object] | None = None,
+) -> bool:
     """Check if a config object is enabled via an 'enabled' field.
 
     Args:
@@ -33,7 +57,7 @@ def check_enabled_field(config: Any, resolve_attr: Optional[Callable] = None) ->
     return bool(enabled)
 
 
-def format_preview_value(value: Any) -> Optional[str]:
+def format_preview_value(value: object) -> str | None:
     """Format any value for preview display. Simple type-based, no field knowledge needed.
 
     Args:

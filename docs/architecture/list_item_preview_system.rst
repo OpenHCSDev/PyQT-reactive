@@ -64,6 +64,14 @@ metadata.  When ``append_signature_diff_fields`` is enabled, it appends missing
 signature-difference paths while avoiding fields already represented by a
 parent or child path.
 
+ObjectState config declarations can own a compact ``preview_label``.
+``pyqt_reactive.utils.resolve_preview_label`` first resolves a generated lazy
+wrapper to its authored config type, then follows that declaration's MRO.  Its
+result includes both the label and the declaring type, so host formatters can
+apply family policy without treating copied lazy-wrapper metadata as another
+semantic owner.  Hosts should use this resolver instead of walking the metadata
+registry themselves.
+
 Ownership boundary
 ------------------
 

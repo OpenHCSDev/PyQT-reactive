@@ -1,8 +1,13 @@
 """Preview field formatting for manager list items."""
 
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, is_dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
+
+from pyqt_reactive.utils.preview_formatters import (
+    check_enabled_field,
+    resolve_preview_label,
+)
 
 
 @dataclass(frozen=True)
@@ -14,20 +19,20 @@ class PreviewFieldFormatRequest:
 
     @property
     def field_name(self) -> str:
-        return self.field_path.split('.')[-1]
+        return self.field_path.split(".")[-1]
 
 
 @dataclass(frozen=True)
 class PreviewFieldFormatResult:
     """Typed optional carrier for preview text."""
 
-    text: Optional[str]
+    text: str | None
 
 
 class ManagerPreviewFieldFormatter:
     """Formats field values for AbstractManagerWidget preview segments."""
 
-    def format_field(self, field_path: str, value: Any) -> Optional[str]:
+    def format_field(self, field_path: str, value: Any) -> str | None:
         request = PreviewFieldFormatRequest(field_path=field_path, value=value)
         return self.resolve(request).text
 
@@ -56,7 +61,7 @@ class ManagerPreviewFieldFormatter:
             formatted = self._preview_label_for_config(request.value)
         return PreviewFieldFormatResult(text=formatted)
 
-    def _format_preview_value(self, value: Any) -> Optional[str]:
+    def _format_preview_value(self, value: Any) -> str | None:
         if value is None:
             return None
         if isinstance(value, Enum):
@@ -73,28 +78,16 @@ class ManagerPreviewFieldFormatter:
             return getattr(value, "__name__", str(value))
         return str(value)
 
-    def _preview_label_for_config(self, config_obj: Any) -> Optional[str]:
-        from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
-
-        config_type = type(config_obj)
-        if is_dataclass(config_obj):
-            field_names = {field.name for field in fields(config_obj)}
-            if "enabled" in field_names and not bool(getattr(config_obj, "enabled")):
-                return None
-
-        if config_type in PREVIEW_LABEL_REGISTRY:
-            return PREVIEW_LABEL_REGISTRY[config_type]
-
-        for base in config_type.__mro__[1:]:
-            if base in PREVIEW_LABEL_REGISTRY:
-                return PREVIEW_LABEL_REGISTRY[base]
-
-        return None
+    def _preview_label_for_config(self, config_obj: Any) -> str | None:
+        if not check_enabled_field(config_obj):
+            return None
+        resolution = resolve_preview_label(config_obj)
+        return resolution.label if resolution is not None else None
 
     def _field_abbreviation(
         self,
         field_name: str,
-        config_type: Optional[type] = None,
+        config_type: type | None = None,
     ) -> str:
         from objectstate.lazy_factory import FIELD_ABBREVIATIONS_REGISTRY
 

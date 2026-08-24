@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4
+
+- Resolve preview labels from canonical ObjectState declarations so generated
+  lazy wrapper types preserve metadata provenance instead of becoming a second
+  apparent owner.
+
 ## 0.3.3
 
 - Keep repeated status polling out of application INFO logs while retaining the
