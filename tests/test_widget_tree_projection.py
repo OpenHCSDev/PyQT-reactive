@@ -285,6 +285,8 @@ def test_bounded_widget_tree_projects_visible_siblings_before_hidden_siblings(
 
     assert projection.root.children[0].text == "visible"
     assert projection.root.children[0].path == (1,)
+    assert projection.root.child_at_index(1) is projection.root.children[0]
+    assert projection.root.child_at_index(0) is None
     assert visible.projection_reads == 1
     assert hidden.projection_reads == 0
 

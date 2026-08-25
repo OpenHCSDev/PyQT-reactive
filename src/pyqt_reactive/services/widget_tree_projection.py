@@ -161,6 +161,18 @@ class WidgetDescriptor(WidgetNodeIdentity):
     children: tuple["WidgetDescriptor", ...]
     item_texts: tuple[str, ...] = ()
 
+    def child_at_index(self, child_index: int) -> WidgetDescriptor | None:
+        """Resolve one child through its stable Qt/model index identity."""
+
+        matches = tuple(
+            child for child in self.children if child.child_index == child_index
+        )
+        if len(matches) > 1:
+            raise WidgetProjectionError(
+                f"Widget path has duplicate child index {child_index}."
+            )
+        return matches[0] if matches else None
+
 
 @dataclass(frozen=True, slots=True)
 class WidgetTreeProjection:
