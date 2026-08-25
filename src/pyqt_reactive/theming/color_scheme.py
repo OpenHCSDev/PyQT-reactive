@@ -326,8 +326,8 @@ class ColorScheme:
 
     @staticmethod
     def validate_wcag_contrast(
-        foreground: Tuple[int, int, int],
-        background: Tuple[int, int, int],
+        foreground: tuple[int, int, int],
+        background: tuple[int, int, int],
         min_ratio: float = 4.5,
     ) -> bool:
         """

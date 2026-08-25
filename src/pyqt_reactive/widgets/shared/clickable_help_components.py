@@ -2,8 +2,9 @@
 
 import inspect
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
+from typing import Optional, Union
 
 from objectstate import ObjectState
 from PyQt6.QtCore import QRect, QRectF, QSize, Qt, QTimer, pyqtSignal
