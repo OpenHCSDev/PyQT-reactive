@@ -55,7 +55,7 @@ class BaseManagedWindow(QDialog):
         """Handle close event with WindowManager cleanup."""
         scope_key = self._get_window_scope_key()
         if scope_key:
-            WindowManager.unregister(scope_key)
+            WindowManager.unregister(scope_key, self)
         super().closeEvent(event)
 
     def _get_window_scope_key(self) -> Optional[str]:

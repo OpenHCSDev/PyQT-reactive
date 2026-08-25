@@ -810,9 +810,9 @@ class FunctionListWidget(QWidget):
         for pane in self.function_panes:
             # Unregister ObjectState
             pane.cleanup_object_state()
-            # Explicitly unregister the form manager before scheduling deletion
+            # Dispose the form manager before scheduling deletion.
             if pane.form_manager is not None:
-                pane.form_manager.unregister_from_cross_window_updates()
+                pane.form_manager.dispose()
             pane.deleteLater()  # Schedule for deletion - triggers destroyed signal
         self.function_panes.clear()
 

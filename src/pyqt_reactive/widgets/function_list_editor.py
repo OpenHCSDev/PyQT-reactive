@@ -991,9 +991,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             if widget is None or sip.isdeleted(widget):
                 continue
 
-            # Unregister form manager if it exists
+            # Dispose form manager if it exists.
             if isinstance(widget, FunctionPaneWidget) and widget.form_manager is not None:
-                widget.form_manager.unregister_from_cross_window_updates()
+                widget.form_manager.dispose()
 
             widget.deleteLater()  # Schedule for deletion instead of just orphaning
 

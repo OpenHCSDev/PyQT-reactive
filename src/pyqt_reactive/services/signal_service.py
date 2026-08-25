@@ -14,7 +14,9 @@ Key features:
 """
 
 from contextlib import contextmanager
+from functools import partial
 from typing import Any, Callable, Optional, TYPE_CHECKING
+from weakref import ReferenceType, ref
 from PyQt6.QtWidgets import QWidget, QCheckBox, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox
 import logging
 
@@ -115,7 +117,19 @@ class SignalService:
         This method now only handles:
         - Cleanup on destroy
         """
-        manager.destroyed.connect(manager.unregister_from_cross_window_updates)
+        manager.destroyed.connect(
+            partial(SignalService._dispose_destroyed_manager, ref(manager))
+        )
+
+    @staticmethod
+    def _dispose_destroyed_manager(
+        manager_reference: ReferenceType,
+        _destroyed_object: object,
+    ) -> None:
+        """Dispose Python-owned subscriptions after Qt destroys their widget."""
+        manager = manager_reference()
+        if manager is not None:
+            manager.dispose()
 
     @staticmethod
     def register_cross_window_signals(manager: Any) -> None:
@@ -151,4 +165,4 @@ class SignalService:
             SignalService.register_cross_window_signals(manager)
             yield manager
         finally:
-            manager.unregister_from_cross_window_updates()
+            manager.dispose()

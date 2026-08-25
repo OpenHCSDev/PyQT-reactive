@@ -73,7 +73,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         super().__init__(parent)
         self._flash_overlay_cleaned = False
         self._change_detection_connected = False
-        self._managed_listener_cleanup_done = False
+        self._managed_resource_cleanup_done = False
         self._dirty_window_presenter = DirtyWindowPresenter()
         self._dirty_window_state = DirtyWindowStateTracker(
             state_provider=lambda: self.state,
@@ -244,7 +244,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         super().accept()
         self._unregister_managed_window()
         self._cleanup_window_flash_overlay()
-        self._cleanup_managed_listeners()
+        self._cleanup_managed_resources()
 
     def mark_saved_and_refresh_all(self) -> None:
         """Mark the managed state saved and notify other windows."""
@@ -277,7 +277,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         super().reject()
         self._unregister_managed_window()
         self._cleanup_window_flash_overlay()
-        self._cleanup_managed_listeners()
+        self._cleanup_managed_resources()
         self.after_managed_reject()
 
     def closeEvent(self, event):
@@ -291,14 +291,14 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
         self._unregister_managed_window()
         self._cleanup_window_flash_overlay()
-        self._cleanup_managed_listeners()
+        self._cleanup_managed_resources()
         super().closeEvent(event)
 
     def _unregister_managed_window(self) -> None:
         """Remove this managed window from WindowManager singleton tracking."""
         scope_key = self.window_manager_scope_id()
         if scope_key:
-            WindowManager.unregister(scope_key)
+            WindowManager.unregister(scope_key, self)
 
     def _cleanup_window_flash_overlay(self) -> None:
         """Release flash overlay resources owned by this top-level window."""
@@ -310,14 +310,14 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
 
         WindowFlashOverlay.cleanup_window(self)
 
-    def _cleanup_managed_listeners(self) -> None:
-        """Disconnect ObjectState listeners owned by this managed form window."""
-        if self._managed_listener_cleanup_done:
+    def _cleanup_managed_resources(self) -> None:
+        """Dispose every lifecycle resource owned by this managed window."""
+        if self._managed_resource_cleanup_done:
             return
-        self._managed_listener_cleanup_done = True
+        self._managed_resource_cleanup_done = True
 
         for form_manager in self.form_managers():
-            form_manager.unregister_from_cross_window_updates()
+            form_manager.dispose()
 
     def connect_change_detection(self) -> None:
         """Connect managed form managers to automatic change detection."""

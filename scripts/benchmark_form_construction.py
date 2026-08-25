@@ -122,7 +122,7 @@ def run(*, iterations: int, warmups: int, timeout_s: float) -> dict[str, object]
                 manager._form_build_transaction.max_slice_elapsed_s,
             )
         )
-        manager.unregister_from_cross_window_updates()
+        manager.dispose()
         sip.delete(manager)
         app.processEvents()
 

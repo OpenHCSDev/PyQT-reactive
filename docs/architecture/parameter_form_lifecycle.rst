@@ -57,9 +57,11 @@ return to the Qt thread. Debouncing coalesces rapid state notifications.
 Teardown
 --------
 
-Closing a root form disconnects state callbacks, signal-service registrations,
-timers, and nested managers. The ObjectState may outlive the window when it is
-registered for reuse by another view.
+Closing a root form calls ``ParameterFormManager.dispose()``. The manager
+cancels its root construction transaction before disconnecting state callbacks
+and cross-window registrations, so a retained but hidden Qt window cannot keep
+building rows or publish a late failure. The ObjectState may outlive the window
+when it is registered for reuse by another view.
 
 Ownership boundary
 ------------------

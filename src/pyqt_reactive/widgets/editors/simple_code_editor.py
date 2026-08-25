@@ -203,7 +203,7 @@ class SimpleCodeEditorService(Generic[DeclarationT]):
         )
 
         def unregister() -> None:
-            WindowManager.unregister(scope_id)
+            WindowManager.unregister(scope_id, dialog)
 
         dialog.finished.connect(lambda _result: unregister())
         dialog.destroyed.connect(lambda _obj=None: unregister())

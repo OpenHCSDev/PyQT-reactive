@@ -263,7 +263,53 @@ def test_deleting_progressive_root_cancels_unfinished_generation(qapp):
         qapp.processEvents()
 
     assert transaction.finalization_count == 0
+    assert transaction.cancelled is True
+    assert manager._disposed is True
     ObjectStateRegistry.clear()
+
+
+def test_disposing_progressive_root_cancels_hidden_form_work(qapp):
+    """Closing a retained window stops work before QObject destruction."""
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    set_base_config_type(_FlatRoot)
+    ObjectStateRegistry.clear()
+    manager = ParameterFormManager(
+        ObjectState(_FlatRoot()),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+    transaction = manager._form_build_transaction
+    failures = []
+    completions = []
+    manager.form_build_failed.connect(failures.append)
+    manager.form_build_completed.connect(lambda: completions.append(True))
+    rows_before_disposal = _created_row_count(manager)
+
+    try:
+        manager.dispose()
+        for _ in range(10):
+            qapp.processEvents()
+
+        assert manager.form_build_cancelled is True
+        assert manager.form_build_complete is False
+        assert manager.form_build_failure is None
+        assert transaction.finalization_count == 0
+        assert _created_row_count(manager) == rows_before_disposal
+        assert failures == []
+        assert completions == []
+    finally:
+        manager.deleteLater()
+        qapp.processEvents()
+        ObjectStateRegistry.clear()
 
 
 def test_form_build_has_one_scheduling_and_finalization_authority():

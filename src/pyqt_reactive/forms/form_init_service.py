@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field, make_dataclass, fields as dataclass_fields
+from enum import Enum, auto
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Callable, List, TypeVar
 from PyQt6.QtCore import QTimer
@@ -138,6 +139,15 @@ class BuildConfig:
             raise ValueError("max_slice_ms must be positive.")
 
 
+class FormBuildState(Enum):
+    """Single lifecycle authority for one root form construction."""
+
+    ACTIVE = auto()
+    COMPLETED = auto()
+    CANCELLED = auto()
+    FAILED = auto()
+
+
 @dataclass(slots=True)
 class ProgressiveFormWork:
     """Remaining row construction for one manager."""
@@ -167,23 +177,29 @@ class FormBuildTransaction:
         self._work_queue: deque[ProgressiveFormWork] = deque()
         self._root_registered = False
         self._finalization_scheduled = False
-        self._finalized = False
+        self._state = FormBuildState.ACTIVE
         self.failure: Exception | None = None
         self.finalization_count = 0
         self.max_slice_elapsed_s = 0.0
         self._work_timer = QTimer(root_manager)
         self._work_timer.setSingleShot(True)
         self._work_timer.timeout.connect(self._run_next_slice)
+        root_manager.destroyed.connect(self.cancel)
 
     def begin_registration(self) -> None:
-        if self._finalized or self.failure is not None:
+        if self._state is not FormBuildState.ACTIVE:
             raise RuntimeError("Cannot register form work after finalization.")
         self._registration_depth += 1
 
     @property
     def complete(self) -> bool:
         """Whether the root form has completed semantic finalization."""
-        return self._finalized
+        return self._state is FormBuildState.COMPLETED
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the lifecycle owner cancelled unfinished construction."""
+        return self._state is FormBuildState.CANCELLED
 
     def claim_initial_sync_widgets(self, requested: int) -> int:
         claimed = min(max(requested, 0), self._remaining_sync_widgets)
@@ -198,6 +214,8 @@ class FormBuildTransaction:
         on_batch_complete: Callable[[list[tuple[str, QWidget]]], None],
     ) -> None:
         """Register one manager and queue its remaining rows."""
+        if self._state is not FormBuildState.ACTIVE:
+            raise RuntimeError("Cannot enqueue form work after finalization.")
         self._pending_managers[id(manager)] = manager
         self._work_queue.append(
             ProgressiveFormWork(
@@ -228,24 +246,34 @@ class FormBuildTransaction:
 
     def fail(self, error: Exception) -> None:
         """Stop this generation and publish its construction failure once."""
-        if self.failure is not None:
+        if self._state is not FormBuildState.ACTIVE:
             return
         self.failure = error
+        self._state = FormBuildState.FAILED
         self._work_timer.stop()
         self._work_queue.clear()
         self._pending_managers.clear()
         self.root_manager.form_build_failed.emit(error)
 
+    def cancel(self, _destroyed_object: object | None = None) -> None:
+        """Stop unfinished work without projecting teardown as a build failure."""
+        if self._state is not FormBuildState.ACTIVE:
+            return
+        self._state = FormBuildState.CANCELLED
+        self._work_timer.stop()
+        self._work_queue.clear()
+        self._pending_managers.clear()
+
     def _schedule_work(self) -> None:
         if (
-            self.failure is None
+            self._state is FormBuildState.ACTIVE
             and self._work_queue
             and not self._work_timer.isActive()
         ):
             self._work_timer.start(0)
 
     def _run_next_slice(self) -> None:
-        if self.failure is not None:
+        if self._state is not FormBuildState.ACTIVE:
             return
         slice_started = perf_counter()
         widgets_created = 0
@@ -312,8 +340,7 @@ class FormBuildTransaction:
             or self._registration_depth
             or self._pending_managers
             or self._finalization_scheduled
-            or self._finalized
-            or self.failure is not None
+            or self._state is not FormBuildState.ACTIVE
         ):
             return
         self._finalization_scheduled = True
@@ -324,8 +351,7 @@ class FormBuildTransaction:
         if (
             self._registration_depth
             or self._pending_managers
-            or self._finalized
-            or self.failure is not None
+            or self._state is not FormBuildState.ACTIVE
         ):
             self._schedule_finalization_if_complete()
             return
@@ -335,7 +361,7 @@ class FormBuildTransaction:
             logger.exception("Form generation finalization failed.")
             self.fail(error)
             return
-        self._finalized = True
+        self._state = FormBuildState.COMPLETED
         self.finalization_count += 1
         self.root_manager.form_build_completed.emit()
 

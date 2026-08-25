@@ -245,6 +245,11 @@ class ParameterFormManager(
         return self._form_build_transaction.failure
 
     @property
+    def form_build_cancelled(self) -> bool:
+        """Whether the owning view cancelled unfinished construction."""
+        return self._form_build_transaction.cancelled
+
+    @property
     def parameter_types(self) -> ParameterTypesByName:
         """Derive parameter types from object_instance using UnifiedParameterAnalyzer.
 
@@ -352,6 +357,7 @@ class ParameterFormManager(
 
         with timer(f"ParameterFormManager.__init__ ({target_type_name})", threshold_ms=5.0):
             QWidget.__init__(self, config.parent)
+            self._disposed = False
 
             # Store ObjectState reference - PFM delegates MODEL to state
             self.state = state
@@ -1010,34 +1016,24 @@ class ParameterFormManager(
         self._parameter_ops_service.refresh_with_live_context(self)
         self.queue_visual_update()
 
-    def unregister_from_cross_window_updates(self):
-        """Unregister from cross-window updates."""
-        try:
-            from objectstate import ObjectStateRegistry
+    def dispose(self) -> None:
+        """End deferred construction and release every external subscription."""
+        if self._disposed:
+            return
+        self._disposed = True
 
-            ObjectStateRegistry.disconnect_listener(self._on_live_context_changed)
+        if self._parent_manager is None:
+            self._form_build_transaction.cancel()
 
-            # CRITICAL: Unregister resolved value change callback to prevent memory leak
-            # Without this, closed windows leave callbacks in ObjectState that fire on every change
-            if self._parent_manager is None:
-                callbacks_before = len(self.state._on_resolved_changed_callbacks)
-                self.state.off_resolved_changed(self._on_resolved_values_changed)
-                callbacks_after = len(self.state._on_resolved_changed_callbacks)
-                logger.debug(
-                    f"🔔 CALLBACK_LEAK_DEBUG: Unregistered callback for {self.field_id}, "
-                    f"callbacks: {callbacks_before} -> {callbacks_after}"
-                )
+        from objectstate import ObjectStateRegistry
 
-            # Unregister state change callback (root only)
-            if self._parent_manager is None:
-                self.state.off_state_changed(self._on_materialized_state_changed)
-
-            if self.context_obj is not None and not self._parent_manager:
-                unregister_hierarchy_relationship(type(self.object_instance))
-            # Invalidate cache + notify listeners that a form closed
-            ObjectStateRegistry.increment_token()
-        except Exception as e:
-            logger.warning(f"Unregister error: {e}")
+        ObjectStateRegistry.disconnect_listener(self._on_live_context_changed)
+        if self._parent_manager is None:
+            self.state.off_resolved_changed(self._on_resolved_values_changed)
+            self.state.off_state_changed(self._on_materialized_state_changed)
+        if self.context_obj is not None and self._parent_manager is None:
+            unregister_hierarchy_relationship(type(self.object_instance))
+        ObjectStateRegistry.increment_token()
 
     def refresh_widgets_from_state(self):
         """Refresh all widget values from state.parameters.
@@ -1082,7 +1078,7 @@ class ParameterFormManager(
         if self._resolved_changed_flush_scheduled:
             return
         self._resolved_changed_flush_scheduled = True
-        QTimer.singleShot(0, self._flush_resolved_values_changed)
+        self.schedule_lifecycle_callback(0, self._flush_resolved_values_changed)
 
     def _flush_resolved_values_changed(self) -> None:
         """Flush coalesced resolved-value UI refresh for one root manager."""

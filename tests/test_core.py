@@ -47,8 +47,39 @@ def test_managed_window_registers_declared_window_scope(qapp):
     finally:
         window.close()
         qapp.processEvents()
-        WindowManager.unregister("window_scope")
-        WindowManager.unregister("object_scope")
+        WindowManager.unregister("window_scope", window)
+
+
+def test_delayed_close_cannot_evict_new_window_for_reused_scope(qapp):
+    """Window identity, not scope text alone, authorizes unregistration."""
+    from pyqt_reactive.services.window_manager import WindowManager
+    from pyqt_reactive.widgets.shared.base_form_dialog import BaseManagedWindow
+
+    class ManagedWindow(BaseManagedWindow):
+        def window_manager_scope_id(self) -> str:
+            return "reused_scope"
+
+    old_window = ManagedWindow()
+    new_window = ManagedWindow()
+
+    try:
+        old_window.show()
+        qapp.processEvents()
+        old_window.close()
+        qapp.processEvents()
+
+        new_window.show()
+        qapp.processEvents()
+        old_window.close()
+        qapp.processEvents()
+
+        assert WindowManager.get_window("reused_scope") is new_window
+        assert new_window.isVisible()
+    finally:
+        old_window.close()
+        new_window.close()
+        qapp.processEvents()
+        WindowManager.unregister("reused_scope", new_window)
 
 
 def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatch):
@@ -143,13 +174,13 @@ def test_managed_window_show_replays_flash_registrations(qapp, monkeypatch):
         def __init__(self) -> None:
             self.form_tree = FormTree(self)
             self.reregister_count = 0
-            self.unregister_count = 0
+            self.dispose_count = 0
 
         def reregister_flash_elements(self) -> None:
             self.reregister_count += 1
 
-        def unregister_from_cross_window_updates(self) -> None:
-            self.unregister_count += 1
+        def dispose(self) -> None:
+            self.dispose_count += 1
 
     class ManagedWindow(BaseManagedWindow):
         scope_id = "flash_scope"
@@ -173,7 +204,7 @@ def test_managed_window_show_replays_flash_registrations(qapp, monkeypatch):
     finally:
         window.close()
         qapp.processEvents()
-        WindowManager.unregister("flash_scope")
+        WindowManager.unregister("flash_scope", window)
 
 
 def test_live_context_refresh_replays_root_flash_registrations():
@@ -274,15 +305,15 @@ def test_window_flash_overlay_replaces_stale_cached_overlay(qapp, monkeypatch):
 
 
 def test_managed_window_cleanup_unregisters_form_managers_once(qapp):
-    """Managed window teardown disconnects form ObjectState listeners."""
+    """Managed window teardown disposes form managers exactly once."""
     from pyqt_reactive.widgets.shared.base_form_dialog import BaseManagedWindow
 
     class FormManager:
         def __init__(self) -> None:
-            self.unregister_count = 0
+            self.dispose_count = 0
 
-        def unregister_from_cross_window_updates(self) -> None:
-            self.unregister_count += 1
+        def dispose(self) -> None:
+            self.dispose_count += 1
 
     class ManagedWindow(BaseManagedWindow):
         def __init__(self, form_manager: FormManager) -> None:
@@ -295,10 +326,10 @@ def test_managed_window_cleanup_unregisters_form_managers_once(qapp):
     form_manager = FormManager()
     window = ManagedWindow(form_manager)
 
-    window._cleanup_managed_listeners()
-    window._cleanup_managed_listeners()
+    window._cleanup_managed_resources()
+    window._cleanup_managed_resources()
 
-    assert form_manager.unregister_count == 1
+    assert form_manager.dispose_count == 1
 
 
 def test_managed_window_reject_authorizes_before_restore(qapp, monkeypatch):

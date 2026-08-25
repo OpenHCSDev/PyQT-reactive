@@ -207,21 +207,25 @@ class WindowManager:
         window = cls._scoped_windows[scope_id]
 
         if sip.isdeleted(window):
-            result = WindowLookupResult(scope_id, WindowLookupStatus.STALE)
+            result = WindowLookupResult(
+                scope_id,
+                WindowLookupStatus.STALE,
+                window,
+            )
             cls._drop_resolved_window(result)
             return result
 
         visible = window.isVisible()
         if require_visible and not visible:
-            cls.unregister(scope_id)
+            cls.unregister(scope_id, window)
             return WindowLookupResult(scope_id, WindowLookupStatus.HIDDEN)
 
         return WindowLookupResult(scope_id, WindowLookupStatus.PRESENT, window)
 
     @classmethod
     def _drop_resolved_window(cls, result: WindowLookupResult) -> None:
-        if result.status is WindowLookupStatus.STALE:
-            cls.unregister(result.scope_id)
+        if result.status is WindowLookupStatus.STALE and result.window is not None:
+            cls.unregister(result.scope_id, result.window)
 
     @classmethod
     def _navigation_driver(cls, scope_id: str) -> WindowNavigationDriver:
@@ -426,19 +430,18 @@ class WindowManager:
         # Create new window
         logger.debug(f"[WINDOW_MGR] Creating new window for scope: {scope_id}")
         window = window_factory()
-        cls._scoped_windows[scope_id] = window
-        if navigation_driver is None:
-            cls._navigation_drivers[scope_id] = NullWindowNavigationDriver()
-        else:
-            cls._navigation_drivers[scope_id] = navigation_driver
-        if code_document_driver is not None:
-            cls._code_document_drivers[scope_id] = code_document_driver
+        cls.register(
+            scope_id,
+            window,
+            navigation_driver=navigation_driver,
+            code_document_driver=code_document_driver,
+        )
 
         # Auto-cleanup on close (hook into closeEvent)
         original_close = window.closeEvent
 
         def close_wrapper(event):
-            cls.unregister(scope_id)
+            cls.unregister(scope_id, window)
             original_close(event)
 
         window.closeEvent = close_wrapper
@@ -622,11 +625,14 @@ class WindowManager:
                     super().show()
 
                 def closeEvent(self, event):
-                    WindowManager.unregister(scope_key)
+                    WindowManager.unregister(scope_key, self)
                     super().closeEvent(event)
         """
-        if scope_id in cls._scoped_windows:
-            logger.warning(f"[WINDOW_MGR] Overwriting existing window for scope: {scope_id}")
+        existing = cls._resolve_registered_window(scope_id)
+        if existing.is_present and existing.window is not window:
+            raise RuntimeError(
+                f"Window scope {scope_id!r} is already owned by a live window."
+            )
 
         cls._scoped_windows[scope_id] = window
         if navigation_driver is None:
@@ -645,24 +651,28 @@ class WindowManager:
         logger.debug(f"[WINDOW_MGR] Registered window for scope: {scope_id}")
 
     @classmethod
-    def unregister(cls, scope_id: str) -> None:
-        """Unregister a window from singleton tracking.
+    def unregister(cls, scope_id: str, window: QWidget) -> bool:
+        """Unregister the exact window that owns a singleton scope.
 
-        Called by windows in their closeEvent to allow reopening.
+        A delayed close from an older window cannot evict a newer registration
+        that happens to reuse the same scope.
 
         Args:
-            scope_id: Scope to unregister
+            scope_id: Scope to unregister.
+            window: Exact registered owner requesting removal.
         """
-        if scope_id in cls._scoped_windows:
-            from pyqt_reactive.animation import WindowFlashOverlay
+        registered = cls._scoped_windows.get(scope_id)
+        if registered is not window:
+            return False
 
-            WindowFlashOverlay.cleanup_window(cls._scoped_windows[scope_id])
-            del cls._scoped_windows[scope_id]
-            if scope_id in cls._navigation_drivers:
-                del cls._navigation_drivers[scope_id]
-            if scope_id in cls._code_document_drivers:
-                del cls._code_document_drivers[scope_id]
-            logger.debug(f"[WINDOW_MGR] Unregistered window: {scope_id}")
+        from pyqt_reactive.animation import WindowFlashOverlay
+
+        WindowFlashOverlay.cleanup_window(registered)
+        del cls._scoped_windows[scope_id]
+        cls._navigation_drivers.pop(scope_id, None)
+        cls._code_document_drivers.pop(scope_id, None)
+        logger.debug(f"[WINDOW_MGR] Unregistered window: {scope_id}")
+        return True
 
     @classmethod
     def require_code_document_driver(cls, scope_id: str) -> "WindowCodeDocumentDriver":
