@@ -29,7 +29,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from PyQt6 import sip
 from PyQt6.QtCore import QRect, QTimer
@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 
 logger = logging.getLogger(__name__)
+WindowProjectionT = TypeVar("WindowProjectionT")
 
 
 class WindowLookupStatus(Enum):
@@ -171,6 +172,28 @@ class WindowManager:
             for widget in QApplication.topLevelWidgets()
             if not sip.isdeleted(widget) and widget.isWindow() and widget.isVisible()
         )
+
+    @staticmethod
+    def project_live_window(
+        window: QWidget,
+        projection: Callable[[QWidget], WindowProjectionT],
+    ) -> WindowProjectionT | None:
+        """Project one window while containing Qt object deletion at this boundary.
+
+        A Python wrapper can pass a liveness check and then lose its owned C++
+        object before the projection reads it.  Only deletion invalidation is
+        suppressed; an unrelated ``RuntimeError`` from the projection remains
+        visible to the caller.
+        """
+
+        if sip.isdeleted(window):
+            return None
+        try:
+            return projection(window)
+        except RuntimeError:
+            if sip.isdeleted(window):
+                return None
+            raise
 
     @classmethod
     def _resolve_registered_window(

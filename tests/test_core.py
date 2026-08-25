@@ -77,6 +77,43 @@ def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatc
         qapp.processEvents()
 
 
+def test_live_window_projection_contains_deletion_during_projection(qapp):
+    """A window deleted after discovery cannot escape through its projection."""
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QWidget
+
+    from pyqt_reactive.services.window_manager import WindowManager
+
+    window = QWidget()
+    window.setWindowTitle("Transient")
+
+    def delete_before_read(projected_window):
+        sip.delete(projected_window)
+        return projected_window.windowTitle()
+
+    assert WindowManager.project_live_window(window, delete_before_read) is None
+
+
+def test_live_window_projection_preserves_unrelated_runtime_errors(qapp):
+    """Projection failures remain visible while the Qt object is still live."""
+    import pytest
+    from PyQt6.QtWidgets import QWidget
+
+    from pyqt_reactive.services.window_manager import WindowManager
+
+    window = QWidget()
+
+    def fail_projection(projected_window):
+        del projected_window
+        raise RuntimeError("projection failure")
+
+    try:
+        with pytest.raises(RuntimeError, match="projection failure"):
+            WindowManager.project_live_window(window, fail_projection)
+    finally:
+        window.close()
+
+
 def test_managed_window_show_replays_flash_registrations(qapp, monkeypatch):
     """Shown form windows re-anchor flash registrations to the live top-level window."""
     from pyqt_reactive.animation import WindowFlashOverlay
