@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, qInstallMessageHandler
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QStyleOptionViewItem
 from zmqruntime.messages import ProcessIdentity
 
@@ -36,12 +38,44 @@ def test_log_delegate_uses_pyqt6_item_data_role(qtbot) -> None:
     delegate = LogItemDelegate()
     delegate.set_search_state("matching", case_sensitive=False)
 
-    delegate._precompute_search_matches(model)
-    hint = delegate.sizeHint(QStyleOptionViewItem(), model.index(1, 0))
+    try:
+        delegate._precompute_search_matches(model)
+        hint = delegate.sizeHint(QStyleOptionViewItem(), model.index(1, 0))
 
-    assert delegate._search_match_rows == {1}
-    assert model.data(model.index(1, 0), Qt.ItemDataRole.DisplayRole) == "matching line"
-    assert hint.isValid()
+        assert delegate._search_match_rows == {1}
+        assert model.data(model.index(1, 0), Qt.ItemDataRole.DisplayRole) == "matching line"
+        assert hint.isValid()
+    finally:
+        delegate.cleanup()
+
+
+def test_log_delegate_cleanup_closes_and_joins_highlighting_tasks(
+    qtbot,
+    monkeypatch,
+) -> None:
+    """Delegate cleanup closes its client before Qt can destroy worker signals."""
+
+    started = []
+
+    def wait_until_closed(client, _text):
+        started.append(True)
+        while not client._closed:
+            time.sleep(0.001)
+        return []
+
+    monkeypatch.setattr(
+        "pyqt_reactive.utils.log_highlight_client.LogHighlightClient.parse_line",
+        wait_until_closed,
+    )
+    delegate = LogItemDelegate()
+    delegate._get_or_request_segments("background line", QFont("Consolas", 10))
+    qtbot.waitUntil(lambda: started == [True])
+
+    delegate.cleanup()
+
+    assert delegate._highlighting_cleaned_up
+    assert delegate._thread_pool.activeThreadCount() == 0
+    assert delegate._pending_highlights == set()
 
 
 def test_log_line_html_uses_authoritative_highlight_segments() -> None:

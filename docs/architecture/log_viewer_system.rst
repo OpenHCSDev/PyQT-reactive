@@ -21,8 +21,14 @@ The implementation is split into small Qt components:
 * ``LogViewerWindow`` composes selection, search, filtering, loading, tailing,
   and process tracking.
 
-The earlier subprocess/JSONL clients and ``LogViewerWidget`` API are not part of
-the current implementation.  Consumers should construct ``LogViewerWindow``.
+Each ``LogItemDelegate`` owns its highlighting subprocess, serial thread pool,
+worker signals, and repaint timer as one lifecycle.  Window cleanup closes the
+subprocess and joins that pool before Qt destroys the delegate or its signals;
+highlighting work never outlives the view that consumes it.
+
+The earlier log-transport subprocess/JSONL clients and ``LogViewerWidget`` API
+are not part of the current implementation.  Consumers should construct
+``LogViewerWindow``.
 
 Host-owned discovery
 --------------------

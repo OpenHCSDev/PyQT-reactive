@@ -161,7 +161,11 @@ def test_system_metric_helpers_use_background_process_policy(monkeypatch) -> Non
 
 def test_log_highlighter_uses_background_process_policy(monkeypatch) -> None:
     captured: dict[str, object] = {}
-    process = SimpleNamespace(poll=lambda: None)
+    process = SimpleNamespace(
+        poll=lambda: None,
+        terminate=lambda: None,
+        wait=lambda timeout=None: None,
+    )
     monkeypatch.setattr(
         log_highlight_client,
         "BackgroundProcessLaunchPolicy",
@@ -174,10 +178,10 @@ def test_log_highlighter_uses_background_process_policy(monkeypatch) -> None:
             captured.update(command=command, **kwargs) or process
         ),
     )
-    log_highlight_client.LogHighlightClient._proc = None
+    client = log_highlight_client.LogHighlightClient()
     try:
-        assert log_highlight_client.LogHighlightClient._ensure_process() is process
+        assert client._ensure_process() is process
         assert captured["command"][0] == "windowed-python"
         assert captured["creationflags"] == 73
     finally:
-        log_highlight_client.LogHighlightClient._proc = None
+        client.shutdown()

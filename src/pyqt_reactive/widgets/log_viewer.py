@@ -570,20 +570,18 @@ class HighlightWorker(QRunnable):
         self,
         text: str,
         cache_key: tuple[str, str, int],
-        color_scheme: LogColorScheme,
+        client: LogHighlightClient,
         signals: HighlightSignals,
     ):
         super().__init__()
         self.text = text
         self.cache_key = cache_key
-        self.color_scheme = color_scheme
+        self.client = client
         self.signals = signals
 
     def run(self):
         """Request formatting segments from subprocess parser."""
-        if not LogHighlightClient.is_available():
-            return
-        segments = LogHighlightClient.parse_line(self.text)
+        segments = self.client.parse_line(self.text)
         if segments is None:
             return
         converted = []
@@ -629,12 +627,15 @@ class LogItemDelegate(QStyledItemDelegate):
         # Pre-computed search match cache: set of row indices that match search
         self._search_match_rows: set[int] = set()
 
-        # Thread pool for background highlighting
-        self._thread_pool = QThreadPool.globalInstance()
+        # One serial subprocess and thread pool share this delegate's lifetime.
+        self._thread_pool = QThreadPool(self)
+        self._thread_pool.setMaxThreadCount(1)
+        self._highlight_client = LogHighlightClient()
         self._highlighting_enabled = True
+        self._highlighting_cleaned_up = False
 
         # Signals for background workers
-        self._highlight_signals = HighlightSignals()
+        self._highlight_signals = HighlightSignals(self._thread_pool)
         self._highlight_signals.finished.connect(self._on_highlighting_finished)
 
         # Cache: maps (text, font_family, font_size) -> List[HighlightedSegment]
@@ -662,7 +663,7 @@ class LogItemDelegate(QStyledItemDelegate):
         self._size_hint_cache: dict[tuple[str, str, int, int], QSize] = {}
 
         # Debounce timer for viewport updates
-        self._viewport_update_timer = QTimer()
+        self._viewport_update_timer = QTimer(self)
         self._viewport_update_timer.setSingleShot(True)
         self._viewport_update_timer.setInterval(16)  # ~60fps
         self._viewport_update_timer.timeout.connect(self._do_viewport_update)
@@ -761,6 +762,9 @@ class LogItemDelegate(QStyledItemDelegate):
             cache_key: Cache key for this line
             segments: List of formatting segments from background thread
         """
+        if self._highlighting_cleaned_up:
+            return
+
         # Remove from pending set
         self._pending_highlights.discard(cache_key)
 
@@ -824,11 +828,29 @@ class LogItemDelegate(QStyledItemDelegate):
             return None
         if cache_key not in self._pending_highlights:
             self._pending_highlights.add(cache_key)
-            worker = HighlightWorker(text, cache_key, self._color_scheme, self._highlight_signals)
+            worker = HighlightWorker(
+                text,
+                cache_key,
+                self._highlight_client,
+                self._highlight_signals,
+            )
             self._thread_pool.start(worker)
 
         # Return None - caller will paint plain text until parsing completes
         return None
+
+    def cleanup(self) -> None:
+        """Stop and join every highlighting task owned by this delegate."""
+
+        if self._highlighting_cleaned_up:
+            return
+        self._highlighting_cleaned_up = True
+        self._highlighting_enabled = False
+        self._viewport_update_timer.stop()
+        self._thread_pool.clear()
+        self._highlight_client.shutdown()
+        self._thread_pool.waitForDone()
+        self._pending_highlights.clear()
 
     def _apply_segments_to_document(
         self, doc: QTextDocument, segments: list[HighlightedSegment]
@@ -3257,7 +3279,8 @@ class LogViewerWindow(QMainWindow):
         self._server_scan_requests.clear()
 
         self.stop_monitoring()
-        LogHighlightClient.shutdown()
+        if self.log_delegate is not None:
+            self.log_delegate.cleanup()
 
     def closeEvent(self, event) -> None:
         """Handle window close event."""

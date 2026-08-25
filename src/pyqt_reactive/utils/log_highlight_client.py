@@ -7,49 +7,54 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class HighlightedSegmentDTO:
     start: int
     length: int
-    color: Tuple[int, int, int]
+    color: tuple[int, int, int]
     bold: bool = False
 
 
 class LogHighlightClient:
-    _proc: Optional[subprocess.Popen] = None
-    _lock = threading.Lock()
+    """Own one serial highlighting subprocess for one log delegate."""
 
-    @classmethod
-    def _ensure_process(cls) -> subprocess.Popen:
-        if cls._proc and cls._proc.poll() is None:
-            return cls._proc
+    def __init__(self) -> None:
+        self._proc: subprocess.Popen[str] | None = None
+        self._state_lock = threading.Lock()
+        self._io_lock = threading.Lock()
+        self._closed = False
 
-        launch_policy = BackgroundProcessLaunchPolicy.current()
-        cls._proc = subprocess.Popen(
-            [
-                launch_policy.python_executable(sys.executable),
-                "-m",
-                "pyqt_reactive.utils.log_highlighter",
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            **launch_policy.popen_arguments(),
-        )
-        return cls._proc
+    def _ensure_process(self) -> subprocess.Popen:
+        with self._state_lock:
+            if self._closed:
+                raise RuntimeError("Log highlight client is closed")
+            if self._proc and self._proc.poll() is None:
+                return self._proc
 
-    @classmethod
-    def parse_line(cls, text: str) -> Optional[List[HighlightedSegmentDTO]]:
+            launch_policy = BackgroundProcessLaunchPolicy.current()
+            self._proc = subprocess.Popen(
+                [
+                    launch_policy.python_executable(sys.executable),
+                    "-m",
+                    "pyqt_reactive.utils.log_highlighter",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                **launch_policy.popen_arguments(),
+            )
+            return self._proc
+
+    def parse_line(self, text: str) -> list[HighlightedSegmentDTO] | None:
         try:
-            with cls._lock:
-                proc = cls._ensure_process()
+            with self._io_lock:
+                proc = self._ensure_process()
                 if not proc.stdin or not proc.stdout:
                     return None
 
@@ -75,25 +80,23 @@ class LogHighlightClient:
         except Exception:
             return None
 
-    @classmethod
-    def is_available(cls) -> bool:
-        try:
-            proc = cls._ensure_process()
-            return proc.poll() is None
-        except Exception:
-            return False
+    def shutdown(self) -> None:
+        """Close this client and interrupt an in-flight subprocess read."""
 
-    @classmethod
-    def shutdown(cls) -> None:
-        if not cls._proc:
+        with self._state_lock:
+            if self._closed:
+                return
+            self._closed = True
+            proc = self._proc
+            self._proc = None
+
+        if not proc:
             return
         try:
-            cls._proc.terminate()
-            cls._proc.wait(timeout=1)
-        except Exception:
-            try:
-                cls._proc.kill()
-            except Exception:
-                pass
-        finally:
-            cls._proc = None
+            proc.terminate()
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        except ProcessLookupError:
+            pass
