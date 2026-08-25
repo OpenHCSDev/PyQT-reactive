@@ -45,10 +45,22 @@ rules:
 * a section taller than the viewport is aligned or minimally revealed rather
   than repeatedly recentered.
 
+The computed position is clamped once to the scrollbar's declared range. A
+field near the bottom can therefore use the maximum position without being
+misclassified as an unfinished layout merely because ideal centering would
+extend beyond that range.
+
 The associated ``ScrollableFormWindowNavigationDriver`` waits for both the
 field target and stable layout geometry before dispatch. This prevents a
 navigation request from racing responsive reflow or scrolling to the top
 because an exact structural leaf is temporarily unavailable.
+
+``ParameterFormManager`` derives field ownership from its ObjectState parameter
+paths and owns the one-shot callback for unfinished form construction. Window
+navigation does not inspect callback lists or spend its bounded layout-retry
+budget while that construction owner is still active. Composite drivers route
+prepare, readiness, callback, and execution operations only to children that
+accept the requested field or item.
 
 Flashing is a view reaction after target resolution. Structural fields may
 provide a distinct masked flash target and scroll target, so navigation can

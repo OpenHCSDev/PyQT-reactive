@@ -107,17 +107,27 @@ only when the scope is not already open:
 
    from PyQt6.QtWidgets import QMainWindow
    from pyqt_reactive.services.window_manager import WindowManager
+   from pyqt_reactive.services.window_navigation import FieldWindowNavigationDriver
 
+   selected_fields = []
    window = WindowManager.show_or_focus(
        "workflow",
        lambda: QMainWindow(),
+       navigation_driver=FieldWindowNavigationDriver(selected_fields.append),
    )
 
-   WindowManager.focus_and_navigate("workflow")
+   dispatch = WindowManager.focus_and_navigate_result(
+       "workflow",
+       field_path="outputs.directory",
+   )
+   assert dispatch.focused
+   assert dispatch.target_accepted
    WindowManager.close_window("workflow")
 
 Hosts that support field or item navigation should register an explicit
-navigation driver with the window.
+navigation driver with the window. ``focus_and_navigate()`` reports focus for
+callers that only need window activation. Use ``focus_and_navigate_result()``
+when the caller must distinguish focus from accepted field or item navigation.
 
 Service registration
 --------------------
@@ -126,14 +136,16 @@ The generic service registry is keyed by a service type:
 
 .. code-block:: python
 
-   from typing import Protocol
+   from abc import ABC, abstractmethod
 
    from pyqt_reactive.services.service_registry import ServiceRegistry
 
-   class StatusSink(Protocol):
-       def publish(self, message: str) -> None: ...
+   class StatusSink(ABC):
+       @abstractmethod
+       def publish(self, message: str) -> None:
+           raise NotImplementedError
 
-   class ConsoleStatusSink:
+   class ConsoleStatusSink(StatusSink):
        def publish(self, message: str) -> None:
            print(message)
 
