@@ -169,7 +169,30 @@ class WidgetTreeProjection:
     root: WidgetDescriptor
     widget_count: int
     actionable_count: int
+    truncated: bool = False
 
+
+@dataclass(slots=True)
+class _WidgetTreeProjectionState:
+    """Own traversal bounds and the resulting projection extent."""
+
+    policy: WidgetTreeProjectionPolicy
+    projected_nodes: int = 0
+    truncated: bool = False
+
+    def consume_node(self, path: WidgetPath) -> bool:
+        maximum_depth = self.policy.maximum_depth
+        if maximum_depth is not None and len(path) > maximum_depth:
+            self.truncated = True
+            return False
+
+        maximum_nodes = self.policy.maximum_nodes
+        if maximum_nodes is not None and self.projected_nodes >= maximum_nodes:
+            self.truncated = True
+            return False
+
+        self.projected_nodes += 1
+        return True
 
 @dataclass(slots=True)
 class _ItemModelProjectionState:
@@ -732,17 +755,22 @@ class WidgetTreeProjectionService:
         ),
         policy: WidgetTreeProjectionPolicy = DEFAULT_WIDGET_TREE_PROJECTION_POLICY,
     ) -> WidgetTreeProjection:
+        state = _WidgetTreeProjectionState(policy)
+        if not state.consume_node(()):
+            raise WidgetProjectionError("Projection policy excluded the root widget")
         root_descriptor = cls._project_widget(
             widget=root,
             path=(),
             child_index=None,
             registry=registry,
             policy=policy,
+            state=state,
         )
         return WidgetTreeProjection(
             root=root_descriptor,
-            widget_count=cls._count_widgets(root_descriptor),
+            widget_count=state.projected_nodes,
             actionable_count=cls._count_actionable_widgets(root_descriptor),
+            truncated=state.truncated,
         )
 
     @classmethod
@@ -754,6 +782,7 @@ class WidgetTreeProjectionService:
         child_index: int | None,
         registry: WidgetDescriptorProjectorRegistry,
         policy: WidgetTreeProjectionPolicy,
+        state: _WidgetTreeProjectionState,
     ) -> WidgetDescriptor:
         projector = registry.projector_for(widget)
         fields = projector.project(widget, policy)
@@ -762,6 +791,7 @@ class WidgetTreeProjectionService:
             path=path,
             registry=registry,
             policy=policy,
+            state=state,
         )
         return WidgetDescriptor(
             path=path,
@@ -802,6 +832,7 @@ class WidgetTreeProjectionService:
         path: WidgetPath,
         registry: WidgetDescriptorProjectorRegistry,
         policy: WidgetTreeProjectionPolicy,
+        state: _WidgetTreeProjectionState,
     ) -> tuple[WidgetDescriptor, ...]:
         child_widgets = widget.findChildren(
             QWidget,
@@ -810,6 +841,8 @@ class WidgetTreeProjectionService:
         descriptors: list[WidgetDescriptor] = []
         for child_index, child_widget in enumerate(child_widgets):
             child_path = (*path, child_index)
+            if not state.consume_node(child_path):
+                break
             descriptors.append(
                 cls._project_widget(
                     widget=child_widget,
@@ -817,6 +850,7 @@ class WidgetTreeProjectionService:
                     child_index=child_index,
                     registry=registry,
                     policy=policy,
+                    state=state,
                 )
             )
         item_descriptors = cls._project_item_view_children(
@@ -824,6 +858,7 @@ class WidgetTreeProjectionService:
             path=path,
             child_index_offset=len(child_widgets),
             policy=policy,
+            projection_state=state,
         )
         descriptors.extend(item_descriptors)
         return tuple(descriptors)
@@ -836,6 +871,7 @@ class WidgetTreeProjectionService:
         path: WidgetPath,
         child_index_offset: int,
         policy: WidgetTreeProjectionPolicy,
+        projection_state: _WidgetTreeProjectionState,
     ) -> tuple[WidgetDescriptor, ...]:
         if not isinstance(widget, QAbstractItemView):
             return ()
@@ -855,6 +891,7 @@ class WidgetTreeProjectionService:
                 child_index_offset=child_index_offset,
                 state=state,
                 policy=policy,
+                projection_state=projection_state,
             )
         )
 
@@ -869,13 +906,20 @@ class WidgetTreeProjectionService:
         child_index_offset: int = 0,
         state: _ItemModelProjectionState,
         policy: WidgetTreeProjectionPolicy,
+        projection_state: _WidgetTreeProjectionState,
     ) -> tuple[WidgetDescriptor, ...]:
         descriptors: list[WidgetDescriptor] = []
         for row in range(model.rowCount(parent_index)):
             synthetic_child_index = child_index_offset + row
             child_path = (*path, synthetic_child_index)
+            index = model.index(row, 0, parent_index)
+            if not index.isValid():
+                continue
             if not state.consume_node():
-                if state.consume_truncation_report():
+                projection_state.truncated = True
+                if state.consume_truncation_report() and projection_state.consume_node(
+                    child_path
+                ):
                     descriptors.append(
                         cls._model_truncation_descriptor(
                             view=view,
@@ -887,9 +931,8 @@ class WidgetTreeProjectionService:
                     )
                 break
 
-            index = model.index(row, 0, parent_index)
-            if not index.isValid():
-                continue
+            if not projection_state.consume_node(child_path):
+                break
             descriptors.append(
                 cls._model_index_descriptor(
                     view=view,
@@ -899,6 +942,7 @@ class WidgetTreeProjectionService:
                     child_index=synthetic_child_index,
                     state=state,
                     policy=policy,
+                    projection_state=projection_state,
                 )
             )
 
@@ -917,6 +961,7 @@ class WidgetTreeProjectionService:
         child_index: int,
         state: _ItemModelProjectionState,
         policy: WidgetTreeProjectionPolicy,
+        projection_state: _WidgetTreeProjectionState,
     ) -> WidgetDescriptor:
         text_projection = policy.project_text(cls._model_index_text(model, index))
         rect = cls._model_index_visual_rect(view, index)
@@ -932,6 +977,7 @@ class WidgetTreeProjectionService:
             child_index_offset=0,
             state=state,
             policy=policy,
+            projection_state=projection_state,
         )
         return WidgetDescriptor(
             path=path,
@@ -1108,13 +1154,6 @@ class WidgetTreeProjectionService:
     def _global_rect(widget: QWidget) -> QRect:
         top_left = widget.mapToGlobal(QPoint(0, 0))
         return QRect(top_left, widget.size())
-
-    @classmethod
-    def _count_widgets(cls, descriptor: WidgetDescriptor) -> int:
-        count = 1
-        for child in descriptor.children:
-            count += cls._count_widgets(child)
-        return count
 
     @classmethod
     def _count_actionable_widgets(cls, descriptor: WidgetDescriptor) -> int:

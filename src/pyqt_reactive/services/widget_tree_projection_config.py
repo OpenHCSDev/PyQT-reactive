@@ -148,17 +148,34 @@ class WidgetTreeProjectionControls:
             truncated=True,
         )
 
-    def as_projection_policy(self) -> "WidgetTreeProjectionPolicy":
+    def as_projection_policy(
+        self,
+        *,
+        maximum_depth: int | None = None,
+        maximum_nodes: int | None = None,
+    ) -> WidgetTreeProjectionPolicy:
         return WidgetTreeProjectionPolicy(
             maximum_text_length=self.maximum_text_length,
             maximum_item_model_nodes=self.maximum_item_model_nodes,
             truncation_suffix=self.truncation_suffix,
+            maximum_depth=maximum_depth,
+            maximum_nodes=maximum_nodes,
         )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WidgetTreeProjectionPolicy(WidgetTreeProjectionControls):
     """Concrete projection policy used by Qt widget tree projectors."""
+
+    maximum_depth: int | None = None
+    maximum_nodes: int | None = None
+
+    def __post_init__(self) -> None:
+        WidgetTreeProjectionControls.__post_init__(self)
+        if self.maximum_depth is not None and self.maximum_depth < 0:
+            raise ValueError("maximum_depth must be non-negative or None")
+        if self.maximum_nodes is not None and self.maximum_nodes < 1:
+            raise ValueError("maximum_nodes must be positive or None")
 
 
 DEFAULT_WIDGET_TREE_PROJECTION_POLICY = WidgetTreeProjectionPolicy()

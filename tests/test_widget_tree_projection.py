@@ -57,6 +57,18 @@ def _descriptors_by_class(
     return descriptors
 
 
+class _ProjectionCountingLabel(QLabel):
+    """Expose whether a widget family projector visited this label."""
+
+    def __init__(self, text: str, parent: QWidget) -> None:
+        super().__init__(text, parent)
+        self.projection_reads = 0
+
+    def text(self) -> str:
+        self.projection_reads += 1
+        return super().text()
+
+
 def test_widget_tree_projection_describes_known_widget_families(qapp) -> None:
     root = QWidget()
     root.setObjectName("root_widget")
@@ -241,6 +253,58 @@ def test_widget_text_projection_policy_truncates_explicitly(qapp) -> None:
     assert projection.root.text_truncated
 
 
+def test_widget_tree_node_bound_stops_live_projection(qapp) -> None:
+    root = QWidget()
+    labels = tuple(_ProjectionCountingLabel(str(index), root) for index in range(6))
+
+    projection = WidgetTreeProjectionService.project(
+        root,
+        policy=WidgetTreeProjectionPolicy(maximum_nodes=3),
+    )
+
+    assert projection.widget_count == 3
+    assert len(projection.root.children) == 2
+    assert projection.truncated
+    assert [label.projection_reads for label in labels] == [1, 1, 0, 0, 0, 0]
+
+
+def test_widget_tree_depth_bound_stops_live_projection(qapp) -> None:
+    root = QWidget()
+    branch = QWidget(root)
+    leaf = _ProjectionCountingLabel("unvisited", branch)
+
+    projection = WidgetTreeProjectionService.project(
+        root,
+        policy=WidgetTreeProjectionPolicy(maximum_depth=1),
+    )
+
+    assert projection.widget_count == 2
+    assert len(projection.root.children) == 1
+    assert projection.root.children[0].children == ()
+    assert projection.truncated
+    assert leaf.projection_reads == 0
+
+
+def test_default_widget_tree_policy_projects_the_complete_tree(qapp) -> None:
+    root = QWidget()
+    labels = tuple(_ProjectionCountingLabel(str(index), root) for index in range(6))
+
+    projection = WidgetTreeProjectionService.project(root)
+
+    assert projection.widget_count == 7
+    assert not projection.truncated
+    assert [label.projection_reads for label in labels] == [1, 1, 1, 1, 1, 1]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("maximum_depth", -1), ("maximum_nodes", 0)),
+)
+def test_widget_tree_policy_rejects_invalid_traversal_bounds(field, value) -> None:
+    with pytest.raises(ValueError):
+        WidgetTreeProjectionPolicy(**{field: value})
+
+
 def test_widget_tree_projection_includes_item_view_model_rows(qapp) -> None:
     tree = QTreeWidget()
     tree.setObjectName("config_hierarchy")
@@ -270,6 +334,25 @@ def test_widget_tree_projection_includes_item_view_model_rows(qapp) -> None:
     assert root_row.action_kinds == (WidgetActionKind.ITEM_SELECT,)
     assert root_row.clickable
     assert root_row.actionable
+
+
+def test_item_model_bound_marks_the_tree_projection_truncated(qapp) -> None:
+    tree = QTreeWidget()
+    tree.setHeaderLabels(("Functions",))
+    tree.addTopLevelItems(
+        tuple(QTreeWidgetItem((name,)) for name in ("load", "segment", "measure"))
+    )
+
+    projection = WidgetTreeProjectionService.project(
+        tree,
+        policy=WidgetTreeProjectionPolicy(maximum_item_model_nodes=1),
+    )
+
+    model_rows = _descriptors_by_class(projection.root, "QModelIndex")
+    limits = _descriptors_by_class(projection.root, "QModelIndexLimit")
+    assert [row.text for row in model_rows] == ["load"]
+    assert len(limits) == 1
+    assert projection.truncated
 
 
 def test_widget_tree_projection_handles_list_models_without_public_column_count(qapp) -> None:
