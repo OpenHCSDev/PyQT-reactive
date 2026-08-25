@@ -268,6 +268,27 @@ def test_widget_tree_node_bound_stops_live_projection(qapp) -> None:
     assert [label.projection_reads for label in labels] == [1, 1, 0, 0, 0, 0]
 
 
+def test_bounded_widget_tree_projects_visible_siblings_before_hidden_siblings(
+    qapp,
+) -> None:
+    root = QWidget()
+    hidden = _ProjectionCountingLabel("hidden", root)
+    visible = _ProjectionCountingLabel("visible", root)
+    root.show()
+    hidden.hide()
+    qapp.processEvents()
+
+    projection = WidgetTreeProjectionService.project(
+        root,
+        policy=WidgetTreeProjectionPolicy(maximum_nodes=2),
+    )
+
+    assert projection.root.children[0].text == "visible"
+    assert projection.root.children[0].path == (1,)
+    assert visible.projection_reads == 1
+    assert hidden.projection_reads == 0
+
+
 def test_widget_tree_depth_bound_stops_live_projection(qapp) -> None:
     root = QWidget()
     branch = QWidget(root)

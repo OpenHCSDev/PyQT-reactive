@@ -839,7 +839,11 @@ class WidgetTreeProjectionService:
             options=Qt.FindChildOption.FindDirectChildrenOnly,
         )
         descriptors: list[WidgetDescriptor] = []
-        for child_index, child_widget in enumerate(child_widgets):
+        indexed_child_widgets = sorted(
+            enumerate(child_widgets),
+            key=lambda indexed_widget: not indexed_widget[1].isVisible(),
+        )
+        for child_index, child_widget in indexed_child_widgets:
             child_path = (*path, child_index)
             if not state.consume_node(child_path):
                 break
