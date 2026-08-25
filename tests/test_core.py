@@ -51,6 +51,32 @@ def test_managed_window_registers_declared_window_scope(qapp):
         WindowManager.unregister("object_scope")
 
 
+def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatch):
+    """Qt window discovery never exposes wrappers after C++ object deletion."""
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QApplication, QWidget
+
+    from pyqt_reactive.services.window_manager import WindowManager
+
+    live_window = QWidget()
+    deleted_window = QWidget()
+    live_window.show()
+    deleted_window.show()
+    qapp.processEvents()
+    sip.delete(deleted_window)
+    monkeypatch.setattr(
+        QApplication,
+        "topLevelWidgets",
+        staticmethod(lambda: [deleted_window, live_window]),
+    )
+
+    try:
+        assert WindowManager.visible_top_level_windows() == (live_window,)
+    finally:
+        live_window.close()
+        qapp.processEvents()
+
+
 def test_managed_window_show_replays_flash_registrations(qapp, monkeypatch):
     """Shown form windows re-anchor flash registrations to the live top-level window."""
     from pyqt_reactive.animation import WindowFlashOverlay
@@ -184,6 +210,7 @@ def test_deferred_live_context_refresh_obeys_manager_qobject_lifetime(qapp):
 def test_window_flash_overlay_replaces_stale_cached_overlay(qapp, monkeypatch):
     """Overlay cache entries stay owned by the exact live top-level window."""
     from PyQt6.QtWidgets import QDialog
+
     import pyqt_reactive.animation.flash_mixin as flash_mixin
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
 

@@ -26,16 +26,15 @@ Example Usage:
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, Callable, Optional
+from typing import TYPE_CHECKING
+
 from PyQt6 import sip
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtCore import QRect, QTimer
 from PyQt6.QtGui import QCursor, QGuiApplication
-from PyQt6.QtCore import QRect
-from PyQt6.QtWidgets import QApplication, QMainWindow
-from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
 
 from pyqt_reactive.services.window_navigation import (
     NullWindowNavigationDriver,
@@ -60,7 +59,7 @@ class WindowLookupStatus(Enum):
 class WindowLookupResult:
     scope_id: str
     status: WindowLookupStatus
-    window: Optional[QWidget] = None
+    window: QWidget | None = None
 
     @property
     def is_present(self) -> bool:
@@ -78,7 +77,7 @@ class NavigationRetryScheduler:
         cls,
         request: RegisteredWindowNavigationRequest,
         driver: WindowNavigationDriver,
-        retry_counts: Dict[int, int],
+        retry_counts: dict[int, int],
         check_and_navigate: Callable[[], None],
     ) -> bool:
         window_key = id(request.window)
@@ -103,14 +102,14 @@ class NavigationRetryScheduler:
     @staticmethod
     def clear(
         request: RegisteredWindowNavigationRequest,
-        retry_counts: Dict[int, int],
+        retry_counts: dict[int, int],
     ) -> None:
         window_key = id(request.window)
         if window_key in retry_counts:
             del retry_counts[window_key]
 
     @staticmethod
-    def _retry_count(window_key: int, retry_counts: Dict[int, int]) -> int:
+    def _retry_count(window_key: int, retry_counts: dict[int, int]) -> int:
         if window_key in retry_counts:
             return retry_counts[window_key]
         return 0
@@ -151,10 +150,27 @@ class WindowManager:
     """
 
     # Global registry of open windows by scope_id
-    _scoped_windows: Dict[str, QWidget] = {}
-    _navigation_drivers: Dict[str, WindowNavigationDriver] = {}
-    _code_document_drivers: Dict[str, "WindowCodeDocumentDriver"] = {}
-    _navigation_retry_counts: Dict[int, int] = {}
+    _scoped_windows: dict[str, QWidget] = {}
+    _navigation_drivers: dict[str, WindowNavigationDriver] = {}
+    _code_document_drivers: dict[str, "WindowCodeDocumentDriver"] = {}
+    _navigation_retry_counts: dict[int, int] = {}
+
+    @staticmethod
+    def visible_top_level_windows() -> tuple[QWidget, ...]:
+        """Return live, visible Qt top-level windows.
+
+        Qt may briefly retain Python wrappers whose underlying C++ objects have
+        already been destroyed.  Consumers must reject those wrappers before
+        invoking any QWidget API.
+        """
+
+        if QApplication.instance() is None:
+            return ()
+        return tuple(
+            widget
+            for widget in QApplication.topLevelWidgets()
+            if not sip.isdeleted(widget) and widget.isWindow() and widget.isVisible()
+        )
 
     @classmethod
     def _resolve_registered_window(
@@ -235,10 +251,8 @@ class WindowManager:
                 continue
 
         def intersects_any(rect: QRect) -> bool:
-            for widget in QApplication.topLevelWidgets():
+            for widget in WindowManager.visible_top_level_windows():
                 if widget is window:
-                    continue
-                if not widget.isVisible():
                     continue
                 if isinstance(widget, QMainWindow):
                     continue
@@ -322,8 +336,8 @@ class WindowManager:
         cls,
         scope_id: str,
         window_factory: Callable[[], QWidget],
-        item_id: Optional[str] = None,
-        field_path: Optional[str] = None,
+        item_id: str | None = None,
+        field_path: str | None = None,
         navigation_driver: WindowNavigationDriver | None = None,
         code_document_driver: "WindowCodeDocumentDriver | None" = None,
     ) -> QWidget:
@@ -343,7 +357,8 @@ class WindowManager:
             scope_id: Unique identifier for the window (e.g., plate path, step scope)
             window_factory: Callable that creates the window if needed
             item_id: Optional item to select after showing (e.g., list index)
-            field_path: Optional field to highlight after showing (e.g., "well_filter_config.well_filter")
+            field_path: Optional field to highlight after showing
+                (e.g., "well_filter_config.well_filter")
 
         Returns:
             The window (existing or newly created)
@@ -423,10 +438,7 @@ class WindowManager:
 
     @classmethod
     def focus_and_navigate(
-        cls,
-        scope_id: str,
-        item_id: Optional[str] = None,
-        field_path: Optional[str] = None
+        cls, scope_id: str, item_id: str | None = None, field_path: str | None = None
     ) -> bool:
         """Focus window and navigate to specific item/field.
 
@@ -486,8 +498,8 @@ class WindowManager:
     def focus_widget_and_navigate(
         cls,
         window: QWidget,
-        item_id: Optional[str] = None,
-        field_path: Optional[str] = None,
+        item_id: str | None = None,
+        field_path: str | None = None,
     ) -> bool:
         """Focus/navigate the registered scope that owns a concrete Qt window."""
         target_window = window.window()
@@ -504,8 +516,8 @@ class WindowManager:
     def _deferred_navigate(
         cls,
         window: QWidget,
-        item_id: Optional[str] = None,
-        field_path: Optional[str] = None,
+        item_id: str | None = None,
+        field_path: str | None = None,
         navigation_driver: WindowNavigationDriver | None = None,
     ) -> None:
         """Internal: Deferred navigation that waits for async widget creation.
@@ -531,7 +543,7 @@ class WindowManager:
             try:
                 window.windowTitle()
             except RuntimeError:
-                logger.debug(f"[WINDOW_MGR] Window deleted during deferred navigation")
+                logger.debug("[WINDOW_MGR] Window deleted during deferred navigation")
                 return
 
             readiness = driver.readiness(request)
@@ -545,8 +557,7 @@ class WindowManager:
                     _check_and_navigate,
                 ):
                     logger.debug(
-                        "[WINDOW_MGR] Registered navigation retry "
-                        "(wait_reason=%s)",
+                        "[WINDOW_MGR] Registered navigation retry (wait_reason=%s)",
                         readiness.wait_reason,
                     )
                     return
@@ -605,6 +616,7 @@ class WindowManager:
         # Eagerly create flash overlay so OpenGL context is ready before any flashes
         # This prevents first-paint glitches when GL initializes mid-render
         from pyqt_reactive.animation import WindowFlashOverlay
+
         WindowFlashOverlay.get_for_window(window)
 
         logger.debug(f"[WINDOW_MGR] Registered window for scope: {scope_id}")
@@ -633,20 +645,14 @@ class WindowManager:
     def require_code_document_driver(cls, scope_id: str) -> "WindowCodeDocumentDriver":
         """Return the code-document driver explicitly registered for a scope."""
         if scope_id not in cls._code_document_drivers:
-            raise KeyError(
-                f"Window scope has no code-document driver registered: {scope_id!r}"
-            )
+            raise KeyError(f"Window scope has no code-document driver registered: {scope_id!r}")
         return cls._code_document_drivers[scope_id]
 
     @classmethod
     def get_code_document_scopes(cls) -> list[str]:
         """Return open window scopes with registered code-document drivers."""
         open_scopes = set(cls.get_open_scopes())
-        return [
-            scope_id
-            for scope_id in cls._code_document_drivers
-            if scope_id in open_scopes
-        ]
+        return [scope_id for scope_id in cls._code_document_drivers if scope_id in open_scopes]
 
     @classmethod
     def is_open(cls, scope_id: str) -> bool:
@@ -662,7 +668,7 @@ class WindowManager:
         return lookup.is_present
 
     @classmethod
-    def get_window(cls, scope_id: str) -> Optional[QWidget]:
+    def get_window(cls, scope_id: str) -> QWidget | None:
         """Return the window instance for a scope_id if present.
 
         Args:
