@@ -113,16 +113,6 @@ class ScrollableFormWindowNavigationDriver(FormFieldWindowNavigationDriver):
         ):
             return readiness
 
-        target_scroll = self._owner._navigation_scroll_position(
-            target,
-            viewport,
-            is_fallback=is_fallback,
-        )
-        if target_scroll > viewport.vertical_scroll_bar.maximum():
-            return RegisteredWindowNavigationReadiness(
-                wait_reason=NavigationWaitReason.LAYOUT,
-            )
-
         return readiness
 
     def _target_geometry_is_stable(
@@ -493,23 +483,28 @@ class ScrollableFormMixin:
         """Return the navigation position for an exact or contextual target."""
 
         if not is_fallback:
-            return self._target_scroll_position(target, viewport)
+            target_scroll = self._target_scroll_position(target, viewport)
+        else:
+            widget_top, widget_height, widget_bottom = self._target_visual_bounds(
+                target,
+                viewport,
+            )
+            if widget_height >= viewport.viewport_height:
+                if widget_bottom <= viewport.viewport_top:
+                    target_scroll = widget_bottom - 1
+                elif widget_top >= viewport.viewport_bottom:
+                    target_scroll = widget_top - viewport.viewport_height + 1
+                else:
+                    target_scroll = viewport.viewport_top
+            elif widget_top < viewport.viewport_top:
+                target_scroll = widget_top
+            elif widget_bottom > viewport.viewport_bottom:
+                target_scroll = widget_bottom - viewport.viewport_height
+            else:
+                target_scroll = viewport.viewport_top
 
-        widget_top, widget_height, widget_bottom = self._target_visual_bounds(
-            target,
-            viewport,
-        )
-        if widget_height >= viewport.viewport_height:
-            if widget_bottom <= viewport.viewport_top:
-                return max(0, widget_bottom - 1)
-            if widget_top >= viewport.viewport_bottom:
-                return max(0, widget_top - viewport.viewport_height + 1)
-            return viewport.viewport_top
-        if widget_top < viewport.viewport_top:
-            return max(0, widget_top)
-        if widget_bottom > viewport.viewport_bottom:
-            return max(0, widget_bottom - viewport.viewport_height)
-        return viewport.viewport_top
+        scroll_bar = viewport.vertical_scroll_bar
+        return max(scroll_bar.minimum(), min(target_scroll, scroll_bar.maximum()))
 
     def _target_scroll_position(self, target: ScrollTarget, viewport: ScrollViewport) -> int:
         if target.is_field:

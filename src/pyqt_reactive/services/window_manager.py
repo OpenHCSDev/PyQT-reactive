@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
 from pyqt_reactive.services.window_navigation import (
     NullWindowNavigationDriver,
     RegisteredWindowNavigationRequest,
+    WindowNavigationDispatch,
     WindowNavigationDriver,
 )
 
@@ -81,21 +82,28 @@ class NavigationRetryScheduler:
         retry_counts: dict[int, int],
         check_and_navigate: Callable[[], None],
     ) -> bool:
-        window_key = id(request.window)
-        current_retry_count = cls._retry_count(window_key, retry_counts)
+        def retry_after_build() -> None:
+            QTimer.singleShot(cls.RETRY_DELAY_MS, check_and_navigate)
+
+        if driver.register_readiness_callback(
+            request,
+            retry_after_build,
+        ):
+            cls.clear(request, retry_counts)
+            return True
+
+        navigation_key = id(request)
+        current_retry_count = cls._retry_count(navigation_key, retry_counts)
         if current_retry_count >= cls.MAX_RETRIES:
             logger.warning("[WINDOW_MGR] Max retries reached for navigation")
             return False
 
         next_retry_count = current_retry_count + 1
-        retry_counts[window_key] = next_retry_count
+        retry_counts[navigation_key] = next_retry_count
         logger.debug(
             "[WINDOW_MGR] Scheduling navigation retry attempt %s",
             next_retry_count,
         )
-
-        if cls._register_build_callback(driver, check_and_navigate):
-            return True
 
         QTimer.singleShot(cls.RETRY_DELAY_MS, check_and_navigate)
         return True
@@ -105,37 +113,15 @@ class NavigationRetryScheduler:
         request: RegisteredWindowNavigationRequest,
         retry_counts: dict[int, int],
     ) -> None:
-        window_key = id(request.window)
-        if window_key in retry_counts:
-            del retry_counts[window_key]
+        navigation_key = id(request)
+        if navigation_key in retry_counts:
+            del retry_counts[navigation_key]
 
     @staticmethod
-    def _retry_count(window_key: int, retry_counts: dict[int, int]) -> int:
-        if window_key in retry_counts:
-            return retry_counts[window_key]
+    def _retry_count(navigation_key: int, retry_counts: dict[int, int]) -> int:
+        if navigation_key in retry_counts:
+            return retry_counts[navigation_key]
         return 0
-
-    @classmethod
-    def _register_build_callback(
-        cls,
-        driver: WindowNavigationDriver,
-        check_and_navigate: Callable[[], None],
-    ) -> bool:
-        callback_lists = driver.build_complete_callbacks()
-        if len(callback_lists) == 0:
-            return False
-
-        def retry_after_build() -> None:
-            QTimer.singleShot(cls.RETRY_DELAY_MS, check_and_navigate)
-
-        registered = False
-        for callbacks in callback_lists:
-            if len(callbacks) == 0:
-                continue
-            callbacks.append(retry_after_build)
-            registered = True
-        return registered
-
 
 class WindowManager:
     """Global registry for scoped windows with navigation support.
@@ -378,7 +364,7 @@ class WindowManager:
         IMPORTANT: Navigation is deferred to handle async widget creation.
         The scroll/flash only triggers after:
         1. Window is shown and painted
-        2. Target widgets are built (via _on_build_complete_callbacks)
+        2. The owning form reports build completion
 
         Args:
             scope_id: Unique identifier for the window (e.g., plate path, step scope)
@@ -418,11 +404,11 @@ class WindowManager:
             )
 
             if item_id is not None or field_path is not None:
-                cls._deferred_navigate(
+                cls._dispatch_navigation(
+                    scope_id,
                     window,
-                    item_id,
-                    field_path,
-                    cls._navigation_driver(scope_id),
+                    item_id=item_id,
+                    field_path=field_path,
                 )
 
             return window
@@ -452,11 +438,11 @@ class WindowManager:
 
         # Defer navigation if requested (waits for async widget creation)
         if item_id is not None or field_path is not None:
-            cls._deferred_navigate(
+            cls._dispatch_navigation(
+                scope_id,
                 window,
-                item_id,
-                field_path,
-                cls._navigation_driver(scope_id),
+                item_id=item_id,
+                field_path=field_path,
             )
 
         logger.debug(f"[WINDOW_MGR] Registered and showed new window for scope: {scope_id}")
@@ -469,12 +455,12 @@ class WindowManager:
         """Focus window and navigate to specific item/field.
 
         Brings window to front and optionally navigates to item/field.
-        Navigation only works if window implements the navigation protocol.
+        Navigation only works when the registered navigation driver accepts the target.
 
         IMPORTANT: Uses deferred navigation to handle async widget creation.
         The scroll/flash only triggers after:
         1. Window is shown and painted
-        2. Target widgets are built (via _on_build_complete_callbacks)
+        2. The owning form reports build completion
 
         Args:
             scope_id: Window to focus
@@ -497,10 +483,31 @@ class WindowManager:
                 item_id="3"  # Select step 3 in list
             )
         """
+        return cls.focus_and_navigate_result(
+            scope_id,
+            item_id=item_id,
+            field_path=field_path,
+        ).focused
+
+    @classmethod
+    def focus_and_navigate_result(
+        cls,
+        scope_id: str,
+        item_id: str | None = None,
+        field_path: str | None = None,
+        *,
+        requested_scope_id: str | None = None,
+    ) -> WindowNavigationDispatch:
+        """Focus a scope window and report whether its driver accepted the target."""
+
         lookup = cls._resolve_registered_window(scope_id)
         if not lookup.is_present:
             logger.debug(f"[WINDOW_MGR] Cannot navigate - window not open for scope: {scope_id}")
-            return False
+            return WindowNavigationDispatch(
+                focused=False,
+                target_requested=item_id is not None or field_path is not None,
+                target_accepted=False,
+            )
         window = lookup.window
 
         cls._focus_window(window, scope_id)
@@ -511,14 +518,43 @@ class WindowManager:
         # This ensures scroll/flash only happens after:
         # 1. Window is painted (QTimer.singleShot(0, ...))
         # 2. Target widgets exist (_on_build_complete_callbacks)
-        cls._deferred_navigate(
+        return cls._dispatch_navigation(
+            scope_id,
             window,
-            item_id,
-            field_path,
-            cls._navigation_driver(scope_id),
+            item_id=item_id,
+            field_path=field_path,
+            requested_scope_id=requested_scope_id,
         )
 
-        return True
+    @classmethod
+    def _dispatch_navigation(
+        cls,
+        scope_id: str,
+        window: QWidget,
+        *,
+        item_id: str | None = None,
+        field_path: str | None = None,
+        requested_scope_id: str | None = None,
+    ) -> WindowNavigationDispatch:
+        """Dispatch an accepted target through the driver registered for ``scope_id``."""
+
+        driver = cls._navigation_driver(scope_id)
+        navigation_request = RegisteredWindowNavigationRequest(
+            window=window,
+            requested_scope_id=(scope_id if requested_scope_id is None else requested_scope_id),
+            item_id=item_id,
+            field_path=field_path,
+        )
+        target_accepted = driver.accepts(navigation_request)
+        if target_accepted:
+            driver.prepare(navigation_request)
+            cls._deferred_navigate(navigation_request, driver)
+
+        return WindowNavigationDispatch(
+            focused=True,
+            target_requested=navigation_request.has_target,
+            target_accepted=target_accepted,
+        )
 
     @classmethod
     def focus_widget_and_navigate(
@@ -541,52 +577,51 @@ class WindowManager:
     @classmethod
     def _deferred_navigate(
         cls,
-        window: QWidget,
-        item_id: str | None = None,
-        field_path: str | None = None,
-        navigation_driver: WindowNavigationDriver | None = None,
+        request: RegisteredWindowNavigationRequest,
+        navigation_driver: WindowNavigationDriver,
     ) -> None:
         """Internal: Deferred navigation that waits for async widget creation.
 
         Uses QTimer.singleShot(0, ...) to defer to after paint, then checks
-        if widgets and nested managers are ready. If not, registers a callback
-        on _on_build_complete_callbacks to retry.
+        if widgets and nested managers are ready. Unfinished forms own the
+        completion callback; post-build layout stabilization uses bounded polling.
 
         For nested field navigation (e.g., "well_filter_config.well_filter"),
         we check that nested managers exist at all path levels.
         """
         driver = navigation_driver
-        if driver is None:
-            driver = NullWindowNavigationDriver()
-        request = RegisteredWindowNavigationRequest(
-            window=window,
-            item_id=item_id,
-            field_path=field_path,
-        )
 
         def _check_and_navigate():
             """Check if widgets are ready, navigate or schedule retry."""
             try:
-                window.windowTitle()
+                request.window.windowTitle()
             except RuntimeError:
                 logger.debug("[WINDOW_MGR] Window deleted during deferred navigation")
+                NavigationRetryScheduler.clear(request, cls._navigation_retry_counts)
                 return
 
             readiness = driver.readiness(request)
             if not readiness.window_alive:
+                NavigationRetryScheduler.clear(request, cls._navigation_retry_counts)
                 return
             if readiness.needs_wait:
-                if NavigationRetryScheduler.schedule(
+                scheduled = NavigationRetryScheduler.schedule(
                     request,
                     driver,
                     cls._navigation_retry_counts,
                     _check_and_navigate,
-                ):
+                )
+                if scheduled:
                     logger.debug(
                         "[WINDOW_MGR] Registered navigation retry (wait_reason=%s)",
                         readiness.wait_reason,
                     )
-                    return
+                else:
+                    NavigationRetryScheduler.clear(
+                        request,
+                        cls._navigation_retry_counts,
+                    )
+                return
 
             driver.execute(request)
             NavigationRetryScheduler.clear(request, cls._navigation_retry_counts)

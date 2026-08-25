@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QLineEdit, QScrollArea, QWidget
 
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import (
     ScrollableFormMixin,
+    ScrollableFormWindowNavigationDriver,
     ScrollTarget,
 )
 
@@ -198,5 +199,50 @@ def test_exact_and_fallback_navigation_repeats_without_context_drift(qapp) -> No
         owner.exact_target = exact
         owner.select_and_scroll_to_field(exact.field_name)
         assert scroll_area.verticalScrollBar().value() == exact_value
+    finally:
+        scroll_area.close()
+
+
+def test_bottom_field_navigation_is_ready_at_clamped_scroll_limit(qapp) -> None:
+    from pyqt_reactive.services.window_navigation import (
+        NavigationWaitReason,
+        RegisteredWindowNavigationRequest,
+    )
+
+    scroll_area, content = _scroll_fixture(qapp)
+    exact_widget = QLineEdit(content)
+    exact_widget.setGeometry(20, 1150, 180, 30)
+    exact = _scroll_target("value", exact_widget, is_field=True)
+    owner = _NavigationHarness(
+        scroll_area,
+        exact_target=exact,
+        fallback_target=exact,
+    )
+    owner.form_manager = SimpleNamespace(
+        widgets={"value": exact_widget},
+        nested_managers={},
+    )
+    request = RegisteredWindowNavigationRequest(
+        window=owner,
+        requested_scope_id="bottom_form",
+        field_path="value",
+    )
+    driver = ScrollableFormWindowNavigationDriver(owner)
+
+    try:
+        assert driver.readiness(request).wait_reason is NavigationWaitReason.LAYOUT
+        assert not driver.readiness(request).needs_wait
+
+        viewport = owner._scroll_viewport()
+        assert owner._navigation_scroll_position(
+            exact,
+            viewport,
+            is_fallback=False,
+        ) == viewport.vertical_scroll_bar.maximum()
+
+        driver.execute(request)
+        qapp.processEvents()
+        assert scroll_area.verticalScrollBar().value() == scroll_area.verticalScrollBar().maximum()
+        assert owner._target_is_fully_visible(exact, owner._scroll_viewport())
     finally:
         scroll_area.close()

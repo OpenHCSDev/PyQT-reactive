@@ -30,17 +30,19 @@ class ScopeWindowNavigationService:
 
         open_window = WindowManager.get_window(target.window_scope_id)
         if open_window is not None:
-            focused = WindowManager.focus_and_navigate(
+            dispatch = WindowManager.focus_and_navigate_result(
                 target.window_scope_id,
                 item_id=target.item_id,
                 field_path=target.field_path,
+                requested_scope_id=target.requested_scope_id,
             )
             return WindowNavigationResult(
                 request=request,
                 window=open_window,
-                focused=focused,
+                focused=dispatch.focused,
                 created=False,
                 window_scope_id=target.window_scope_id,
+                target_accepted=dispatch.target_accepted,
             )
 
         if not request.create_if_missing:
@@ -67,18 +69,20 @@ class ScopeWindowNavigationService:
 
         cls._position_created_window(created_window, request)
 
-        focused = WindowManager.focus_and_navigate(
+        dispatch = WindowManager.focus_and_navigate_result(
             target.window_scope_id,
             item_id=target.item_id,
             field_path=target.field_path,
+            requested_scope_id=target.requested_scope_id,
         )
         open_window = WindowManager.get_window(target.window_scope_id)
         return WindowNavigationResult(
             request=request,
             window=open_window or created_window,
-            focused=focused,
+            focused=dispatch.focused,
             created=True,
             window_scope_id=target.window_scope_id,
+            target_accepted=dispatch.target_accepted,
         )
 
     @staticmethod

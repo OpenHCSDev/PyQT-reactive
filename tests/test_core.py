@@ -275,6 +275,61 @@ def test_deferred_live_context_refresh_obeys_manager_qobject_lifetime(qapp):
     assert refreshed == []
 
 
+def test_form_disposal_invalidates_hierarchy_without_broadcasting_model_change():
+    """View teardown cannot masquerade as an ObjectState model mutation."""
+    from types import SimpleNamespace
+
+    from objectstate import ObjectStateRegistry
+
+    from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
+
+    class Parent:
+        pass
+
+    class Child:
+        pass
+
+    class State:
+        def off_resolved_changed(self, callback):
+            del callback
+
+        def off_state_changed(self, callback):
+            del callback
+
+    class FormManager:
+        _disposed = False
+        _parent_manager = None
+        context_obj = Parent()
+        object_instance = Child()
+
+        def __init__(self) -> None:
+            self.state = State()
+            self._form_build_transaction = SimpleNamespace(cancel=lambda: None)
+
+        def _on_live_context_changed(self):
+            pass
+
+        def _on_resolved_values_changed(self, changed_paths):
+            del changed_paths
+
+        def _on_materialized_state_changed(self, changed_paths):
+            del changed_paths
+
+    notifications: list[None] = []
+    manager = FormManager()
+    previous_callbacks = list(ObjectStateRegistry._change_callbacks)
+    ObjectStateRegistry._change_callbacks[:] = [lambda: notifications.append(None)]
+    previous_token = ObjectStateRegistry.get_token()
+
+    try:
+        ParameterFormManager.dispose(manager)
+
+        assert ObjectStateRegistry.get_token() == previous_token + 1
+        assert notifications == []
+    finally:
+        ObjectStateRegistry._change_callbacks[:] = previous_callbacks
+
+
 def test_window_flash_overlay_replaces_stale_cached_overlay(qapp, monkeypatch):
     """Overlay cache entries stay owned by the exact live top-level window."""
     from PyQt6.QtWidgets import QDialog

@@ -40,7 +40,7 @@ from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher
 from pyqt_reactive.services.flag_context_manager import FlagContextManager
 from pyqt_reactive.services.signal_service import SignalService
 from pyqt_reactive.services.value_collection_service import ValueCollectionService
-from pyqt_reactive.services.window_navigation import FormNavigationManager
+from pyqt_reactive.services.window_navigation import ObjectStateNavigationTargetAuthority
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.config_tree_contracts import ConfigTreeFlashManager
 
@@ -248,6 +248,28 @@ class ParameterFormManager(
     def form_build_cancelled(self) -> bool:
         """Whether the owning view cancelled unfinished construction."""
         return self._form_build_transaction.cancelled
+
+    def register_form_build_completion_callback(
+        self,
+        callback: Callable[[], None],
+    ) -> bool:
+        """Run ``callback`` once when this root form finishes construction."""
+        root_manager = self._form_build_transaction.root_manager
+        if root_manager is not self:
+            return root_manager.register_form_build_completion_callback(callback)
+        if (
+            self.form_build_complete
+            or self.form_build_cancelled
+            or self.form_build_failure is not None
+        ):
+            return False
+
+        def run_once() -> None:
+            self.form_build_completed.disconnect(run_once)
+            callback()
+
+        self.form_build_completed.connect(run_once)
+        return True
 
     @property
     def parameter_types(self) -> ParameterTypesByName:
@@ -1033,7 +1055,7 @@ class ParameterFormManager(
             self.state.off_state_changed(self._on_materialized_state_changed)
         if self.context_obj is not None and self._parent_manager is None:
             unregister_hierarchy_relationship(type(self.object_instance))
-        ObjectStateRegistry.increment_token()
+            ObjectStateRegistry.increment_token(notify=False)
 
     def refresh_widgets_from_state(self):
         """Refresh all widget values from state.parameters.
@@ -1501,6 +1523,14 @@ class ParameterFormManager(
 
         return f"{self.field_id}.{field_name}" if self.field_id else field_name
 
+    def owns_navigation_field_path(self, field_path: str) -> bool:
+        """Return whether this form can reveal the declared field or an ancestor."""
+
+        return ObjectStateNavigationTargetAuthority.owns_field_path(
+            self.state,
+            field_path,
+        )
+
     @staticmethod
     def _relative_child_field_name(owner_path: str, path: str) -> str | None:
         """Return the direct child field under an ObjectState owner path."""
@@ -1521,6 +1551,3 @@ class ParameterFormManager(
         Used by ConfigWindow to repaint tree widget using same flash source of truth.
         """
         self._extra_repaint_callbacks.append(callback)
-
-
-FormNavigationManager.register(ParameterFormManager)

@@ -117,7 +117,11 @@ def test_nested_forms_share_one_sync_budget_and_finalize_once(qapp, monkeypatch)
     )
     transaction = manager._form_build_transaction
     completed = []
+    registered_completion_callbacks = []
     manager.form_build_completed.connect(lambda: completed.append(True))
+    assert manager.register_form_build_completion_callback(
+        lambda: registered_completion_callbacks.append(True)
+    )
 
     try:
         assert BuildConfig().initial_sync_widgets == 5
@@ -143,6 +147,8 @@ def test_nested_forms_share_one_sync_budget_and_finalize_once(qapp, monkeypatch)
         assert transaction.finalization_count == 1
         assert manager.form_build_complete is True
         assert completed == [True]
+        assert registered_completion_callbacks == [True]
+        assert not manager.register_form_build_completion_callback(lambda: None)
         assert refresh_calls == [(manager, False)]
     finally:
         manager.deleteLater()

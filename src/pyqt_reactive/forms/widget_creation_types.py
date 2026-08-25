@@ -108,6 +108,19 @@ class ParameterFormManager(ABC, metaclass=_CombinedMeta):
     _widget_ops: Any
     _on_build_complete_callbacks: list
 
+    @abstractmethod
+    def owns_navigation_field_path(self, field_path: str) -> bool:
+        """Return whether this form owns an exact or contextual field target."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def register_form_build_completion_callback(
+        self,
+        callback: Callable[[], None],
+    ) -> bool:
+        """Register one callback when unfinished form construction completes."""
+        raise NotImplementedError
+
     # ==================== LIFECYCLE HOOKS ====================
     # These are like React useEffect hooks
     # DELETED: _emit_parameter_change - replaced by FieldChangeDispatcher
