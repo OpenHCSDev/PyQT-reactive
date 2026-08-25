@@ -3,19 +3,26 @@
 import inspect
 import logging
 from dataclasses import dataclass
-from typing import Union, Callable, Optional
-from objectstate import ObjectState
-from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox, QVBoxLayout, QSizePolicy, QAbstractButton
-from PyQt6.QtCore import Qt, pyqtSignal, QRect, QRectF, QSize, QTimer
-from PyQt6.QtGui import QFont, QCursor, QColor, QPainter
+from typing import Callable, Optional, Union
 
-from pyqt_reactive.theming import ColorScheme
+from objectstate import ObjectState
+from PyQt6.QtCore import QRect, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QCursor, QFont, QPainter
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.forms import layout_constants
-from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
-from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
-from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 from pyqt_reactive.protocols import (
+    ChangeSignalEmitter,
     ChildFieldChromeRefreshable,
     ChildFieldIdentityProvider,
     ChildFieldNavigationTargetProvider,
@@ -24,7 +31,6 @@ from pyqt_reactive.protocols import (
     DirtyMarkerSettable,
     InlineDataclassGroupBoxChromeProvider,
     InlineDataclassRootResettable,
-    ChangeSignalEmitter,
     PlaceholderStateMixin,
     PyQtWidgetMeta,
     RawResolvedValueSettable,
@@ -32,6 +38,10 @@ from pyqt_reactive.protocols import (
     ValueGettable,
     ValueSettable,
 )
+from pyqt_reactive.theming import AccentChromeColorPolicy, ColorScheme
+from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
+from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
+from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -70,57 +80,6 @@ class ScopeAccentColorResolution:
         if scope_accent_color is None:
             return default_color
         return scope_accent_color
-
-
-@dataclass(frozen=True, slots=True)
-class HelpChromeColors:
-    """Resolved stylesheet colors for one help control state set."""
-
-    background: str
-    hover: str
-    pressed: str
-    border: str
-    text: str = "#ffffff"
-
-
-class HelpChromeColorPolicy:
-    """Contrast-aware visual policy for help buttons and indicators."""
-
-    light_accent_luminance = 230
-    neutral_background = "#555555"
-    neutral_hover = "#666666"
-    neutral_pressed = "#444444"
-    neutral_border = "1px solid #ffffff"
-    accent_border = "none"
-
-    @classmethod
-    def resolve(cls, color, color_scheme: ColorScheme) -> HelpChromeColors:
-        qcolor = cls._qcolor(color, color_scheme)
-        if cls._is_light_accent(qcolor):
-            return HelpChromeColors(
-                background=cls.neutral_background,
-                hover=cls.neutral_hover,
-                pressed=cls.neutral_pressed,
-                border=cls.neutral_border,
-            )
-        return HelpChromeColors(
-            background=qcolor.name(),
-            hover=qcolor.lighter(115).name(),
-            pressed=qcolor.darker(115).name(),
-            border=cls.accent_border,
-        )
-
-    @staticmethod
-    def _qcolor(color, color_scheme: ColorScheme) -> QColor:
-        if isinstance(color, QColor):
-            return QColor(color)
-        return QColor(color_scheme.to_hex(color))
-
-    @classmethod
-    def _is_light_accent(cls, color: QColor) -> bool:
-        return color.red() >= cls.light_accent_luminance and (
-            color.green() >= cls.light_accent_luminance
-        ) and color.blue() >= cls.light_accent_luminance
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,7 +302,7 @@ class HelpIndicator(QLabel):
 
     def _apply_color(self, color) -> None:
         """Apply contrast-aware help indicator styling."""
-        colors = HelpChromeColorPolicy.resolve(color, self.color_scheme)
+        colors = AccentChromeColorPolicy.resolve(color)
 
         self.setStyleSheet(f"""
             QLabel {{
@@ -479,7 +438,7 @@ class HelpButton(QPushButton):
 
     def _apply_color(self, color) -> None:
         """Apply a color to this button (for scope accent styling)."""
-        colors = HelpChromeColorPolicy.resolve(color, self.color_scheme)
+        colors = AccentChromeColorPolicy.resolve(color)
 
         padding = "0" if self._square_icon else "4px 8px"
         self.setStyleSheet(f"""

@@ -324,9 +324,12 @@ class ColorScheme:
 
         return cls()  # Return default scheme
 
-    def validate_wcag_contrast(self, foreground: Tuple[int, int, int],
-                              background: Tuple[int, int, int],
-                              min_ratio: float = 4.5) -> bool:
+    @staticmethod
+    def validate_wcag_contrast(
+        foreground: Tuple[int, int, int],
+        background: Tuple[int, int, int],
+        min_ratio: float = 4.5,
+    ) -> bool:
         """
         Validate WCAG contrast ratio between foreground and background colors.
 
@@ -344,7 +347,7 @@ class ColorScheme:
 
             # Apply gamma correction
             def gamma_correct(c):
-                return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+                return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
             r, g, b = map(gamma_correct, [r, g, b])
             return 0.2126 * r + 0.7152 * g + 0.0722 * b

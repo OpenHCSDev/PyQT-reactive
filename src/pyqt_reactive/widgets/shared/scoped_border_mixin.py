@@ -1,16 +1,17 @@
 """Mixin for scope-based window border rendering."""
 
-from typing import Optional
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QWidget
 import logging
 
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QWidget
+
+from pyqt_reactive.services.scope_color_service import ScopeColorService
+from pyqt_reactive.theming import AccentChromeColorPolicy
+from pyqt_reactive.widgets.shared.config_tree_contracts import ScopeColorSchemeHost
+from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
 from pyqt_reactive.widgets.shared.scope_color_utils import (
     get_scope_color_scheme,
 )
-from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
-from pyqt_reactive.services.scope_color_service import ScopeColorService
-from pyqt_reactive.widgets.shared.config_tree_contracts import ScopeColorSchemeHost
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,8 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
     """
 
     _scope_color_scheme = None
-    scope_id: Optional[str] = None
-    _step_index: Optional[int] = None  # For border pattern based on actual position
+    scope_id: str | None = None
+    _step_index: int | None = None  # For border pattern based on actual position
 
     def init_scope_border(self) -> None:
         """Initialize scope-based border. Call after scope_id is set.
@@ -59,7 +60,7 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
         """
         pass  # Default: no accent styling
 
-    def get_scope_accent_color(self) -> Optional[QColor]:
+    def get_scope_accent_color(self) -> QColor | None:
         """Get the scope accent color (matching border/flash color).
 
         Returns None if no scope color scheme is set.
@@ -82,35 +83,22 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
         if not color:
             return ""
 
-        hex_color = color.name()
-        # Lighter version for hover
-        lighter = color.lighter(115)
-        hex_lighter = lighter.name()
-        # Darker version for pressed
-        darker = color.darker(115)
-        hex_darker = darker.name()
-        border = "none"
-        text_color = "white"
-        if color.red() >= 230 and color.green() >= 230 and color.blue() >= 230:
-            hex_color = "#555555"
-            hex_lighter = "#666666"
-            hex_darker = "#444444"
-            border = "1px solid #ffffff"
+        chrome = AccentChromeColorPolicy.resolve(color)
 
         if for_button:
             return f"""
                 QPushButton {{
-                    background-color: {hex_color};
-                    color: {text_color};
-                    border: {border};
+                    background-color: {chrome.background};
+                    color: {chrome.text};
+                    border: {chrome.border};
                     border-radius: 3px;
                     padding: 8px;
                 }}
                 QPushButton:hover {{
-                    background-color: {hex_lighter};
+                    background-color: {chrome.hover};
                 }}
                 QPushButton:pressed {{
-                    background-color: {hex_darker};
+                    background-color: {chrome.pressed};
                 }}
             """
         return ""
@@ -125,15 +113,12 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
         if not color:
             return ""
 
-        hex_color = color.name()
-        # Slightly transparent for hover
-        hover_color = QColor(color)
-        hover_color.setAlphaF(0.3)
+        chrome = AccentChromeColorPolicy.resolve(color)
 
         return f"""
             QTreeWidget::item:selected {{
-                background-color: {hex_color};
-                color: white;
+                background-color: {chrome.background};
+                color: {chrome.text};
             }}
             QTreeWidget::item:hover:!selected {{
                 background-color: rgba({color.red()}, {color.green()}, {color.blue()}, 76);

@@ -14,6 +14,11 @@ Applications may provide their own palette and scope-color adapter. Keep Qt
 stylesheet construction and contrast rules in pyqt-reactive, while domain labels
 and semantic status colors remain in the host.
 
+``AccentChromeColorPolicy`` is the single contrast owner for dynamic
+scope-accent buttons, help controls, and tree selections. Bright accents such
+as the root scope's white identity project to neutral interactive chrome, so
+selection text remains readable without changing the scope's border identity.
+
 Application theming is idempotent at the live Qt owner. Reapplying a scheme
 reuses the installed control style and compares the generated application
 stylesheet with ``QApplication.styleSheet()`` before asking Qt to repolish the

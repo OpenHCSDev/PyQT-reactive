@@ -14,6 +14,7 @@ from PyQt6.QtGui import QColor
 
 from pyqt_reactive.forms import layout_constants
 
+from .accent_chrome import AccentChromeColorPolicy
 from .color_scheme import ColorScheme
 
 logger = logging.getLogger(__name__)
@@ -716,34 +717,21 @@ class StyleSheetGenerator:
         cs = self.color_scheme
         layout = layout_constants.CURRENT_LAYOUT
 
-        hex_color = accent_color.name()
-        hex_lighter = accent_color.lighter(115).name()
-        hex_darker = accent_color.darker(115).name()
-        border = "none"
-        text_color = "white"
-        if (
-            accent_color.red() >= 230
-            and accent_color.green() >= 230
-            and accent_color.blue() >= 230
-        ):
-            hex_color = "#555555"
-            hex_lighter = "#666666"
-            hex_darker = "#444444"
-            border = "1px solid #ffffff"
+        chrome = AccentChromeColorPolicy.resolve(accent_color)
 
         return f"""
             QPushButton {{
-                background-color: {hex_color};
-                color: {text_color};
-                border: {border};
+                background-color: {chrome.background};
+                color: {chrome.text};
+                border: {chrome.border};
                 border-radius: {layout.widget_corner_radius}px;
                 padding: 8px;
             }}
             QPushButton:hover {{
-                background-color: {hex_lighter};
+                background-color: {chrome.hover};
             }}
             QPushButton:pressed {{
-                background-color: {hex_darker};
+                background-color: {chrome.pressed};
             }}
             QPushButton:disabled {{
                 background-color: {cs.to_hex(cs.button_disabled_bg)};
