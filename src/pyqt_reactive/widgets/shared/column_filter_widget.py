@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -30,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from pyqt_reactive.forms.layout_constants import COMPACT_LAYOUT
 from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
     ColumnDef,
     ColumnPresentation,
@@ -284,7 +284,7 @@ class ColumnFilterWidget(QFrame):
         self.column_key = column.key
         self.column_name = column.name
         self.unique_values = sorted(unique_values)  # Sort for consistent display
-        self.checkboxes: dict[str, QCheckBox] = {}
+        self.checkboxes: dict[str, ThemedCheckBox] = {}
         self.color_scheme = color_scheme or ColorScheme()
 
         # Apply frame styling
@@ -364,7 +364,7 @@ class ColumnFilterWidget(QFrame):
 
         # Create checkbox for each unique value (compact styling)
         for value in self.unique_values:
-            checkbox = QCheckBox(str(value))
+            checkbox = ThemedCheckBox(str(value))
             checkbox.setChecked(True)  # Start with all selected
             checkbox.setStyleSheet(f"""
                 QCheckBox {{

@@ -5,6 +5,8 @@ Specialized widget subclasses that build on the protocol layer
 with enhanced behavior.
 """
 
+from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
+
 from .no_scroll_spinbox import (
     IgnoreWheelEventMixin,
     NoneAwareCheckBox,
@@ -28,4 +30,5 @@ __all__ = [
     "NoneAwareCheckBox",
     "StatusIndicator",
     "StatusState",
+    "ThemedCheckBox",
 ]

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6.QtCore import QPoint, QRect, Qt
-from PyQt6.QtGui import QColor, QImage, QPaintEvent, QPalette
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QColor, QImage, QPalette
 from PyQt6.QtWidgets import QTableWidgetItem, QWidget
 
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
@@ -193,5 +193,7 @@ def test_groupbox_with_help_paints_extracted_scope_border(qapp) -> None:
     groupbox = GroupBoxWithHelp(title="Scoped")
     groupbox.set_scope_color_scheme(_scope_scheme())
     groupbox.resize(120, 80)
+    groupbox.show()
+    qapp.processEvents()
 
-    groupbox.paintEvent(QPaintEvent(QRect(0, 0, 120, 80)))
+    assert not groupbox.grab().isNull()

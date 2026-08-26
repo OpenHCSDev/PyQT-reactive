@@ -48,7 +48,6 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLineEdit,
@@ -76,6 +75,7 @@ from pyqt_reactive.services.process_tracker import (
     get_log_display_name,
     get_log_tooltip,
 )
+from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
 from pyqt_reactive.utils.log_highlight_client import LogHighlightClient
 from pyqt_reactive.utils.log_highlighter import build_log_line_html
 
@@ -2197,10 +2197,10 @@ class LogViewerWindow(QMainWindow):
         self.search_toolbar.addWidget(self.search_input)
 
         # Search options
-        self.case_sensitive_cb = QCheckBox("Case sensitive")
+        self.case_sensitive_cb = ThemedCheckBox("Case sensitive")
         self.search_toolbar.addWidget(self.case_sensitive_cb)
 
-        self.regex_cb = QCheckBox("Regex")
+        self.regex_cb = ThemedCheckBox("Regex")
         self.search_toolbar.addWidget(self.regex_cb)
 
         # Search navigation buttons
@@ -2255,7 +2255,7 @@ class LogViewerWindow(QMainWindow):
         self.bottom_btn = QPushButton("Bottom")
 
         # Process filter checkbox
-        self.show_alive_only_cb = QCheckBox("Show only running processes")
+        self.show_alive_only_cb = ThemedCheckBox("Show only running processes")
         self.show_alive_only_cb.setToolTip(
             "Filter logs to show only those from currently running processes"
         )

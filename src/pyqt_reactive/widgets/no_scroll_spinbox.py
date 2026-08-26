@@ -7,20 +7,19 @@ Prevents accidental value changes from mouse wheel events.
 from enum import Enum
 from typing import Callable
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QFont, QPainter, QWheelEvent
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QStyle,
     QStyleOptionButton,
     QStyleOptionComboBox,
 )
-from PyQt6.QtGui import QWheelEvent, QFont, QColor, QPainter
-from PyQt6.QtCore import Qt
 
 # Import adapters that already implement ValueGettable/ValueSettable
 from pyqt_reactive.protocols import (
-    ComboBoxAdapter,
     ChangeSignalEmitter,
+    ComboBoxAdapter,
     DoubleSpinBoxAdapter,
     PlaceholderStateMixin,
     PyQtWidgetMeta,
@@ -28,6 +27,10 @@ from pyqt_reactive.protocols import (
     SpinBoxAdapter,
     ValueGettable,
     ValueSettable,
+)
+from pyqt_reactive.theming.themed_checkbox import (
+    ThemedCheckBox,
+    paint_themed_checkbox,
 )
 
 
@@ -176,7 +179,7 @@ class CheckboxValueState(Enum):
 
 class NoneAwareCheckBox(
     PlaceholderStateMixin,
-    QCheckBox,
+    ThemedCheckBox,
     ValueGettable,
     ValueSettable,
     ResolvedValuePreviewSettable,
@@ -329,7 +332,7 @@ class NoneAwareCheckBox(
         ):
             option.palette.setColor(role, QColor(136, 136, 136))
 
-        self.style().drawControl(QStyle.ControlElement.CE_CheckBox, option, painter, self)
+        paint_themed_checkbox(self, option, painter)
         painter.end()
 
 

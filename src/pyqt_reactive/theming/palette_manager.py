@@ -14,7 +14,6 @@ from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication
 
 from .color_scheme import ColorScheme
-from .splitter_grip_style import install_application_control_style
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +185,6 @@ class ThemeManager:
         self.palette_manager.apply_palette_to_application()
         app = QApplication.instance()
         if app is not None:
-            install_application_control_style(app)
             application_style_sheet = self.get_application_control_style_sheet()
             if app.styleSheet() != application_style_sheet:
                 app.setStyleSheet(application_style_sheet)

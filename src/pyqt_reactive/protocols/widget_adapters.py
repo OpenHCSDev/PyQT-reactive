@@ -14,23 +14,24 @@ All adapters implement consistent interface via ABCs:
 Mirrors MemoryTypeConverter pattern - adapters normalize inconsistent APIs.
 """
 
-from typing import Any, Callable, Optional
-from enum import Enum
 from abc import ABCMeta
+from enum import Enum
+from typing import Any, Callable, Optional
 
 try:
+    from PyQt6.QtCore import QObject, Qt
+    from PyQt6.QtGui import QKeySequence
     from PyQt6.QtWidgets import (
+        QComboBox,
+        QDoubleSpinBox,
+        QGroupBox,
+        QKeySequenceEdit,
         QLineEdit,
         QSpinBox,
-        QDoubleSpinBox,
-        QComboBox,
-        QCheckBox,
-        QKeySequenceEdit,
         QWidget,
-        QGroupBox,
     )
-    from PyQt6.QtCore import Qt, QObject
-    from PyQt6.QtGui import QKeySequence
+
+    from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
     PYQT6_AVAILABLE = True
     # PyQt-specific metaclass that combines ABCMeta with Qt's metaclass
     # Order matters: ABCMeta first (it's the "primary" metaclass for ABC functionality)
@@ -42,16 +43,20 @@ except ImportError:
     PYQT6_AVAILABLE = False
     # Create dummy base classes for type hints
     QLineEdit = QSpinBox = QDoubleSpinBox = QComboBox = object
-    QCheckBox = QKeySequenceEdit = QWidget = object
+    ThemedCheckBox = QKeySequenceEdit = QWidget = object
     PyQtWidgetMeta = ABCMeta
 
 from .widget_protocols import (
-    ValueGettable, ValueSettable, PlaceholderCapable,
-    PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter,
+    ChangeSignalEmitter,
+    PlaceholderCapable,
+    PlaceholderStateTrackable,
+    RangeConfigurable,
     ResolvedValuePreviewSettable,
-    WidgetCapability, widget_supports_capability
+    ValueGettable,
+    ValueSettable,
+    WidgetCapability,
+    widget_supports_capability,
 )
-
 
 if PYQT6_AVAILABLE:
 
@@ -344,7 +349,7 @@ if PYQT6_AVAILABLE:
                 pass
     
     
-    class CheckBoxAdapter(PlaceholderStateMixin, QCheckBox, ValueGettable, ValueSettable,
+    class CheckBoxAdapter(PlaceholderStateMixin, ThemedCheckBox, ValueGettable, ValueSettable,
                          ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
         Adapter for QCheckBox implementing OpenHCS ABCs.
@@ -512,9 +517,13 @@ if PYQT6_AVAILABLE:
 # (PyQtWidgetMeta doesn't auto-register like WidgetMeta does)
 if PYQT6_AVAILABLE:
     from .widget_protocols import (
-        ValueGettable, ValueSettable, PlaceholderCapable,
-        PlaceholderStateTrackable, RangeConfigurable, ChangeSignalEmitter,
+        ChangeSignalEmitter,
+        PlaceholderCapable,
+        PlaceholderStateTrackable,
+        RangeConfigurable,
         ResolvedValuePreviewSettable,
+        ValueGettable,
+        ValueSettable,
     )
 
     # Register all adapter classes

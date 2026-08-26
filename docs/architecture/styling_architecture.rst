@@ -19,8 +19,10 @@ scope-accent buttons, help controls, and tree selections. Bright accents such
 as the root scope's white identity project to neutral interactive chrome, so
 selection text remains readable without changing the scope's border identity.
 
-Application theming is idempotent at the live Qt owner. Reapplying a scheme
-reuses the installed control style and compares the generated application
-stylesheet with ``QApplication.styleSheet()`` before asking Qt to repolish the
-widget tree. A changed scheme still updates the application palette and
-stylesheet; an identical scheme does not repeat native style work.
+Application theming leaves ``QApplication`` on Qt's native style and derives
+shared colors through its palette and stylesheet. Reapplying a scheme compares
+the generated stylesheet with ``QApplication.styleSheet()`` before asking Qt to
+repolish the widget tree. ``ThemedCheckBox`` owns the one platform-sensitive
+indicator override at the leaf widget, while splitter visibility is declared by
+the shared stylesheet. No Python ``QStyle`` replacement competes with Qt's
+stylesheet style owner.

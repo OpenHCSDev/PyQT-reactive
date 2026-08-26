@@ -5,7 +5,6 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QDialog,
     QGroupBox,
@@ -13,19 +12,17 @@ from PyQt6.QtWidgets import (
     QMenuBar,
     QMessageBox,
     QProgressBar,
+    QProxyStyle,
     QPushButton,
     QScrollBar,
     QSplitter,
-    QStyleFactory,
     QTabBar,
     QVBoxLayout,
     QWidget,
 )
 
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming.splitter_grip_style import (
-    _APPLICATION_STYLE_ATTRIBUTE,
-)
+from pyqt_reactive.widgets import ThemedCheckBox
 
 
 class _DerivedTabBar(QTabBar):
@@ -34,27 +31,6 @@ class _DerivedTabBar(QTabBar):
 
 class _DerivedDialog(QDialog):
     """Representative application dialog subclass."""
-
-
-@pytest.fixture
-def theme_app(qapp):
-    """Restore the complete application style boundary after a theme test."""
-
-    original_style_name = qapp.style().objectName()
-    original_stylesheet = qapp.styleSheet()
-    original_palette = QPalette(qapp.palette())
-    yield qapp
-
-    replacement_style = QStyleFactory.create(original_style_name)
-    if replacement_style is None:
-        raise RuntimeError(f"Qt style factory cannot restore style {original_style_name!r}.")
-    # Application QSS wraps the active QStyle. Replace the process-owned proxy
-    # before restoring QSS so no later test inherits the prior native object.
-    qapp.setStyle(replacement_style)
-    qapp.setStyleSheet(original_stylesheet)
-    qapp.setPalette(original_palette)
-    qapp.__dict__.pop(_APPLICATION_STYLE_ATTRIBUTE, None)
-    qapp.processEvents()
 
 
 def test_color_scheme_creation():
@@ -101,14 +77,13 @@ def test_complete_application_style_owns_native_menu_and_scrollbar_colors():
     ),
 )
 def test_theme_manager_renders_both_scrollbar_orientations_from_color_scheme(
-    theme_app,
+    qapp,
     orientation,
     size,
 ):
     """Both native scrollbar orientations render with the declared dark colors."""
     from pyqt_reactive.theming import ThemeManager
 
-    qapp = theme_app
     scrollbar = QScrollBar(orientation)
     try:
         scheme = ColorScheme()
@@ -136,14 +111,13 @@ def test_theme_manager_renders_both_scrollbar_orientations_from_color_scheme(
     "orientation",
     (Qt.Orientation.Horizontal, Qt.Orientation.Vertical),
 )
-def test_theme_manager_renders_splitter_grip_without_changing_geometry(
-    theme_app,
+def test_theme_manager_renders_splitter_handle_without_changing_geometry(
+    qapp,
     orientation,
 ):
-    """The shared style supplies visible grip dots without resizing handles."""
+    """The shared stylesheet makes handles visible without resizing them."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
 
-    qapp = theme_app
     splitter = QSplitter(orientation)
     splitter.addWidget(QLabel("First"))
     splitter.addWidget(QLabel("Second"))
@@ -172,41 +146,34 @@ def test_theme_manager_renders_splitter_grip_without_changing_geometry(
         splitter.close()
 
 
-def test_splitter_grip_style_is_application_owned_and_idempotent(theme_app):
-    """Repeated theme application reuses one proxy and its current application QSS."""
+def test_theme_application_preserves_native_style_and_is_idempotent(qapp):
+    """Repeated theme application leaves native style ownership with Qt."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
-    from pyqt_reactive.theming.splitter_grip_style import (
-        install_application_control_style,
-    )
 
-    qapp = theme_app
     try:
         scheme = ColorScheme()
         manager = ThemeManager(scheme)
         manager.apply_color_scheme(scheme)
-        installed = install_application_control_style(qapp)
+        native_style = qapp.style()
         application_stylesheet = qapp.styleSheet()
 
         manager.apply_color_scheme(scheme)
 
-        assert install_application_control_style(qapp) is installed
+        assert qapp.style() is native_style
+        assert not isinstance(native_style, QProxyStyle)
         assert qapp.styleSheet() == application_stylesheet
         assert application_stylesheet == manager.get_application_control_style_sheet()
     finally:
         qapp.processEvents()
 
 
-def test_theme_switching_repolishes_live_controls_repeatedly(theme_app):
+def test_theme_switching_repolishes_live_controls_repeatedly(qapp):
     """Live controls survive repeated application-owned theme transitions."""
 
     from pyqt_reactive.theming import ThemeManager
-    from pyqt_reactive.theming.splitter_grip_style import (
-        install_application_control_style,
-    )
 
-    qapp = theme_app
     menu_bar = QMenuBar()
-    checkbox = QCheckBox("Enabled")
+    checkbox = ThemedCheckBox("Enabled")
     progress = QProgressBar()
     splitter = QSplitter()
     splitter.addWidget(QLabel("First"))
@@ -222,17 +189,13 @@ def test_theme_switching_repolishes_live_controls_repeatedly(theme_app):
             control.show()
 
         manager = ThemeManager()
-        installed_style = None
         scheme_factories = (ColorScheme, ColorScheme.create_light_theme)
         for transition in range(20):
             scheme = scheme_factories[transition % len(scheme_factories)]()
             manager.apply_color_scheme(scheme)
             qapp.processEvents()
 
-            current_style = install_application_control_style(qapp)
-            if installed_style is None:
-                installed_style = current_style
-            assert current_style is installed_style
+            assert not isinstance(qapp.style(), QProxyStyle)
             assert qapp.styleSheet() == manager.get_application_control_style_sheet()
             assert qapp.palette().color(QPalette.ColorRole.Button).name() == scheme.to_hex(
                 scheme.button_normal_bg
@@ -243,11 +206,10 @@ def test_theme_switching_repolishes_live_controls_repeatedly(theme_app):
             control.close()
 
 
-def test_theme_manager_renders_menu_bar_from_color_scheme(theme_app):
+def test_theme_manager_renders_menu_bar_from_color_scheme(qapp):
     """Application-level theming keeps the menu bar out of the OS white theme."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
 
-    qapp = theme_app
     menu_bar = QMenuBar()
     try:
         scheme = ColorScheme()
@@ -287,17 +249,16 @@ def test_theme_manager_renders_menu_bar_from_color_scheme(theme_app):
     (ColorScheme, ColorScheme.create_light_theme),
 )
 def test_theme_manager_colors_native_form_controls_without_geometry_rules(
-    theme_app,
+    qapp,
     scheme_factory,
 ):
     """Windows-sensitive inputs use theme colors without shared layout QSS."""
 
     from pyqt_reactive.theming import ThemeManager
 
-    qapp = theme_app
     combo = QComboBox()
     progress = QProgressBar()
-    checkbox = QCheckBox("Enabled")
+    checkbox = ThemedCheckBox("Enabled")
     try:
         scheme = scheme_factory()
         manager = ThemeManager(scheme)
@@ -333,12 +294,11 @@ def test_theme_manager_colors_native_form_controls_without_geometry_rules(
         checkbox.close()
 
 
-def test_theme_manager_renders_tab_bar_from_color_scheme(theme_app):
+def test_theme_manager_renders_tab_bar_from_color_scheme(qapp):
     """Application tabs inherit the shared theme instead of OS white defaults."""
 
     from pyqt_reactive.theming import ColorScheme, ThemeManager
 
-    qapp = theme_app
     tab_bar = _DerivedTabBar()
     try:
         scheme = ColorScheme()
@@ -368,7 +328,7 @@ def test_theme_manager_renders_tab_bar_from_color_scheme(theme_app):
         tab_bar.close()
 
 
-def test_theme_manager_selects_inherited_qt_file_dialogs(theme_app):
+def test_theme_manager_selects_inherited_qt_file_dialogs(qapp):
     """The shared theme prevents native dialogs from bypassing application QSS."""
 
     from pyqt_reactive.theming import ColorScheme, ThemeManager
@@ -379,19 +339,18 @@ def test_theme_manager_selects_inherited_qt_file_dialogs(theme_app):
         QApplication.setAttribute(attribute, False)
         scheme = ColorScheme()
         ThemeManager(scheme).apply_color_scheme(scheme)
-        theme_app.processEvents()
+        qapp.processEvents()
 
         assert QApplication.testAttribute(attribute)
     finally:
         QApplication.setAttribute(attribute, original_value)
 
 
-def test_theme_manager_renders_all_dialog_subclasses_from_shared_colors(theme_app):
+def test_theme_manager_renders_all_dialog_subclasses_from_shared_colors(qapp):
     """Application, message, and file dialogs share one inherited color rule."""
 
     from pyqt_reactive.theming import ColorScheme, ThemeManager
 
-    qapp = theme_app
     dialogs = (_DerivedDialog(), QMessageBox())
     try:
         scheme = ColorScheme()
@@ -415,11 +374,10 @@ def test_theme_manager_renders_all_dialog_subclasses_from_shared_colors(theme_ap
             dialog.close()
 
 
-def test_theme_manager_renders_message_box_buttons_from_shared_style(theme_app):
+def test_theme_manager_renders_message_box_buttons_from_shared_style(qapp):
     """Updater-style message boxes inherit the borderless button authority."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
 
-    qapp = theme_app
     message_box = QMessageBox()
     try:
         scheme = ColorScheme()
@@ -450,7 +408,7 @@ def test_theme_manager_renders_message_box_buttons_from_shared_style(theme_app):
         message_box.close()
 
 
-def test_qscintilla_editor_uses_shared_borderless_button_style(theme_app):
+def test_qscintilla_editor_uses_shared_borderless_button_style(qapp):
     """The code editor must not restore its former outlined button mirror."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
     from pyqt_reactive.widgets.editors.simple_code_editor import (
@@ -462,7 +420,6 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(theme_app):
     if not QSCINTILLA_AVAILABLE:
         pytest.skip("QScintilla is not installed")
 
-    qapp = theme_app
     dialog = None
     try:
         scheme = ColorScheme()
@@ -501,11 +458,10 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(theme_app):
             dialog.close()
 
 
-def test_native_control_theme_preserves_nested_widget_geometry(theme_app):
+def test_native_control_theme_preserves_nested_widget_geometry(qapp):
     """Coloring native chrome must not alter nested form spacing or size hints."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
 
-    qapp = theme_app
     root = QWidget()
     outer_layout = QVBoxLayout(root)
     outer_group = QGroupBox("Outer")
@@ -516,7 +472,9 @@ def test_native_control_theme_preserves_nested_widget_geometry(theme_app):
     leaf_layout = QVBoxLayout(inner_group)
     leaf_layout.addWidget(QLabel("Value"))
     try:
-        qapp.setStyleSheet("")
+        scheme = ColorScheme()
+        manager = ThemeManager(scheme)
+        manager.apply_color_scheme(scheme)
         root.ensurePolished()
         qapp.processEvents()
         baseline_size_hint = root.sizeHint()
@@ -525,8 +483,7 @@ def test_native_control_theme_preserves_nested_widget_geometry(theme_app):
             for layout in (outer_layout, inner_layout, leaf_layout)
         )
 
-        scheme = ColorScheme()
-        ThemeManager(scheme).apply_color_scheme(scheme)
+        manager.apply_color_scheme(ColorScheme.create_light_theme())
         root.ensurePolished()
         qapp.processEvents()
 

@@ -191,7 +191,22 @@ class StyleSheetGenerator:
             + self.generate_scrollbar_style()
             + "\n"
             + self.generate_tab_color_style()
+            + "\n"
+            + self.generate_splitter_style()
         )
+
+    def generate_splitter_style(self) -> str:
+        """Keep native splitter geometry while making its handle visible."""
+
+        cs = self.color_scheme
+        return f"""
+            QSplitter::handle {{
+                background-color: {cs.to_hex(cs.border_color)};
+            }}
+            QSplitter::handle:hover {{
+                background-color: {cs.to_hex(cs.border_light)};
+            }}
+        """
 
     def generate_application_control_style(self) -> str:
         """Style application controls without restyling form containers."""

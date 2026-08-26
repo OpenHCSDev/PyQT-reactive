@@ -9,7 +9,6 @@ from .accent_chrome import AccentChromeColorPolicy, AccentChromeColors
 from .color_scheme import ColorScheme
 from .color_scheme_resolution import ColorSchemeResolution, WidgetTheme
 from .palette_manager import PaletteManager, ThemeManager
-from .splitter_grip_style import ApplicationControlStyle
 from .style_generator import StatusColorRole, StyleSheetGenerator
 
 __all__ = [
@@ -20,7 +19,6 @@ __all__ = [
     "WidgetTheme",
     "PaletteManager",
     "ThemeManager",
-    "ApplicationControlStyle",
     "StatusColorRole",
     "StyleSheetGenerator",
 ]
