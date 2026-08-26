@@ -1,0 +1,2 @@
+# Source candidates needed to validate this checkout before coordinated publication.
+zmqruntime @ git+https://github.com/OpenHCSDev/ZMQRuntime.git@da854a3639f5fb2bf85d33773923e24cb3411993
