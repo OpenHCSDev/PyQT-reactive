@@ -34,7 +34,7 @@ dependencies = [
     "Pygments>=2.15",
     "pyzmq>=22.0",
     "python-introspect>=0.1.10",
-    "zmqruntime>=0.2.8",
+    "zmqruntime>=0.2.19,<0.3",
 ]
 
 [project.optional-dependencies]
