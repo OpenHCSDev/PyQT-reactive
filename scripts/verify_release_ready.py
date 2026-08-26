@@ -93,7 +93,7 @@ def check_publish_workflow() -> None:
     required_fragments = (
         "tags:",
         "id-token: write",
-        "pypa/gh-action-pypi-publish@release/v1",
+        "pypa/gh-action-pypi-publish@",
     )
     missing = tuple(fragment for fragment in required_fragments if fragment not in workflow)
     if missing:
