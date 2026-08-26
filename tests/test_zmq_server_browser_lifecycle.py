@@ -270,6 +270,7 @@ def test_kill_result_carries_the_exact_endpoint_selected_by_the_scan(
         scan_service=scan_service,
     )
     observed: list[TransportEndpoint] = []
+    shutdown_endpoints: list[TransportEndpoint] = []
     browser.endpoint_terminated.connect(observed.append)
 
     class _ShutdownService:
@@ -289,8 +290,10 @@ def test_kill_result_carries_the_exact_endpoint_selected_by_the_scan(
 
     monkeypatch.setattr(
         EndpointShutdownService,
-        "for_config",
-        classmethod(lambda cls, config: _ShutdownService()),
+        "for_endpoint",
+        classmethod(
+            lambda cls, config, endpoint: shutdown_endpoints.append(endpoint) or _ShutdownService()
+        ),
     )
 
     browser._spawn_server_kill_thread([5000], EndpointShutdownMode.GRACEFUL)
@@ -305,6 +308,7 @@ def test_kill_result_carries_the_exact_endpoint_selected_by_the_scan(
             transport_mode=scan_service.transport_mode,
         )
     ]
+    assert shutdown_endpoints == observed
 
 
 def test_startup_event_and_tree_share_the_endpoint_snapshot_authority(qapp) -> None:
@@ -572,8 +576,8 @@ def test_kill_completion_is_suppressed_after_cleanup(qapp, monkeypatch) -> None:
 
     monkeypatch.setattr(
         EndpointShutdownService,
-        "for_config",
-        classmethod(lambda cls, config: _ShutdownService()),
+        "for_endpoint",
+        classmethod(lambda cls, config, endpoint: _ShutdownService()),
     )
 
     mode = EndpointShutdownMode.GRACEFUL

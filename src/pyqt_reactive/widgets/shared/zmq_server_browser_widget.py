@@ -306,9 +306,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     ) -> None:
         """Install and publish the sole persistent endpoint observation state."""
 
-        self._commit_endpoint_authority(
-            self._endpoint_authority.with_snapshot(snapshot)
-        )
+        self._commit_endpoint_authority(self._endpoint_authority.with_snapshot(snapshot))
 
     def _commit_endpoint_authority(
         self,
@@ -403,7 +401,10 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         mode: EndpointShutdownMode,
     ) -> None:
         scan_service = self._scan_service
-        shutdown_service = EndpointShutdownService.for_config(scan_service.config)
+        shutdown_service = EndpointShutdownService.for_endpoint(
+            scan_service.config,
+            scan_service.endpoint(ports[0]),
+        )
 
         def _kill_servers() -> None:
             result = shutdown_service.shutdown_ports(
