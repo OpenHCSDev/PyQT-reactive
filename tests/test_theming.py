@@ -410,6 +410,7 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(qapp):
     from pyqt_reactive.theming import ColorScheme, ThemeManager
     from pyqt_reactive.widgets.editors.simple_code_editor import (
         QSCINTILLA_AVAILABLE,
+        QSCINTILLA_FOLD_MARGIN_INDEX,
         QScintillaCodeEditorDialog,
     )
 
@@ -440,6 +441,19 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(qapp):
                 for y in range(button.height())
             }
             assert scheme.to_hex(scheme.button_normal_bg) in rendered_colors
+
+        fold_margin_x = sum(
+            dialog.editor.marginWidth(index)
+            for index in range(QSCINTILLA_FOLD_MARGIN_INDEX)
+        ) + (
+            dialog.editor.marginWidth(QSCINTILLA_FOLD_MARGIN_INDEX)
+            // 2
+        )
+        rendered_fold_margin = dialog.editor.grab().toImage().pixelColor(
+            fold_margin_x,
+            dialog.editor.height() // 2,
+        )
+        assert rendered_fold_margin.name() == scheme.to_hex(scheme.frame_bg)
     finally:
         if dialog is not None:
             dialog.close()

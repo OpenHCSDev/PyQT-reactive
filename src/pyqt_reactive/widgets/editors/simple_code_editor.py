@@ -36,6 +36,7 @@ from pyqt_reactive.services.window_manager import WindowManager
 
 logger = logging.getLogger(__name__)
 DeclarationT = TypeVar("DeclarationT")
+QSCINTILLA_FOLD_MARGIN_INDEX = 2
 
 # Try to import QScintilla, fall back to QTextEdit if not available
 try:
@@ -481,7 +482,10 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
         self.editor.setAutoIndent(True)
 
         # Code folding
-        self.editor.setFolding(QsciScintilla.FoldStyle.BoxedTreeFoldStyle)
+        self.editor.setFolding(
+            QsciScintilla.FoldStyle.BoxedTreeFoldStyle,
+            QSCINTILLA_FOLD_MARGIN_INDEX,
+        )
 
         # Brace matching
         self.editor.setBraceMatching(QsciScintilla.BraceMatch.SloppyBraceMatch)
@@ -758,8 +762,10 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
         self.editor.setPaper(cs.to_qcolor(cs.panel_bg))
 
         # Set margin colors
-        self.editor.setMarginsBackgroundColor(cs.to_qcolor(cs.frame_bg))
+        margin_background = cs.to_qcolor(cs.frame_bg)
+        self.editor.setMarginsBackgroundColor(margin_background)
         self.editor.setMarginsForegroundColor(cs.to_qcolor(cs.text_secondary))
+        self.editor.setFoldMarginColors(margin_background, margin_background)
 
         # Set caret line color
         self.editor.setCaretLineBackgroundColor(cs.to_qcolor(cs.selection_bg))
@@ -876,7 +882,10 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
     def _toggle_code_folding(self, checked):
         """Toggle code folding."""
         if checked:
-            self.editor.setFolding(QsciScintilla.FoldStyle.BoxedTreeFoldStyle)
+            self.editor.setFolding(
+                QsciScintilla.FoldStyle.BoxedTreeFoldStyle,
+                QSCINTILLA_FOLD_MARGIN_INDEX,
+            )
         else:
             self.editor.setFolding(QsciScintilla.FoldStyle.NoFoldStyle)
 
