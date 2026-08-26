@@ -15,11 +15,12 @@ Mirrors MemoryTypeConverter pattern - adapters normalize inconsistent APIs.
 """
 
 from abc import ABCMeta
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any
 
 try:
-    from PyQt6.QtCore import QObject, Qt
+    from PyQt6.QtCore import QObject
     from PyQt6.QtGui import QKeySequence
     from PyQt6.QtWidgets import (
         QComboBox,
