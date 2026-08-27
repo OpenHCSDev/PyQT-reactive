@@ -3,15 +3,27 @@
 import ast
 import dataclasses
 import logging
-from collections.abc import Mapping as MappingABC, Sequence as SequenceABC
+from collections.abc import Callable
+from collections.abc import Mapping as MappingABC
+from collections.abc import Sequence as SequenceABC
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Callable, ClassVar, get_args, get_origin
+from typing import ClassVar, get_args, get_origin
 
-from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QVBoxLayout, QSpinBox, QDoubleSpinBox, QWidget
-from PyQt6.QtGui import QIntValidator, QValidator
-from magicgui.widgets import Widget as MagicGuiWidget, create_widget
+from magicgui.widgets import Widget as MagicGuiWidget
+from magicgui.widgets import create_widget
 from objectstate import DataclassFieldAccess
+from PyQt6.QtGui import QIntValidator, QValidator
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QLineEdit,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 from python_introspect import (
     enum_member_type,
     get_enum_from_list,
@@ -22,15 +34,12 @@ from python_introspect import (
     resolve_annotated,
     resolve_optional,
 )
+
 from pyqt_reactive.forms.parameter_info_types import ParameterInfo
 from pyqt_reactive.forms.parameter_value_contracts import (
     FormObject,
     ParameterValue,
     WidgetValue,
-)
-
-from pyqt_reactive.widgets import (
-    NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox, NoneAwareCheckBox
 )
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
@@ -45,11 +54,15 @@ from pyqt_reactive.protocols import (
     WidgetCapability,
     widget_supports_capability,
 )
-from pyqt_reactive.qt_types import QtKeySequenceText
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
-from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
+from pyqt_reactive.qt_types import QtKeySequenceText
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
-from contextlib import contextmanager
+from pyqt_reactive.widgets import (
+    NoneAwareCheckBox,
+    NoScrollComboBox,
+    NoScrollDoubleSpinBox,
+)
+from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
 
 try:
     from pyqt_reactive.core.performance_monitor import timer
@@ -704,7 +717,10 @@ class MagicGuiValueBoundary:
     """Formal boundary defaults required by magicgui widget construction."""
 
     @staticmethod
-    def project(resolved_type: type, extracted_value: ParameterValue | None) -> ParameterValue | None:
+    def project(
+        resolved_type: type,
+        extracted_value: ParameterValue | None,
+    ) -> ParameterValue | None:
         if extracted_value is not None:
             return extracted_value
 
@@ -911,7 +927,10 @@ def _create_none_aware_checkbox():
     return NoneAwareCheckBox()
 
 
-def convert_widget_value_to_type(value: WidgetValue | None, param_type: type) -> ParameterValue | None:
+def convert_widget_value_to_type(
+    value: WidgetValue | None,
+    param_type: type,
+) -> ParameterValue | None:
     """
     PyQt-specific type conversions for widget values.
 
