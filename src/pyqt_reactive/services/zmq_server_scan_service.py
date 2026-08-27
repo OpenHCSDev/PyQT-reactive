@@ -9,7 +9,11 @@ from dataclasses import dataclass
 
 from zmqruntime.config import TransportMode, ZMQConfig
 from zmqruntime.messages import PongResponse
-from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
+from zmqruntime.startup import (
+    EndpointStartupPhase,
+    EndpointStartupPresentationTarget,
+    EndpointStartupStatus,
+)
 from zmqruntime.transport import (
     TransportEndpoint,
     request_control_ping,
@@ -126,6 +130,11 @@ class StartingEndpointObservation(EndpointObservation):
     @property
     def startup_observation(self) -> StartingEndpointObservation:
         return self
+
+    def present(self, target: EndpointStartupPresentationTarget) -> None:
+        """Project this observation through its lifecycle declaration leaf."""
+
+        self.startup_status.phase.present(target, self.startup_status.message)
 
     def after_startup_status(
         self,

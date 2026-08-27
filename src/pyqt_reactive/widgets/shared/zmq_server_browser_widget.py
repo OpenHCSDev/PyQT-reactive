@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, ABCMeta, abstractmethod
 from collections.abc import Callable
+from functools import partialmethod
 from pathlib import Path
 
 from objectstate import spawn_thread_with_context
@@ -18,7 +19,10 @@ from PyQt6.QtWidgets import (
 )
 from zmqruntime import EndpointShutdownMode
 from zmqruntime.shutdown import EndpointShutdownService
-from zmqruntime.startup import EndpointStartupStatus
+from zmqruntime.startup import (
+    EndpointStartupPresentationTarget,
+    EndpointStartupStatus,
+)
 
 from pyqt_reactive.services.coalesced_scan_requests import CoalescedScanRequests
 from pyqt_reactive.services.zmq_server_info import (
@@ -62,6 +66,22 @@ class BrowserLifecycleState:
             return False
         self._cleaning_up = True
         return True
+
+
+class EndpointStartupTreeItemPresentation(EndpointStartupPresentationTarget):
+    """Project endpoint lifecycle leaves onto one server-browser row."""
+
+    def __init__(self, item: QTreeWidgetItem) -> None:
+        self._item = item
+
+    def set_status(self, status: str, message: str) -> None:
+        self._item.setText(1, status)
+        self._item.setText(2, message)
+
+    present_checking = partialmethod(set_status, "🚀 Starting")
+    present_connected = partialmethod(set_status, "✅ Connected")
+    present_disconnected = partialmethod(set_status, "❌ Disconnected")
+    present_warning = partialmethod(set_status, "⚠️ Preparing")
 
 
 class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
@@ -140,7 +160,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         self.on_browser_cleanup()
 
-    def showEvent(self, event) -> None:
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt virtual method name
         super().showEvent(event)
         if self._lifecycle_state.is_cleaning_up():
             return
@@ -149,7 +169,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
             self.refresh_timer.start(5000)
         self.on_browser_shown()
 
-    def hideEvent(self, event) -> None:
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt virtual method name
         super().hideEvent(event)
         if self.refresh_timer is not None:
             self.refresh_timer.stop()
@@ -343,13 +363,8 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
     ) -> QTreeWidgetItem:
         """Render a row before the endpoint can identify its server role."""
 
-        item = QTreeWidgetItem(
-            [
-                f"Port {observation.port} - Endpoint",
-                "🚀 Starting",
-                observation.status.message,
-            ]
-        )
+        item = QTreeWidgetItem([f"Port {observation.port} - Endpoint", "", ""])
+        observation.present(EndpointStartupTreeItemPresentation(item))
         item.setData(0, Qt.ItemDataRole.UserRole, observation)
         return item
 

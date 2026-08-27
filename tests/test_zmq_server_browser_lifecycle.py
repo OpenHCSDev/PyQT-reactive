@@ -331,7 +331,18 @@ def test_startup_event_and_tree_share_the_endpoint_snapshot_authority(qapp) -> N
     assert published == [browser._endpoint_snapshot]
     row = browser.server_tree.topLevelItem(0)
     assert row.text(0) == "Port 5000 - Endpoint"
+    assert row.text(1) == "🚀 Starting"
     assert row.text(2) == "Importing runtime"
+
+    connected_status = EndpointStartupStatus(
+        phase=EndpointStartupPhase.CONNECTED,
+        message="Connected to endpoint",
+    )
+    browser.observe_endpoint_startup(5000, connected_status)
+    row = browser.server_tree.topLevelItem(0)
+    assert browser._endpoint_snapshot.status_for_port(5000) is connected_status
+    assert row.text(1) == "✅ Connected"
+    assert row.text(2) == "Connected to endpoint"
 
     browser.observe_endpoint_startup(
         5000,
