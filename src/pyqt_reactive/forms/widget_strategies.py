@@ -6,7 +6,7 @@ import logging
 from collections.abc import Mapping as MappingABC, Sequence as SequenceABC
 from enum import Enum
 from pathlib import Path
-from typing import ClassVar, Dict, Type, Callable, get_args, get_origin
+from typing import Callable, ClassVar, get_args, get_origin
 
 from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QVBoxLayout, QSpinBox, QDoubleSpinBox, QWidget
 from PyQt6.QtGui import QIntValidator, QValidator
@@ -214,7 +214,7 @@ class TypedLiteralContainerEdit(
         self.setValidator(TypedLiteralValidator(self._parse_text, self))
         self.setToolTip(self._syntax_help())
 
-    def configure_annotation(self, param_name: str, param_type: Type) -> None:
+    def configure_annotation(self, param_name: str, param_type: type) -> None:
         """Bind the semantic annotation used by the shared conversion authority."""
         self._param_name = param_name
         self._param_type = param_type
@@ -384,7 +384,7 @@ class TypedLiteralUnionEdit(
 ):
     """Literal editor for unions whose declared members are safely editable."""
 
-    def __init__(self, param_name: str, param_type: Type, parent=None):
+    def __init__(self, param_name: str, param_type: type, parent=None):
         self._param_name = param_name
         self._param_type = param_type
         members = get_args(param_type)
@@ -471,7 +471,7 @@ class WidgetCreationRequest:
     """Public widget creation request carried through the creation authority."""
 
     param_name: str
-    param_type: Type
+    param_type: type
     current_value: ParameterValue | None
     widget_id: str
     parameter_info: ParameterInfo | None
@@ -482,7 +482,7 @@ class ResolvedWidgetRequest:
     """Widget request after optional/enum wrappers have been projected."""
 
     source: WidgetCreationRequest
-    resolved_type: Type
+    resolved_type: type
     current_value: ParameterValue | None
     accepts_none: bool
 
@@ -491,7 +491,7 @@ class WidgetTypeLabel:
     """Stable type labels for diagnostics and timer names."""
 
     @staticmethod
-    def render(param_type: Type) -> str:
+    def render(param_type: type) -> str:
         if isinstance(param_type, type):
             return param_type.__name__
         return str(param_type)
@@ -549,7 +549,7 @@ class CheckboxGroupWidgetFactory:
     def create(
         self,
         param_name: str,
-        param_type: Type,
+        param_type: type,
         current_value: ParameterValue | None,
     ) -> CheckboxGroupAdapter:
         enum_type = get_enum_from_list(param_type)
@@ -591,7 +591,7 @@ class LiteralContainerWidgetFactory:
     @classmethod
     def container_type_for(
         cls,
-        annotation: Type,
+        annotation: type,
     ) -> type[list] | type[tuple] | type[dict] | None:
         """Return the supported container kind declared by ``annotation``."""
 
@@ -601,7 +601,7 @@ class LiteralContainerWidgetFactory:
         return cls.abstract_container_types.get(container_type)
 
     @classmethod
-    def supports(cls, annotation: Type) -> bool:
+    def supports(cls, annotation: type) -> bool:
         """Return whether this authority can project ``annotation``."""
 
         return cls.container_type_for(annotation) is not None
@@ -659,7 +659,7 @@ class LiteralUnionWidgetFactory:
         widget.set_value(request.current_value)
         return widget
 
-    def _is_literal_safe(self, member: Type) -> bool:
+    def _is_literal_safe(self, member: type) -> bool:
         if member in self.scalar_member_types or is_enum_type(member):
             return True
         return LITERAL_CONTAINER_WIDGET_FACTORY.supports(member)
@@ -667,7 +667,7 @@ class LiteralUnionWidgetFactory:
     @staticmethod
     def _value_matches_literal_member(
         value: ParameterValue,
-        members: tuple[Type, ...],
+        members: tuple[type, ...],
     ) -> bool:
         from python_introspect import validate_annotation_value
 
@@ -704,7 +704,7 @@ class MagicGuiValueBoundary:
     """Formal boundary defaults required by magicgui widget construction."""
 
     @staticmethod
-    def project(resolved_type: Type, extracted_value: ParameterValue | None) -> ParameterValue | None:
+    def project(resolved_type: type, extracted_value: ParameterValue | None) -> ParameterValue | None:
         if extracted_value is not None:
             return extracted_value
 
@@ -790,7 +790,7 @@ class MagicGuiWidgetFactory:
         return None
 
     @staticmethod
-    def _clear_magicgui_none_preview(native_widget: QWidget, resolved_type: Type) -> None:
+    def _clear_magicgui_none_preview(native_widget: QWidget, resolved_type: type) -> None:
         if isinstance(native_widget, QLineEdit):
             native_widget.setText("")
             return
@@ -804,7 +804,7 @@ MAGICGUI_WIDGET_FACTORY = MagicGuiWidgetFactory()
 class PyQt6WidgetCreationAuthority:
     """Nominal authority for choosing the widget creation path."""
 
-    direct_factories: ClassVar[Dict[Type, Callable[[ParameterValue | None], QWidget]]] = {
+    direct_factories: ClassVar[dict[type, Callable[[ParameterValue | None], QWidget]]] = {
         int: DIRECT_WIDGET_FACTORY.create_int,
         float: DIRECT_WIDGET_FACTORY.create_float,
         bool: DIRECT_WIDGET_FACTORY.create_bool,
@@ -911,7 +911,7 @@ def _create_none_aware_checkbox():
     return NoneAwareCheckBox()
 
 
-def convert_widget_value_to_type(value: WidgetValue | None, param_type: Type) -> ParameterValue | None:
+def convert_widget_value_to_type(value: WidgetValue | None, param_type: type) -> ParameterValue | None:
     """
     PyQt-specific type conversions for widget values.
 
@@ -934,7 +934,7 @@ def convert_widget_value_to_type(value: WidgetValue | None, param_type: Type) ->
 
 
 def create_enum_widget_unified(
-    enum_type: Type,
+    enum_type: type,
     current_value: ParameterValue | None,
     *,
     accepts_none: bool = False,
@@ -960,7 +960,7 @@ def create_enum_widget_unified(
     return widget
 
 
-def coerce_enum_widget_value(enum_type: Type, value: ParameterValue | None) -> Enum | None:
+def coerce_enum_widget_value(enum_type: type, value: ParameterValue | None) -> Enum | None:
     """Coerce enum-compatible UI values through the enum declaration itself."""
     if isinstance(value, enum_type):
         return value
@@ -982,7 +982,7 @@ def _select_combobox_data(widget: QComboBox, value: ParameterValue) -> None:
 
 def create_pyqt6_widget(
     param_name: str,
-    param_type: Type,
+    param_type: type,
     current_value: ParameterValue | None,
     widget_id: str,
     parameter_info: ParameterInfo | None = None,
@@ -1261,7 +1261,7 @@ def _tooltip_without_interaction_hints(current_tooltip: str) -> str:
 class WidgetTypeEntryResolver:
     """MRO-aware lookup for raw widget boundary entries."""
 
-    mapping: Dict[Type, TypeResolvedBoundaryEntry]
+    mapping: dict[type, TypeResolvedBoundaryEntry]
 
     def entry_for(self, widget: WidgetBoundaryTarget) -> TypeResolvedBoundaryEntry | None:
         for widget_type in type(widget).__mro__:
@@ -1272,7 +1272,7 @@ class WidgetTypeEntryResolver:
 
 
 # Declarative widget-to-strategy mapping
-WIDGET_PLACEHOLDER_STRATEGIES: Dict[Type, Callable[[QWidget, str], None]] = {
+WIDGET_PLACEHOLDER_STRATEGIES: dict[type, Callable[[QWidget, str], None]] = {
     QCheckBox: PLACEHOLDER_RENDERER.apply_checkbox,
     QComboBox: PLACEHOLDER_RENDERER.apply_combobox,
     QSpinBox: PLACEHOLDER_RENDERER.apply_spinbox,
@@ -1380,7 +1380,7 @@ def _connect_raw_combobox(widget: QComboBox, callback: WidgetSignalCallback) -> 
 
 RawWidgetSignalConnector = Callable[[QWidget, WidgetSignalCallback], None]
 
-RAW_WIDGET_SIGNAL_CONNECTORS: Dict[Type, RawWidgetSignalConnector] = {
+RAW_WIDGET_SIGNAL_CONNECTORS: dict[type, RawWidgetSignalConnector] = {
     QCheckBox: _connect_raw_checkbox,
     QLineEdit: _connect_raw_lineedit,
     QSpinBox: _connect_raw_spinbox,
@@ -1484,7 +1484,7 @@ def _set_magicgui_widget(widget: MagicGuiWidget, value: ParameterValue | None) -
 
 RawWidgetValueSetter = Callable[[WidgetBoundaryTarget, ParameterValue | None], None]
 
-RAW_WIDGET_VALUE_SETTERS: Dict[Type, RawWidgetValueSetter] = {
+RAW_WIDGET_VALUE_SETTERS: dict[type, RawWidgetValueSetter] = {
     QCheckBox: _set_raw_checkbox,
     QSpinBox: _set_raw_spinbox,
     QDoubleSpinBox: _set_raw_double_spinbox,
