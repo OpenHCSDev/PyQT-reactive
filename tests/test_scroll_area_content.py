@@ -90,7 +90,7 @@ def test_reflowing_vertical_scroll_area_tracks_viewport_width_across_bar_transit
         scroll_area.close()
 
 
-def test_reflowing_vertical_scroll_area_preserves_base_margins_stably(qapp) -> None:
+def test_reflowing_vertical_scroll_area_preserves_base_margins_stably(qapp, qtbot) -> None:
     content = QWidget()
     content_layout = QVBoxLayout(content)
     for index in range(30):
@@ -128,7 +128,10 @@ def test_reflowing_vertical_scroll_area_preserves_base_margins_stably(qapp) -> N
         ) == compact_snapshot
 
         scroll_area.resize(300, 2000)
-        _settle()
+        qtbot.waitUntil(
+            lambda: scroll_area.viewportMargins().right() == base_margins[2],
+            timeout=1000,
+        )
         expanded_margins = scroll_area.viewportMargins()
         assert (
             expanded_margins.left(),
@@ -138,7 +141,14 @@ def test_reflowing_vertical_scroll_area_preserves_base_margins_stably(qapp) -> N
         ) == base_margins
 
         scroll_area.resize(300, 180)
-        _settle()
+        qtbot.waitUntil(
+            lambda: (
+                scroll_area.viewportMargins(),
+                _rect_in(scroll_area.viewport(), scroll_area),
+            )
+            == compact_snapshot,
+            timeout=1000,
+        )
         assert (
             scroll_area.viewportMargins(),
             _rect_in(scroll_area.viewport(), scroll_area),
