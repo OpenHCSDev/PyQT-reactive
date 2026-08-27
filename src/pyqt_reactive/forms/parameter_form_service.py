@@ -9,7 +9,11 @@ Uses React-style discriminated unions for type-safe parameter handling.
 """
 
 import dataclasses
-from collections.abc import Callable as CallableABC
+from collections.abc import (
+    Callable as CallableABC,
+    Mapping as MappingABC,
+    Sequence as SequenceABC,
+)
 
 from objectstate import (
     DataclassFieldAccess,
@@ -357,13 +361,13 @@ class ParameterFormService:
         if dataclasses.is_dataclass(param_type):
             return self._convert_dataclass_value(value, param_type, param_name)
 
-        if origin is tuple:
+        if origin in (tuple, SequenceABC):
             return self._convert_tuple_value(value, param_type, param_name)
 
         if origin is list:
             return self._convert_list_value(value, param_type, param_name)
 
-        if origin is dict:
+        if origin in (dict, MappingABC):
             return self._convert_dict_value(value, param_type, param_name)
 
         return _NO_CONVERSION
@@ -451,6 +455,12 @@ class ParameterFormService:
             return _NO_CONVERSION
 
         args = get_args(param_type)
+        if get_origin(param_type) is SequenceABC:
+            item_type = args[0] if args else Any
+            return tuple(
+                self._converted_container_item(item, item_type, param_name)
+                for item in value
+            )
         if len(args) == 2 and args[1] is Ellipsis:
             item_type = args[0]
             return tuple(

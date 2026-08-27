@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
+
+
+class _Mode(Enum):
+    FIRST = "first"
+    SECOND = "second"
 
 
 def test_mapping_edit_round_trip_preserves_object_state_type(qapp):
@@ -111,6 +117,77 @@ def test_literal_container_editor_preserves_declared_container_kind(
 
     assert widget.get_value() == expected
     assert type(widget.get_value()) is type(initial_value)
+
+
+def test_optional_enum_editor_preserves_explicit_default_choice(qapp):
+    """An optional enum exposes its authored None value instead of a false member."""
+    from pyqt_reactive.forms.widget_strategies import create_pyqt6_widget
+
+    widget = create_pyqt6_widget(
+        "value",
+        _Mode | None,
+        None,
+        "value",
+    )
+
+    assert widget.currentData() is None
+    assert widget.currentText() == "Default"
+    assert tuple(widget.itemData(index) for index in range(widget.count())) == (
+        None,
+        *_Mode,
+    )
+
+
+def test_literal_union_editor_projects_writable_members_of_callable_union(qapp):
+    """Code-only callable members do not suppress writable literal alternatives."""
+    from pyqt_reactive.forms.widget_strategies import (
+        TypedLiteralUnionEdit,
+        create_pyqt6_widget,
+    )
+
+    annotation = float | Callable[..., Any] | Sequence[Any] | None
+    widget = create_pyqt6_widget("value", annotation, None, "value")
+
+    assert isinstance(widget, TypedLiteralUnionEdit)
+    widget.setText("2.5")
+    assert widget.get_value() == 2.5
+    widget.setText("[1, 2]")
+    assert widget.get_value() == (1, 2)
+
+
+@pytest.mark.parametrize(
+    ("annotation", "initial_value", "edited_text", "expected"),
+    (
+        (list[int], range(1, 4), "[4, 5]", [4, 5]),
+        (tuple[int, ...], range(1, 4), "(4, 5)", (4, 5)),
+        (Sequence[int], range(1, 4), "(4, 5)", (4, 5)),
+        (Mapping[str, int], {"a": 1}, "{'a': 2}", {"a": 2}),
+    ),
+)
+def test_literal_container_editor_projects_compatible_abstract_defaults(
+    qapp,
+    annotation,
+    initial_value,
+    edited_text,
+    expected,
+):
+    """Abstract and range defaults use one concrete typed literal projection."""
+    from pyqt_reactive.forms.widget_strategies import (
+        TypedLiteralContainerEdit,
+        create_pyqt6_widget,
+    )
+
+    widget = create_pyqt6_widget(
+        "value",
+        annotation,
+        initial_value,
+        "value",
+    )
+
+    assert isinstance(widget, TypedLiteralContainerEdit)
+    widget.setText(edited_text)
+    assert widget.get_value() == expected
+    assert type(widget.get_value()) is type(expected)
 
 
 def test_literal_container_editor_rejects_invalid_or_wrong_kind(qapp):

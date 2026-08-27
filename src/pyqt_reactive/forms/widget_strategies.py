@@ -3,6 +3,7 @@
 import ast
 import dataclasses
 import logging
+from collections.abc import Mapping as MappingABC, Sequence as SequenceABC
 from enum import Enum
 from pathlib import Path
 from typing import ClassVar, Dict, Type, Callable, get_args, get_origin
@@ -17,6 +18,7 @@ from python_introspect import (
     is_enum_type,
     is_list_of_enums,
     is_union_type,
+    optional_member_type,
     resolve_annotated,
     resolve_optional,
 )
@@ -218,6 +220,7 @@ class TypedLiteralContainerEdit(
         self._param_type = param_type
 
     def set_value(self, value: ParameterValue | None) -> None:
+        value = self._project_container(value)
         self._validate_container(value)
         super().set_value(project_literal_edit_value(value))
 
@@ -268,6 +271,29 @@ class TypedLiteralContainerEdit(
             f"Expected {self._container_type.__name__}, "
             f"got {type(value).__name__}."
         )
+
+    def _project_container(
+        self,
+        value: ParameterValue | None,
+    ) -> ParameterValue | None:
+        """Project compatible abstract/default containers into the editor kind."""
+        if value is None or isinstance(value, self._container_type):
+            return value
+        if (
+            self._container_type is list
+            and isinstance(value, SequenceABC)
+            and not isinstance(value, (str, bytes, bytearray))
+        ):
+            return list(value)
+        if (
+            self._container_type is tuple
+            and isinstance(value, SequenceABC)
+            and not isinstance(value, (str, bytes, bytearray))
+        ):
+            return tuple(value)
+        if self._container_type is dict and isinstance(value, MappingABC):
+            return dict(value)
+        return value
 
     def _syntax_help(self) -> str:
         example = {
@@ -458,6 +484,7 @@ class ResolvedWidgetRequest:
     source: WidgetCreationRequest
     resolved_type: Type
     current_value: ParameterValue | None
+    accepts_none: bool
 
 
 class WidgetTypeLabel:
@@ -554,6 +581,12 @@ class LiteralContainerWidgetFactory:
         tuple,
         dict,
     )
+    abstract_container_types: ClassVar[
+        dict[type, type[list] | type[tuple] | type[dict]]
+    ] = {
+        SequenceABC: tuple,
+        MappingABC: dict,
+    }
 
     @classmethod
     def container_type_for(
@@ -565,7 +598,7 @@ class LiteralContainerWidgetFactory:
         container_type = get_origin(annotation) or annotation
         if container_type in cls.container_types:
             return container_type
-        return None
+        return cls.abstract_container_types.get(container_type)
 
     @classmethod
     def supports(cls, annotation: Type) -> bool:
@@ -605,7 +638,18 @@ class LiteralUnionWidgetFactory:
             for member in get_args(request.resolved_type)
             if member is not type(None)
         )
-        if not members or not all(self._is_literal_safe(member) for member in members):
+        literal_members = tuple(
+            member for member in members if self._is_literal_safe(member)
+        )
+        if not literal_members:
+            return None
+        if (
+            request.current_value is not None
+            and not self._value_matches_literal_member(
+                request.current_value,
+                literal_members,
+            )
+        ):
             return None
 
         widget = TypedLiteralUnionEdit(
@@ -619,6 +663,21 @@ class LiteralUnionWidgetFactory:
         if member in self.scalar_member_types or is_enum_type(member):
             return True
         return LITERAL_CONTAINER_WIDGET_FACTORY.supports(member)
+
+    @staticmethod
+    def _value_matches_literal_member(
+        value: ParameterValue,
+        members: tuple[Type, ...],
+    ) -> bool:
+        from python_introspect import validate_annotation_value
+
+        for member in members:
+            try:
+                validate_annotation_value(member, value, path="parameter default")
+            except (TypeError, ValueError):
+                continue
+            return True
+        return False
 
 
 LITERAL_UNION_WIDGET_FACTORY = LiteralUnionWidgetFactory()
@@ -770,6 +829,7 @@ class PyQt6WidgetCreationAuthority:
                 return create_enum_widget_unified(
                     resolved.resolved_type,
                     resolved.current_value,
+                    accepts_none=resolved.accepts_none,
                 )
 
         direct_factory = self.direct_factories.get(resolved.resolved_type)
@@ -795,11 +855,14 @@ class PyQt6WidgetCreationAuthority:
 
     def _resolve_request(self, request: WidgetCreationRequest) -> ResolvedWidgetRequest:
         resolved_type = request.param_type
+        accepts_none = False
         while resolved_type not in self.direct_factories:
             owned_type = resolve_annotated(resolved_type)
             if owned_type != resolved_type:
                 resolved_type = owned_type
                 continue
+            if optional_member_type(resolved_type) is not None:
+                accepts_none = True
             required_type = resolve_optional(resolved_type)
             if required_type == resolved_type:
                 break
@@ -815,6 +878,7 @@ class PyQt6WidgetCreationAuthority:
             source=request,
             resolved_type=resolved_type,
             current_value=current_value,
+            accepts_none=accepts_none,
         )
 
     @staticmethod
@@ -869,11 +933,19 @@ def convert_widget_value_to_type(value: WidgetValue | None, param_type: Type) ->
     return value
 
 
-def create_enum_widget_unified(enum_type: Type, current_value: ParameterValue | None, **kwargs) -> QComboBox:
+def create_enum_widget_unified(
+    enum_type: Type,
+    current_value: ParameterValue | None,
+    *,
+    accepts_none: bool = False,
+) -> QComboBox:
     """Unified enum widget creator with consistent display text."""
     from pyqt_reactive.forms.ui_utils import format_enum_display
 
     widget = NoScrollComboBox()
+
+    if accepts_none:
+        widget.addItem("Default", None)
 
     # Add all enum items
     for enum_value in enum_type:
