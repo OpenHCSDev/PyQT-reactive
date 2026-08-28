@@ -2,6 +2,31 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
+import pytest
+
+from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
+    TabLabelDeclarationMixin,
+)
+
+
+class _ExampleTab(TabLabelDeclarationMixin, str, Enum):
+    def __new__(cls, value: str, label: str):
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.label = label
+        return member
+
+    SECOND = ("second", "Second")
+
+
+def test_tab_declaration_resolves_live_label_without_fixed_position() -> None:
+    assert _ExampleTab.SECOND.index_in(("First", "Second", "Third")) == 1
+
+    with pytest.raises(ValueError, match="found 0"):
+        _ExampleTab.SECOND.index_in(("First", "Third"))
+
 
 def test_inactive_tab_materializes_once_on_first_activation(qapp):
     from PyQt6.QtWidgets import QLabel, QPushButton

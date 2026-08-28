@@ -35,6 +35,10 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.action_tabbed_window_body",
         "ActionTabbedWindowBody",
     ),
+    "TabLabelDeclarationMixin": (
+        "pyqt_reactive.widgets.shared.action_tabbed_window_body",
+        "TabLabelDeclarationMixin",
+    ),
     "BaseManagedWindow": (
         "pyqt_reactive.widgets.shared.base_form_dialog",
         "BaseManagedWindow",
