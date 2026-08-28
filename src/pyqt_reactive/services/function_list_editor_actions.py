@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 
 from pyqt_reactive.services.executable_action import LabeledExecutableActionMixin
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
 
 
-class FunctionListEditorAction(LabeledExecutableActionMixin, str, Enum):
+class FunctionListEditorAction(LabeledExecutableActionMixin, StrEnum):
     """Function-editor actions with member-owned presentation and execution."""
 
     maximum_width: int

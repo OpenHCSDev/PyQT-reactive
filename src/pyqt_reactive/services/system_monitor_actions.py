@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 
 from pyqt_reactive.services.executable_action import LabeledExecutableActionMixin
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 
 
-class SystemMonitorAction(LabeledExecutableActionMixin, str, Enum):
+class SystemMonitorAction(LabeledExecutableActionMixin, StrEnum):
     """Declared system-monitor actions with member-owned execution leaves."""
 
     tooltip: str

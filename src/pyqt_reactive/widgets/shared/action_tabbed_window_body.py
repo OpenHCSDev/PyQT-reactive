@@ -16,7 +16,9 @@ from PyQt6.QtWidgets import (
 )
 
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.services.tab_identity import TabLabelDeclarationMixin
+from pyqt_reactive.services.tab_identity import (
+    TabLabelDeclarationMixin as TabLabelDeclarationMixin,
+)
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveTwoRowWidget
 
 

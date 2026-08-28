@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QResizeEvent
 
+from pyqt_reactive.services.system_monitor_actions import SystemMonitorAction
+
 # Lazy import of PyQtGraph to avoid blocking startup. PyQtGraph imports cupy at
 # module level, so the presentation backend is selected only after that import.
 pg = None  # Will be set when pyqtgraph is imported
@@ -27,7 +29,6 @@ pg = None  # Will be set when pyqtgraph is imported
 from pyqt_reactive.animation import queue_visual_frame_callback
 from pyqt_reactive.theming import ColorScheme
 
-from pyqt_reactive.services.system_monitor_actions import SystemMonitorAction
 from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.services.persistent_system_monitor import (
     PersistentSystemMonitor,
