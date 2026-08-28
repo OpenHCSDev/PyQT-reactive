@@ -106,11 +106,18 @@ class FunctionListEditorAction(str, Enum):
         """Create one button directly from this action declaration."""
 
         button = QPushButton(self.label)
+        button.setObjectName(self.object_name)
         button.setMaximumWidth(self.maximum_width)
         button.setFixedHeight(CURRENT_LAYOUT.button_height)
         button.setStyleSheet(widget._get_button_style())
         button.clicked.connect(lambda _checked=False: self.invoke(widget))
         return button
+
+    @property
+    def object_name(self) -> str:
+        """Return the declaration-derived Qt identity for this action."""
+
+        return f"function_list_editor_action_{self.value}"
 
     def invoke(self, widget: FunctionListEditorWidget) -> None:
         """Execute this action's leaf behavior."""

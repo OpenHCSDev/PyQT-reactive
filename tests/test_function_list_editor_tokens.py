@@ -74,6 +74,10 @@ def test_function_editor_actions_own_labels_and_execution_leaves() -> None:
         1,
     ]
     assert FunctionListEditorAction.ADD.label == "Add"
+    assert (
+        FunctionListEditorAction.ADD.object_name
+        == "function_list_editor_action_add"
+    )
 
 
 def _wrapped(func):
