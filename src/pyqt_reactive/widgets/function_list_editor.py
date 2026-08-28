@@ -29,6 +29,9 @@ from pyqt_reactive.services.function_navigation import (
     FunctionPatternField,
     parse_function_field_target,
 )
+from pyqt_reactive.services.function_list_editor_actions import (
+    FunctionListEditorAction,
+)
 from pyqt_reactive.services.function_pattern_code_document import (
     FunctionAuthority,
     FunctionKwargs,
@@ -52,77 +55,6 @@ from pyqt_reactive.widgets.shared.detachable_action_bar import (
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
-
-
-class FunctionListEditorAction(str, Enum):
-    """Function-editor actions with member-owned presentation and execution."""
-
-    def __new__(
-        cls,
-        value: str,
-        label: str,
-        maximum_width: int,
-        executor: Callable[[FunctionListEditorWidget], None],
-    ) -> FunctionListEditorAction:
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member.label = label
-        member.maximum_width = maximum_width
-        member._executor = executor
-        return member
-
-    ADD = (
-        "add",
-        "Add",
-        60,
-        lambda widget: widget.add_function(),
-    )
-    CODE = (
-        "code",
-        "Code",
-        60,
-        lambda widget: widget.edit_function_code(),
-    )
-    COMPONENT = (
-        "component",
-        "Component",
-        120,
-        lambda widget: widget.show_component_selection_dialog(),
-    )
-    PREVIOUS_PATTERN = (
-        "previous_pattern",
-        "<",
-        30,
-        lambda widget: widget._navigate_pattern_key(-1),
-    )
-    NEXT_PATTERN = (
-        "next_pattern",
-        ">",
-        30,
-        lambda widget: widget._navigate_pattern_key(1),
-    )
-
-    def create_button(self, widget: FunctionListEditorWidget) -> QPushButton:
-        """Create one button directly from this action declaration."""
-
-        button = QPushButton(self.label)
-        button.setObjectName(self.object_name)
-        button.setMaximumWidth(self.maximum_width)
-        button.setFixedHeight(CURRENT_LAYOUT.button_height)
-        button.setStyleSheet(widget._get_button_style())
-        button.clicked.connect(lambda _checked=False: self.invoke(widget))
-        return button
-
-    @property
-    def object_name(self) -> str:
-        """Return the declaration-derived Qt identity for this action."""
-
-        return f"function_list_editor_action_{self.value}"
-
-    def invoke(self, widget: FunctionListEditorWidget) -> None:
-        """Execute this action's leaf behavior."""
-
-        self._executor(widget)
 
 
 @dataclass(frozen=True)

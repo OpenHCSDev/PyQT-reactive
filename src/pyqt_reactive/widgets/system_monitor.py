@@ -27,6 +27,7 @@ pg = None  # Will be set when pyqtgraph is imported
 from pyqt_reactive.animation import queue_visual_frame_callback
 from pyqt_reactive.theming import ColorScheme
 
+from pyqt_reactive.services.system_monitor_actions import SystemMonitorAction
 from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.services.persistent_system_monitor import (
     PersistentSystemMonitor,
@@ -40,60 +41,6 @@ from pyqt_reactive.services.system_metrics_sampler import (
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import create_manager_header
 
 logger = logging.getLogger(__name__)
-
-
-class SystemMonitorAction(str, Enum):
-    """Declared system-monitor actions with member-owned execution leaves."""
-
-    def __new__(
-        cls,
-        value: str,
-        label: str,
-        tooltip: str,
-        executor: Callable[[SystemMonitorWidget], None],
-    ) -> SystemMonitorAction:
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member.label = label
-        member.tooltip = tooltip
-        member._executor = executor
-        return member
-
-    GLOBAL_CONFIG = (
-        "global_config",
-        "Global Config",
-        "Open global configuration editor",
-        lambda widget: widget.show_global_config.emit(),
-    )
-    LOG_VIEWER = (
-        "log_viewer",
-        "Log Viewer",
-        "Open log viewer window",
-        lambda widget: widget.show_log_viewer.emit(),
-    )
-    CUSTOM_FUNCTIONS = (
-        "custom_functions",
-        "Custom Functions",
-        "Manage custom functions",
-        lambda widget: widget.show_custom_functions.emit(),
-    )
-    TEST_PLATE = (
-        "test_plate",
-        "Test Plate",
-        "Generate synthetic test plate",
-        lambda widget: widget.show_test_plate_generator.emit(),
-    )
-
-    @property
-    def button_config(self) -> tuple[str, str, str]:
-        """Project this action into the generic button-panel contract."""
-
-        return self.label, self.value, self.tooltip
-
-    def invoke(self, widget: SystemMonitorWidget) -> None:
-        """Execute this member's leaf behavior."""
-
-        self._executor(widget)
 
 
 class SystemMonitorGraphLayout(Enum):

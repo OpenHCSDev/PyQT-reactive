@@ -36,7 +36,7 @@ _EXPORTS = {
         "ActionTabbedWindowBody",
     ),
     "TabLabelDeclarationMixin": (
-        "pyqt_reactive.widgets.shared.action_tabbed_window_body",
+        "pyqt_reactive.services.tab_identity",
         "TabLabelDeclarationMixin",
     ),
     "BaseManagedWindow": (
