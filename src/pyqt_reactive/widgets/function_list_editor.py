@@ -5,6 +5,8 @@ Mirrors the Textual TUI FunctionListEditorWidget with sophisticated parameter fo
 Displays a scrollable list of function panes with Add/Load/Save/Code controls.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import copy
@@ -50,6 +52,70 @@ from pyqt_reactive.widgets.shared.detachable_action_bar import (
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
+
+
+class FunctionListEditorAction(str, Enum):
+    """Function-editor actions with member-owned presentation and execution."""
+
+    def __new__(
+        cls,
+        value: str,
+        label: str,
+        maximum_width: int,
+        executor: Callable[[FunctionListEditorWidget], None],
+    ) -> FunctionListEditorAction:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.label = label
+        member.maximum_width = maximum_width
+        member._executor = executor
+        return member
+
+    ADD = (
+        "add",
+        "Add",
+        60,
+        lambda widget: widget.add_function(),
+    )
+    CODE = (
+        "code",
+        "Code",
+        60,
+        lambda widget: widget.edit_function_code(),
+    )
+    COMPONENT = (
+        "component",
+        "Component",
+        120,
+        lambda widget: widget.show_component_selection_dialog(),
+    )
+    PREVIOUS_PATTERN = (
+        "previous_pattern",
+        "<",
+        30,
+        lambda widget: widget._navigate_pattern_key(-1),
+    )
+    NEXT_PATTERN = (
+        "next_pattern",
+        ">",
+        30,
+        lambda widget: widget._navigate_pattern_key(1),
+    )
+
+    def create_button(self, widget: FunctionListEditorWidget) -> QPushButton:
+        """Create one button directly from this action declaration."""
+
+        button = QPushButton(self.label)
+        button.setMaximumWidth(self.maximum_width)
+        button.setFixedHeight(CURRENT_LAYOUT.button_height)
+        button.setStyleSheet(widget._get_button_style())
+        button.clicked.connect(lambda _checked=False: self.invoke(widget))
+        return button
+
+    def invoke(self, widget: FunctionListEditorWidget) -> None:
+        """Execute this action's leaf behavior."""
+
+        self._executor(widget)
 
 
 @dataclass(frozen=True)
@@ -158,49 +224,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         self._action_buttons_container = DetachableActionBar(
             object_name="func_action_buttons_container"
         )
-
-        add_btn = QPushButton("Add")
-        add_btn.setMaximumWidth(60)
-        add_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
-        add_btn.setStyleSheet(self._get_button_style())
-        add_btn.clicked.connect(self.add_function)
-        self._action_buttons_container.add_button(add_btn)
-
-        code_btn = QPushButton("Code")
-        code_btn.setMaximumWidth(60)
-        code_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
-        code_btn.setStyleSheet(self._get_button_style())
-        code_btn.clicked.connect(self.edit_function_code)
-        self._action_buttons_container.add_button(code_btn)
-
-        # Component selection button
-        self.component_btn = QPushButton(self._get_component_button_text())
-        self.component_btn.setMaximumWidth(120)
-        self.component_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
-        self.component_btn.setStyleSheet(self._get_button_style())
-        self.component_btn.clicked.connect(self.show_component_selection_dialog)
-        self.component_btn.setEnabled(not self._is_component_button_disabled())
-        self._action_buttons_container.add_button(self.component_btn)
-
-        # Channel navigation buttons.
-        #
-        # These are needed in dict mode (component-selected mode) to let the user
-        # switch between dict keys/components. When render_header=False (DualEditorWindow
-        # embeds the action buttons container in its own header), the nav buttons
-        # must still exist and be clickable.
-        self.prev_key_btn = QPushButton("<")
-        self.prev_key_btn.setMaximumWidth(30)
-        self.prev_key_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
-        self.prev_key_btn.setStyleSheet(self._get_button_style())
-        self.prev_key_btn.clicked.connect(lambda: self._navigate_pattern_key(-1))
-        self._action_buttons_container.add_button(self.prev_key_btn)
-
-        self.next_key_btn = QPushButton(">")
-        self.next_key_btn.setMaximumWidth(30)
-        self.next_key_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
-        self.next_key_btn.setStyleSheet(self._get_button_style())
-        self.next_key_btn.clicked.connect(lambda: self._navigate_pattern_key(1))
-        self._action_buttons_container.add_button(self.next_key_btn)
+        self._action_buttons = {
+            action: action.create_button(self) for action in FunctionListEditorAction
+        }
+        for action in FunctionListEditorAction:
+            self._action_buttons_container.add_button(self._action_buttons[action])
 
         # Initialize services (reuse existing business logic)
         self.component_selection_provider = get_component_selection_provider()
@@ -233,6 +261,8 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
         # Initialize pattern data and mode
         self._initialize_pattern_data(initial_functions)
+        self._refresh_component_button()
+        self._update_navigation_buttons()
 
         # UI components
         self.function_panes: list[FunctionPaneWidget] = []
@@ -1763,6 +1793,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             )
         )
 
+    def action_button(self, action: FunctionListEditorAction) -> QPushButton:
+        """Return the button projected from one declared editor action."""
+
+        return self._action_buttons[action]
+
     def show_component_selection_dialog(self):
         """Show the component selection dialog (mirrors Textual TUI)."""
         # Check if component selection is disabled
@@ -1982,16 +2017,17 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         # The component button is always created (even when render_header=False),
         # because DualEditorWindow extracts the action buttons container and
         # renders it in its own header.
+        component_button = self.action_button(FunctionListEditorAction.COMPONENT)
         new_text = self._get_component_button_text()
-        old_text = self.component_btn.text()
+        old_text = component_button.text()
         logger.debug(
             "_refresh_component_button: old=%r, new=%r, group_by=%s",
             old_text,
             new_text,
             self.current_group_by,
         )
-        self.component_btn.setText(new_text)
-        self.component_btn.setEnabled(not self._is_component_button_disabled())
+        component_button.setText(new_text)
+        component_button.setEnabled(not self._is_component_button_disabled())
 
         # Navigation buttons only exist when the header is rendered.
         if self._render_header:
@@ -2002,12 +2038,17 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         # Show navigation buttons only in dict mode with multiple keys.
         # Buttons exist regardless of render_header; DualEditorWindow embeds
         # the action button container when render_header=False.
-        show_nav = (
-            self.is_dict_mode and isinstance(self.pattern_data, dict) and len(self.pattern_data) > 1
+        show_navigation = (
+            self.is_dict_mode
+            and isinstance(self.pattern_data, dict)
+            and len(self.pattern_data) > 1
         )
-
-        self.prev_key_btn.setVisible(show_nav)
-        self.next_key_btn.setVisible(show_nav)
+        self.action_button(FunctionListEditorAction.PREVIOUS_PATTERN).setVisible(
+            show_navigation
+        )
+        self.action_button(FunctionListEditorAction.NEXT_PATTERN).setVisible(
+            show_navigation
+        )
 
     def _navigate_pattern_key(self, direction: int):
         """Navigate to next/previous pattern key (with looping)."""

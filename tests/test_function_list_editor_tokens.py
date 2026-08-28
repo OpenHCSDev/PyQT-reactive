@@ -15,6 +15,7 @@ from pyqt_reactive.services.scope_token_service import (
     reconcile_occurrence_tokens,
 )
 from pyqt_reactive.widgets.function_list_editor import (
+    FunctionListEditorAction,
     FunctionListEditorWidget,
     PatternMutation,
 )
@@ -49,6 +50,30 @@ def sample_function(image, threshold: int = 1):
 
 def alternate_function(image, radius: int = 1):
     return image
+
+
+def test_function_editor_actions_own_labels_and_execution_leaves() -> None:
+    calls: list[object] = []
+    widget = SimpleNamespace(
+        add_function=lambda: calls.append(FunctionListEditorAction.ADD),
+        edit_function_code=lambda: calls.append(FunctionListEditorAction.CODE),
+        show_component_selection_dialog=lambda: calls.append(
+            FunctionListEditorAction.COMPONENT
+        ),
+        _navigate_pattern_key=lambda direction: calls.append(direction),
+    )
+
+    for action in FunctionListEditorAction:
+        action.invoke(widget)
+
+    assert calls == [
+        FunctionListEditorAction.ADD,
+        FunctionListEditorAction.CODE,
+        FunctionListEditorAction.COMPONENT,
+        -1,
+        1,
+    ]
+    assert FunctionListEditorAction.ADD.label == "Add"
 
 
 def _wrapped(func):
