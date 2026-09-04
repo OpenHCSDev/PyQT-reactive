@@ -944,7 +944,7 @@ class ParameterFormManager(
             refreshed_compound_owner_paths = (
                 self.chrome_sync.refresh_widgets_for_paths(changed_paths) or set()
             )
-        self._locally_applied_model_paths.add(full_path)
+        self.form_tree.root()._locally_applied_model_paths.add(full_path)
         self.chrome_sync.after_model_field_change(
             param_name,
             full_path,
@@ -1171,7 +1171,13 @@ class ParameterFormManager(
             paths=len(changed_paths),
         ):
             flash_paths: list[str] = []
-            for path in ParameterFormManager._flash_paths_for_changed_paths(changed_paths):
+            flash_changed_paths = self._exclude_local_edit_paths(
+                changed_paths,
+                local_paths,
+            )
+            for path in ParameterFormManager._flash_paths_for_changed_paths(
+                flash_changed_paths
+            ):
                 if self.field_id:
                     if "." in path:
                         path_prefix = path.rsplit(".", 1)[0]

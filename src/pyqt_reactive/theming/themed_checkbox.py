@@ -72,9 +72,15 @@ def paint_themed_checkbox(
         painter.drawRect(indicator.adjusted(3, 3, -3, -3))
     painter.restore()
 
+    label_option = QStyleOptionButton(option)
+    label_option.rect = style.subElementRect(
+        QStyle.SubElement.SE_CheckBoxContents,
+        option,
+        checkbox,
+    )
     style.drawControl(
         QStyle.ControlElement.CE_CheckBoxLabel,
-        option,
+        label_option,
         painter,
         checkbox,
     )

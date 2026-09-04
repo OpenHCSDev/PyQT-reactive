@@ -233,10 +233,6 @@ class StyleSheetGenerator:
                 background-color: {cs.to_hex(cs.input_bg)};
                 color: {cs.to_hex(cs.input_text)};
             }}
-            QComboBox::drop-down {{
-                background-color: {cs.to_hex(cs.button_normal_bg)};
-                border-color: {cs.to_hex(cs.input_border)};
-            }}
             QComboBox QAbstractItemView {{
                 background-color: {cs.to_hex(cs.input_bg)};
                 color: {cs.to_hex(cs.input_text)};
@@ -386,13 +382,6 @@ class StyleSheetGenerator:
                 border: 1px solid {cs.to_hex(cs.input_border)};
                 border-radius: {layout.widget_corner_radius}px;
                 padding: {layout.widget_padding}px;
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                background-color: {cs.to_hex(cs.button_normal_bg)};
-            }}
-            QComboBox::down-arrow {{
-                border: none;
             }}
             QComboBox QAbstractItemView {{
                 background-color: {cs.to_hex(cs.input_bg)};

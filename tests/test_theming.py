@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollBar,
     QSplitter,
+    QStyle,
+    QStyleOptionButton,
     QTabBar,
     QVBoxLayout,
     QWidget,
@@ -67,6 +69,48 @@ def test_complete_application_style_owns_native_menu_and_scrollbar_colors():
     assert "QTabBar::tab" in stylesheet
     assert scheme.to_hex(scheme.panel_bg) in stylesheet
     assert scheme.to_hex(scheme.button_normal_bg) in stylesheet
+
+
+def test_combo_styles_leave_dropdown_affordance_to_native_style():
+    """Color styling must not replace Qt's platform-owned dropdown subcontrols."""
+
+    scheme = ColorScheme()
+
+    for stylesheet in (
+        scheme.styles.generate_native_form_control_color_style(),
+        scheme.styles.generate_combobox_style(),
+    ):
+        assert "QComboBox::drop-down" not in stylesheet
+        assert "QComboBox::down-arrow" not in stylesheet
+
+
+def test_themed_checkbox_label_does_not_paint_inside_indicator(qapp):
+    """The custom indicator and Qt-rendered label own disjoint native geometry."""
+
+    checkbox = ThemedCheckBox("MMMMMMMM")
+    try:
+        checkbox.resize(checkbox.sizeHint())
+        checkbox.show()
+        qapp.processEvents()
+
+        option = QStyleOptionButton()
+        checkbox.initStyleOption(option)
+        indicator = checkbox.style().subElementRect(
+            QStyle.SubElement.SE_CheckBoxIndicator,
+            option,
+            checkbox,
+        ).adjusted(4, 4, -4, -4)
+        image = checkbox.grab().toImage()
+        expected_color = checkbox.palette().color(QPalette.ColorRole.Base)
+
+        assert indicator.isValid()
+        assert {
+            image.pixelColor(x, y).rgba()
+            for x in range(indicator.left(), indicator.right() + 1)
+            for y in range(indicator.top(), indicator.bottom() + 1)
+        } == {expected_color.rgba()}
+    finally:
+        checkbox.close()
 
 
 @pytest.mark.parametrize(

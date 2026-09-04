@@ -2085,6 +2085,62 @@ def test_nested_reset_flash_registers_each_changed_input_widget(qapp) -> None:
         ObjectStateRegistry.clear()
 
 
+def test_local_field_edit_does_not_flash_over_its_source_input(qapp) -> None:
+    """The source form stays readable while other consumers receive the change."""
+    from dataclasses import field
+
+    from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+
+    from pyqt_reactive.animation.flash_mixin import (
+        WindowFlashOverlay,
+        widget_rect_flash_source_id,
+    )
+    from pyqt_reactive.forms.parameter_form_manager import (
+        FormManagerConfig,
+        ParameterFormManager,
+    )
+    from pyqt_reactive.theming import ColorScheme
+
+    @dataclass
+    class ChildConfig:
+        alpha: int = 1
+
+    @dataclass
+    class RootConfig:
+        child: ChildConfig = field(default_factory=ChildConfig)
+
+    set_base_config_type(RootConfig)
+    ObjectStateRegistry.clear()
+    host = QDialog()
+    layout = QVBoxLayout(host)
+    manager = ParameterFormManager(
+        ObjectState(RootConfig()),
+        FormManagerConfig(color_scheme=ColorScheme(), use_scroll_area=False),
+    )
+    layout.addWidget(manager)
+    host.show()
+
+    try:
+        qapp.processEvents()
+        nested = manager.nested_managers["child"]
+        nested.update_parameter("alpha", 11)
+        qapp.processEvents()
+
+        overlay = WindowFlashOverlay.get_for_window(host)
+        assert overlay is not None
+        assert not overlay.has_element_source(
+            "child.alpha",
+            widget_rect_flash_source_id(nested.widgets["alpha"]),
+        )
+    finally:
+        WindowFlashOverlay.cleanup_window(host)
+        host.close()
+        host.deleteLater()
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
 def test_widget_rect_flash_element_paints_visible_pixels_over_children(qapp) -> None:
     """Widget-rect flashes paint the target section itself, including child tables."""
     from PyQt6.QtGui import QColor

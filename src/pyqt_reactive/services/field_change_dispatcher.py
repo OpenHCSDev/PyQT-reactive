@@ -70,8 +70,9 @@ class DispatchReentrancyGuard:
         source._dispatching = True
         return True
 
-    def is_reset_blocked(self, source: "ParameterFormManager") -> bool:
-        if not source._in_reset:
+    def is_reset_blocked(self, event: FieldChangeEvent) -> bool:
+        source = event.source_manager
+        if not source._in_reset or event.is_reset:
             return False
         if DEBUG_DISPATCHER:
             logger.warning(
@@ -142,6 +143,7 @@ class SourceStateUpdateStage:
         context.source.sync_after_model_field_change(
             context.event.field_name,
             context.source_path,
+            queue_flash=context.event.is_reset,
             changed_paths=changed_paths,
         )
         if DEBUG_DISPATCHER:
@@ -382,7 +384,7 @@ class FieldChangeDispatcher:
             return
 
         try:
-            if self._guard.is_reset_blocked(source):
+            if self._guard.is_reset_blocked(event):
                 return
 
             logger.debug(
