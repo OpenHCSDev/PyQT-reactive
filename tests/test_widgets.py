@@ -2073,9 +2073,14 @@ def test_nested_reset_flash_registers_each_changed_input_widget(qapp) -> None:
         assert overlay is not None
         for field_name in ("alpha", "beta"):
             widget = nested.widgets[field_name]
+            label = nested.labels[field_name]
             assert overlay.has_element_source(
                 f"child.{field_name}",
                 widget_rect_flash_source_id(widget),
+            )
+            assert overlay.has_element_source(
+                f"child.{field_name}",
+                widget_rect_flash_source_id(label),
             )
     finally:
         WindowFlashOverlay.cleanup_window(host)
@@ -2085,8 +2090,8 @@ def test_nested_reset_flash_registers_each_changed_input_widget(qapp) -> None:
         ObjectStateRegistry.clear()
 
 
-def test_local_field_edit_does_not_flash_over_its_source_input(qapp) -> None:
-    """The source form stays readable while other consumers receive the change."""
+def test_local_field_edit_flashes_its_complete_source_field(qapp) -> None:
+    """A local semantic edit flashes its input and label exactly at the source."""
     from dataclasses import field
 
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
@@ -2129,10 +2134,25 @@ def test_local_field_edit_does_not_flash_over_its_source_input(qapp) -> None:
 
         overlay = WindowFlashOverlay.get_for_window(host)
         assert overlay is not None
-        assert not overlay.has_element_source(
+        assert overlay.has_element_source(
             "child.alpha",
             widget_rect_flash_source_id(nested.widgets["alpha"]),
         )
+        assert overlay.has_element_source(
+            "child.alpha",
+            widget_rect_flash_source_id(nested.labels["alpha"]),
+        )
+        elements = overlay._elements["child.alpha"]
+        alpha_scale_by_source = {
+            element.source_id: element.alpha_scale for element in elements
+        }
+        context_alpha_scale = min(alpha_scale_by_source.values())
+        assert alpha_scale_by_source[
+            widget_rect_flash_source_id(nested.widgets["alpha"])
+        ] > context_alpha_scale
+        assert alpha_scale_by_source[
+            widget_rect_flash_source_id(nested.labels["alpha"])
+        ] > context_alpha_scale
     finally:
         WindowFlashOverlay.cleanup_window(host)
         host.close()

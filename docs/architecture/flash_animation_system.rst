@@ -147,10 +147,12 @@ The system supports multiple element types via ``FlashElement`` dataclass:
 Context and leaf registration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``register_flash_leaf`` registers two paint sources under the same semantic
+``register_flash_leaf`` registers three paint sources under the same semantic
 key. The inverse groupbox source paints the surrounding field context while
-masking the title, changed input, and its label. A widget-rectangle source
-paints the changed input itself:
+masking the title, changed input, and its label. Widget-rectangle sources paint
+the changed input and its label as one complete field. The shared
+``FlashConfig`` gives the surrounding context lower opacity than the field, so
+the edited control remains visually distinct and readable:
 
 .. code-block:: python
 

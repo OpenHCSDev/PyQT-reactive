@@ -50,6 +50,8 @@ class FlashConfig:
     fade_in_s: float = 0.200
     hold_s: float = 0.050
     fade_out_s: float = 0.600
+    leaf_context_alpha_scale: float = 0.35
+    leaf_field_alpha_scale: float = 0.65
 
     # Frame rate configuration
     frame_ms: Optional[int] = None  # Auto-calculated from target_fps if not specified
@@ -70,6 +72,13 @@ class FlashConfig:
 
     def __post_init__(self):
         """Calculate frame_ms from target_fps or auto-detect screen refresh rate."""
+        if not 0.0 <= self.leaf_context_alpha_scale <= 1.0:
+            raise ValueError(
+                "leaf_context_alpha_scale must be between 0.0 and 1.0"
+            )
+        if not 0.0 <= self.leaf_field_alpha_scale <= 1.0:
+            raise ValueError("leaf_field_alpha_scale must be between 0.0 and 1.0")
+
         # If frame_ms explicitly set, use it
         if self.frame_ms is not None:
             return

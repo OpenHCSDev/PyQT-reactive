@@ -397,6 +397,7 @@ class FlashElement:
     get_model_index: Optional[Callable[[], Any]] = None  # Returns QModelIndex for targeted item updates (avoids full viewport repaint)
     layout_watch_widgets: Tuple[QWidget, ...] = field(default_factory=tuple)
     scroll_clip_widget: Optional[QWidget] = None  # Visual owner whose ancestor viewports bound this element.
+    alpha_scale: float = 1.0  # Relative emphasis within one semantic flash.
 
 
 def _scroll_clip_rects_for_element(
@@ -839,6 +840,7 @@ def create_groupbox_element(
     inverse_masking: bool = False,
     extra_mask_rects: Optional[Callable[[QWidget], Iterable[Tuple[QRect, bool]]]] = None,
     extra_layout_watch_widgets: Iterable[QWidget] = (),
+    alpha_scale: float = 1.0,
 ) -> FlashElement:
     """Create a FlashElement for a QGroupBox with configurable masking.
 
@@ -857,6 +859,7 @@ def create_groupbox_element(
         inverse_masking: Use inverse masking even when the changed target is not a widget.
         extra_mask_rects: Window-relative mask rectangles for structural targets such as table cells.
         extra_layout_watch_widgets: Additional widgets whose geometry affects structural masks.
+        alpha_scale: Relative opacity of this source within the semantic flash.
     """
     # Track groupbox size to detect resize and invalidate child cache
     _last_groupbox_size: Optional[tuple] = None
@@ -1040,6 +1043,7 @@ def create_groupbox_element(
             )
         ),
         scroll_clip_widget=groupbox,
+        alpha_scale=alpha_scale,
     )
 
 
@@ -1083,7 +1087,12 @@ def create_structural_masked_container_element(
     )
 
 
-def create_widget_rect_element(key: str, widget: QWidget) -> FlashElement:
+def create_widget_rect_element(
+    key: str,
+    widget: QWidget,
+    *,
+    alpha_scale: float = 1.0,
+) -> FlashElement:
     """Create a FlashElement that paints a widget's full visible rectangle.
 
     This is for inline child widgets whose own contents are the thing being
@@ -1114,6 +1123,7 @@ def create_widget_rect_element(key: str, widget: QWidget) -> FlashElement:
         corner_radius=radius,
         layout_watch_widgets=(widget,),
         scroll_clip_widget=widget,
+        alpha_scale=alpha_scale,
     )
 
 
@@ -1961,22 +1971,28 @@ class WindowFlashOverlay(QWidget):
 
                 path = cached_regions[index] if index < len(cached_regions) else None
                 source_token = self._paint_source_token(key, index, element)
+                element_color = None
+                if color is not None:
+                    element_color = QColor(color)
+                    element_color.setAlpha(
+                        round(element_color.alpha() * element.alpha_scale)
+                    )
                 record = OverlayFlashPaintRecord(
                     source_token=source_token,
                     key=key,
                     rect=rect,
                     radius=radius,
                     path=path,
-                    color=color,
+                    color=element_color,
                 )
                 existing = records_by_source.get(source_token)
                 if existing is None:
                     records_by_source[source_token] = record
                     continue
-                if color is None:
+                if element_color is None:
                     continue
                 existing_alpha = existing.color.alpha() if existing.color is not None else -1
-                if color.alpha() > existing_alpha:
+                if element_color.alpha() > existing_alpha:
                     records_by_source[source_token] = record
         return tuple(records_by_source.values()), len(visible_keys)
 
@@ -3454,11 +3470,21 @@ class VisualUpdateMixin:
             source_id_factory=lambda k: groupbox_flash_source_id(k, groupbox, use_full_rect=True),
         )
 
-    def register_flash_widget_rect(self, key: str, widget: QWidget) -> None:
+    def register_flash_widget_rect(
+        self,
+        key: str,
+        widget: QWidget,
+        *,
+        alpha_scale: float = 1.0,
+    ) -> None:
         """Register a widget for direct full-rect flash rendering."""
         self._register_flash_element_internal(
             key,
-            lambda k: create_widget_rect_element(k, widget),
+            lambda k: create_widget_rect_element(
+                k,
+                widget,
+                alpha_scale=alpha_scale,
+            ),
             widget,
             source_id_factory=lambda _k: widget_rect_flash_source_id(widget),
         )
@@ -3519,16 +3545,24 @@ class VisualUpdateMixin:
         - The specific leaf widget that changed
         - The label associated with the leaf widget (if provided)
 
-        A second source registered under the same semantic key paints the leaf
-        widget itself. The changed input therefore participates in reset and
-        provenance flashes without sacrificing the surrounding context.
+        Widget-rectangle sources registered under the same semantic key paint
+        the leaf widget and its label. The complete changed field therefore
+        participates in reset and provenance flashes without sacrificing the
+        surrounding context.
 
         Uses the unified create_groupbox_element with leaf_widget and label_widget parameters.
         """
         logger.debug(f"[FLASH TRAIL] register_flash_leaf: key={key}, groupbox={type(groupbox).__name__}, leaf_widget={type(leaf_widget).__name__}, label_widget={type(label_widget).__name__ if label_widget else None}")
+        config = get_flash_config()
         self._register_flash_element_internal(
             key,
-            lambda k: create_groupbox_element(k, groupbox, leaf_widget=leaf_widget, label_widget=label_widget),  # type: ignore
+            lambda k: create_groupbox_element(
+                k,
+                groupbox,
+                leaf_widget=leaf_widget,
+                label_widget=label_widget,
+                alpha_scale=config.leaf_context_alpha_scale,
+            ),  # type: ignore
             groupbox,
             lifecycle_widgets=(leaf_widget, label_widget),
             source_id_factory=lambda k: groupbox_flash_source_id(
@@ -3538,7 +3572,17 @@ class VisualUpdateMixin:
                 label_widget=label_widget,
             ),
         )
-        self.register_flash_widget_rect(key, leaf_widget)
+        self.register_flash_widget_rect(
+            key,
+            leaf_widget,
+            alpha_scale=config.leaf_field_alpha_scale,
+        )
+        if label_widget is not None:
+            self.register_flash_widget_rect(
+                key,
+                label_widget,
+                alpha_scale=config.leaf_field_alpha_scale,
+            )
 
     def reregister_flash_elements(self) -> None:
         """Re-register all previously registered flash elements (after overlay cleanup)."""
