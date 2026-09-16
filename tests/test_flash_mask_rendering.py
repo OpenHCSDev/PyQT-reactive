@@ -5,13 +5,13 @@ from dataclasses import dataclass, field
 import objectstate.config as config_module
 import pytest
 from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QPainterPath
 from PyQt6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
 from pyqt_reactive.animation.flash_mixin import (
     LEAF_WIDGET_TYPES,
-    NativeLabelCoverageSurface,
+    LABEL_MASK_PADDING_PX,
     WindowFlashOverlay,
     _GlobalFlashCoordinator,
     get_child_mask_path,
@@ -66,129 +66,25 @@ def nested_form(qapp):
     config_module._base_config_type = previous_base
 
 
-@pytest.mark.parametrize("text", ["Alpha:", "A longer parameter label:"])
+@pytest.mark.parametrize("text", ["Alpha:", "A longer parameter label:", ""])
 @pytest.mark.parametrize("width", [100, 220])
-@pytest.mark.parametrize("underline", [False, True])
-@pytest.mark.parametrize("point_size", [9, 12])
-@pytest.mark.parametrize("italic", [False, True])
-def test_label_mask_has_padded_native_hull_and_respects_alignment_and_style(
-    nested_form, qapp, text, width, underline, point_size, italic
-):
+def test_label_mask_is_padded_widget_geometry(nested_form, qapp, text, width):
     host, manager = nested_form
     label = manager.labels["alpha"].findChild(QLabel)
     label.setText(text)
-    font = label.font()
-    font.setUnderline(underline)
-    font.setPointSize(point_size)
-    font.setItalic(italic)
-    label.setFont(font)
-    label.setWordWrap(True)
     label.setFixedSize(width, 112)
     manager.labels["alpha"].setMinimumSize(width + 40, 120)
     label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
     label.setStyleSheet("color: white; background: #141414; padding: 4px; margin: 2px;")
     qapp.processEvents()
-    rect = label.rect().translated(label.mapTo(host, QPoint()))
-    mask = get_child_mask_rect(label, host)
-    mask_path = get_child_mask_path(label, host)
-    assert mask.width() < rect.width()
-    assert mask.height() < rect.height()
-    contents = label.contentsRect().translated(label.mapTo(host, QPoint()))
-    # Native italic glyphs can overhang the layout contents rectangle.
-    padding = NativeLabelCoverageSurface.MASK_PADDING_PX
-    assert rect.adjusted(-int(padding), -int(padding), int(padding), int(padding)).contains(mask)
-    image = label.grab().toImage()
-    ratio = image.devicePixelRatio()
-    text_pixels = [
-        QPointF((x + 0.5) / ratio, (y + 0.5) / ratio)
-        for y in range(image.height())
-        for x in range(image.width())
-        if max(image.pixelColor(x, y).getRgb()[:3]) > 20 and image.pixelColor(x, y).alpha() > 0
-    ]
-    assert text_pixels
-    origin = QPointF(label.mapTo(host, QPoint()))
-    outside = [point for point in text_pixels if not mask_path.contains(point + origin)]
-    assert not outside, (mask, contents, outside[:10])
-    assert mask_path.boundingRect().left() == pytest.approx(
-        origin.x() + min(point.x() for point in text_pixels) - 0.5 / ratio - padding,
-        abs=0.02,
+    origin = label.mapTo(host, QPoint())
+    expected = label.rect().translated(origin).adjusted(
+        -LABEL_MASK_PADDING_PX,
+        -LABEL_MASK_PADDING_PX,
+        LABEL_MASK_PADDING_PX,
+        LABEL_MASK_PADDING_PX,
     )
-    assert mask_path.boundingRect().right() == pytest.approx(
-        origin.x() + max(point.x() for point in text_pixels) + 0.5 / ratio + padding,
-        abs=0.02,
-    )
-    assert mask_path.boundingRect().top() == pytest.approx(
-        origin.y() + min(point.y() for point in text_pixels) - 0.5 / ratio - padding,
-        abs=0.02,
-    )
-    assert mask_path.boundingRect().bottom() == pytest.approx(
-        origin.y() + max(point.y() for point in text_pixels) + 0.5 / ratio + padding,
-        abs=0.02,
-    )
-    assert any(
-        not mask_path.contains(QPointF(x + 0.5, y + 0.5))
-        for y in range(mask.top(), mask.bottom() + 1)
-        for x in range(mask.left(), mask.right() + 1)
-    ), "The padded hull must retain its sloped/rounded outline"
-
-
-def test_label_mask_gives_letter_interiors_and_word_spaces_one_convex_backing(nested_form, qapp):
-    host, manager = nested_form
-    label = manager.labels["alpha"].findChild(QLabel)
-    label.setText("O     O")
-    font = label.font()
-    font.setPointSize(32)
-    font.setUnderline(False)
-    label.setFont(font)
-    label.setFixedSize(240, 80)
-    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    qapp.processEvents()
-
-    path = get_child_mask_path(label, host)
-    contours = path.simplified().toSubpathPolygons()
-    assert len(contours) == 1
-    bounds = path.boundingRect()
-    center = bounds.center()
-    assert path.contains(center), "Word spaces share the whole label's backing"
-    assert path.contains(QPointF(bounds.left() + 10, center.y()))
-    assert path.contains(QPointF(bounds.right() - 10, center.y()))
-
-
-def test_empty_label_has_no_flash_mask(nested_form, qapp):
-    host, manager = nested_form
-    label = manager.labels["alpha"].findChild(QLabel)
-    label.setText("")
-    qapp.processEvents()
-    assert get_child_mask_path(label, host).isEmpty()
-
-
-def test_native_label_capture_preserves_source_and_releases_temporary_children(nested_form):
-    host, manager = nested_form
-    label = manager.labels["alpha"].findChild(QLabel)
-    before = (label.text(), label.font(), label.styleSheet(), label.geometry(), label.children())
-    for _ in range(3):
-        assert not get_child_mask_path(label, host).isEmpty()
-    after = (label.text(), label.font(), label.styleSheet(), label.geometry(), label.children())
-    assert after == before
-
-
-def test_native_label_capture_does_not_notify_live_hierarchy_observers(nested_form):
-    class ChildObserver(QObject):
-        def __init__(self):
-            super().__init__()
-            self.events = []
-
-        def eventFilter(self, watched, event):  # noqa: N802 - Qt virtual method name
-            if event.type() in {QEvent.Type.ChildAdded, QEvent.Type.ChildRemoved}:
-                self.events.append(event.type())
-            return False
-
-    host, manager = nested_form
-    label = manager.labels["alpha"].findChild(QLabel)
-    observer = ChildObserver()
-    label.installEventFilter(observer)
-    assert not get_child_mask_path(label, host).isEmpty()
-    assert observer.events == []
+    assert get_child_mask_rect(label, host) == expected
 
 
 @pytest.mark.parametrize("fields", [("alpha",), ("alpha", "beta")])

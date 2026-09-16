@@ -2333,8 +2333,8 @@ def test_groupbox_flash_cache_invalidates_when_mask_child_geometry_changes(qapp)
     dialog.close()
 
 
-def test_groupbox_flash_cache_tracks_tight_label_bounds_without_widget_resize(qapp) -> None:
-    """A label's native content bounds change even when its widget stays fixed."""
+def test_groupbox_flash_cache_tracks_label_widget_geometry_not_text(qapp) -> None:
+    """Text changes do not invalidate masks owned by unchanged widget geometry."""
 
     from PyQt6.QtWidgets import QDialog, QGroupBox, QLabel, QPushButton, QVBoxLayout
 
@@ -2388,11 +2388,8 @@ def test_groupbox_flash_cache_tracks_tight_label_bounds_without_widget_resize(qa
     for _ in range(3):
         qapp.processEvents()
 
-    assert "section.name" not in overlay._cache.element_rects
-
-    overlay._rebuild_geometry_cache([], {"section.name"})
-    assert overlay._cache.element_rects["section.name"] is not cached_rects
-    assert overlay._cache.element_regions["section.name"] is not cached_regions
+    assert overlay._cache.element_rects["section.name"] is cached_rects
+    assert overlay._cache.element_regions["section.name"] is cached_regions
 
     label.setFixedSize(label.width() + 8, label.height())
     for _ in range(3):

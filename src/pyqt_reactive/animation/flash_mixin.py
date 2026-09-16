@@ -72,12 +72,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QColor,
-    QBitmap,
     QPainter,
     QPainterPath,
-    QPolygonF,
     QRegion,
-    QTransform,
 )
 from PyQt6 import sip
 
@@ -476,103 +473,7 @@ def get_child_mask_rect(widget: QWidget, window: QWidget) -> QRect:
     return get_child_mask_path(widget, window).boundingRect().toAlignedRect()
 
 
-class NativeLabelCoverageSurface(QWidget):
-    """Rasterize label coverage on a native widget paint target.
-
-    Qt's QRasterPaintEngine::drawCachedGlyphs explicitly forces Format_A8
-    on non-widget paint devices, losing LCD subpixel edges even on opaque
-    QImage/QPixmap surfaces. The private surface uses its source's screen
-    without introducing child events into the observed form hierarchy.
-    Every paint queries the source's current declarations.
-    """
-
-    MASK_PADDING_PX = 2.0
-
-    def __init__(self, source: QLabel):
-        super().__init__()
-        self._source = source
-        self.setScreen(source.screen())
-        self.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
-        self.resize(source.size())
-
-    def paintEvent(self, event):  # noqa: N802 - Qt virtual method name
-        widget = self._source
-        margin = widget.margin()
-        contents = widget.contentsRect().adjusted(margin, margin, -margin, -margin)
-        alignment = QStyle.visualAlignment(widget.layoutDirection(), widget.alignment())
-        indent = widget.indent()
-        if indent < 0 and widget.frameWidth():
-            indent = widget.fontMetrics().horizontalAdvance("x") // 2 - margin
-        indent = max(0, indent)
-        contents.adjust(
-            indent * bool(alignment & Qt.AlignmentFlag.AlignLeft),
-            indent * bool(alignment & Qt.AlignmentFlag.AlignTop),
-            -indent * bool(alignment & Qt.AlignmentFlag.AlignRight),
-            -indent * bool(alignment & Qt.AlignmentFlag.AlignBottom),
-        )
-        palette = widget.palette()
-        palette.setColor(widget.foregroundRole(), Qt.GlobalColor.white)
-        flags = alignment.value
-        if widget.wordWrap():
-            flags |= Qt.TextFlag.TextWordWrap.value
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), Qt.GlobalColor.black)
-        painter.setFont(widget.font())
-        widget.style().drawItemText(
-            painter, contents, flags, palette, widget.isEnabled(),
-            widget.text(), widget.foregroundRole(),
-        )
-
-    def mask_path(self) -> QPainterPath:
-        """Give the whole native label a padded, convex backing in logical pixels."""
-        coverage = self.grab().toImage()
-        pixels = QRegion(QBitmap.fromImage(
-            coverage.createMaskFromColor(
-                QColor(Qt.GlobalColor.black).rgba(), Qt.MaskMode.MaskInColor
-            )
-        ))
-        contours = QPainterPath()
-        contours.addRegion(pixels)
-        logical_pixels = QTransform.fromScale(
-            1 / coverage.devicePixelRatio(), 1 / coverage.devicePixelRatio()
-        )
-        return convex_hull_path(logical_pixels.map(contours), self.MASK_PADDING_PX)
-
-
-def convex_hull_path(path: QPainterPath, padding: float = 0) -> QPainterPath:
-    """Enclose all contours with a convex polygon and axis-aligned padding.
-
-    Expanding vertices before taking the hull keeps the padded outline convex
-    and polygonal, including during Qt's mask subtraction and union operations.
-    """
-    points = sorted({
-        (point.x() + dx, point.y() + dy)
-        for polygon in path.toSubpathPolygons()
-        for point in polygon
-        for dx in (-padding, padding)
-        for dy in (-padding, padding)
-    })
-
-    def half_hull(
-        ordered_points: Iterable[tuple[float, float]],
-    ) -> list[tuple[float, float]]:
-        hull: list[tuple[float, float]] = []
-        for point in ordered_points:
-            while len(hull) >= 2:
-                first, second = hull[-2:]
-                cross = ((second[0] - first[0]) * (point[1] - first[1])
-                         - (second[1] - first[1]) * (point[0] - first[0]))
-                if cross > 0:
-                    break
-                hull.pop()
-            hull.append(point)
-        return hull[:-1]
-
-    hull = half_hull(points) + half_hull(reversed(points))
-    result = QPainterPath()
-    result.addPolygon(QPolygonF([QPointF(*point) for point in hull]))
-    result.closeSubpath()
-    return result
+LABEL_MASK_PADDING_PX = 2
 
 
 def get_child_mask_path(
@@ -582,8 +483,8 @@ def get_child_mask_path(
 
     This is the single source of truth for child masking geometry used by
     both STANDARD and INVERSE groupbox flashes. Native checkboxes expose
-    their indicator geometry through Qt; labels use a padded convex hull of
-    native text coverage. Other controls retain their full laid-out geometry.
+    their indicator geometry through Qt; labels use their laid-out widget
+    geometry with a small padding. Other controls retain their full geometry.
 
     Args:
         widget: Widget to mask
@@ -618,12 +519,13 @@ def get_child_mask_path(
         return mask_path_from_rect(result, corner_radius if widget.text() else 0)
 
     if isinstance(widget, QLabel):
-        surface = NativeLabelCoverageSurface(widget)
-        try:
-            path = surface.mask_path()
-        finally:
-            sip.delete(surface)
-        return path.translated(widget_window.x(), widget_window.y())
+        label_rect = widget.rect().adjusted(
+            -LABEL_MASK_PADDING_PX,
+            -LABEL_MASK_PADDING_PX,
+            LABEL_MASK_PADDING_PX,
+            LABEL_MASK_PADDING_PX,
+        )
+        return mask_path_from_rect(label_rect.translated(widget_window))
     return mask_path_from_rect(widget.rect().translated(widget_window), corner_radius)
 
 
