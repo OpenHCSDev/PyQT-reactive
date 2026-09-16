@@ -12,6 +12,7 @@ from pyqt_reactive.services.function_pattern_code_document import (
 )
 from pyqt_reactive.services.scope_token_service import (
     ScopeTokenService,
+    ScopeTokenTarget,
     reconcile_occurrence_tokens,
 )
 from pyqt_reactive.widgets.function_list_editor import (
@@ -248,6 +249,95 @@ def test_adopting_a_token_invalidates_the_projected_scope_id() -> None:
     ScopeTokenService.adopt_token("plate", target, "step_7")
 
     assert ScopeTokenService.build_scope_id("plate", target) == "plate::step_7"
+
+
+@pytest.mark.parametrize("already_registered", (False, True))
+def test_restoring_detached_token_does_not_register_or_seed_live_state(monkeypatch, already_registered):
+    @dataclass
+    class Step(ScopeTokenTarget):
+        number: int = 3
+
+    monkeypatch.setattr(ScopeTokenService, "_generators", {})
+    monkeypatch.setattr(ScopeTokenService, "_scope_id_cache", {})
+    live = Step()
+    if already_registered:
+        ScopeTokenService.build_scope_id("plate", live)
+    generators_before = dict(ScopeTokenService._generators)
+    cache_before = dict(ScopeTokenService._scope_id_cache)
+    generator_values_before = {
+        key: (generator._counter, set(generator._used_tokens))
+        for key, generator in generators_before.items()
+    }
+    detached = Step(99)
+    attributes_before = vars(detached).copy()
+
+    assert ScopeTokenService.restore_object_token(detached, "step_7") == "step_7"
+    assert vars(detached) == attributes_before | {ScopeTokenService.SCOPE_TOKEN_ATTRIBUTE: "step_7"}
+    assert ScopeTokenService.object_token(detached) == "step_7"
+    assert ScopeTokenService._generators == generators_before
+    assert ScopeTokenService._scope_id_cache == cache_before
+    assert {
+        key: (generator._counter, set(generator._used_tokens))
+        for key, generator in ScopeTokenService._generators.items()
+    } == generator_values_before
+
+    assert ScopeTokenService.build_scope_id("plate", detached) == "plate::step_7"
+    generator = ScopeTokenService.get_generator("plate", "step")
+    assert "step_7" in generator._used_tokens
+    assert ScopeTokenService.build_scope_id("plate", Step()) == "plate::step_8"
+
+
+def test_scope_token_consumers_derive_the_single_attribute_declaration(monkeypatch):
+    @dataclass
+    class Step(ScopeTokenTarget):
+        number: int = 3
+
+    monkeypatch.setattr(ScopeTokenService, "_generators", {})
+    monkeypatch.setattr(ScopeTokenService, "_scope_id_cache", {})
+    monkeypatch.setattr(ScopeTokenService, "SCOPE_TOKEN_ATTRIBUTE", "_alternative_token")
+    target = Step()
+    ScopeTokenService.restore_object_token(target, "step_2")
+    assert ScopeTokenService.object_token(target) == "step_2"
+    assert ScopeTokenService.build_scope_id("plate", target) == "plate::step_2"
+    ScopeTokenService.adopt_token("plate", target, "step_9")
+    assert ScopeTokenService.object_token(target) == "step_9"
+    assert ScopeTokenService.build_scope_id("plate", target) == "plate::step_9"
+    assert vars(target) == {"number": 3, "_alternative_token": "step_9"}
+
+
+def test_native_reused_object_id_does_not_override_restored_token(monkeypatch):
+    @dataclass
+    class Step(ScopeTokenTarget):
+        number: int = 3
+
+    monkeypatch.setattr(ScopeTokenService, "_generators", {})
+    monkeypatch.setattr(ScopeTokenService, "_scope_id_cache", {})
+    previous = Step()
+    assert ScopeTokenService.build_scope_id("plate", previous) == "plate::step_0"
+    departed_id = id(previous)
+    del previous
+    detached = Step(99)
+    assert id(detached) == departed_id, "Native CPython reproduction must actually reuse the departed ID"
+    generator = ScopeTokenService.get_generator("plate", "step")
+    counter_before = generator._counter
+    cache_before = dict(ScopeTokenService._scope_id_cache)
+    ScopeTokenService.restore_object_token(detached, "step_7")
+    assert generator._counter == counter_before
+    assert ScopeTokenService._scope_id_cache == cache_before
+    assert ScopeTokenService.build_scope_id("plate", detached) == "plate::step_7"
+    assert generator._counter == 8
+
+
+def test_cached_numeric_id_without_a_current_token_is_not_identity(monkeypatch):
+    @dataclass
+    class Step(ScopeTokenTarget):
+        number: int = 3
+
+    monkeypatch.setattr(ScopeTokenService, "_generators", {})
+    target = Step()
+    monkeypatch.setattr(ScopeTokenService, "_scope_id_cache", {("plate", id(target)): "plate::foreign_9"})
+    assert ScopeTokenService.build_scope_id("plate", target) == "plate::step_0"
+    assert ScopeTokenService.object_token(target) == "step_0"
 
 
 def test_pattern_mutation_authorization_runs_before_local_write() -> None:

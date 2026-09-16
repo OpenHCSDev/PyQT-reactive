@@ -297,11 +297,15 @@ def test_wrapped_text_disclosure_marker_and_flash_stay_aligned_when_scrolled(
         OBJECT_STATE_PATH_ROLE,
         SCOPE_SCHEME_ROLE,
     )
+    from pyqt_reactive.widgets.shared.config_tree_contracts import TreeFlashColorProvider
     from pyqt_reactive.widgets.shared.scope_color_utils import build_color_scheme_from_rgb
 
-    class ActiveRowFlash:
+    class ActiveRowFlash(TreeFlashColorProvider):
         def get_flash_color_for_object_state_path(self, scope):
             return QColor(230, 45, 65, 200)
+
+        def acknowledge_flash_paint(self, object_state_path, window, alpha):
+            pass
 
     view = preview_list
     native_frames = []

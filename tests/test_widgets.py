@@ -1679,6 +1679,9 @@ def test_flash_delegate_update_targets_only_item_rect() -> None:
         def __init__(self):
             self._viewport = Viewport()
 
+        def isVisible(self):
+            return True
+
         def viewport(self):
             return self._viewport
 
@@ -1766,6 +1769,9 @@ def test_delegate_flash_tracks_descendant_objectstate_key() -> None:
     class TreeLike:
         def __init__(self):
             self._viewport = Viewport()
+
+        def isVisible(self):
+            return True
 
         def viewport(self):
             return self._viewport
@@ -1956,7 +1962,7 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
     ObjectStateRegistry.clear()
     coordinator = _GlobalFlashCoordinator.get()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
     coordinator._pending_flash_keys.clear()
 
     host = QDialog()
@@ -1991,13 +1997,13 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
         coordinator._flush_pending_flash_keys()
         if coordinator._timer is not None:
             coordinator._timer.stop()
-        for key in tuple(coordinator._flash_start_times):
-            coordinator._flash_start_times[key] -= coordinator._config.fade_in_s
+        for key in tuple(coordinator._playbacks):
+            coordinator._playbacks[key].phase_started_at -= coordinator._config.fade_in_s
         coordinator._on_global_tick()
         qapp.processEvents()
 
         assert manager.get_flash_color_for_object_state_path("child") is not None
-        coordinator._flash_start_times.clear()
+        coordinator._playbacks.clear()
         coordinator._pending_flash_keys.clear()
         coordinator._computed_colors.clear()
 
@@ -2005,8 +2011,8 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
         coordinator._flush_pending_flash_keys()
         if coordinator._timer is not None:
             coordinator._timer.stop()
-        for key in tuple(coordinator._flash_start_times):
-            coordinator._flash_start_times[key] -= coordinator._config.fade_in_s
+        for key in tuple(coordinator._playbacks):
+            coordinator._playbacks[key].phase_started_at -= coordinator._config.fade_in_s
         coordinator._on_global_tick()
         qapp.processEvents()
 
@@ -2014,7 +2020,7 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
     finally:
         if coordinator._timer is not None:
             coordinator._timer.stop()
-        coordinator._flash_start_times.clear()
+        coordinator._playbacks.clear()
         coordinator._pending_flash_keys.clear()
         coordinator._computed_colors.clear()
         coordinator._active_windows.clear()
@@ -2177,7 +2183,7 @@ def test_widget_rect_flash_element_paints_visible_pixels_over_children(qapp) -> 
 
     coordinator = _GlobalFlashCoordinator.get()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
 
     dialog = QDialog()
     dialog.resize(320, 220)
@@ -2209,6 +2215,10 @@ def test_widget_rect_flash_element_paints_visible_pixels_over_children(qapp) -> 
     if coordinator._timer is not None:
         coordinator._timer.stop()
     baseline = overlay.grab().toImage().pixelColor(table_center)
+    from pyqt_reactive.animation.flash_config import FlashPlayback, FlashPhase
+    import time
+    coordinator._playbacks["section"] = FlashPlayback(time.perf_counter(), phase=FlashPhase.HOLD)
+    coordinator._key_base_colors["section"] = QColor(255, 0, 0)
     coordinator._computed_colors["section"] = QColor(255, 0, 0, 180)
     overlay._invalidate_geometry_cache()
     overlay.repaint()
@@ -2233,7 +2243,7 @@ def test_flash_coordinator_batches_queue_calls_until_event_loop(qapp) -> None:
     if coordinator._timer is not None:
         coordinator._timer.stop()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
     coordinator._active_windows.clear()
     coordinator._pending_flash_keys.clear()
     coordinator._pending_flash_flush_scheduled = False
@@ -2241,7 +2251,7 @@ def test_flash_coordinator_batches_queue_calls_until_event_loop(qapp) -> None:
     coordinator.queue_flash("scope::first")
     coordinator.queue_flash_batch(("scope::second", "scope::third"))
 
-    assert coordinator._flash_start_times == {}
+    assert coordinator._playbacks == {}
     assert tuple(coordinator._pending_flash_keys) == (
         "scope::first",
         "scope::second",
@@ -2251,16 +2261,17 @@ def test_flash_coordinator_batches_queue_calls_until_event_loop(qapp) -> None:
     for _ in range(3):
         qapp.processEvents()
 
-    timestamps = tuple(coordinator._flash_start_times.values())
+    timestamps = tuple(playback.phase_started_at for playback in coordinator._playbacks.values())
     assert len(timestamps) == 3
     assert len(set(timestamps)) == 1
+    assert len({id(playback) for playback in coordinator._playbacks.values()}) == 1
     assert coordinator._pending_flash_keys == {}
     assert coordinator._pending_flash_flush_scheduled is False
 
     if coordinator._timer is not None:
         coordinator._timer.stop()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
     coordinator._active_windows.clear()
 
 
@@ -2277,7 +2288,7 @@ def test_groupbox_flash_cache_invalidates_when_mask_child_geometry_changes(qapp)
 
     coordinator = _GlobalFlashCoordinator.get()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
 
     dialog = QDialog()
     dialog.resize(360, 180)
@@ -2335,7 +2346,7 @@ def test_groupbox_flash_cache_tracks_tight_label_bounds_without_widget_resize(qa
 
     coordinator = _GlobalFlashCoordinator.get()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
 
     dialog = QDialog()
     dialog.resize(360, 180)
@@ -2572,7 +2583,7 @@ def test_overlay_batches_multiple_keys_for_same_visual_source(qapp) -> None:
 
     coordinator = _GlobalFlashCoordinator.get()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
 
     dialog = QDialog()
     dialog.resize(320, 180)
@@ -2948,7 +2959,7 @@ def test_dynamic_flash_registration_rebuilds_valid_geometry_cache(qapp) -> None:
 
     coordinator = _GlobalFlashCoordinator.get()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
 
     dialog = QDialog()
     dialog.resize(320, 220)
@@ -2977,6 +2988,10 @@ def test_dynamic_flash_registration_rebuilds_valid_geometry_cache(qapp) -> None:
 
     table_center = table.mapTo(dialog, table.rect().center())
     baseline = overlay.grab().toImage().pixelColor(table_center)
+    from pyqt_reactive.animation.flash_config import FlashPlayback, FlashPhase
+    import time
+    coordinator._playbacks["section"] = FlashPlayback(time.perf_counter(), phase=FlashPhase.HOLD)
+    coordinator._key_base_colors["section"] = QColor(255, 0, 0)
     coordinator._computed_colors["section"] = QColor(255, 0, 0, 180)
     overlay.repaint()
     qapp.processEvents()
@@ -3012,7 +3027,7 @@ def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
 
     coordinator = _GlobalFlashCoordinator.get()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
     coordinator._active_windows.clear()
     coordinator._pending_flash_keys.clear()
     coordinator._pending_flash_flush_scheduled = False
@@ -3046,10 +3061,10 @@ def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
     expected_key = manager._get_scoped_flash_key("section")
     manager.queue_flash_local("section")
     coordinator._flush_pending_flash_keys()
-    assert expected_key in coordinator._flash_start_times
+    assert expected_key in coordinator._playbacks
     if coordinator._timer is not None:
         coordinator._timer.stop()
-    coordinator._flash_start_times[expected_key] -= coordinator._config.fade_in_s
+    coordinator._playbacks[expected_key].phase_started_at -= coordinator._config.fade_in_s
     coordinator._on_global_tick()
     overlay.repaint()
     qapp.processEvents()
@@ -3061,7 +3076,7 @@ def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
     if coordinator._timer is not None:
         coordinator._timer.stop()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
     coordinator._active_windows.clear()
     coordinator._pending_flash_keys.clear()
     coordinator._pending_flash_flush_scheduled = False
@@ -3086,7 +3101,7 @@ def test_table_cell_flash_element_paints_visible_cell_pixels(qapp) -> None:
 
     coordinator = _GlobalFlashCoordinator.get()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
 
     dialog = QDialog()
     dialog.resize(320, 180)
@@ -3113,6 +3128,10 @@ def test_table_cell_flash_element_paints_visible_cell_pixels(qapp) -> None:
     assert flash_rect.contains(cell_center)
 
     baseline = overlay.grab().toImage().pixelColor(cell_center)
+    from pyqt_reactive.animation.flash_config import FlashPlayback, FlashPhase
+    import time
+    coordinator._playbacks["cell"] = FlashPlayback(time.perf_counter(), phase=FlashPhase.HOLD)
+    coordinator._key_base_colors["cell"] = QColor(255, 0, 0)
     coordinator._computed_colors["cell"] = QColor(255, 0, 0, 180)
     overlay._invalidate_geometry_cache()
     overlay.repaint()

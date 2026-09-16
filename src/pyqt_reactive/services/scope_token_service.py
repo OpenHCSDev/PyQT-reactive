@@ -299,6 +299,7 @@ class ScopeTokenService:
         ScopeTokenService.build_scope_id(plate_path, step)   # → "plate::step_0"
         ScopeTokenService.build_scope_id(step_scope, func)   # → "plate::step_0::func_0"
     """
+    SCOPE_TOKEN_ATTRIBUTE = "_scope_token"
     _generators: dict[tuple[str, str], ScopeTokenGenerator] = {}
 
     @classmethod
@@ -318,7 +319,7 @@ class ScopeTokenService:
         parent_scope = cls._normalize_scope(parent_scope)
         key = (parent_scope, prefix)
         if key not in cls._generators:
-            cls._generators[key] = ScopeTokenGenerator(prefix, '_scope_token')
+            cls._generators[key] = ScopeTokenGenerator(prefix, cls.SCOPE_TOKEN_ATTRIBUTE)
             logger.debug(f"🔑 ScopeTokenService: Created generator for parent_scope={parent_scope}, prefix={prefix}")
         return cls._generators[key]
 
@@ -350,20 +351,29 @@ class ScopeTokenService:
         token: str,
     ) -> str:
         """Assign a known scope token to an object through the token authority."""
+        cls.restore_object_token(obj, token)
         parent_scope = cls._normalize_scope(parent_scope)
         prefix = cls._get_prefix(obj)
         generator = cls.get_generator(parent_scope, prefix)
         generator.seed_from_tokens((token,))
-        if generator.attr_name is None:
-            return token
-        ScopeTokenObjectStore.write(obj, generator.attr_name, token)
         cls._scope_id_cache.pop((parent_scope, id(obj)), None)
+        return token
+
+    @classmethod
+    def restore_object_token(cls, obj: ScopeTokenTarget, token: str) -> str:
+        """Restore detached object identity without registering it in a scope.
+
+        Deserialization/validation can prepare an object without changing any
+        live generator counter, used-token set or scope-ID cache. Ordinary
+        later build/seed/adopt operations perform their explicit registration.
+        """
+        ScopeTokenObjectStore.write(obj, cls.SCOPE_TOKEN_ATTRIBUTE, token)
         return token
 
     @classmethod
     def object_token(cls, obj: ScopeTokenTarget) -> str | None:
         """Return an object's existing scope token without creating one."""
-        return ScopeTokenGenerator.existing_token(obj, "_scope_token")
+        return ScopeTokenObjectStore.read(obj, cls.SCOPE_TOKEN_ATTRIBUTE)
 
     @classmethod
     def same_object_token(
@@ -380,16 +390,26 @@ class ScopeTokenService:
     # PERFORMANCE: Cache scope_id strings per (parent_scope, object_id)
     _scope_id_cache: dict[tuple[str, int], str] = {}
 
+    @staticmethod
+    def _scope_id_for_token(parent_scope: str, token: str) -> str:
+        """The one serialization projection of nominal object-token identity."""
+        return f"{parent_scope}::{token}"
+
     @classmethod
     def build_scope_id(cls, parent_scope, obj: ScopeTokenTarget) -> str:
         parent_scope = cls._normalize_scope(parent_scope)
-        # PERFORMANCE: Check cache first
+        # Python can reuse a departed object's numeric ID. The cache is only a
+        # projection; the current object's declaration-owned token remains the
+        # identity authority, even when a numeric cache key happens to match.
         cache_key = (parent_scope, id(obj))
-        if cache_key in cls._scope_id_cache:
-            return cls._scope_id_cache[cache_key]
+        cached = cls._scope_id_cache.get(cache_key)
+        existing_token = cls.object_token(obj)
+        if (cached is not None and existing_token is not None
+                and cached == cls._scope_id_for_token(parent_scope, existing_token)):
+            return cached
 
         token = cls.ensure_token(parent_scope, obj)
-        result = f"{parent_scope}::{token}"
+        result = cls._scope_id_for_token(parent_scope, token)
         cls._scope_id_cache[cache_key] = result
         logger.debug(f"🔑 ScopeTokenService.build_scope_id: {result} for {type(obj).__name__}")
         return result

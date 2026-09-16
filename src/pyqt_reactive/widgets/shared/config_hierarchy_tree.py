@@ -181,6 +181,7 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
 
         # Draw flash background BEHIND text (inside item rect)
         object_state_path = index.data(TREE_OBJECT_STATE_PATH_ROLE)
+        painted_flash_alpha = None
         if object_state_path and self._manager is not None:
             flash_color = self._manager.get_flash_color_for_object_state_path(object_state_path)
             if flash_color and flash_color.alpha() > 0:
@@ -200,6 +201,7 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
                         break
                     window = window.parent()
                 painter.fillRect(option.rect, flash_color)
+                painted_flash_alpha = flash_color.alpha()
 
         # Let the style draw selection, hover, backgrounds (except text)
         self.parent().style().drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, self.parent())
@@ -247,6 +249,8 @@ class TreeItemFlashDelegate(QStyledItemDelegate):
         painter.drawText(x_offset, y_offset, text)
 
         painter.restore()
+        if painted_flash_alpha is not None:
+            self._manager.acknowledge_flash_paint(object_state_path, self.parent(), painted_flash_alpha)
 
     @staticmethod
     def _scheme_flash_color(scheme: ScopeColorScheme) -> Optional[QColor]:

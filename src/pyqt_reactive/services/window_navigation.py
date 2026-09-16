@@ -106,6 +106,21 @@ class RegisteredWindowNavigationReadiness:
         return self.wait_reason is not None
 
 
+@dataclass(frozen=True, slots=True)
+class RegisteredWindowNavigationCompletion:
+    """Terminal facts from the existing deferred navigation lifecycle.
+
+    Unknown exposure does not erase successful execution. Capture consumers
+    require positive exposure, rather than mistaking accepted dispatch for it.
+    """
+
+    executed: bool
+    target_exposed: bool | None = None
+    window_alive: bool = True
+    wait_reason: NavigationWaitReason | None = None
+    error: Exception | None = None
+
+
 class WindowNavigationDriver(ABC):
     """Registered navigation behavior for one WindowManager scope."""
 
@@ -155,6 +170,11 @@ class WindowNavigationDriver(ABC):
 
     def execute(self, request: RegisteredWindowNavigationRequest) -> None:
         del request
+
+    def target_exposed(self, request: RegisteredWindowNavigationRequest) -> bool | None:
+        """Return proved target exposure, or unknown for unsupported owners."""
+        del request
+        return None
 
 
 class NullWindowNavigationDriver(WindowNavigationDriver):
@@ -207,6 +227,13 @@ class CompositeWindowNavigationDriver(WindowNavigationDriver):
     def execute(self, request: RegisteredWindowNavigationRequest) -> None:
         for driver in self._matching_drivers(request):
             driver.execute(request)
+
+    def target_exposed(self, request: RegisteredWindowNavigationRequest) -> bool | None:
+        exposures = tuple(driver.target_exposed(request)
+                          for driver in self._matching_drivers(request))
+        if not exposures or any(exposure is None for exposure in exposures):
+            return None
+        return all(exposures)
 
     def _matching_drivers(
         self,

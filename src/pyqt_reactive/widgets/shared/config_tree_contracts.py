@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
 
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QTreeWidget
+from PyQt6.QtWidgets import QTreeWidget, QWidget
 
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
@@ -23,6 +23,11 @@ class TreeFlashColorProvider(ABC):
     @abstractmethod
     def get_flash_color_for_object_state_path(self, object_state_path: str) -> Optional[QColor]:
         """Return the current flash color for a delegate-painted ObjectState row."""
+        ...
+
+    @abstractmethod
+    def acknowledge_flash_paint(self, object_state_path: str, window: QWidget, alpha: int) -> None:
+        """Acknowledge a genuine renderer contribution to the playback owner."""
         ...
 
 

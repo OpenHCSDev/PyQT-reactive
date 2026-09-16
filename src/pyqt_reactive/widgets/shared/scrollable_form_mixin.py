@@ -143,6 +143,17 @@ class ScrollableFormWindowNavigationDriver(FormFieldWindowNavigationDriver):
         self._stable_geometry_samples += 1
         return self._stable_geometry_samples >= self.stable_geometry_sample_count
 
+    def target_exposed(self, request: RegisteredWindowNavigationRequest) -> bool | None:
+        if request.field_path is None:
+            return None
+        target, is_fallback = self._owner._resolve_navigation_scroll_target(request.field_path)
+        # A contextual ancestor is not proof that the requested leaf is exposed.
+        if target is None or is_fallback:
+            return None
+        viewport = self._owner._scroll_viewport()
+        return (target.target_widget.isVisibleTo(self._owner.scroll_area.viewport())
+                and self._owner._target_is_fully_visible(target, viewport))
+
 
 class ScrollableFormMixin:
     """

@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
 from pyqt_reactive.services.window_navigation import (
     NullWindowNavigationDriver,
     RegisteredWindowNavigationRequest,
+    RegisteredWindowNavigationCompletion,
     WindowNavigationDispatch,
     WindowNavigationDriver,
 )
@@ -500,6 +501,7 @@ class WindowManager:
         field_path: str | None = None,
         *,
         requested_scope_id: str | None = None,
+        completed: Callable[[RegisteredWindowNavigationCompletion], None] | None = None,
     ) -> WindowNavigationDispatch:
         """Focus a scope window and report whether its driver accepted the target."""
 
@@ -529,6 +531,7 @@ class WindowManager:
             item_id=item_id,
             field_path=field_path,
             requested_scope_id=requested_scope_id,
+            completed=completed,
         )
 
     @classmethod
@@ -540,6 +543,7 @@ class WindowManager:
         item_id: str | None = None,
         field_path: str | None = None,
         requested_scope_id: str | None = None,
+        completed: Callable[[RegisteredWindowNavigationCompletion], None] | None = None,
     ) -> WindowNavigationDispatch:
         """Dispatch an accepted target through the driver registered for ``scope_id``."""
 
@@ -552,6 +556,7 @@ class WindowManager:
             ),
             item_id=item_id,
             field_path=field_path,
+            completed=completed,
         )
 
     @classmethod
@@ -563,6 +568,7 @@ class WindowManager:
         requested_scope_id: str,
         item_id: str | None = None,
         field_path: str | None = None,
+        completed: Callable[[RegisteredWindowNavigationCompletion], None] | None = None,
     ) -> WindowNavigationDispatch:
         """Navigate an already-focused widget through its declared driver.
 
@@ -578,7 +584,7 @@ class WindowManager:
         target_accepted = driver.accepts(navigation_request)
         if target_accepted:
             driver.prepare(navigation_request)
-            cls._deferred_navigate(navigation_request, driver)
+            cls._deferred_navigate(navigation_request, driver, completed)
 
         return WindowNavigationDispatch(
             focused=True,
@@ -612,6 +618,7 @@ class WindowManager:
         cls,
         request: RegisteredWindowNavigationRequest,
         navigation_driver: WindowNavigationDriver,
+        completed: Callable[[RegisteredWindowNavigationCompletion], None] | None = None,
     ) -> None:
         """Internal: Deferred navigation that waits for async widget creation.
 
@@ -623,19 +630,35 @@ class WindowManager:
         we check that nested managers exist at all path levels.
         """
         driver = navigation_driver
+        finished = False
+
+        def finish(result: RegisteredWindowNavigationCompletion):
+            nonlocal finished
+            if finished:
+                return
+            finished = True
+            NavigationRetryScheduler.clear(request, cls._navigation_retry_counts)
+            if completed is not None:
+                completed(result)
 
         def _check_and_navigate():
             """Check if widgets are ready, navigate or schedule retry."""
+            if finished:
+                return
             try:
                 request.window.windowTitle()
             except RuntimeError:
                 logger.debug("[WINDOW_MGR] Window deleted during deferred navigation")
-                NavigationRetryScheduler.clear(request, cls._navigation_retry_counts)
+                finish(RegisteredWindowNavigationCompletion(False, window_alive=False))
                 return
 
-            readiness = driver.readiness(request)
+            try:
+                readiness = driver.readiness(request)
+            except Exception as exc:
+                finish(RegisteredWindowNavigationCompletion(False, error=exc))
+                return
             if not readiness.window_alive:
-                NavigationRetryScheduler.clear(request, cls._navigation_retry_counts)
+                finish(RegisteredWindowNavigationCompletion(False, window_alive=False))
                 return
             if readiness.needs_wait:
                 scheduled = NavigationRetryScheduler.schedule(
@@ -650,14 +673,23 @@ class WindowManager:
                         readiness.wait_reason,
                     )
                 else:
-                    NavigationRetryScheduler.clear(
-                        request,
-                        cls._navigation_retry_counts,
-                    )
+                    finish(RegisteredWindowNavigationCompletion(
+                        False, wait_reason=readiness.wait_reason,
+                    ))
                 return
 
-            driver.execute(request)
-            NavigationRetryScheduler.clear(request, cls._navigation_retry_counts)
+            try:
+                if not driver.accepts(request):
+                    finish(RegisteredWindowNavigationCompletion(
+                        False, error=ValueError("Navigation target is no longer accepted."),
+                    ))
+                    return
+                driver.execute(request)
+                exposure = driver.target_exposed(request)
+            except Exception as exc:
+                finish(RegisteredWindowNavigationCompletion(False, error=exc))
+            else:
+                finish(RegisteredWindowNavigationCompletion(True, exposure))
 
         # Step 1: Defer to after current event loop (ensures window is at least shown)
         QTimer.singleShot(0, _check_and_navigate)

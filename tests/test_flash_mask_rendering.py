@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
 from pyqt_reactive.animation.flash_mixin import (
     LEAF_WIDGET_TYPES,
+    NativeLabelCoverageSurface,
     WindowFlashOverlay,
     _GlobalFlashCoordinator,
     get_child_mask_path,
@@ -54,7 +55,7 @@ def nested_form(qapp):
     if coordinator._timer is not None:
         coordinator._timer.stop()
     coordinator._computed_colors.clear()
-    coordinator._flash_start_times.clear()
+    coordinator._playbacks.clear()
     coordinator._pending_flash_keys.clear()
     WindowFlashOverlay.cleanup_window(host)
     host.close()
@@ -70,7 +71,7 @@ def nested_form(qapp):
 @pytest.mark.parametrize("underline", [False, True])
 @pytest.mark.parametrize("point_size", [9, 12])
 @pytest.mark.parametrize("italic", [False, True])
-def test_label_mask_is_tight_and_respects_alignment_and_style(
+def test_label_mask_has_padded_native_hull_and_respects_alignment_and_style(
     nested_form, qapp, text, width, underline, point_size, italic
 ):
     host, manager = nested_form
@@ -94,7 +95,8 @@ def test_label_mask_is_tight_and_respects_alignment_and_style(
     assert mask.height() < rect.height()
     contents = label.contentsRect().translated(label.mapTo(host, QPoint()))
     # Native italic glyphs can overhang the layout contents rectangle.
-    assert rect.contains(mask)
+    padding = NativeLabelCoverageSurface.MASK_PADDING_PX
+    assert rect.adjusted(-int(padding), -int(padding), int(padding), int(padding)).contains(mask)
     image = label.grab().toImage()
     ratio = image.devicePixelRatio()
     text_pixels = [
@@ -108,25 +110,29 @@ def test_label_mask_is_tight_and_respects_alignment_and_style(
     outside = [point for point in text_pixels if not mask_path.contains(point + origin)]
     assert not outside, (mask, contents, outside[:10])
     assert mask_path.boundingRect().left() == pytest.approx(
-        origin.x() + min(point.x() for point in text_pixels) - 0.5 / ratio
+        origin.x() + min(point.x() for point in text_pixels) - 0.5 / ratio - padding,
+        abs=0.02,
     )
     assert mask_path.boundingRect().right() == pytest.approx(
-        origin.x() + max(point.x() for point in text_pixels) + 0.5 / ratio
+        origin.x() + max(point.x() for point in text_pixels) + 0.5 / ratio + padding,
+        abs=0.02,
     )
     assert mask_path.boundingRect().top() == pytest.approx(
-        origin.y() + min(point.y() for point in text_pixels) - 0.5 / ratio
+        origin.y() + min(point.y() for point in text_pixels) - 0.5 / ratio - padding,
+        abs=0.02,
     )
     assert mask_path.boundingRect().bottom() == pytest.approx(
-        origin.y() + max(point.y() for point in text_pixels) + 0.5 / ratio
+        origin.y() + max(point.y() for point in text_pixels) + 0.5 / ratio + padding,
+        abs=0.02,
     )
     assert any(
         not mask_path.contains(QPointF(x + 0.5, y + 0.5))
         for y in range(mask.top(), mask.bottom() + 1)
         for x in range(mask.left(), mask.right() + 1)
-    ), "Native contours must not collapse back into a bounding rectangle"
+    ), "The padded hull must retain its sloped/rounded outline"
 
 
-def test_label_mask_preserves_letter_interiors_without_bridging_word_spaces(nested_form, qapp):
+def test_label_mask_gives_letter_interiors_and_word_spaces_one_convex_backing(nested_form, qapp):
     host, manager = nested_form
     label = manager.labels["alpha"].findChild(QLabel)
     label.setText("O     O")
@@ -140,10 +146,20 @@ def test_label_mask_preserves_letter_interiors_without_bridging_word_spaces(nest
 
     path = get_child_mask_path(label, host)
     contours = path.simplified().toSubpathPolygons()
-    assert len(contours) == 2
-    centers = sorted((polygon.boundingRect().center() for polygon in contours), key=lambda p: p.x())
-    assert all(path.contains(center) for center in centers), "Letter counters need dark backing"
-    assert not path.contains((centers[0] + centers[1]) / 2), "Word spaces must remain unmasked"
+    assert len(contours) == 1
+    bounds = path.boundingRect()
+    center = bounds.center()
+    assert path.contains(center), "Word spaces share the whole label's backing"
+    assert path.contains(QPointF(bounds.left() + 10, center.y()))
+    assert path.contains(QPointF(bounds.right() - 10, center.y()))
+
+
+def test_empty_label_has_no_flash_mask(nested_form, qapp):
+    host, manager = nested_form
+    label = manager.labels["alpha"].findChild(QLabel)
+    label.setText("")
+    qapp.processEvents()
+    assert get_child_mask_path(label, host).isEmpty()
 
 
 def test_native_label_capture_preserves_source_and_releases_temporary_children(nested_form):
@@ -187,6 +203,11 @@ def test_nested_flash_paint_has_opaque_context_and_complete_clear_holes(nested_f
         coordinator._timer.stop()
     coordinator._computed_colors.clear()
     keys = {f"child.{name}" for name in fields}
+    import time
+    from pyqt_reactive.animation.flash_config import FlashPlayback, FlashPhase
+    coordinator._playbacks.clear()
+    coordinator._playbacks.update({key: FlashPlayback(time.perf_counter(), phase=FlashPhase.HOLD) for key in keys})
+    coordinator._key_base_colors.update({key: QColor(255, 0, 0) for key in keys})
     coordinator._computed_colors.update({key: QColor(255, 0, 0, 255) for key in keys})
     overlay._rebuild_geometry_cache([], keys)
     records, _ = overlay._visible_paint_records(keys, colors=coordinator._computed_colors)

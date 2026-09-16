@@ -1,6 +1,7 @@
 """Shared scope-window navigation service."""
 
 from __future__ import annotations
+from collections.abc import Callable
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QWidget
@@ -13,6 +14,7 @@ from pyqt_reactive.services.scope_window_factory import (
 from pyqt_reactive.services.window_navigation import (
     WindowNavigationRequest,
     WindowNavigationResult,
+    RegisteredWindowNavigationCompletion,
 )
 
 
@@ -23,6 +25,7 @@ class ScopeWindowNavigationService:
     def navigate(
         cls,
         request: WindowNavigationRequest,
+        completed: Callable[[RegisteredWindowNavigationCompletion], None] | None = None,
     ) -> WindowNavigationResult:
         from pyqt_reactive.services.window_manager import WindowManager
 
@@ -35,6 +38,7 @@ class ScopeWindowNavigationService:
                 item_id=target.item_id,
                 field_path=target.field_path,
                 requested_scope_id=target.requested_scope_id,
+                completed=completed,
             )
             return WindowNavigationResult(
                 request=request,
@@ -74,6 +78,7 @@ class ScopeWindowNavigationService:
             item_id=target.item_id,
             field_path=target.field_path,
             requested_scope_id=target.requested_scope_id,
+            completed=completed,
         )
         open_window = WindowManager.get_window(target.window_scope_id)
         return WindowNavigationResult(

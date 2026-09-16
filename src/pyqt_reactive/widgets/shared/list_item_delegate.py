@@ -31,6 +31,7 @@ from PyQt6.QtCore import (
 )
 
 from pyqt_reactive.widgets.shared.scope_color_utils import tint_color_perceptual
+from pyqt_reactive.widgets.shared.config_tree_contracts import TreeFlashColorProvider
 from pyqt_reactive.widgets.shared.scope_visual_config import (
     ScopeColorScheme,
     get_scope_visual_config,
@@ -151,7 +152,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         preview_color: QColor,
         selected_text_color: QColor,
         parent: QListView,
-        manager=None,
+        manager: TreeFlashColorProvider | None = None,
     ):
         """Initialize delegate with color scheme.
 
@@ -160,7 +161,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
             preview_color: Color for preview text lines (grey)
             selected_text_color: Color for text when item is selected
             parent: Parent widget (QListWidget)
-            manager: Manager widget (unused - kept for API compat)
+            manager: Flash-color provider that owns delegate paint acknowledgements
         """
         super().__init__(parent)
         self.name_color = name_color
@@ -202,6 +203,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
 
         # Flash effect - drawn BEHIND text but inside borders
         object_state_path = index.data(OBJECT_STATE_PATH_ROLE)
+        painted_flash_alpha = None
         if object_state_path and self._manager is not None:
             flash_color = self._manager.get_flash_color_for_object_state_path(object_state_path)
             if flash_color and flash_color.alpha() > 0:
@@ -218,6 +220,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
                     self._paint_checkerboard_flash(painter, content_rect, flash_color)
                 else:
                     painter.fillRect(content_rect, flash_color)
+                painted_flash_alpha = flash_color.alpha()
 
         # Let the style draw selection, hover, borders
         self.parent().style().drawControl(
@@ -261,6 +264,8 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
 
         if scheme is not None:
             self._paint_border_layers(painter, opt.rect, scheme)
+        if painted_flash_alpha is not None:
+            self._manager.acknowledge_flash_paint(object_state_path, self.parent(), painted_flash_alpha)
 
     def _paint_leading_marker(
         self,

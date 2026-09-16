@@ -11,7 +11,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pyqt_reactive.animation.flash_trace import flash_trace
+
+from ..flash_trace import flash_trace
+
 
 if TYPE_CHECKING:
     from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager

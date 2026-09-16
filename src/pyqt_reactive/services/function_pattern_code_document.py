@@ -781,11 +781,82 @@ class FunctionPatternCodeDocumentService:
                 state.reset_parameter(param_name)
 
     @staticmethod
+    def _editable_callable_surface(func: FunctionAuthority) -> tuple[tuple, frozenset[str]]:
+        """Return the parameter surface that an ObjectState can represent."""
+
+        signature = inspect.signature(func)
+        return (
+            tuple(
+                (parameter.name, parameter.kind, parameter.annotation)
+                for parameter in signature.parameters.values()
+            ),
+            parameter_exclusions(func),
+        )
+
+    @classmethod
+    def synchronize_existing_function_state(
+        cls,
+        *,
+        state: ObjectState,
+        parent_state: ObjectState,
+        entry: FunctionPatternValue,
+    ) -> ObjectState:
+        """Synchronize one existing child, replacing it when its form changes."""
+
+        next_callable = EditableFunctionPatternCallable.for_entry(
+            entry.func,
+            entry.kwargs,
+        )
+        if not cls.same_function_authority(state.object_instance, entry.func) or (
+            cls._editable_callable_surface(state.object_instance)
+            != cls._editable_callable_surface(next_callable)
+        ):
+            cls.replace_function_state(
+                scope_id=state.scope_id,
+                parent_state=parent_state,
+                entry=entry,
+            )
+            replacement = ObjectStateRegistry.get_by_scope(state.scope_id)
+            if replacement is None:
+                raise FunctionPatternRoundTripError(
+                    f"Function child state {state.scope_id!r} was not replaced."
+                )
+            return replacement
+
+        cls.apply_kwargs_to_state(
+            state=state,
+            previous_kwargs=cls.reconstruct_kwargs_from_state(state),
+            next_kwargs=entry.kwargs,
+        )
+        return state
+
+    @staticmethod
     def unregister_function_state(parent_scope_id: str, token: str) -> None:
         """Unregister one function child ObjectState if it is present."""
         state = ObjectStateRegistry.get_by_scope(f"{parent_scope_id}::{token}")
         if state is not None:
             ObjectStateRegistry.unregister(state, _skip_snapshot=True)
+
+    @classmethod
+    def create_function_state(
+        cls,
+        *,
+        scope_id: str,
+        parent_state: ObjectState,
+        entry: FunctionPatternValue,
+    ) -> ObjectState:
+        """Construct an unregistered child from its declared function pattern."""
+        editable_func = EditableFunctionPatternCallable.for_entry(
+            entry.func,
+            entry.kwargs,
+        )
+        return ObjectState(
+            object_instance=editable_func,
+            scope_id=scope_id,
+            parent_state=parent_state,
+            exclude_params=cls.reserved_parameter_names(editable_func),
+            initial_values=dict(entry.kwargs),
+        )
 
     @classmethod
     def replace_function_state(
@@ -799,17 +870,8 @@ class FunctionPatternCodeDocumentService:
         current = ObjectStateRegistry.get_by_scope(scope_id)
         if current is not None:
             ObjectStateRegistry.unregister(current, _skip_snapshot=True)
-
-        editable_func = EditableFunctionPatternCallable.for_entry(
-            entry.func,
-            entry.kwargs,
-        )
-        func_state = ObjectState(
-            object_instance=editable_func,
-            scope_id=scope_id,
-            parent_state=parent_state,
-            exclude_params=cls.reserved_parameter_names(editable_func),
-            initial_values=dict(entry.kwargs),
+        func_state = cls.create_function_state(
+            scope_id=scope_id, parent_state=parent_state, entry=entry
         )
         ObjectStateRegistry.register(func_state, _skip_snapshot=True)
 

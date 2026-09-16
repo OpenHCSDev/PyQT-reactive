@@ -10,7 +10,7 @@ from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 
 from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
-from pyqt_reactive.animation.flash_trace import FlashTrace
+from pyqt_reactive.flash_trace import FlashTrace
 from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
     ParameterFormManager,

@@ -217,3 +217,124 @@ def test_composite_dispatches_only_to_matching_nominal_driver(qapp) -> None:
         assert unrelated.calls == []
     finally:
         window.close()
+
+
+def test_terminal_navigation_distinguishes_execution_from_unknown_exposure(qtbot):
+    from PyQt6.QtWidgets import QWidget
+    from pyqt_reactive.services.window_manager import WindowManager
+    from pyqt_reactive.services.window_navigation import ListItemWindowNavigationDriver
+
+    window = QWidget()
+    qtbot.addWidget(window)
+    selected, completed = [], []
+    dispatch = WindowManager.dispatch_widget_navigation(
+        window, ListItemWindowNavigationDriver(selected.append, lambda: True,
+                                                lambda identity: identity == "item"),
+        requested_scope_id="list-terminal", item_id="item", completed=completed.append,
+    )
+    assert dispatch.target_accepted
+    assert not completed
+    qtbot.waitUntil(lambda: bool(completed))
+    assert selected == ["item"]
+    assert completed[0].executed
+    assert completed[0].target_exposed is None
+
+
+def test_terminal_navigation_reports_exhausted_readiness(qtbot):
+    from PyQt6.QtWidgets import QWidget
+    from pyqt_reactive.services.window_manager import WindowManager
+    from pyqt_reactive.services.window_navigation import (
+        FieldWindowNavigationDriver, NavigationWaitReason, RegisteredWindowNavigationReadiness,
+    )
+
+    class WaitingDriver(FieldWindowNavigationDriver):
+        def readiness(self, request):
+            return RegisteredWindowNavigationReadiness(wait_reason=NavigationWaitReason.LAYOUT)
+
+    window = QWidget()
+    qtbot.addWidget(window)
+    completed, selected = [], []
+    WindowManager.dispatch_widget_navigation(
+        window, WaitingDriver(selected.append), requested_scope_id="never-ready",
+        field_path="value", completed=completed.append,
+    )
+    qtbot.waitUntil(lambda: bool(completed), timeout=1500)
+    assert not selected
+    assert not completed[0].executed
+    assert completed[0].wait_reason is NavigationWaitReason.LAYOUT
+
+
+def test_terminal_navigation_reports_destroyed_window_once(qapp, qtbot):
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QWidget
+    from pyqt_reactive.services.window_manager import WindowManager
+    from pyqt_reactive.services.window_navigation import FieldWindowNavigationDriver
+
+    window = QWidget()
+    selected, completed = [], []
+    WindowManager.dispatch_widget_navigation(
+        window, FieldWindowNavigationDriver(selected.append), requested_scope_id="destroyed",
+        field_path="value", completed=completed.append,
+    )
+    window.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qtbot.waitUntil(lambda: bool(completed))
+    assert not selected
+    assert len(completed) == 1
+    assert not completed[0].window_alive
+
+
+def test_scrollable_terminal_exposure_uses_actual_target_viewport(qtbot):
+    from PyQt6.QtWidgets import QWidget, QScrollArea, QVBoxLayout, QLabel
+    from pyqt_reactive.services.window_manager import WindowManager
+    from pyqt_reactive.services.window_navigation import RegisteredWindowNavigationReadiness
+    from pyqt_reactive.widgets.shared.scrollable_form_mixin import (
+        ScrollableFormMixin, ScrollableFormWindowNavigationDriver, ScrollTarget,
+    )
+
+    class Owner(QWidget, ScrollableFormMixin):
+        def __init__(self):
+            super().__init__()
+            self.resize(300, 180)
+            self.scroll_area = QScrollArea(self)
+            self.scroll_area.setWidgetResizable(True)
+            QVBoxLayout(self).addWidget(self.scroll_area)
+            content = QWidget()
+            layout = QVBoxLayout(content)
+            for index in range(30):
+                label = QLabel(f"Field {index}")
+                label.setMinimumHeight(30)
+                layout.addWidget(label)
+            self.leaf = label
+            self.scroll_area.setWidget(content)
+
+        def _resolve_navigation_scroll_target(self, field_path):
+            return ScrollTarget(field_path, "leaf", "", self.leaf, None, None, True), False
+
+        def select_and_scroll_to_field(self, field_path):
+            self._scroll_to_section(field_path, flash=False)
+
+    class Driver(ScrollableFormWindowNavigationDriver):
+        def accepts_field_path(self, request):
+            return request.field_path == "leaf"
+
+        def readiness(self, request):
+            # This fixture has an already-built native layout; the production
+            # owner's viewport/exposure behavior remains unchanged.
+            return RegisteredWindowNavigationReadiness()
+
+    owner = Owner()
+    qtbot.addWidget(owner)
+    owner.show()
+    qtbot.waitExposed(owner)
+    driver = Driver(owner)
+    completed = []
+    WindowManager.dispatch_widget_navigation(
+        owner, driver, requested_scope_id="scrollable", field_path="leaf",
+        completed=completed.append,
+    )
+    assert not completed
+    qtbot.waitUntil(lambda: bool(completed))
+    assert completed[0].executed
+    assert completed[0].target_exposed is True
+    assert owner.scroll_area.verticalScrollBar().value() > 0

@@ -40,6 +40,7 @@ from PyQt6.QtCore import (
     QCoreApplication,
     QObject,
     QPoint,
+    QPointF,
     QThread,
     QTimer,
     Qt,
@@ -74,15 +75,19 @@ from PyQt6.QtGui import (
     QBitmap,
     QPainter,
     QPainterPath,
+    QPolygonF,
     QRegion,
     QTransform,
 )
 from PyQt6 import sip
 
 from objectstate.time_travel_profile import TimeTravelProfiler
-from pyqt_reactive.animation.flash_config import FlashConfig, get_flash_config
-from pyqt_reactive.animation.flash_trace import flash_trace
+from pyqt_reactive.animation.flash_config import FlashConfig, FlashPlayback, FlashPhase, get_flash_config
 from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
+from pyqt_reactive.services.window_snapshot import FlashPaintElement, FlashPaintFrame
+
+from ..flash_trace import flash_trace
+
 
 # Cache for extracted widget corner radii (widget_id -> radius)
 _corner_radius_cache: Dict[int, float] = {}
@@ -295,50 +300,22 @@ def compute_flash_color_at_time(
     config: Optional[FlashConfig] = None,
     base_color: Optional[QColor] = None,
 ) -> Optional[QColor]:
-    """Compute flash color based on elapsed time. Returns None if animation complete.
+    """Legacy elapsed-time sampling, using the same declared phase curves.
 
-    PAINT-TIME COMPUTATION: Called during paint, not during timer tick.
-    This moves O(n) color computation from timer to paint (which Qt batches).
+    Actual UI rendering uses FlashPlayback's paint-acknowledged presentation.
     """
     cfg = config or get_flash_config()
-    fade_in_s = cfg.fade_in_s
-    hold_s = cfg.hold_s
-    fade_out_s = cfg.fade_out_s
-    total_duration_s = fade_in_s + hold_s + fade_out_s
-
     elapsed = now - start_time
-
-    if elapsed < 0:
-        return None  # Not started yet
-    elif elapsed >= total_duration_s:
-        return None  # Animation complete
-    elif elapsed < fade_in_s:
-        # Fade in: 0 → full alpha
-        t = elapsed / fade_in_s
-        t = t * (2 - t)  # OutQuad easing
-        alpha = int(cfg.flash_alpha * t)
-        color = QColor(base_color) if base_color is not None else _base_color(cfg)
-        color.setAlpha(alpha)
-        return color
-    elif elapsed < fade_in_s + hold_s:
-        if base_color is not None:
-            color = QColor(base_color)
-            color.setAlpha(cfg.flash_alpha)
+    if elapsed < 0 or elapsed >= cfg.total_duration_s:
+        return None
+    for phase in FlashPhase:
+        duration = phase.duration(cfg)
+        if elapsed < duration:
+            color = QColor(base_color) if base_color is not None else _base_color(cfg)
+            color.setAlpha(phase.alpha(elapsed / duration, cfg.flash_alpha))
             return color
-        return _full_flash_color(cfg)
-    else:
-        # Fade out: full → 0
-        fade_elapsed = elapsed - fade_in_s - hold_s
-        t = fade_elapsed / fade_out_s
-        # InOutCubic easing
-        if t < 0.5:
-            t = 4 * t * t * t
-        else:
-            t = 1 - pow(-2 * t + 2, 3) / 2
-        alpha = int(cfg.flash_alpha * (1 - t))
-        color = QColor(base_color) if base_color is not None else _base_color(cfg)
-        color.setAlpha(alpha)
-        return color
+        elapsed -= duration
+    return None
 
 
 # ==================== FLASH ELEMENT REGISTRATION ====================
@@ -509,6 +486,8 @@ class NativeLabelCoverageSurface(QWidget):
     Every paint queries the source's current declarations.
     """
 
+    MASK_PADDING_PX = 2.0
+
     def __init__(self, source: QLabel):
         super().__init__()
         self._source = source
@@ -544,6 +523,57 @@ class NativeLabelCoverageSurface(QWidget):
             widget.text(), widget.foregroundRole(),
         )
 
+    def mask_path(self) -> QPainterPath:
+        """Give the whole native label a padded, convex backing in logical pixels."""
+        coverage = self.grab().toImage()
+        pixels = QRegion(QBitmap.fromImage(
+            coverage.createMaskFromColor(
+                QColor(Qt.GlobalColor.black).rgba(), Qt.MaskMode.MaskInColor
+            )
+        ))
+        contours = QPainterPath()
+        contours.addRegion(pixels)
+        logical_pixels = QTransform.fromScale(
+            1 / coverage.devicePixelRatio(), 1 / coverage.devicePixelRatio()
+        )
+        return convex_hull_path(logical_pixels.map(contours), self.MASK_PADDING_PX)
+
+
+def convex_hull_path(path: QPainterPath, padding: float = 0) -> QPainterPath:
+    """Enclose all contours with a convex polygon and axis-aligned padding.
+
+    Expanding vertices before taking the hull keeps the padded outline convex
+    and polygonal, including during Qt's mask subtraction and union operations.
+    """
+    points = sorted({
+        (point.x() + dx, point.y() + dy)
+        for polygon in path.toSubpathPolygons()
+        for point in polygon
+        for dx in (-padding, padding)
+        for dy in (-padding, padding)
+    })
+
+    def half_hull(
+        ordered_points: Iterable[tuple[float, float]],
+    ) -> list[tuple[float, float]]:
+        hull: list[tuple[float, float]] = []
+        for point in ordered_points:
+            while len(hull) >= 2:
+                first, second = hull[-2:]
+                cross = ((second[0] - first[0]) * (point[1] - first[1])
+                         - (second[1] - first[1]) * (point[0] - first[0]))
+                if cross > 0:
+                    break
+                hull.pop()
+            hull.append(point)
+        return hull[:-1]
+
+    hull = half_hull(points) + half_hull(reversed(points))
+    result = QPainterPath()
+    result.addPolygon(QPolygonF([QPointF(*point) for point in hull]))
+    result.closeSubpath()
+    return result
+
 
 def get_child_mask_path(
     widget: QWidget, window: QWidget, corner_radius: float = 0
@@ -552,8 +582,8 @@ def get_child_mask_path(
 
     This is the single source of truth for child masking geometry used by
     both STANDARD and INVERSE groupbox flashes. Native checkboxes expose
-    their indicator geometry through Qt; labels use native text bounds with
-    alignment and margins. Other controls retain their full laid-out geometry.
+    their indicator geometry through Qt; labels use a padded convex hull of
+    native text coverage. Other controls retain their full laid-out geometry.
 
     Args:
         widget: Widget to mask
@@ -590,30 +620,10 @@ def get_child_mask_path(
     if isinstance(widget, QLabel):
         surface = NativeLabelCoverageSurface(widget)
         try:
-            coverage = surface.grab().toImage()
+            path = surface.mask_path()
         finally:
             sip.delete(surface)
-        device_ratio = coverage.devicePixelRatio()
-        pixels = QRegion(QBitmap.fromImage(
-            coverage.createMaskFromColor(
-                QColor(Qt.GlobalColor.black).rgba(), Qt.MaskMode.MaskInColor
-            )
-        ))
-        if pixels.isEmpty():
-            return QPainterPath()
-        # Preserve each native contour's backing, including enclosed letter
-        # counters, without joining unrelated glyphs or bridging word spaces.
-        # Qt supplies the contours; their union fills counters independently of
-        # winding direction while retaining the native exterior raster edge.
-        contours = QPainterPath()
-        contours.addRegion(pixels)
-        filled = QRegion()
-        for polygon in contours.simplified().toSubpathPolygons():
-            filled = filled.united(QRegion(polygon.toPolygon(), Qt.FillRule.WindingFill))
-        path = QPainterPath()
-        path.addRegion(filled)
-        logical_pixels = QTransform.fromScale(1 / device_ratio, 1 / device_ratio)
-        return logical_pixels.map(path).translated(widget_window.x(), widget_window.y())
+        return path.translated(widget_window.x(), widget_window.y())
     return mask_path_from_rect(widget.rect().translated(widget_window), corner_radius)
 
 
@@ -1326,6 +1336,35 @@ class WindowFlashOverlay(QWidget):
     VIEWPORT CULLING: Elements outside visible scroll areas return None from
     their geometry callback and are skipped.
     """
+    frame_painted = pyqtSignal(object)
+    native_render_requested = pyqtSignal()
+
+    def flash_start_signal(self):
+        """Expose the single coordinator's authoritative window-start stream."""
+        return _GlobalFlashCoordinator.get().flash_started
+
+    def flash_observation_config(self) -> FlashConfig:
+        """Snapshot the actual coordinator configuration used by this renderer."""
+        return replace(_GlobalFlashCoordinator.get()._config)
+
+    def has_pending_or_active_flash(self) -> bool:
+        """Project this window's actual pending and active coordinator keys."""
+        coordinator = _GlobalFlashCoordinator.get()
+        keys = set(coordinator._pending_flash_keys) | set(coordinator._playbacks)
+        return bool(coordinator._overlay_flash_keys(self, keys))
+
+    def can_present_frame(self) -> bool:
+        """Native exposure or an armed same-renderer capture admits presentation.
+
+        A visible QWidget on an unmapped desktop is not a paint recipient. Its
+        actual start stream still exists, but it cannot block an exposed peer.
+        """
+        if not self._window.isVisible():
+            return False
+        handle = self._window.windowHandle()
+        return bool((handle is not None and handle.isExposed())
+                    or self.receivers(self.native_render_requested) > 0)
+
     # Class-level registry: window_id -> live overlay.
     _overlays: Dict[int, 'WindowFlashOverlay'] = {}
 
@@ -2120,6 +2159,11 @@ class WindowFlashOverlay(QWidget):
             self._needs_raise = False
         started = time.perf_counter()
         self.update(update_region)
+        # Capture observers may render this exact computed frame even when the
+        # platform does not deliver an exposed-window paint. Normal animation
+        # remains update-only; the capture owner supplies any native grab.
+        if rect_count and self.receivers(self.native_render_requested):
+            self.native_render_requested.emit()
         update_ms = (time.perf_counter() - started) * 1000.0
         elapsed_ms = region_total_ms + union_ms + update_ms
         if TimeTravelProfiler.enabled() and elapsed_ms >= 5.0:
@@ -2284,6 +2328,14 @@ class WindowFlashOverlay(QWidget):
 
         active_key_set = set(active_keys)
         self._ensure_geometry_cache_for_keys(active_key_set)
+        # Static native label/mask preparation can block. Sample the one playback
+        # owner only afterwards, never paint an old tick's cached phase color.
+        now = time.perf_counter()
+        active_keys = {
+            key: QColor(color.red(), color.green(), color.blue(),
+                        coordinator._sample_color(key, now).alpha())
+            for key, color in active_keys.items()
+        }
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("[FLASH] CACHE HIT - Using cached geometry for window %s", id(self._window))
 
@@ -2305,6 +2357,9 @@ class WindowFlashOverlay(QWidget):
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
         drawn_count = 0
+        drawn_source_alphas: dict[str, int] = {}
+        observe_paint = self.receivers(self.frame_painted) > 0
+        painted_elements: list[FlashPaintElement] = []
 
         debug_enabled = logger.isEnabledFor(logging.DEBUG)
         if debug_enabled:
@@ -2369,6 +2424,14 @@ class WindowFlashOverlay(QWidget):
                 )
 
             drawn_count += 1
+            drawn_source_alphas[record.source_token] = color.alpha()
+            if observe_paint:
+                painted_elements.append(FlashPaintElement(
+                    key=record.key,
+                    source_token=record.source_token,
+                    rect=(rect.x(), rect.y(), rect.width(), rect.height()),
+                    rgba=(color.red(), color.green(), color.blue(), color.alpha()),
+                ))
 
         if drawn_count > 0 and debug_enabled:
             logger.debug(
@@ -2379,6 +2442,21 @@ class WindowFlashOverlay(QWidget):
             )
 
         painter.end()
+        for key in active_key_set:
+            # Several fanout keys can collapse to one actually drawn source.
+            records, _ = self._visible_paint_records({key}, colors=active_keys)
+            for record in records:
+                alpha = drawn_source_alphas.get(record.source_token)
+                if alpha is not None:
+                    coordinator.acknowledge_paint(key, (id(self._window), record.source_token), alpha)
+        if painted_elements:
+            self.frame_painted.emit(FlashPaintFrame(
+                window_identity=id(self._window),
+                painted_at_monotonic=time.perf_counter(),
+                configured_maximum_alpha=coordinator._config.flash_alpha,
+                configured_flash_duration_s=coordinator._config.total_duration_s,
+                elements=tuple(painted_elements),
+            ))
 
 
 # ==================== GLOBAL ANIMATION COORDINATOR ====================
@@ -2393,6 +2471,7 @@ class _GlobalFlashCoordinator(QObject):
     - Triggers ONE repaint per window (WindowFlashOverlay)
     - Total: O(k) per tick where k = flashing elements, O(1) per window for repaint
     """
+    flash_started = pyqtSignal(object, object)
     start_timer_requested = pyqtSignal()
     flush_pending_flashes_requested = pyqtSignal()
     flush_visual_frame_callbacks_requested = pyqtSignal()
@@ -2442,7 +2521,7 @@ class _GlobalFlashCoordinator(QObject):
         self._timer: Optional[QTimer] = None
         self._config = get_flash_config()
         # FIX 1: Single unified flash timing (all keys are scoped, no global/local split)
-        self._flash_start_times: Dict[str, float] = {}
+        self._playbacks: Dict[str, FlashPlayback] = {}
         # Pre-computed colors for ALL keys
         self._computed_colors: Dict[str, QColor] = {}
         # PERF: Cache base colors per key (computed ONCE when flash starts, not every tick)
@@ -2535,7 +2614,7 @@ class _GlobalFlashCoordinator(QObject):
                 "coordinator.timer_request_queued",
                 current=id(current_thread),
                 owner=id(owner_thread),
-                active_keys=len(self._flash_start_times),
+                active_keys=len(self._playbacks),
             )
             self.start_timer_requested.emit()
             return
@@ -2553,7 +2632,7 @@ class _GlobalFlashCoordinator(QObject):
             flash_trace(
                 "coordinator.timer_start",
                 frame_ms=self._config.frame_ms,
-                active_keys=len(self._flash_start_times),
+                active_keys=len(self._playbacks),
                 timer=id(timer),
                 active=timer.isActive(),
             )
@@ -2717,7 +2796,7 @@ class _GlobalFlashCoordinator(QObject):
         """Return active visual work owned by the shared frame coordinator."""
 
         return (
-            len(self._flash_start_times)
+            len(self._playbacks)
             + len(self._pending_flash_keys)
             + len(self._pending_visual_frame_callbacks)
         )
@@ -2734,10 +2813,10 @@ class _GlobalFlashCoordinator(QObject):
             "visual_frame.callback_queued",
             owner=type(owner).__qualname__,
             pending=len(self._pending_visual_frame_callbacks),
-            active_flashes=len(self._flash_start_times),
+            active_flashes=len(self._playbacks),
         )
 
-        if self._flash_start_times or self._pending_flash_keys or self._active_windows:
+        if self._playbacks or self._pending_flash_keys or self._active_windows:
             self._start_timer()
             return
 
@@ -2788,20 +2867,27 @@ class _GlobalFlashCoordinator(QObject):
         if self._pending_flash_keys:
             self._schedule_pending_flash_flush()
 
-    def _commit_flash_keys(self, keys: Iterable[str], *, timestamp: float) -> None:
+    def _commit_flash_keys(self, keys: Iterable[str]) -> None:
         unique_keys = tuple(dict.fromkeys(key for key in keys if key))
         if not unique_keys:
             return
 
         self._process_pending_registrations()
-
+        self._flush_visual_frame_callbacks()
+        recipients = self._prepare_visible_recipients(set(unique_keys))
         for key in unique_keys:
-            self._flash_start_times[key] = timestamp
+            self._get_base_color_for_key(key)
+        admitted_at = time.perf_counter()
+        playback = FlashPlayback(admitted_at, set().union(*recipients.values()))
+        for key in unique_keys:
+            self._playbacks[key] = playback
 
         keys_set = set(unique_keys)
         for window_id, overlay in WindowFlashOverlay.live_items():
-            if self._overlay_flash_keys(overlay, keys_set):
+            matching_keys = self._overlay_flash_keys(overlay, keys_set)
+            if matching_keys and overlay._window.isVisible():
                 self._active_windows.add(window_id)
+                self.flash_started.emit(window_id, tuple(sorted(matching_keys)))
 
         self._trace_next_tick = True
         self._start_timer()
@@ -2818,45 +2904,41 @@ class _GlobalFlashCoordinator(QObject):
         self._pending_flash_flush_scheduled = False
         if not keys:
             return
-        self._commit_flash_keys(keys, timestamp=time.perf_counter())
+        self._commit_flash_keys(keys)
         flash_trace(
             "queue.flush",
             keys=len(keys),
-            active=len(self._flash_start_times),
+            active=len(self._playbacks),
         )
 
     def queue_flash_batch(self, keys: Iterable[str]) -> None:
-        """Queue multiple flashes with shared timestamp - perfect sync.
+        """Queue multiple flashes with one prepared presentation admission.
 
         Commits at the next event-loop turn so independent owners participating
-        in one UI mutation share one timestamp and one timer start.
+        in one UI mutation share one admitted clock and one timer start.
         """
         self._enqueue_flash_keys(keys)
 
-    def queue_flash(self, key: str, window: Optional[QWidget] = None, timestamp: Optional[float] = None) -> None:
+    def queue_flash(self, key: str, window: Optional[QWidget] = None) -> None:
         """Start or retrigger flash for key (global API).
 
         Args:
             key: The flash key
             window: Optional window widget (for window-level overlay registration)
-            timestamp: Optional shared timestamp for batch sync (all keys in batch use same time)
         """
-        if timestamp is None:
-            self._enqueue_flash_keys((key,))
-        else:
-            self._commit_flash_keys((key,), timestamp=timestamp)
+        self._enqueue_flash_keys((key,))
         flash_trace(
             "queue.global",
             key=key,
             pending=len(self._pending_flash_keys),
-            active=len(self._flash_start_times),
+            active=len(self._playbacks),
         )
-        logger.debug("[FLASH] queue_flash: key=%s pending=%s", key, timestamp is None)
+        logger.debug("[FLASH] queue_flash: key=%s pending=True", key)
 
     def _maybe_stop_timer(self) -> None:
         """Stop timer if no active animations."""
         if (not self._active_windows and
-            not self._flash_start_times and
+            not self._playbacks and
             self._timer and self._timer.isActive()):
             self._timer.stop()
             for _window_id, overlay in WindowFlashOverlay.live_items():
@@ -2869,6 +2951,41 @@ class _GlobalFlashCoordinator(QObject):
     def get_computed_color(self, key: str) -> Optional[QColor]:
         """Get pre-computed color for key. O(1) dict lookup."""
         return self._computed_colors.get(key)
+
+    def _sample_color(self, key: str, now: float) -> Optional[QColor]:
+        playback = self._playbacks.get(key)
+        if playback is None:
+            return None
+        alpha = playback.sample_alpha(now, self._config)
+        color = QColor(self._get_base_color_for_key(key))
+        color.setAlpha(alpha)
+        self._computed_colors[key] = color
+        return color
+
+    def acknowledge_paint(self, object_state_path: str, recipient: tuple[int, str], alpha: int) -> None:
+        """A genuine renderer contribution admits the shared declared hold phase."""
+        now = time.perf_counter()
+        for key, playback in self._playbacks.items():
+            if self._key_matches_hierarchical_prefix(key, object_state_path):
+                playback.acknowledge(recipient, alpha, now, self._config)
+
+    def _prepare_visible_recipients(self, keys: Set[str]) -> Dict[str, Set[tuple[int, str]]]:
+        """Resolve current actual viewport targets and prepare static masks first."""
+        recipients = {key: set() for key in keys}
+        for window_id, overlay in WindowFlashOverlay.live_items():
+            if not overlay.can_present_frame():
+                continue
+            target_keys = self._overlay_flash_keys(overlay, keys)
+            overlay._ensure_geometry_cache_for_keys(target_keys)
+            for key in keys:
+                targets = self._overlay_flash_keys(overlay, {key})
+                records, _ = overlay._visible_paint_records(targets)
+                recipients[key].update((window_id, record.source_token) for record in records)
+                for target in targets:
+                    for index, element in enumerate(overlay._elements[target]):
+                        if element.skip_overlay_paint and self._delegate_update_rect(element) is not None:
+                            recipients[key].add((window_id, overlay._paint_source_token(target, index, element)))
+        return recipients
 
     @staticmethod
     def _key_matches_hierarchical_prefix(key: str, prefix: str) -> bool:
@@ -2923,6 +3040,10 @@ class _GlobalFlashCoordinator(QObject):
 
     def get_computed_color_for_object_state_path(self, object_state_path: str) -> Optional[QColor]:
         """Return the strongest active color for one ObjectState path."""
+        now = time.perf_counter()
+        for key in tuple(self._playbacks):
+            if self._key_matches_hierarchical_prefix(key, object_state_path):
+                self._sample_color(key, now)
         exact = self._computed_colors.get(object_state_path)
         if exact is not None:
             return exact
@@ -2966,8 +3087,8 @@ class _GlobalFlashCoordinator(QObject):
                     overlay_keys.add(candidate)
         return overlay_keys
 
-    def _update_delegate_element(self, element: FlashElement) -> None:
-        """Repaint only the delegate-owned item rect for a flashing list/tree row."""
+    def _delegate_update_rect(self, element: FlashElement) -> Optional[QRect]:
+        """Derive exposure from the registered item-view/viewport owners."""
         widget = element.delegate_widget
         if widget is None or element.get_model_index is None:
             return
@@ -2982,14 +3103,21 @@ class _GlobalFlashCoordinator(QObject):
                 return
 
             visual_rect = widget.visualRect(index)
-            if not visual_rect.isValid():
+            if not widget.isVisible() or not visual_rect.isValid():
                 return
 
             update_rect = visual_rect.intersected(viewport.rect())
             if not update_rect.isEmpty():
-                viewport.update(update_rect)
+                return update_rect
         except (RuntimeError, AttributeError):
             pass
+        return None
+
+    def _update_delegate_element(self, element: FlashElement) -> None:
+        """Repaint only the delegate-owned item rect for a flashing list/tree row."""
+        update_rect = self._delegate_update_rect(element)
+        if update_rect is not None:
+            element.delegate_widget.viewport().update(update_rect)
 
     def _update_overlay_for_keys(self, overlay: 'WindowFlashOverlay', keys: Set[str]) -> bool:
         """Update delegate rows directly and report whether overlay paint is needed."""
@@ -3036,8 +3164,15 @@ class _GlobalFlashCoordinator(QObject):
         - Each overlay paintEvent: O(k_window) elements
         """
         tick_started = time.perf_counter()
-        now = time.perf_counter()
         self._tick_count += 1
+        self._flush_visual_frame_callbacks()
+        recipients = self._prepare_visible_recipients(set(self._playbacks))
+        visible_by_playback: Dict[FlashPlayback, Set[tuple[int, str]]] = {}
+        for key, playback in self._playbacks.items():
+            visible_by_playback.setdefault(playback, set()).update(recipients[key])
+        for playback, visible in visible_by_playback.items():
+            playback.retain_recipients(visible)
+        now = time.perf_counter()
 
         # ==================== BATCH COLOR COMPUTATION ====================
         # FIX 1: Single unified color computation (all keys are scoped)
@@ -3045,28 +3180,25 @@ class _GlobalFlashCoordinator(QObject):
         expired_keys = []
 
         # Compute colors for ALL keys (no global/local distinction)
-        total_duration_s = (
-            self._config.fade_in_s + self._config.hold_s + self._config.fade_out_s
-        )
-        for key, start_time in self._flash_start_times.items():
-            base_color = self._get_base_color_for_key(key)
-            if now - start_time >= total_duration_s:
+        for key, playback in self._playbacks.items():
+            if not recipients[key]:
                 expired_keys.append(key)
                 continue
-            color = compute_flash_color_at_time(
-                start_time, now, config=self._config, base_color=base_color
-            )
+            color = self._sample_color(key, now)
+            if playback.phase is FlashPhase.COMPLETE:
+                expired_keys.append(key)
+                continue
             if color and color.alpha() > 0:
                 self._computed_colors[key] = color
 
         # Prune expired keys and their cached base colors
         for key in expired_keys:
-            del self._flash_start_times[key]
+            del self._playbacks[key]
+            self._computed_colors.pop(key, None)
             self._key_base_colors.pop(key, None)  # Clean up color cache
 
         # Run coalesced non-flash visual work inside the same frame boundary
         # before overlay update requests are issued.
-        self._flush_visual_frame_callbacks()
 
         # ==================== TRIGGER WINDOW OVERLAY REPAINTS ====================
         # FIX 1 & 2: Simplified single-path repaint (all keys scoped, no dirty tracking complexity)
@@ -3628,16 +3760,15 @@ class VisualUpdateMixin:
         if not self._text_timer.isActive():
             self._text_timer.start(16)
 
-    def queue_flash(self, key: str, timestamp: Optional[float] = None) -> None:
+    def queue_flash(self, key: str) -> None:
         """Start or retrigger flash for key (GLOBAL - all windows with this key flash).
 
         Args:
             key: The flash key
-            timestamp: Optional shared timestamp for batch sync (all keys in batch use same time)
         """
         coordinator = _GlobalFlashCoordinator.get()
         window = self.window() if isinstance(self, QWidget) else None
-        coordinator.queue_flash(key, window, timestamp=timestamp)
+        coordinator.queue_flash(key, window)
 
     def queue_flash_batch(self, keys: Iterable[str]) -> None:
         """Start multiple global flashes with one coordinator registration/timer pass."""
@@ -3723,7 +3854,7 @@ class VisualUpdateMixin:
             return
 
         is_new_flash = (
-            scoped_key not in coordinator._flash_start_times
+            scoped_key not in coordinator._playbacks
             and scoped_key not in coordinator._pending_flash_keys
         )
         coordinator._enqueue_flash_keys((scoped_key,))
@@ -3736,7 +3867,7 @@ class VisualUpdateMixin:
             overlay=id(overlay),
             new=is_new_flash,
             elements=len(overlay._elements.get(scoped_key, ())),
-            active_keys=len(coordinator._flash_start_times),
+            active_keys=len(coordinator._playbacks),
         )
         logger.debug(
             "[FLASH] queue_flash_local queued: key=%s scoped=%s window=%s",
@@ -3801,7 +3932,7 @@ class VisualUpdateMixin:
         new_count = 0
         for scoped_key in queueable_keys:
             is_new_flash = (
-                scoped_key not in coordinator._flash_start_times
+                scoped_key not in coordinator._playbacks
                 and scoped_key not in coordinator._pending_flash_keys
             )
             if is_new_flash:
@@ -3816,7 +3947,7 @@ class VisualUpdateMixin:
             new=new_count,
             window=window_id,
             overlay=id(overlay),
-            active_keys=len(coordinator._flash_start_times),
+            active_keys=len(coordinator._playbacks),
         )
 
     def get_flash_color_for_object_state_path(
@@ -3827,6 +3958,18 @@ class VisualUpdateMixin:
         return _GlobalFlashCoordinator.get().get_computed_color_for_object_state_path(
             object_state_path
         )
+
+    def acknowledge_flash_paint(self, object_state_path: str, window: QWidget, alpha: int) -> None:
+        """Project an actual delegate draw to the shared presentation owner."""
+        coordinator = _GlobalFlashCoordinator.get()
+        overlay = WindowFlashOverlay.live_for_window_id(id(window.window()))
+        if overlay is None:
+            return
+        for target in coordinator._overlay_flash_keys(overlay, {object_state_path}):
+            for index, element in enumerate(overlay._elements[target]):
+                if element.skip_overlay_paint and element.delegate_widget is window:
+                    coordinator.acknowledge_paint(object_state_path,
+                        (id(window.window()), overlay._paint_source_token(target, index, element)), alpha)
 
     def _execute_text_update_batch(self) -> None:
         """Execute pending text update."""
