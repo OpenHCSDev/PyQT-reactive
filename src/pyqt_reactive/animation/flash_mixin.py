@@ -473,9 +473,6 @@ def get_child_mask_rect(widget: QWidget, window: QWidget) -> QRect:
     return get_child_mask_path(widget, window).boundingRect().toAlignedRect()
 
 
-LABEL_MASK_PADDING_PX = 2
-
-
 def get_child_mask_path(
     widget: QWidget, window: QWidget, corner_radius: float = 0
 ) -> QPainterPath:
@@ -519,11 +516,12 @@ def get_child_mask_path(
         return mask_path_from_rect(result, corner_radius if widget.text() else 0)
 
     if isinstance(widget, QLabel):
+        padding = get_flash_config().label_mask_padding_px
         label_rect = widget.rect().adjusted(
-            -LABEL_MASK_PADDING_PX,
-            -LABEL_MASK_PADDING_PX,
-            LABEL_MASK_PADDING_PX,
-            LABEL_MASK_PADDING_PX,
+            -padding,
+            -padding,
+            padding,
+            padding,
         )
         return mask_path_from_rect(label_rect.translated(widget_window))
     return mask_path_from_rect(widget.rect().translated(widget_window), corner_radius)

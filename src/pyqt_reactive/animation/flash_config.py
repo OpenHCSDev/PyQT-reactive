@@ -112,6 +112,7 @@ class FlashConfig:
 
     base_color_rgb: Tuple[int, int, int] = (255, 255, 255)  # Medium grey for no-scope flashes
     flash_alpha: int = 255
+    label_mask_padding_px: int = 2
     fade_in_s: float = 0.200
     hold_s: float = 0.050
     fade_out_s: float = 0.600

@@ -11,13 +11,13 @@ from PyQt6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
 from pyqt_reactive.animation.flash_mixin import (
     LEAF_WIDGET_TYPES,
-    LABEL_MASK_PADDING_PX,
     WindowFlashOverlay,
     _GlobalFlashCoordinator,
     get_child_mask_path,
     get_child_mask_rect,
     resolve_mask_widgets,
 )
+from pyqt_reactive.animation.flash_config import get_flash_config
 from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
     ParameterFormManager,
@@ -78,11 +78,12 @@ def test_label_mask_is_padded_widget_geometry(nested_form, qapp, text, width):
     label.setStyleSheet("color: white; background: #141414; padding: 4px; margin: 2px;")
     qapp.processEvents()
     origin = label.mapTo(host, QPoint())
+    padding = get_flash_config().label_mask_padding_px
     expected = label.rect().translated(origin).adjusted(
-        -LABEL_MASK_PADDING_PX,
-        -LABEL_MASK_PADDING_PX,
-        LABEL_MASK_PADDING_PX,
-        LABEL_MASK_PADDING_PX,
+        -padding,
+        -padding,
+        padding,
+        padding,
     )
     assert get_child_mask_rect(label, host) == expected
 
