@@ -686,31 +686,20 @@ class FunctionPatternCodeDocumentService:
             self.unregister_function_state(parent_scope_id, token)
 
         for token in set(old_by_token) & set(new_by_token):
-            old_value = old_by_token[token]
             new_value = new_by_token[token]
             scope_id = f"{parent_scope_id}::{token}"
-
-            if old_value.func is not new_value.func:
-                parent_state = ObjectStateRegistry.get_by_scope(parent_scope_id)
-                if parent_state is None:
-                    raise FunctionPatternRoundTripError(
-                        f"Missing parent ObjectState for {parent_scope_id!r}."
-                    )
-                self.replace_function_state(
-                    scope_id=scope_id,
-                    parent_state=parent_state,
-                    entry=new_value,
-                )
-                continue
-
             state = ObjectStateRegistry.get_by_scope(scope_id)
             if state is None:
                 continue
-
-            self.apply_kwargs_to_state(
+            parent_state = ObjectStateRegistry.get_by_scope(parent_scope_id)
+            if parent_state is None:
+                raise FunctionPatternRoundTripError(
+                    f"Missing parent ObjectState for {parent_scope_id!r}."
+                )
+            self.synchronize_existing_function_state(
                 state=state,
-                previous_kwargs=old_value.kwargs,
-                next_kwargs=new_value.kwargs,
+                parent_state=parent_state,
+                entry=new_value,
             )
 
     def resolve_pattern_values(
@@ -986,7 +975,7 @@ class FunctionPatternCodeDocumentService:
         """Apply a single-entry source document to one function child scope."""
         address = FunctionPatternChildScopeAddress.parse(scope_id)
         parent_state = self.require_parent_state(address)
-        current_value = self.child_scope_entry(scope_id)
+        self.child_scope_entry(scope_id)
         next_value = self.single_entry_from_source(source)
         self._replace_parent_pattern_entry(
             parent_state=parent_state,
@@ -994,17 +983,8 @@ class FunctionPatternCodeDocumentService:
             next_value=next_value,
         )
 
-        if current_value.func is next_value.func:
-            child_state = self.require_child_state(address)
-            self.apply_kwargs_to_state(
-                state=child_state,
-                previous_kwargs=current_value.kwargs,
-                next_kwargs=next_value.kwargs,
-            )
-            return
-
-        self.replace_function_state(
-            scope_id=address.scope_id,
+        self.synchronize_existing_function_state(
+            state=self.require_child_state(address),
             parent_state=parent_state,
             entry=next_value,
         )
