@@ -828,7 +828,48 @@ class FunctionPatternCodeDocumentService:
             previous_kwargs=cls.reconstruct_kwargs_from_state(state),
             next_kwargs=entry.kwargs,
         )
-        return state
+        if cls._state_roundtrips_entry(state, entry):
+            return state
+
+        # A restored ObjectState can carry the flattened parameter schema from
+        # an older declaration even though its callable now resolves to the
+        # current function.  Updating a dataclass container cannot safely add
+        # or remove fields that the stale state never registered.  Replace the
+        # child from the declaration rather than accepting a lossy code-mode
+        # application whose rendered source or execution would use defaults.
+        cls.replace_function_state(
+            scope_id=state.scope_id,
+            parent_state=parent_state,
+            entry=entry,
+        )
+        replacement = ObjectStateRegistry.get_by_scope(state.scope_id)
+        if replacement is None or not cls._state_roundtrips_entry(replacement, entry):
+            raise FunctionPatternRoundTripError(
+                f"Function child state {state.scope_id!r} could not preserve its "
+                "declared kwargs through ObjectState reconstruction."
+            )
+        return replacement
+
+    @classmethod
+    def _state_roundtrips_entry(
+        cls,
+        state: ObjectState,
+        entry: FunctionPatternValue,
+    ) -> bool:
+        """Return whether ObjectState preserves the entry's declared kwargs."""
+
+        authority = function_pattern_authority(entry.func)
+        expected = callable_declaration_kwargs(
+            authority,
+            entry.kwargs,
+            values_equal=semantic_values_equal,
+        )
+        reconstructed = callable_declaration_kwargs(
+            authority,
+            cls.reconstruct_kwargs_from_state(state),
+            values_equal=semantic_values_equal,
+        )
+        return semantic_values_equal(expected, reconstructed)
 
     @staticmethod
     def unregister_function_state(parent_scope_id: str, token: str) -> None:

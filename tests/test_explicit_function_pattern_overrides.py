@@ -82,3 +82,59 @@ def test_existing_function_state_rebuilds_when_explicit_kwargs_change_surface(mo
     )
     assert removed is not updated
     assert FunctionPatternCodeDocumentService.reconstruct_kwargs_from_state(removed) == {}
+
+
+def test_code_mode_rebuilds_restored_state_with_stale_nested_dataclass_schema(
+    monkeypatch,
+):
+    """A declaration-added field must survive ObjectState/code-mode roundtrip."""
+
+    @dataclass
+    class RootConfig:
+        pass
+
+    @dataclass(frozen=True)
+    class Settings:
+        threshold: float = 1.0
+        correction_factor: float = 0.85
+
+    monkeypatch.setattr(config, "_base_config_type", RootConfig)
+
+    def process(image, settings: Settings = Settings()):
+        return image
+
+    parent = ObjectState(object_instance=RootConfig(), scope_id="schema-parent")
+    entry = FunctionPatternValue(
+        process,
+        {"settings": Settings(threshold=2.0, correction_factor=0.85)},
+    )
+    state = FunctionPatternCodeDocumentService.create_function_state(
+        scope_id="schema-parent::func_0",
+        parent_state=parent,
+        entry=entry,
+    )
+    ObjectStateRegistry.register(parent, _skip_snapshot=True)
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+
+    # Reproduce a history document written before ``correction_factor`` was
+    # declared: the container resolves to the current class, but the flattened
+    # state has no editable leaf for the new field.
+    stale_path = "settings.correction_factor"
+    state.parameters.pop(stale_path)
+    state._saved_parameters.pop(stale_path)
+
+    requested = FunctionPatternValue(
+        process,
+        {"settings": Settings(threshold=2.0, correction_factor=0.5)},
+    )
+    updated = FunctionPatternCodeDocumentService.synchronize_existing_function_state(
+        state=state,
+        parent_state=parent,
+        entry=requested,
+    )
+
+    assert updated is not state
+    assert updated.parameters[stale_path] == 0.5
+    assert FunctionPatternCodeDocumentService.reconstruct_kwargs_from_state(
+        updated
+    ) == {"settings": Settings(threshold=2.0, correction_factor=0.5)}
