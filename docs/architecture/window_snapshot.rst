@@ -46,3 +46,25 @@ The receipt reports the target window, renderer identity and observed monotonic
 completion time. It proves a requested native frame was completed, not that
 future queued streaming work is settled or that scientific results are valid.
 Products retain ownership of pending-work settlement and native integration.
+
+Enclosing operation deadline
+----------------------------
+
+``QtWindowSnapshotRequest.operation_deadline`` accepts the original ZMQRuntime
+``OperationDeadline``. It is armed by the operation owner before transport;
+queue time is already consumed when the existing Qt observation timer starts.
+``WindowSnapshotCaptureSpec.observation_phase_budget`` declares equal
+observation and capture/reply phase allocation from the remaining budget.
+This is a maximum budget, never an estimate of render latency or a settling
+delay. Explicit observation bounds remain upper bounds and may be capped by
+the enclosing operation. The timer remains on the existing observation owner.
+
+Receipts retain the effective observation budget and original deadline.
+Expired queued work fails with its typed receipt without requesting a frame.
+Capture and PNG persistence recheck the same deadline. The original persistence
+owner uses Qt's atomic ``QSaveFile``; a deadline crossed during commit or digest
+removes only this operation's newly created artifact and fails once.
+
+Monotonic deadlines require the same clock domain, as in the managed local
+viewer processes tested here. These source checks do not qualify cross-host
+deadline transfer or prove installed OpenGL composition.
