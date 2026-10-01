@@ -317,6 +317,34 @@ def test_render_timeout_never_captures_and_releases_native_signal(
     assert rendered_canvas.receivers(rendered_canvas.frame_completed) == 0
 
 
+def test_render_completion_after_deadline_cannot_overtake_queued_timeout(
+    qapp,
+    rendered_canvas,
+    tmp_path,
+    monkeypatch,
+):
+    import pyqt_reactive.services.window_snapshot as snapshot_module
+
+    completed, failed = [], []
+    now = [time.perf_counter()]
+    with monkeypatch.context() as clock:
+        clock.setattr(snapshot_module.time, "perf_counter", lambda: now[0])
+        QtWindowSnapshotService().request_capture(
+            _render_request(
+                rendered_canvas, tmp_path, PaintRenderOwner(rendered_canvas), timeout=0.5
+            ),
+            completed.append,
+            failed.append,
+        )
+        now[0] += 0.6
+        qapp.processEvents()  # Real Qt paint, before the real timer has elapsed.
+    assert not completed and len(failed) == 1
+    assert isinstance(failed[0].error, TimeoutError)
+    assert failed[0].observation.render_frame is not None
+    assert not tuple(tmp_path.glob("*.png"))
+    assert rendered_canvas.receivers(rendered_canvas.frame_completed) == 0
+
+
 def test_render_owner_destroyed_fails_once_without_capture(
     qapp,
     rendered_canvas,

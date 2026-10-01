@@ -484,6 +484,14 @@ class _WindowSnapshotObservation(ABC):
     def _finish(self, frame=None, pixmap=None):
         if self.closed:
             return
+        # A blocked Qt thread can deliver a renderer signal before its queued
+        # timeout event. The original deadline still bounds admission.
+        if (
+            time.perf_counter() - self.started >= self.request.capture.observation_timeout_s
+            and not self.condition.accepts_timeout(self.starts, self.frames)
+        ):
+            self._timeout()
+            return
         receipt = self._receipt(frame)
         self._close()
         try:
