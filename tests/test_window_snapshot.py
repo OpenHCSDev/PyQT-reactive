@@ -366,6 +366,60 @@ def test_render_owner_destroyed_fails_once_without_capture(
     assert not tuple(tmp_path.glob("*.png"))
 
 
+def test_operation_deadline_consumes_queue_time_and_preserves_failure(
+    qapp, rendered_canvas, tmp_path
+):
+    from zmqruntime.timeouts import OperationDeadline
+
+    completed, failed = [], []
+    request = replace(
+        _render_request(rendered_canvas, tmp_path, PaintRenderOwner(rendered_canvas)),
+        operation_deadline=OperationDeadline("expired queued snapshot", 100, time.monotonic() - 1),
+    )
+    QtWindowSnapshotService().request_capture(request, completed.append, failed.append)
+    assert not completed and len(failed) == 1
+    assert isinstance(failed[0].error, TimeoutError)
+    assert failed[0].observation.operation_deadline is request.operation_deadline
+    assert failed[0].observation.observation_budget_s == 0
+    assert not tuple(tmp_path.glob("*.png"))
+    qapp.processEvents()
+    assert len(failed) == 1 and not completed
+
+
+def test_operation_deadline_cancels_late_real_png_commit(
+    qapp, rendered_canvas, tmp_path, monkeypatch
+):
+    from PyQt6.QtCore import QSaveFile
+    from zmqruntime.timeouts import OperationDeadline
+
+    now = [time.monotonic()]
+    completed, failed = [], []
+    original_commit = QSaveFile.commit
+
+    def commit(output):
+        result = original_commit(output)
+        now[0] += 2
+        return result
+
+    with monkeypatch.context() as clock:
+        clock.setattr(time, "monotonic", lambda: now[0])
+        clock.setattr(QSaveFile, "commit", commit)
+        request = replace(
+            _render_request(rendered_canvas, tmp_path, PaintRenderOwner(rendered_canvas)),
+            operation_deadline=OperationDeadline.after_milliseconds(
+                1000, operation="source capture"
+            ),
+        )
+        QtWindowSnapshotService().request_capture(request, completed.append, failed.append)
+        qapp.processEvents()
+    assert not completed and len(failed) == 1
+    assert isinstance(failed[0].error, TimeoutError)
+    assert failed[0].observation.render_frame is not None
+    assert not tuple(tmp_path.glob("*.png"))
+    qapp.processEvents()
+    assert len(failed) == 1 and not completed
+
+
 def test_render_condition_cannot_be_silently_captured_immediately(rendered_canvas, tmp_path):
     with pytest.raises(ValueError, match="no frame-condition receipt"):
         QtWindowSnapshotService().capture(_render_request(rendered_canvas, tmp_path))

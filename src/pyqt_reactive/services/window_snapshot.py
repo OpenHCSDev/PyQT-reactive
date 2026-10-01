@@ -301,6 +301,11 @@ class WindowSnapshotCaptureSpec:
         """Optional enclosing operation supplied by a product request owner."""
         return None
 
+    @staticmethod
+    def observation_phase_budget(remaining_seconds: float) -> float:
+        """Reserve the other half of an operation for capture/reply delivery."""
+        return remaining_seconds / 2
+
     def same_capture_contract(self, other: WindowSnapshotCaptureSpec) -> bool:
         """Return whether two snapshot carriers request the same capture."""
 
@@ -352,7 +357,8 @@ class QtWindowSnapshotRequest:
         if self.operation_deadline is None:
             return self.capture.observation_timeout_s
         return min(
-            self.capture.observation_timeout_s, self.operation_deadline.remaining_seconds() / 2
+            self.capture.observation_timeout_s,
+            self.capture.observation_phase_budget(self.operation_deadline.remaining_seconds()),
         )
 
     def require_operation_budget(self) -> None:
