@@ -373,6 +373,17 @@ class QtWindowSnapshotService:
     FILE_EXTENSION = ".png"
     SAFE_FILENAME_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 
+    @staticmethod
+    def qt_core():
+        """Owning integration's Qt binding; all Qt devices share this authority.
+
+        Reactive forms use PyQt6. A receiving library integration supplies its
+        existing binding module through this hook, never a widget-type switch.
+        """
+        from PyQt6 import QtCore
+
+        return QtCore
+
     def request_capture(
         self,
         request: QtWindowSnapshotRequest,
@@ -420,10 +431,9 @@ class QtWindowSnapshotService:
         output_dir = Path(request.capture.output_dir_path).expanduser().resolve(strict=False)
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / self._filename(request)
-        from PyQt6.QtCore import QIODevice, QSaveFile
-
-        output = QSaveFile(str(output_path))
-        if not output.open(QIODevice.OpenModeFlag.WriteOnly):
+        qt_core = self.qt_core()
+        output = qt_core.QSaveFile(str(output_path))
+        if not output.open(qt_core.QIODevice.OpenModeFlag.WriteOnly):
             raise RuntimeError(f"Failed to open Qt screenshot {output_path}.")
         try:
             if not pixmap.save(output, "PNG"):
@@ -472,8 +482,7 @@ class _WindowSnapshotObservation(ABC):
     """One Qt-owned deadline, capture, failure and cleanup algorithm."""
 
     def __init__(self, service, request, completed, failed, owner, flash_duration_s=0.0):
-        from PyQt6.QtCore import QTimer, Qt
-
+        qt_core = service.qt_core()
         self.service, self.request = service, request
         self.completed, self.failed = completed, failed
         self.condition = request.capture.frame_condition
@@ -485,8 +494,8 @@ class _WindowSnapshotObservation(ABC):
         self.render_frame = None
         self.flash_duration_s = flash_duration_s
         self.connections = []
-        self.timer = QTimer(owner)
-        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.timer = qt_core.QTimer(owner)
+        self.timer.setTimerType(qt_core.Qt.TimerType.PreciseTimer)
         self.timer.setSingleShot(True)
         # The Qt-owned timer retains this bounded observation, not a registry.
         self._connect(self.timer.timeout, lambda: self._timeout())
