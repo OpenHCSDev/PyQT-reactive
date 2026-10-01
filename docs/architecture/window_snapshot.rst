@@ -47,6 +47,26 @@ completion time. It proves a requested native frame was completed, not that
 future queued streaming work is settled or that scientific results are valid.
 Products retain ownership of pending-work settlement and native integration.
 
+Receiving Qt binding
+--------------------
+
+``QtWindowSnapshotService.qt_core`` supplies the owning integration's QtCore
+module to the same observation timer and atomic PNG writer. Reactive forms
+retain their original PyQt6 binding. A receiving Napari integration overrides
+only this hook with its already-selected QtPy module; QtPy, not the capture
+consumer, owns selection among its supported library bindings. There is no
+widget-type dispatch, binding roster, environment override or canvas unwrap.
+
+Vispy's ``Canvas.native`` is a real ``CanvasBackendDesktop`` whose MRO includes
+the selected Qt ``QOpenGLWidget`` and ``QObject``. A PyQt5 widget cannot parent a
+PyQt6 timer, and its pixmap cannot save to a PyQt6 device. Binding authority
+therefore covers both operations, not only the first failing constructor.
+The real hidden Vispy fixture tests timer parenting, typed no-frame failure,
+late-signal cleanup and QLabel PNG persistence under QtPy/PyQt5 and PyQt6.
+It deliberately draws no OpenGL frame; GL composition and installed viewer
+acceptance remain separate obligations. A new integration declares only its
+binding hook and inherits the unchanged capture/observation implementation.
+
 Enclosing operation deadline
 ----------------------------
 
