@@ -23,3 +23,26 @@ window discovery, authorisation, and transport DTOs; they pass the resolved
 The scope and capture-spec declarations are safe to import in headless process
 boundaries. PyQt types are used for static typing and capture execution without
 eagerly importing PyQt while the declaration module is loaded.
+
+Render-complete frames
+----------------------
+
+``WindowSnapshotFrameCondition.RENDER_COMPLETE`` requires a native renderer
+completion receipt. Pass a ``WindowSnapshotRenderOwner`` on
+``QtWindowSnapshotRequest`` and use ``QtWindowSnapshotService.request_capture``.
+The shared observation ancestor arms the renderer signal before requesting a
+frame, captures on completion, and owns the bounded deadline and cleanup.
+Timeout and renderer destruction fail without persisting an image. Calling
+``capture`` directly cannot silently treat an observed condition as immediate.
+
+``OpenGLWidgetSnapshotRenderOwner`` supplies Qt's ``frameSwapped`` signal and
+``update`` request from the existing ``QOpenGLWidget``. It does not paint, run
+another event loop, inspect image content or estimate a settling duration.
+Other native renderers declare only widget, completion-signal and frame-request
+hooks. The same ancestor handles flash observations through their existing
+flash painter; no condition switches belong in product consumers.
+
+The receipt reports the target window, renderer identity and observed monotonic
+completion time. It proves a requested native frame was completed, not that
+future queued streaming work is settled or that scientific results are valid.
+Products retain ownership of pending-work settlement and native integration.
