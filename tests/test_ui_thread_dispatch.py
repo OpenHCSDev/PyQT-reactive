@@ -14,6 +14,16 @@ from pyqt_reactive.services.ui_thread_dispatch import (
 )
 
 
+class CancelledBeforeStartError(UiThreadDispatchTimeoutError):
+    """A consumer's nominal projection of the owner's cancellation."""
+
+
+class ProjectedCancellationDispatcher(UiThreadDispatcher):
+    @staticmethod
+    def _dispatch_timeout_error() -> UiThreadDispatchTimeoutError:
+        return CancelledBeforeStartError("Cancelled before callback invocation.")
+
+
 def test_close_cancels_a_posted_callback_before_qt_executes_it(qapp) -> None:
     dispatcher = UiThreadDispatcher()
     calls: list[str] = []
@@ -27,8 +37,12 @@ def test_close_cancels_a_posted_callback_before_qt_executes_it(qapp) -> None:
         dispatcher.post(lambda: None)
 
 
-def test_call_timeout_cancels_callback_still_queued_for_qt(qapp) -> None:
-    dispatcher = UiThreadDispatcher()
+@pytest.mark.parametrize("dispatcher_type,error_type", (
+    (UiThreadDispatcher, UiThreadDispatchTimeoutError),
+    (ProjectedCancellationDispatcher, CancelledBeforeStartError),
+))
+def test_call_timeout_cancels_callback_still_queued_for_qt(qapp, dispatcher_type, error_type) -> None:
+    dispatcher = dispatcher_type()
     calls: list[str] = []
     errors: list[BaseException] = []
 
@@ -45,8 +59,44 @@ def test_call_timeout_cancels_callback_still_queued_for_qt(qapp) -> None:
 
     assert not worker.is_alive()
     assert len(errors) == 1
-    assert isinstance(errors[0], UiThreadDispatchTimeoutError)
+    assert type(errors[0]) is error_type
     assert calls == []
+
+
+@pytest.mark.parametrize("queued", (False, True), ids=("ui-direct", "queued-started"))
+def test_callback_timeout_after_side_effect_keeps_its_own_outcome(qapp, qtbot, queued):
+    dispatcher = ProjectedCancellationDispatcher()
+    original = UiThreadDispatchTimeoutError("Started callback failed after its side effect.")
+    calls, errors = [], []
+
+    def callback():
+        calls.append("side-effect")
+        if queued:
+            time.sleep(0.04)
+        raise original
+
+    def exercise():
+        try:
+            dispatcher.call(callback, timeout_ms=10)
+        except BaseException as error:
+            errors.append(error)
+
+    try:
+        if queued:
+            worker = threading.Thread(target=exercise)
+            with qtbot.waitSignal(dispatcher._proxy.call_requested, timeout=1000):
+                worker.start()
+            qapp.processEvents()
+            worker.join(timeout=1)
+            assert not worker.is_alive()
+        else:
+            exercise()
+        assert calls == ["side-effect"]
+        assert errors == [original]
+        assert errors[0] is original
+        assert not isinstance(errors[0], CancelledBeforeStartError)
+    finally:
+        dispatcher.close()
 
 
 def test_close_unblocks_worker_waiting_for_queued_call(qapp) -> None:

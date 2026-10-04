@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.26
+
+- Let the original Qt dispatcher project a queued cancellation through its own
+  error-construction hook. Started callback exceptions retain their original
+  outcome, including callback-raised dispatch timeouts after a side effect.
+
 ## 0.3.5
 
 - Carry ObjectState's field declaration into manager-preview formatting so
