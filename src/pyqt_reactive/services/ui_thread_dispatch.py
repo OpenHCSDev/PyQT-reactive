@@ -137,15 +137,24 @@ class UiThreadDispatcher:
         call = self._register(callback)
         self._proxy.call_requested.emit(call)
         if not call.done.wait(timeout_ms / 1000):
-            timeout = UiThreadDispatchTimeoutError(
-                "Timed out waiting for UI thread dispatch."
-            )
+            timeout = self._dispatch_timeout_error()
             if call.cancel(timeout):
                 raise timeout
             call.done.wait()
         if call.error is not None:
             raise call.error
         return cast(ResultT, call.result)
+
+    @staticmethod
+    def _dispatch_timeout_error() -> UiThreadDispatchTimeoutError:
+        """Construct the outcome offered only to a not-yet-started call.
+
+        The call's atomic cancel() decides whether this error is published.
+        Started callbacks retain their own outcome, even when that outcome is
+        itself a UiThreadDispatchTimeoutError. Subclasses can project the owned
+        cancellation without catching and misclassifying callback exceptions.
+        """
+        return UiThreadDispatchTimeoutError("Timed out waiting for UI thread dispatch.")
 
     def post(self, callback: Callable[[], None]) -> None:
         """Queue work on the Qt thread without waiting for its result."""
