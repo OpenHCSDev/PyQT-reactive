@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 from typing import Any, TypeAlias
 
 DEFAULT_MAXIMUM_WIDGET_TEXT_LENGTH = 4096
@@ -48,14 +48,26 @@ def compact_dataclass_projection(value: object) -> dict[str, Any]:
     for declared_field in fields(value):
         field_value = getattr(value, declared_field.name)
         policy = declared_field.metadata.get(COMPACT_FIELD_PROJECTION_METADATA_KEY)
-        if policy is None:
-            includes = _compact_value_carries_information(field_value)
-        elif isinstance(policy, CompactFieldProjection):
-            includes = policy.includes(value, field_value)
-        else:
+        if policy is not None and not isinstance(policy, CompactFieldProjection):
             raise TypeError(
                 f"{type(value).__name__}.{declared_field.name} declares an invalid "
                 "compact field projection."
+            )
+        required = (
+            declared_field.default is MISSING
+            and declared_field.default_factory is MISSING
+        )
+        if required:
+            includes = True
+        elif isinstance(policy, CompactFieldProjection):
+            includes = policy.includes(value, field_value)
+        else:
+            # Empty values may only disappear when the declaration restores
+            # that exact value. Do not evaluate factories during serialization.
+            includes = _compact_value_carries_information(field_value) or not (
+                declared_field.default is not MISSING
+                and type(field_value) is type(declared_field.default)
+                and field_value == declared_field.default
             )
         if includes:
             projected[declared_field.name] = field_value
