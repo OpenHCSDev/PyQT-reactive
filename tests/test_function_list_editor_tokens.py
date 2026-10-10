@@ -320,7 +320,8 @@ def test_reused_object_id_does_not_override_restored_token(monkeypatch):
     # CPython may give the new object the departed object's address, but the
     # allocator does not promise it. Leave the departed entry under the new
     # object's id, which is the state an address reuse produces.
-    ScopeTokenService._scope_id_cache[("plate", id(detached))] = ScopeTokenService._scope_id_cache.pop(departed_key)
+    cache = ScopeTokenService._scope_id_cache
+    cache[("plate", id(detached))] = cache.pop(departed_key)
     generator = ScopeTokenService.get_generator("plate", "step")
     counter_before = generator._counter
     cache_before = dict(ScopeTokenService._scope_id_cache)
