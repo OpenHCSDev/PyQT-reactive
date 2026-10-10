@@ -1,5 +1,6 @@
 """The original publisher resolves declared public runtime and test inputs."""
 
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ def test_published_runtime_is_not_overridden_by_a_source_candidate():
         requirement for requirement in map(Requirement, metadata["project"]["dependencies"])
         if requirement.name == "zmqruntime"
     )
-    assert runtime.specifier.contains("0.3.0")
+    assert runtime.specifier.contains(version(runtime.name))
     constraints = Path("requirements-ci.txt").read_text().splitlines()
     assert not any(
         Requirement(value).name == runtime.name

@@ -8,7 +8,7 @@ import sys
 import threading
 from dataclasses import dataclass
 
-from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
+from zmqruntime.process_launch import BackgroundProcessLaunchPolicy
 
 
 @dataclass(frozen=True, slots=True)

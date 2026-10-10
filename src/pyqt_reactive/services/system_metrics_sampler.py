@@ -16,8 +16,7 @@ from metaclass_registry import AutoRegisterMeta
 import psutil
 from python_introspect import validate_annotated_dataclass
 from zmqruntime.config import PositiveFloat
-
-from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
+from zmqruntime.process_launch import BackgroundProcessLaunchPolicy
 
 try:
     import GPUtil
