@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.28
+
+- Render fields declared with `python_introspect.AnnotationChoices` as a combo
+  box (scalar, with "Default" when optional) or a checkbox group (list) over
+  the declared choices and labels. Requires python-introspect 0.2.3.
+- `ComponentSelectionProviderABC` answers `is_grouped`, `grouping_label` and
+  `grouping_overlaps_variable_components` for an opaque group-by value, replacing
+  `get_groupby_enum`; `GroupBySelectorDialog` takes a `group_label`.
+
 ## 0.3.26
 
 - Let the original Qt dispatcher project a queued cancellation through its own
