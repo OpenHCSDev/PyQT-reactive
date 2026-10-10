@@ -25,6 +25,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from python_introspect import (
+    AnnotationChoices,
+    declared_annotation_choices,
     enum_member_type,
     get_enum_from_list,
     is_enum_type,
@@ -557,7 +559,7 @@ DIRECT_WIDGET_FACTORY = DirectWidgetFactory()
 
 
 class CheckboxGroupWidgetFactory:
-    """Factory for List[Enum] checkbox groups."""
+    """Factory for multi-selection checkbox groups over a finite choice set."""
 
     def create(
         self,
@@ -566,17 +568,41 @@ class CheckboxGroupWidgetFactory:
         current_value: ParameterValue | None,
     ) -> CheckboxGroupAdapter:
         enum_type = get_enum_from_list(param_type)
+        return self.create_from_items(
+            param_name,
+            ((member, str(member.value)) for member in enum_type),
+            current_value,
+        )
+
+    def create_from_choices(
+        self,
+        param_name: str,
+        choices: AnnotationChoices,
+        current_value: ParameterValue | None,
+    ) -> CheckboxGroupAdapter:
+        return self.create_from_items(
+            param_name,
+            ((choice, choices.label(choice)) for choice in choices.choices()),
+            current_value,
+        )
+
+    def create_from_items(
+        self,
+        param_name: str,
+        items,
+        current_value: ParameterValue | None,
+    ) -> CheckboxGroupAdapter:
         widget = CheckboxGroupAdapter()
         widget.setStyleSheet("QGroupBox { background-color: transparent; border: none; }")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(2)
 
-        for enum_value in enum_type:
+        for value, label in items:
             checkbox = NoneAwareCheckBox()
-            checkbox.setText(enum_value.value)
-            checkbox.setObjectName(f"{param_name}_{enum_value.value}")
-            widget._checkboxes[enum_value] = checkbox
+            checkbox.setText(label)
+            checkbox.setObjectName(f"{param_name}_{label}")
+            widget._checkboxes[value] = checkbox
             layout.addWidget(checkbox)
 
         widget.set_value(current_value)
@@ -832,6 +858,20 @@ class PyQt6WidgetCreationAuthority:
         with timer("            resolve_optional", threshold_ms=0.1):
             resolved = self._resolve_request(request)
 
+        choices = declared_annotation_choices(request.param_type)
+        if choices is not None:
+            if get_origin(resolved.resolved_type) in (list, tuple):
+                return CHECKBOX_GROUP_WIDGET_FACTORY.create_from_choices(
+                    request.param_name,
+                    choices,
+                    resolved.current_value,
+                )
+            return create_choice_combobox(
+                choices,
+                resolved.current_value,
+                accepts_none=resolved.accepts_none,
+            )
+
         if is_list_of_enums(resolved.resolved_type):
             with timer("            create checkbox group", threshold_ms=0.5):
                 return CHECKBOX_GROUP_WIDGET_FACTORY.create(
@@ -976,6 +1016,24 @@ def create_enum_widget_unified(
     if enum_value is not None:
         _select_combobox_data(widget, enum_value)
 
+    return widget
+
+
+def create_choice_combobox(
+    choices: AnnotationChoices,
+    current_value: ParameterValue | None,
+    *,
+    accepts_none: bool = False,
+) -> QComboBox:
+    """Combo box over a declared finite choice set, labelled by the declaration."""
+
+    widget = NoScrollComboBox()
+    if accepts_none:
+        widget.addItem("Default", None)
+    for choice in choices.choices():
+        widget.addItem(choices.label(choice), choice)
+    if current_value is not None:
+        _select_combobox_data(widget, current_value)
     return widget
 
 
@@ -1239,6 +1297,11 @@ def _item_matches_value(widget: QComboBox, index: int, target_value: str) -> boo
     # Secondary: Match enum value (case-insensitive)
     if isinstance(item_data, Enum):
         if str(item_data.value).upper() == target_normalized:
+            return True
+
+    # Declared non-enum choices: match the trailing segment of their repr
+    if item_data is not None and not isinstance(item_data, Enum):
+        if str(item_data).rsplit(".", 1)[-1].upper() == target_normalized:
             return True
 
     # Tertiary: Match display text (case-insensitive)

@@ -12,7 +12,6 @@ import os
 import copy
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
-from enum import Enum
 from typing import List, Union, Dict, Optional, Any, Callable
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QScrollArea
@@ -47,7 +46,6 @@ from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
 from objectstate import ObjectStateRegistry, semantic_values_equal
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.forms.ui_utils import format_enum_display
 from pyqt_reactive.widgets.shared.detachable_action_bar import (
     DetachableActionBar,
     DetachableActionBarHost,
@@ -180,7 +178,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             raise RuntimeError(
                 "No function selection provider registered. Call register_function_selection_provider(...)."
             )
-        self._groupby_enum = self.component_selection_provider.get_groupby_enum()
         self.data_manager = PatternDataManager()
         self.pattern_code_documents = FunctionPatternCodeDocumentService()
         self.service_adapter = service_adapter
@@ -1511,7 +1508,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
         self.destroyed.connect(cleanup_subscription)
 
-    def set_effective_group_by(self, group_by: Enum | None) -> None:
+    def set_effective_group_by(self, group_by: object | None) -> None:
         """Accept authoritative GroupBy from parent (step.processing_config) and refresh UI.
 
         The parent (window) is responsible for providing the correct GroupBy instance
@@ -1524,10 +1521,12 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
     def _get_component_button_text(self) -> str:
         """Get text for the component selection button (mirrors Textual TUI)."""
-        if self.current_group_by is None or self.current_group_by == self._groupby_enum.NONE:
+        if not self._is_grouped():
             return "Component: None"
 
-        component_type = format_enum_display(self.current_group_by).title()
+        component_type = self.component_selection_provider.grouping_label(
+            self.current_group_by
+        )
 
         if self.is_dict_mode and isinstance(self.pattern_data, dict):
             keys = sorted(self.pattern_data.keys())
@@ -1545,7 +1544,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
     def _get_component_display_name(self, component_key: str) -> str:
         """Get display name for component key, using metadata if available (mirrors Textual TUI)."""
-        if self.current_group_by:
+        if self._is_grouped():
             metadata_name = self.component_selection_provider.get_component_display_name(
                 self.current_group_by, component_key
             )
@@ -1559,13 +1558,16 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     def _is_component_button_disabled(self) -> bool:
         """Check if component selection button should be disabled (mirrors Textual TUI)."""
         return (
-            self.current_group_by is None
-            or self.current_group_by == self._groupby_enum.NONE
-            or (
-                self.current_variable_components
-                and self.current_group_by.value
-                in [vc.value for vc in self.current_variable_components]
+            not self._is_grouped()
+            or self.component_selection_provider.grouping_overlaps_variable_components(
+                self.current_group_by,
+                self.current_variable_components or (),
             )
+        )
+
+    def _is_grouped(self) -> bool:
+        return self.current_group_by is not None and (
+            self.component_selection_provider.is_grouped(self.current_group_by)
         )
 
     def action_button(self, action: FunctionListEditorAction) -> QPushButton:
@@ -1616,12 +1618,12 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             self._before_mutation()
 
         # Save selection to cache for current group_by
-        if self.current_group_by is not None and self.current_group_by != self._groupby_enum.NONE:
+        if self._is_grouped():
             self.component_selections[self.current_group_by] = new_components
             logger.debug(
                 "Context '%s': Cached selection for %s: %s",
                 self.context_identifier,
-                self.current_group_by.value,
+                self.current_group_by,
                 new_components,
             )
 
