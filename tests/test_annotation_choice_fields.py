@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import pytest
 from python_introspect import AnnotationChoices
@@ -28,7 +28,7 @@ class _KindChoices(AnnotationChoices):
         return choice.__name__.strip("_").lower()
 
 
-SCALAR = Annotated[Optional[type[_Kind]], _KindChoices()]
+SCALAR = Annotated[type[_Kind] | None, _KindChoices()]
 MULTIPLE = Annotated[list[type[_Kind]], _KindChoices()]
 
 
