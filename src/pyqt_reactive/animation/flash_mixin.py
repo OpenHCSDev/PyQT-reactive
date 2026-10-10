@@ -2359,6 +2359,16 @@ class WindowFlashOverlay(QWidget):
             ))
 
 
+@dataclass(frozen=True, eq=False)
+class _PendingRegistration:
+    """A flash element waiting for its widget to reach a flash window."""
+
+    key: str
+    element_factory: Callable[[], Optional['FlashElement']]
+    widget: QWidget
+    source_id: str | None
+
+
 # ==================== GLOBAL ANIMATION COORDINATOR ====================
 # Single timer shared across ALL windows - batch computes colors, triggers repaints
 
@@ -2434,7 +2444,7 @@ class _GlobalFlashCoordinator(QObject):
         self._pending_visual_frame_callbacks: Dict[int, Callable[[], None]] = {}
         self._visual_frame_callback_flush_scheduled = False
         # Pending registrations (widgets not in window hierarchy at registration time)
-        self._pending_registrations: List[Tuple[str, Callable[[], Optional['FlashElement']], QWidget, str | None]] = []
+        self._pending_registrations: list[_PendingRegistration] = []
         self._trace_next_tick = False
         self.start_timer_requested.connect(
             self._start_timer_in_owner_thread,
@@ -2616,9 +2626,27 @@ class _GlobalFlashCoordinator(QObject):
         element_factory: Callable[[], Optional['FlashElement']],
         widget: QWidget,
         source_id: str | None = None,
+        lifecycle_widgets: tuple[QWidget | None, ...] = (),
     ) -> None:
-        """Add a pending registration (widget not in window hierarchy yet)."""
-        self._pending_registrations.append((key, element_factory, widget, source_id))
+        """Hold a registration until ``widget`` reaches a flash window.
+
+        The registration lives exactly as long as every widget it closes over:
+        Qt destruction of any of them drops it. A wrapper of a Qt-created child
+        (for example a scroll area's viewport) is never marked deleted by sip,
+        so the registration must not outlive the native widget and touch it.
+        """
+        registration = _PendingRegistration(key, element_factory, widget, source_id)
+        self._pending_registrations.append(registration)
+        lifetime_widgets = {
+            id(candidate): candidate
+            for candidate in (widget, *lifecycle_widgets)
+            if candidate is not None
+        }
+        for lifetime_widget in lifetime_widgets.values():
+            _DestructionCallback(
+                lifetime_widget,
+                partial(self._drop_pending_registration, registration),
+            )
         flash_trace(
             "register.pending_add",
             key=key,
@@ -2627,62 +2655,64 @@ class _GlobalFlashCoordinator(QObject):
             pending=len(self._pending_registrations),
         )
 
-    def _process_pending_registrations(self) -> None:
-        """Process all deferred element registrations (widgets now in window hierarchy).
+    def _drop_pending_registration(self, registration: '_PendingRegistration') -> None:
+        """Forget a pending registration whose widget Qt destroyed."""
 
-        RESILIENT: Automatically discards registrations for deleted widgets.
-        This handles the case where widgets are deleted and recreated (e.g., function panes).
-        """
+        self._pending_registrations = [
+            pending for pending in self._pending_registrations
+            if pending is not registration
+        ]
+        flash_trace("register.pending_drop_deleted", key=registration.key)
+
+    def _process_pending_registrations(self) -> None:
+        """Attach every pending registration whose widget now has a flash window."""
         if not self._pending_registrations:
             return
 
         logger.debug(f"[FLASH] _process_pending_registrations: processing {len(self._pending_registrations)} pending")
-        still_pending = []
-        for key, element_factory, widget, source_id in self._pending_registrations:
-            try:
-                # Check if widget is still valid (not deleted)
-                # Accessing any Qt property will raise RuntimeError if deleted
-                _ = widget.isVisible()
-                overlay = WindowFlashOverlay.get_for_window(widget)
-                if overlay is not None:
-                    if overlay.has_element_source(key, source_id):
-                        flash_trace(
-                            "register.pending_existing_source",
-                            key=key,
-                            overlay=id(overlay),
-                            window=id(overlay._window),
-                            source=source_id,
-                        )
-                        continue
-                    element = element_factory()
-                    if element is not None:
-                        overlay.register_element(element)
-                        flash_trace(
-                            "register.pending_attached",
-                            key=key,
-                            overlay=id(overlay),
-                            window=id(overlay._window),
-                            source=element.source_id,
-                        )
-                        logger.debug(f"[FLASH] Completed deferred registration: key={key}")
-                    else:
-                        logger.debug(f"[FLASH] element_factory returned None for key={key}")
-                else:
-                    logger.debug(f"[FLASH] No overlay for widget, keeping pending: key={key}")
-                    flash_trace(
-                        "register.pending_wait_overlay",
-                        key=key,
-                        widget=type(widget).__qualname__,
-                    )
-                    still_pending.append((key, element_factory, widget, source_id))
-            except RuntimeError:
-                # Widget was deleted - discard this registration silently
-                flash_trace("register.pending_drop_deleted", key=key)
-                logger.debug(f"[FLASH] Discarding registration for deleted widget: key={key}")
+        settled: set[int] = set()
+        for registration in tuple(self._pending_registrations):
+            key = registration.key
+            source_id = registration.source_id
+            overlay = WindowFlashOverlay.get_for_window(registration.widget)
+            if overlay is None:
+                flash_trace(
+                    "register.pending_wait_overlay",
+                    key=key,
+                    widget=type(registration.widget).__qualname__,
+                )
                 continue
+            settled.add(id(registration))
+            if overlay.has_element_source(key, source_id):
+                flash_trace(
+                    "register.pending_existing_source",
+                    key=key,
+                    overlay=id(overlay),
+                    window=id(overlay._window),
+                    source=source_id,
+                )
+                continue
+            element = registration.element_factory()
+            if element is None:
+                logger.debug(f"[FLASH] element_factory returned None for key={key}")
+                continue
+            overlay.register_element(element)
+            flash_trace(
+                "register.pending_attached",
+                key=key,
+                overlay=id(overlay),
+                window=id(overlay._window),
+                source=element.source_id,
+            )
 
-        logger.debug(f"[FLASH] _process_pending_registrations: {len(still_pending)} still pending")
-        self._pending_registrations = still_pending
+        self._pending_registrations = [
+            pending for pending in self._pending_registrations
+            if id(pending) not in settled
+        ]
+        logger.debug(
+            "[FLASH] _process_pending_registrations: %d still pending",
+            len(self._pending_registrations),
+        )
 
     def process_pending_registrations(self) -> None:
         """Public method to process pending registrations.
@@ -3432,6 +3462,7 @@ class VisualUpdateMixin:
                     lambda: element_factory(scoped_key),
                     widget,
                     source_id,
+                    lifecycle_widgets,
                 )
                 flash_trace(
                     "register.deferred_no_overlay",

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.30
+
+- A flash registration waiting for its widget to reach a flash window is
+  dropped when Qt destroys any widget it closes over. Before, the coordinator
+  kept such registrations for the life of the process and called into their
+  widgets on every local flash; a wrapper of a Qt-created widget (such as a
+  scroll area's viewport) is not marked deleted by sip, so that call read
+  freed memory and segfaulted.
+
 ## 0.3.29
 
 - Accept zmqruntime 0.5 (`zmqruntime>=0.3.0,<0.6`). zmqruntime 0.5 deletes
