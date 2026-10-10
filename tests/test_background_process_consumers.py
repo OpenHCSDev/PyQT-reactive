@@ -1,108 +1,11 @@
-"""Contracts for noninteractive background subprocess creation."""
+"""Background helpers launch through zmqruntime's background process policy."""
 
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
 from types import SimpleNamespace
 
-from pyqt_reactive.process_launch import (
-    BackgroundProcessLaunchPolicy,
-    BackgroundProcessLaunchSpec,
-    BackgroundProcessPlatform,
-)
 from pyqt_reactive.services import system_metrics_sampler
 from pyqt_reactive.utils import log_highlight_client
-
-
-def test_windows_background_process_suppresses_console(monkeypatch) -> None:
-    no_window = 0x08000000
-    new_process_group = 0x00000200
-    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", no_window, raising=False)
-    monkeypatch.setattr(
-        subprocess,
-        "CREATE_NEW_PROCESS_GROUP",
-        new_process_group,
-        raising=False,
-    )
-
-    attached = BackgroundProcessLaunchPolicy(
-        platform=BackgroundProcessPlatform.WINDOWS,
-    )
-    detached = BackgroundProcessLaunchPolicy(
-        platform=BackgroundProcessPlatform.WINDOWS,
-        detached=True,
-    )
-
-    assert attached.resolve() == BackgroundProcessLaunchSpec(
-        creationflags=no_window
-    )
-    assert detached.popen_arguments() == {
-        "creationflags": no_window | new_process_group
-    }
-
-
-def test_non_windows_background_process_detaches_without_windows_flags() -> None:
-    attached = BackgroundProcessLaunchPolicy(
-        platform=BackgroundProcessPlatform.OTHER,
-    )
-    detached = BackgroundProcessLaunchPolicy(
-        platform=BackgroundProcessPlatform.OTHER,
-        detached=True,
-    )
-
-    assert attached.popen_arguments() == {}
-    assert detached.resolve() == BackgroundProcessLaunchSpec(
-        start_new_session=True
-    )
-
-
-def test_windows_background_python_uses_windowed_interpreter(
-    tmp_path: Path,
-) -> None:
-    python_executable = tmp_path / "python.exe"
-    windowed_executable = tmp_path / "pythonw.exe"
-    python_executable.touch()
-    windowed_executable.touch()
-
-    policy = BackgroundProcessLaunchPolicy(
-        platform=BackgroundProcessPlatform.WINDOWS,
-    )
-
-    assert policy.python_executable(str(python_executable)) == str(
-        windowed_executable
-    )
-
-
-def test_background_python_keeps_original_when_windowed_interpreter_is_absent(
-    tmp_path: Path,
-) -> None:
-    python_executable = tmp_path / "python.exe"
-    python_executable.touch()
-
-    policy = BackgroundProcessLaunchPolicy(
-        platform=BackgroundProcessPlatform.WINDOWS,
-    )
-
-    assert policy.python_executable(str(python_executable)) == str(
-        python_executable
-    )
-
-
-def test_non_windows_background_python_keeps_requested_interpreter(
-    tmp_path: Path,
-) -> None:
-    python_executable = tmp_path / "python"
-    python_executable.touch()
-    (tmp_path / "pythonw.exe").touch()
-
-    policy = BackgroundProcessLaunchPolicy(
-        platform=BackgroundProcessPlatform.OTHER,
-    )
-
-    assert policy.python_executable(str(python_executable)) == str(
-        python_executable
-    )
 
 
 class _ConsumerLaunchPolicy:

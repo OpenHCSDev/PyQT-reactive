@@ -1,2 +1,3 @@
 # Source candidates needed to validate this checkout before coordinated publication.
 objectstate @ git+https://github.com/OpenHCSDev/ObjectState.git@44379b0c75fb5bb69c27b4c6a3f4ca6eb28712ca
+zmqruntime @ git+https://github.com/OpenHCSDev/ZMQRuntime.git@25501cb3958522ea88f9d55c665e37728a3c1dad

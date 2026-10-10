@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Remove `pyqt_reactive.process_launch`. The background process launch policy
+  is runtime machinery and now lives in zmqruntime 0.6
+  (`zmqruntime.process_launch`); import it from there. Host families are
+  subclasses of `BackgroundProcessPlatform` (`WindowsBackgroundProcesses`,
+  `SessionBackgroundProcesses`) instead of enum members.
+- Require zmqruntime 0.6 (`zmqruntime>=0.6,<0.7`).
+
 ## 0.3.30
 
 - A flash registration waiting for its widget to reach a flash window is
