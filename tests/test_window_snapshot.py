@@ -20,7 +20,7 @@ from pyqt_reactive.services.window_snapshot import (
 
 
 @pytest.fixture
-def observed_form(qapp):
+def observed_form(qapp, qtbot):
     import objectstate.config as config_module
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from PyQt6.QtCore import QEvent
@@ -64,8 +64,8 @@ def observed_form(qapp):
         ),
     )
     QVBoxLayout(window).addWidget(form)
-    window.show()
-    qapp.processEvents()
+    with qtbot.waitExposed(window):
+        window.show()
     yield window, form
     coordinator = _GlobalFlashCoordinator.get()
     if coordinator._timer is not None:
@@ -128,7 +128,7 @@ def test_capture_comparison_ignores_carrier_fields_outside_owner(tmp_path):
 
 
 @pytest.fixture
-def rendered_canvas(qapp):
+def rendered_canvas(qapp, qtbot):
     """A real Qt painter and completion receipt, never a pixel/content mock."""
     from PyQt6.QtCore import QEvent, pyqtSignal
     from PyQt6.QtGui import QColor, QPainter
@@ -150,8 +150,10 @@ def rendered_canvas(qapp):
 
     canvas = Canvas()
     canvas.resize(80, 60)
-    canvas.show()
-    qapp.processEvents()
+    # Native platforms expose a shown window asynchronously; Qt paints only
+    # exposed windows.
+    with qtbot.waitExposed(canvas):
+        canvas.show()
     yield canvas
     from PyQt6 import sip
 
@@ -731,6 +733,7 @@ def test_two_actual_windows_both_present_maximum_before_shared_hold(
     qtbot,
     observed_form,
     tmp_path,
+    flash_clock,
 ):
     from PyQt6.QtWidgets import QDialog, QVBoxLayout
     from pyqt_reactive.animation.flash_config import FlashPhase
@@ -750,8 +753,8 @@ def test_two_actual_windows_both_present_maximum_before_shared_hold(
         ),
     )
     QVBoxLayout(second).addWidget(second_form)
-    second.show()
-    qtbot.wait(20)
+    with qtbot.waitExposed(second):
+        second.show()
     coordinator = _GlobalFlashCoordinator.get()
     overlay = WindowFlashOverlay.get_for_window(first)
     phases_after_first_maximum = []
@@ -773,6 +776,8 @@ def test_two_actual_windows_both_present_maximum_before_shared_hold(
                 failed.append,
             )
         form.update_parameter("number", 8)
+        qtbot.waitUntil(lambda: "number" in coordinator._playbacks, timeout=2000)
+        flash_clock.advance(coordinator._config.fade_in_s)
         qtbot.waitUntil(lambda: len(completed) == 2 or bool(failed), timeout=2000)
         assert not failed and len(completed) == 2
         assert {result.observation.frame.window_identity for result in completed} == {

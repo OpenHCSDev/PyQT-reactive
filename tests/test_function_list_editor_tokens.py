@@ -305,7 +305,7 @@ def test_scope_token_consumers_derive_the_single_attribute_declaration(monkeypat
     assert vars(target) == {"number": 3, "_alternative_token": "step_9"}
 
 
-def test_native_reused_object_id_does_not_override_restored_token(monkeypatch):
+def test_reused_object_id_does_not_override_restored_token(monkeypatch):
     @dataclass
     class Step(ScopeTokenTarget):
         number: int = 3
@@ -314,10 +314,14 @@ def test_native_reused_object_id_does_not_override_restored_token(monkeypatch):
     monkeypatch.setattr(ScopeTokenService, "_scope_id_cache", {})
     previous = Step()
     assert ScopeTokenService.build_scope_id("plate", previous) == "plate::step_0"
-    departed_id = id(previous)
+    departed_key = ("plate", id(previous))
     del previous
     detached = Step(99)
-    assert id(detached) == departed_id, "Native CPython reproduction must actually reuse the departed ID"
+    # CPython may give the new object the departed object's address, but the
+    # allocator does not promise it. Leave the departed entry under the new
+    # object's id, which is the state an address reuse produces.
+    cache = ScopeTokenService._scope_id_cache
+    cache[("plate", id(detached))] = cache.pop(departed_key)
     generator = ScopeTokenService.get_generator("plate", "step")
     counter_before = generator._counter
     cache_before = dict(ScopeTokenService._scope_id_cache)
