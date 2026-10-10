@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.29
+
+- Accept zmqruntime 0.5 (`zmqruntime>=0.3.0,<0.6`). zmqruntime 0.5 deletes
+  the flat viewer placement-mode enum, which pyqt-reactive does not use.
+- Require python-introspect 0.2.5, which extracts inline dataclass field
+  documentation on Python 3.13 and later.
+
 ## 0.3.28
 
 - Render fields declared with `python_introspect.AnnotationChoices` as a combo
