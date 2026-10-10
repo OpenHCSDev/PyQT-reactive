@@ -2709,7 +2709,10 @@ class _GlobalFlashCoordinator(QObject):
             pending for pending in self._pending_registrations
             if id(pending) not in settled
         ]
-        logger.debug(f"[FLASH] _process_pending_registrations: {len(self._pending_registrations)} still pending")
+        logger.debug(
+            "[FLASH] _process_pending_registrations: %d still pending",
+            len(self._pending_registrations),
+        )
 
     def process_pending_registrations(self) -> None:
         """Public method to process pending registrations.
