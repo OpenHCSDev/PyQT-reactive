@@ -9,8 +9,22 @@ class ComponentSelectionProviderABC(ABC):
     """Host-owned component discovery and selection behavior."""
 
     @abstractmethod
-    def get_groupby_enum(self) -> Any:
-        """Return the GroupBy enum (or compatible enum) used by the host app."""
+    def is_grouped(self, group_by: Any) -> bool:
+        """Return whether ``group_by`` names a grouping (not absent or ungrouped)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def grouping_label(self, group_by: Any) -> str:
+        """Return the display label of a grouping value."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def grouping_overlaps_variable_components(
+        self,
+        group_by: Any,
+        variable_components: Iterable[Any],
+    ) -> bool:
+        """Return whether the grouping is also one of the variable components."""
         raise NotImplementedError
 
     @abstractmethod

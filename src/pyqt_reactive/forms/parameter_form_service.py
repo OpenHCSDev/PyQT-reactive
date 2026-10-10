@@ -25,7 +25,13 @@ from objectstate import (
 from dataclasses import dataclass
 from typing import Any, Dict, Type, Optional, List, get_args, get_origin, get_type_hints
 
-from python_introspect import coerce_enum_member, is_union_type, resolve_annotated
+from python_introspect import (
+    AnnotationChoices,
+    declared_annotation_choices,
+    coerce_enum_member,
+    is_union_type,
+    resolve_annotated,
+)
 from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
 from .parameter_type_utils import ParameterTypeUtils
 from pyqt_reactive.forms.ui_utils import FieldDisplayText, debug_param
@@ -286,6 +292,10 @@ class ParameterFormService:
         if isinstance(value, str) and value == CONSTANTS.NONE_STRING_LITERAL:
             return None
 
+        choices = declared_annotation_choices(param_type)
+        if choices is not None:
+            return self._convert_choice_value(value, choices, param_name)
+
         resolved_type = resolve_annotated(param_type)
         structured_value = self._convert_value_by_annotation(
             value,
@@ -344,8 +354,14 @@ class ParameterFormService:
         param_name: str,
     ) -> ParameterValue | object:
         """Recursively rebuild structured values from JSON-like containers."""
+        choices = declared_annotation_choices(param_type)
+        if choices is not None and value is not None:
+            return self._convert_choice_value(value, choices, param_name)
         param_type = resolve_annotated(param_type)
         origin = get_origin(param_type)
+
+        if origin is type:
+            return value if isinstance(value, type) else _NO_CONVERSION
 
         if param_type is CallableABC or origin is CallableABC:
             return value if callable(value) else _NO_CONVERSION
@@ -371,6 +387,30 @@ class ParameterFormService:
             return self._convert_dict_value(value, param_type, param_name)
 
         return _NO_CONVERSION
+
+    @staticmethod
+    def _convert_choice_value(
+        value: ParameterValue,
+        choices: AnnotationChoices,
+        param_name: str,
+    ) -> ParameterValue:
+        """Decode declared choices (or their labels) for one choice field."""
+
+        admitted = choices.choices()
+
+        def decode(item: ParameterValue) -> ParameterValue:
+            if item in admitted:
+                return item
+            if isinstance(item, str):
+                return choices.choice_for_label(item)
+            raise ValueError(
+                f"Invalid choice for parameter {param_name!r}: {item!r}; expected "
+                f"one of {[choices.label(choice) for choice in admitted]}."
+            )
+
+        if isinstance(value, (list, tuple)):
+            return type(value)(decode(item) for item in value)
+        return decode(value)
 
     def _convert_union_value(
         self,

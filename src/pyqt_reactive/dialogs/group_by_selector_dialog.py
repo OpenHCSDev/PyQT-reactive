@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from pyqt_reactive.forms.ui_utils import format_enum_display
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +32,7 @@ class GroupBySelectorDialog(QDialog):
         available_components: List[str],
         selected_components: List[str],
         group_by: Any,
+        group_label: str,
         metadata_lookup: Optional[Callable[[Any, str], Optional[str]]] = None,
         parent=None,
     ):
@@ -42,7 +42,8 @@ class GroupBySelectorDialog(QDialog):
         Args:
             available_components: List of available components
             selected_components: List of currently selected components
-            group_by: GroupBy enum for component type
+            group_by: Host grouping value, passed back to ``metadata_lookup``
+            group_label: Display label of the grouping (e.g. "Channel")
             metadata_lookup: Optional callback to map (group_by, component_key) -> display name
             parent: Parent widget
         """
@@ -51,6 +52,7 @@ class GroupBySelectorDialog(QDialog):
         self.available_components = available_components.copy()
         self.selected_components = selected_components.copy()
         self.group_by = group_by
+        self.group_label = group_label
         self.metadata_lookup = metadata_lookup
         
         # Calculate initial lists (same logic as Textual TUI) - sorted for consistency
@@ -65,7 +67,7 @@ class GroupBySelectorDialog(QDialog):
     
     def setup_ui(self):
         """Setup the user interface (mirrors Textual TUI layout)."""
-        component_display = format_enum_display(self.group_by).title()
+        component_display = self.group_label
 
         self.setWindowTitle(f"Select {component_display}s")
         self.setModal(True)
@@ -197,8 +199,7 @@ class GroupBySelectorDialog(QDialog):
         Returns:
             Formatted display string (e.g., "Channel 1 | HOECHST 33342" or "Channel 1")
         """
-        component_display = format_enum_display(self.group_by).title()
-        base_text = f"{component_display} {component_key}"
+        base_text = f"{self.group_label} {component_key}"
 
         # Get metadata name if callback is available
         if self.metadata_lookup:
@@ -283,6 +284,7 @@ class GroupBySelectorDialog(QDialog):
         available_components: List[str],
         selected_components: List[str],
         group_by: Any,
+        group_label: str,
         metadata_lookup: Optional[Callable[[Any, str], Optional[str]]] = None,
         parent=None,
     ) -> Optional[List[str]]:
@@ -292,7 +294,8 @@ class GroupBySelectorDialog(QDialog):
         Args:
             available_components: List of available components
             selected_components: List of currently selected components
-            group_by: GroupBy enum for component type
+            group_by: Host grouping value, passed back to ``metadata_lookup``
+            group_label: Display label of the grouping
             metadata_lookup: Optional callback to map (group_by, component_key) -> display name
             parent: Parent widget
 
@@ -303,6 +306,7 @@ class GroupBySelectorDialog(QDialog):
             available_components,
             selected_components,
             group_by,
+            group_label,
             metadata_lookup,
             parent,
         )
