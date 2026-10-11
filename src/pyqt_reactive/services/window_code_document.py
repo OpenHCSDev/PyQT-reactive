@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from pyqt_reactive.protocols import get_codegen_provider
+from pyqt_reactive.protocols import get_codegen_provider, get_form_config
 
 PYTHON_MIME_TYPE = "text/x-python"
+EXTERNAL_EDITOR_ENABLED_VALUES = frozenset(("1", "true", "yes"))
 DeclarationT = TypeVar("DeclarationT")
 
 
@@ -78,3 +80,10 @@ class WindowCodeDocumentDriver(ABC, Generic[DeclarationT]):
     def apply_source(self, source: str) -> None:
         """Apply source through the same state path as interactive code mode."""
         raise NotImplementedError
+
+
+def use_external_code_editor() -> bool:
+    """Whether code documents open in an external editor (the host's environment switch)."""
+
+    value = os.environ.get(get_form_config().external_editor_env_var, "")
+    return value.lower() in EXTERNAL_EDITOR_ENABLED_VALUES

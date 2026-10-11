@@ -8,7 +8,6 @@ Displays a scrollable list of function panes with Add/Load/Save/Code controls.
 from __future__ import annotations
 
 import logging
-import os
 import copy
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
@@ -1079,12 +1078,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
             editor_service = SimpleCodeEditorService(self)
 
-            # Check if user wants external editor (check environment variable)
-            use_external = os.environ.get("OPENHCS_USE_EXTERNAL_EDITOR", "").lower() in (
-                "1",
-                "true",
-                "yes",
-            )
+            from pyqt_reactive.services.window_code_document import use_external_code_editor
+
+            use_external = use_external_code_editor()
 
             # Launch editor with the authored nominal declaration type.
             editor_service.edit_code(

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import inspect
 import logging
-import os
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, Generic, Optional, TypeAlias, TypeVar
+
+from pyqt_reactive.services.window_code_document import use_external_code_editor
 
 logger = logging.getLogger(__name__)
 
@@ -205,11 +206,7 @@ class ManagerActionController:
         from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 
         editor_service = SimpleCodeEditorService(operations.widget)
-        use_external = os.environ.get("OPENHCS_USE_EXTERNAL_EDITOR", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
+        use_external = use_external_code_editor()
 
         editor_service.edit_code(
             initial_content=code,
