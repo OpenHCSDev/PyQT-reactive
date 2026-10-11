@@ -567,7 +567,7 @@ class ProvenanceNavigationMixin:
             logger.warning("Provenance navigation unavailable: %s", exc)
             return
 
-        logger.info(f"🔗 Navigate: {self._dotted_path} → {source_scope_id}::{target_path}")
+        logger.info("Navigate: %s -> %s field %s", self._dotted_path, source_scope_id, target_path)
 
         # Check if source is in the SAME window (sibling MRO inheritance within same scope)
         if (

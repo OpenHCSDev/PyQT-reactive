@@ -2265,7 +2265,7 @@ class WindowFlashOverlay(QWidget):
                 continue
             if not rect.isValid() or not rect.intersects(dirty_rect):
                 if debug_enabled:
-                    short_key = record.key.split('::')[-1] if '::' in record.key else record.key[-30:]
+                    short_key = ScopeKey(record.key).last
                     logger.debug(
                         "[FLASH] SKIPPED key=%s source=%s rect=%s (invalid or off-screen)",
                         short_key,
@@ -2279,7 +2279,7 @@ class WindowFlashOverlay(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             if record.path is not None:
                 if debug_enabled:
-                    short_key = record.key.split('::')[-1] if '::' in record.key else record.key[-30:]
+                    short_key = ScopeKey(record.key).last
                     br = record.path.boundingRect()
                     logger.debug(
                         "[FLASH] DRAWING WITH PATH key=%s source=%s fillRect=%d,%d %dx%d path.boundingRect=%.0f,%.0f %.0fx%.0f",
@@ -2302,7 +2302,7 @@ class WindowFlashOverlay(QWidget):
             painter.restore()
 
             if debug_enabled:
-                short_key = record.key.split('::')[-1] if '::' in record.key else record.key[-30:]
+                short_key = ScopeKey(record.key).last
                 logger.debug(
                     "[FLASH] DREW RECT key=%s source=%s rect=%d,%d %dx%d radius=%s path=%s",
                     short_key,
