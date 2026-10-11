@@ -4,24 +4,25 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QPoint
 
-from pyqt_reactive.widgets.grid_selector import GridModel, GridSelectorWidget
+from pyqt_reactive.widgets.grid_selector import GridAddressing, GridModel, GridSelectorWidget
 
 
-class LetterRows:
+class LetterRowAddressing(GridAddressing):
     """Cell ids like ``B2``: a row letter and a column number."""
 
     default_grid = (8, 12)
 
-    @staticmethod
-    def grid_index(value: object) -> tuple[int, int] | None:
+    def grid_index(self, value: object) -> tuple[int, int] | None:
         text = str(value)
         if len(text) < 2 or not text[0].isalpha() or not text[1:].isdigit():
             return None
         return (ord(text[0].upper()) - ord("A") + 1, int(text[1:]))
 
-    @staticmethod
-    def row_label(row: int) -> str:
+    def row_label(self, row: int) -> str:
         return chr(ord("A") + row - 1)
+
+
+LetterRows = LetterRowAddressing()
 
 
 def test_model_places_cells_by_their_ids_and_bounds_the_grid() -> None:

@@ -10,7 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import ClassVar, Protocol
+from typing import ClassVar
 
 from PyQt6.QtCore import QEvent, QRect, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QFontMetrics
@@ -33,15 +33,19 @@ GridPosition = tuple[int, int]
 """One-based (row, column)."""
 
 
-class GridAddressing(Protocol):
+class GridAddressing(ABC):
     """How an application's cell ids sit on the grid."""
 
-    default_grid: tuple[int, int]
-    """(rows, columns) shown when no cell places the grid's extent."""
+    @property
+    @abstractmethod
+    def default_grid(self) -> tuple[int, int]:
+        """(rows, columns) shown when no cell places the grid's extent."""
 
+    @abstractmethod
     def grid_index(self, value: object) -> GridPosition | None:
         """One-based position a cell id spells; None when it spells none."""
 
+    @abstractmethod
     def row_label(self, row: int) -> str:
         """Label of the one-based ``row``."""
 
