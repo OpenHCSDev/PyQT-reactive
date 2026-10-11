@@ -51,6 +51,7 @@ from pyqt_reactive.widgets.shared.detachable_action_bar import (
     DetachableActionBarHost,
 )
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -221,14 +222,14 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             return
 
         def _is_relevant_time_travel(dirty_states) -> bool:
-            scope = str(self.scope_id)
+            scope = ScopeKey(self.scope_id)
             for entry in dirty_states or []:
                 if not isinstance(entry, (tuple, list)) or len(entry) < 1:
                     continue
                 scope_id = entry[0]
                 if not isinstance(scope_id, str) or not scope_id:
                     continue
-                if scope_id == scope or scope_id.startswith(scope + "::"):
+                if scope.contains(scope_id):
                     return True
             return False
 

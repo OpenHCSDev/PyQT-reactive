@@ -717,7 +717,7 @@ class WindowManager:
         Example:
             class MyWindow(QDialog):
                 def show(self):
-                    scope_key = f"{self.scope_id}::{self.__class__.__name__}"
+                    scope_key = ScopeKey(self.scope_id).child(type(self).__name__)
                     if WindowManager.is_open(scope_key):
                         WindowManager.focus_and_navigate(scope_key)
                         return  # Don't show duplicate

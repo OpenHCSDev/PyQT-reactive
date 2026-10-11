@@ -84,6 +84,7 @@ from pyqt_reactive.forms.layout_constants import default_container_corner_radius
 from pyqt_reactive.services.window_snapshot import FlashPaintElement, FlashPaintFrame
 
 from ..flash_trace import flash_trace
+from objectstate import ScopeKey
 
 
 # Cache for extracted widget corner radii (widget_id -> radius)
@@ -191,15 +192,6 @@ def _ensure_wcag_compliant(
         return color_rgb
 
 
-def _extract_orchestrator_scope(scope_id: Optional[str]) -> Optional[str]:
-    """Extract orchestrator portion from scope_id."""
-    if scope_id is None:
-        return None
-    if "::" in scope_id:
-        return scope_id.split("::", 1)[0]
-    return scope_id
-
-
 def _generate_flash_palette() -> List[Tuple[int, int, int]]:
     """Generate WCAG AA compliant flash color palette.
 
@@ -251,9 +243,9 @@ def get_flash_color_from_palette(scope_id: str, alpha: int = 255, use_parent_sco
 
     # Extract parent scope (plate path) if requested
     # This ensures all elements in same plate get same color
-    scope_to_hash = _extract_orchestrator_scope(scope_id) if use_parent_scope else scope_id
-    if scope_to_hash is None:
-        scope_to_hash = scope_id
+    scope_to_hash = (
+        ScopeKey(scope_id).root if use_parent_scope and scope_id is not None else scope_id
+    )
 
     # Hash scope to deterministic index in palette
     hash_bytes = hashlib.md5(scope_to_hash.encode()).digest()
@@ -1834,7 +1826,7 @@ class WindowFlashOverlay(QWidget):
                         if debug_enabled and first_children is not None and i < 3:
                             first_children.append(f"({child_rect.x()},{child_rect.y()} {child_rect.width()}x{child_rect.height()})")
                     if debug_enabled:
-                        short_key = key.split('::')[-1] if '::' in key else key[-30:]
+                        short_key = ScopeKey(key).last
                         logger.debug(
                             "[FLASH] CACHE_BUILD key=%s groupbox_rect=(%d,%d) first_child_rects=%s subtracted=%d/%d",
                             short_key,
@@ -2548,12 +2540,8 @@ class _GlobalFlashCoordinator(QObject):
             )
 
     def _extract_scope_from_key(self, key: str) -> Optional[str]:
-        """Extract orchestrator/parent scope from flash key using canonical parser."""
-        try:
-            return _extract_orchestrator_scope(key)
-        except Exception:
-            # Fallback to original key if parsing fails
-            return key
+        """Return the root scope of a flash key."""
+        return ScopeKey(key).root
 
     def _get_base_color_for_key(self, key: str) -> QColor:
         """Get base color for flash rendering, using cache for performance.
@@ -2575,31 +2563,18 @@ class _GlobalFlashCoordinator(QObject):
         # Empty/None → neutral
         if not key or key == "":
             return self._get_neutral_flash_color()
-        # Strip tree:: namespace prefix (used to avoid groupbox key collision)
-        if key.startswith("tree::"):
-            key = key[6:]  # len("tree::") == 6
-        # Heuristic: non-scope keys (no "::" and not path-like) → neutral
-        if "::" not in key and not key.startswith("/"):
+        scope_key = ScopeKey(key)
+        # Non-scope keys (a single segment that is not path-like) → neutral
+        if scope_key.depth < 2 and not key.startswith("/"):
             return self._get_neutral_flash_color()
 
         try:
-            # Try to use OpenHCS scope coloring if available
-            from pyqt_reactive.widgets.shared.scope_color_utils import (
-                extract_orchestrator_scope,
-                get_scope_color_scheme,
-            )
+            from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
 
-            # Determine if this is a step key or config field key
-            parts = key.split("::")
-            if len(parts) >= 2:
-                token = parts[-1]
-                # Use pre-compiled regex (module-level _STEP_TOKEN_RE)
-                is_step_token = bool(_STEP_TOKEN_RE.match(token))
-                if is_step_token:
-                    scope_for_color = key
-                else:
-                    # Config field - use orchestrator scope so all fields match plate color
-                    scope_for_color = extract_orchestrator_scope(key) or key
+            # A step key colors as its own scope; a config field key colors as its root
+            # so all fields match the root's color.
+            if scope_key.depth >= 2 and not _STEP_TOKEN_RE.match(scope_key.last):
+                scope_for_color = scope_key.root
             else:
                 scope_for_color = key
 
@@ -2609,9 +2584,6 @@ class _GlobalFlashCoordinator(QObject):
                 return self._get_neutral_flash_color()
 
             return scheme.accent_qcolor()
-        except ImportError:
-            # OpenHCS scope coloring not available - use palette-based coloring
-            return get_flash_color_from_palette(key)
         except Exception as exc:
             logger.debug("Failed to get scope color for key %s: %s", key, exc)
             return self._get_neutral_flash_color()
@@ -2920,7 +2892,7 @@ class _GlobalFlashCoordinator(QObject):
     @staticmethod
     def _key_matches_hierarchical_prefix(key: str, prefix: str) -> bool:
         """Return whether an ObjectState flash key is at or below a prefix."""
-        if key == prefix or key.startswith(f"{prefix}::"):
+        if key == prefix or (prefix and ScopeKey(prefix).contains(key)):
             return True
         key_scope, key_path = _GlobalFlashCoordinator._split_scoped_object_state_key(key)
         prefix_scope, prefix_path = _GlobalFlashCoordinator._split_scoped_object_state_key(prefix)
@@ -2934,18 +2906,18 @@ class _GlobalFlashCoordinator(QObject):
     def _split_scoped_object_state_key(key: str) -> tuple[str | None, str]:
         """Split an optional scope prefix from an ObjectState flash path."""
 
-        scope, separator, path = key.rpartition("::")
-        if not separator:
+        scope_key = ScopeKey(key)
+        if scope_key.depth < 2:
             return None, key
-        return scope, path
+        return scope_key.parent, scope_key.last
 
     @staticmethod
     def _hierarchical_prefix_candidates(key: str) -> tuple[str, ...]:
         """Return possible ObjectState ancestor keys for one scoped flash key."""
-        scope, separator, path = key.rpartition("::")
-        scoped = bool(separator)
-        if not scoped:
-            path = key
+        scope_key = ScopeKey(key)
+        scoped = scope_key.depth >= 2
+        scope = scope_key.parent
+        path = scope_key.last if scoped else key
         if not path:
             return (key,)
 
@@ -2959,7 +2931,7 @@ class _GlobalFlashCoordinator(QObject):
             if char not in ".[" or index == 0:
                 continue
             candidate_path = path[:index]
-            candidate = f"{scope}::{candidate_path}" if scoped else candidate_path
+            candidate = scope.child(candidate_path) if scoped else candidate_path
             if candidate not in seen:
                 candidates.append(candidate)
                 seen.add(candidate)
@@ -3375,7 +3347,7 @@ class VisualUpdateMixin:
         """
         scope_id = self.flash_scope_id()
         if scope_id:
-            return f"{scope_id}::{key}"
+            return ScopeKey(scope_id).child(key)
         return key
 
     def _register_flash_element_internal(

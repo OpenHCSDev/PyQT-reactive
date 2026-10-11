@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 from PyQt6.QtGui import QColor
 
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -120,15 +121,6 @@ def _ensure_wcag_compliant(
         return color_rgb
 
 
-def extract_orchestrator_scope(scope_id: Optional[str]) -> Optional[str]:
-    """Extract orchestrator portion from scope_id."""
-    if scope_id is None:
-        return None
-    if "::" in scope_id:
-        return scope_id.split("::", 1)[0]
-    return scope_id
-
-
 def extract_step_index(scope_id: str) -> int:
     """Extract per-orchestrator step index from scope_id.
 
@@ -139,9 +131,10 @@ def extract_step_index(scope_id: str) -> int:
     """
     import re
 
-    if "::" not in scope_id:
+    scope = ScopeKey(scope_id)
+    if scope.depth < 2:
         return 0
-    step_part = scope_id.split("::")[1]
+    step_part = scope.parts[1]
 
     # Try @ notation first (legacy)
     if "@" in step_part:
@@ -200,7 +193,7 @@ def build_color_scheme_from_rgb(
         step_index: Optional explicit step index. If provided, uses this for
                     border pattern calculation instead of extracting from scope_id.
     """
-    orchestrator_scope = extract_orchestrator_scope(scope_id)
+    orchestrator_scope = None if scope_id is None else ScopeKey(scope_id).root
 
     orch_bg_rgb = base_rgb
     # Use perceptual middle tint (index 1) for orchestrator border, with darker(120)
@@ -209,8 +202,8 @@ def build_color_scheme_from_rgb(
 
     step_item_rgb = orch_bg_rgb
 
-    # Check if this is an orchestrator-level scope (no "::" = no step)
-    is_orchestrator_level = "::" not in (scope_id or "")
+    # A root-level scope has no step segment
+    is_orchestrator_level = ScopeKey(scope_id).depth < 2
 
     if is_orchestrator_level:
         # Orchestrator-level: use fixed middle tint, solid pattern, single layer

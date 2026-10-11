@@ -7,7 +7,6 @@ from enum import Enum
 from typing import Annotated
 
 import pytest
-
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QTableWidget, QTableWidgetItem
 from python_introspect import FieldLabel
