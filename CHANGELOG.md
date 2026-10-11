@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.5.0
+
+Generic Qt machinery moved here from OpenHCS, with the application's choices
+injected instead of named:
+
+- `widgets.editable_table`: editable tables whose columns and cell editors
+  derive from a row dataclass (labels from python-introspect's `FieldLabel`).
+- `widgets.grid_selector`: `GridSelectorWidget` selects cells of a row-and-column
+  grid; the application implements `GridAddressing`.
+- `widgets.time_travel` (`TimeTravelCommands`, `TimeTravelWidget`),
+  `windows.snapshot_browser_window` and `services.time_travel_navigation`
+  (`TimeTravelNavigator`, navigation targets as a class family).
+- `windows.config_window`: tabbed config windows over ObjectState
+  (`ConfigWindow`, `ConfigEditSession`, `ConfigCodeDocumentDriver`); the
+  application implements `ConfigDocumentFormat`. `services.code_editor_form_updater`.
+- `widgets.shared.dock_layout` (`DockPane`, `DockFloatController`, `DockPanes`,
+  `DockLayoutStore`) and `services.application_shortcuts` (`ShortcutLifecycle`).
+
+Changed:
+
+- `PathCacheKey` is an open class family; each context is a subclass whose
+  stored key is its snake-case class name. `PathNameRole` is a class family.
+  Removed: the enum members naming one application's file kinds, the unused
+  keys, `get_cached_path`, `clear_cache`, `remove_cached_path` and the four
+  backward-compatibility alias functions.
+- `use_external_code_editor()` reads the environment variable named by
+  `FormGenConfig.external_editor_env_var`; library widgets no longer read an
+  application's variable.
+- Scope hierarchy operations use `objectstate.ScopeKey`; containment is by
+  whole segments.
+- `AbstractManagerWidget` no longer requires `service_adapter.get_event_bus()`.
+- `PatternDataManager.extract_func_and_kwargs` raises `TypeError` for a
+  malformed entry instead of returning `(None, {})`.
+
+Fixed:
+
+- The manager header's status marquee reuses one timer; each long status
+  message used to leave another live `QTimer` on the manager widget.
+
+Requires objectstate 1.4 and python-introspect 0.2.6.
+
 ## 0.4.0
 
 - Remove `pyqt_reactive.process_launch`. The background process launch policy
