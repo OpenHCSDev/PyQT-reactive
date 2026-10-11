@@ -114,11 +114,11 @@ class TimeTravelNavigator:
     Only the scope that triggered the restored snapshot (and, for a function
     child, its owning editor) is followed: snapshots capture the whole registry,
     so older dirty states would otherwise reopen unrelated editors.
-    ``window_shown`` lets the application adjust a window it navigated to.
+    ``target_shown`` lets the application adjust a window it navigated to.
     """
 
     function_scope: FunctionScopeResolver
-    window_shown: Callable[[str, NavigationTarget | None], None] = lambda _scope, _target: None
+    target_shown: Callable[[str, NavigationTarget], None] = lambda _scope, _target: None
 
     def on_time_travel_complete(self, dirty_states, triggering_scope: str | None) -> None:
         """Registry callback: navigate once the restore's own refreshes have run."""
@@ -211,6 +211,6 @@ class TimeTravelNavigator:
                 )
             if result.created:
                 logger.info("Time travel opened the window for %s", request.scope_id)
-            if result.window is not None:
-                self.window_shown(request.scope_id, request.target)
+            if result.window is not None and request.target is not None:
+                self.target_shown(request.scope_id, request.target)
 
