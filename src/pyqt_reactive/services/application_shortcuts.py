@@ -26,15 +26,18 @@ class KeyEventSequence:
 
 
 class CodeEditorFocus:
-    """Application shortcuts yield while a code editor has keyboard focus."""
+    """Application shortcuts yield while a code editor dialog has keyboard focus."""
 
     @staticmethod
     def allows_application_shortcuts() -> bool:
-        from PyQt6.Qsci import QsciScintilla
+        from pyqt_reactive.widgets.editors.simple_code_editor import (
+            CodeEditorDialog,
+            QScintillaCodeEditorDialog,
+        )
 
         widget = QApplication.focusWidget()
         while widget is not None:
-            if isinstance(widget, QsciScintilla):
+            if isinstance(widget, (QScintillaCodeEditorDialog, CodeEditorDialog)):
                 return False
             widget = widget.parentWidget()
         return True

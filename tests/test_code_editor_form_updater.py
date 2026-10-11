@@ -33,7 +33,7 @@ class _RecordingFormManager:
         self,
         parameters: dict[str, object],
         *,
-        nested_managers: dict[str, "_RecordingFormManager"] | None = None,
+        nested_managers: dict[str, _RecordingFormManager] | None = None,
     ) -> None:
         self.parameters = parameters
         self.nested_managers = nested_managers or {}

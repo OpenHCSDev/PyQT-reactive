@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
-from abc import ABC, abstractmethod
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial

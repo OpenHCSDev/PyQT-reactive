@@ -51,7 +51,9 @@ def test_view_code_and_save_go_through_the_declared_format_and_participant(qapp)
         tabs=(
             ConfigWindowTabSpec(
                 state=state,
-                save_participant=ConfigSaveParticipant(apply=saved.append, rollback=lambda _c: None),
+                save_participant=ConfigSaveParticipant(
+                    apply=saved.append, rollback=lambda _c: None
+                ),
             ),
         ),
         scope_id="/settings",
