@@ -23,7 +23,7 @@ class ManagerTimeTravelBinding:
 
     @property
     def in_time_travel(self) -> bool:
-        return ObjectStateRegistry._in_time_travel
+        return ObjectStateRegistry.is_restoring_snapshot()
 
     def connect(self) -> None:
         ObjectStateRegistry.add_unregister_callback(self.on_registry_unregister)
