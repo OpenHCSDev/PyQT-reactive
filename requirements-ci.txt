@@ -1,2 +1,3 @@
 # Source candidates needed to validate this checkout before coordinated publication.
 objectstate @ git+https://github.com/OpenHCSDev/ObjectState.git@44379b0c75fb5bb69c27b4c6a3f4ca6eb28712ca
+python-introspect @ git+https://github.com/OpenHCSDev/python-introspect.git@d8071f0f14471416c3ee27b5dadd7b463382c3ff
