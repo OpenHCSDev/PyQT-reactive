@@ -236,7 +236,7 @@ class WindowProjectionTarget:
     summary: UiWindowSummary
 
 
-class WindowProjectionResultAuthority:
+class WindowProjectionResults:
     """Shared agent-result fragments for UI window projection operations."""
 
     @staticmethod
@@ -444,7 +444,7 @@ class WindowTargetOperationProjectionMixin(ABC):
         if target is None:
             return snapshot_results.error(
                 request,
-                WindowProjectionResultAuthority.unknown_window(request),
+                WindowProjectionResults.unknown_window(request),
             )
         return snapshot_results.capture(request, target, completed)
 
@@ -454,7 +454,7 @@ class WindowTargetOperationProjectionMixin(ABC):
         if target is None:
             return widget_tree_results.error(
                 request,
-                WindowProjectionResultAuthority.unknown_window(request),
+                WindowProjectionResults.unknown_window(request),
             )
         return widget_tree_results.project(request, target)
 
@@ -467,7 +467,7 @@ class WindowTargetOperationProjectionMixin(ABC):
         if target is None:
             return invoke_results.error(
                 request,
-                WindowProjectionResultAuthority.unknown_window(request),
+                WindowProjectionResults.unknown_window(request),
             )
         return invoke_results.invoke(request, target)
 
@@ -1061,7 +1061,7 @@ class QtTopLevelWindowProjection(
                 schema_version=SCHEMA_VERSION,
                 window_id=request.window_id,
                 focused=False,
-                errors=(WindowProjectionResultAuthority.unknown_window(request),),
+                errors=(WindowProjectionResults.unknown_window(request),),
             )
         target.widget.show()
         target.widget.raise_()
@@ -1094,7 +1094,7 @@ class QtTopLevelWindowProjection(
             errors=(
                 focus_result.errors
                 or (
-                    (WindowProjectionResultAuthority.unsupported_navigation_target(request),)
+                    (WindowProjectionResults.unsupported_navigation_target(request),)
                     if request.has_target
                     else ()
                 )
@@ -2394,7 +2394,7 @@ class UiWindowProjectionService(
             schema_version=SCHEMA_VERSION,
             window_id=identity.window_id,
             focused=False,
-            errors=(WindowProjectionResultAuthority.unknown_window(identity),),
+            errors=(WindowProjectionResults.unknown_window(identity),),
         )
 
     def _navigate_static_route(
@@ -2520,7 +2520,7 @@ class UiWindowProjectionService(
             focused=False,
             navigated=False,
             created=result.created,
-            errors=(WindowProjectionResultAuthority.unknown_window(identity),),
+            errors=(WindowProjectionResults.unknown_window(identity),),
         )
 
     def close(self, request: UiWindowCloseRequest) -> UiWindowCloseResult:
@@ -2713,7 +2713,7 @@ class UiWindowProjectionService(
             errors=(
                 ()
                 if navigated or not request.has_target
-                else (WindowProjectionResultAuthority.unsupported_navigation_target(request),)
+                else (WindowProjectionResults.unsupported_navigation_target(request),)
             ),
         )
 

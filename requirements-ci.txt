@@ -1,3 +1,3 @@
 # Source candidates needed to validate this checkout before coordinated publication.
 # Remove once formbridge 0.1.0 is on PyPI.
-formbridge @ git+https://github.com/OpenHCSDev/formbridge.git@efd973fde8ea4bcf3caeb32c722785b9608b0405
+formbridge @ git+https://github.com/OpenHCSDev/formbridge.git@4fa3a527b07f3ff817eff366db8ab88e24f1a36c
