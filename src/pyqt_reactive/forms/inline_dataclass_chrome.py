@@ -18,7 +18,7 @@ from pyqt_reactive.forms.inline_dataclass_context import (
     InlineDataclassChildFieldIdentity,
     InlineDataclassFormContext,
 )
-from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.widget_creation_config import ResetButtonStyler
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.clickable_help_components import (

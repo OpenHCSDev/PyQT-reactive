@@ -80,7 +80,7 @@ def _manager_for_holder():
 
 
 def _inline_param_info():
-    from pyqt_reactive.forms.parameter_info_types import InlineDataclassWidgetInfo
+    from formbridge.forms.parameter_info_types import InlineDataclassWidgetInfo
 
     return InlineDataclassWidgetInfo(
         name="config",

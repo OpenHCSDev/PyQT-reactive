@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.animation.flash_mixin import LEAF_WIDGET_TYPES, resolve_mask_widgets
-from pyqt_reactive.forms import layout_constants
+from formbridge.forms import layout_constants
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
     ChildFieldChromeRefreshable,
@@ -43,7 +43,7 @@ from pyqt_reactive.protocols import (
 from pyqt_reactive.theming import AccentChromeColorPolicy, ColorScheme
 from pyqt_reactive.protocols.widget_protocols import FlashMaskRectProvider
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
-from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
+from formbridge.theming.scope_color_receiver import ScopeColorSchemeReceiver
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
@@ -921,7 +921,7 @@ class GroupBoxWithHelp(
 
         # Create main layout and add title widget at top
         # Use CURRENT_LAYOUT as single source of truth for margins/spacing
-        from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+        from formbridge.forms.layout_constants import CURRENT_LAYOUT
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(*CURRENT_LAYOUT.groupbox_margins)
         main_layout.setSpacing(CURRENT_LAYOUT.groupbox_spacing)
@@ -1068,7 +1068,7 @@ class GroupBoxWithHelp(
     def _paint_scope_background(self, layers) -> None:
         """Paint subtle scope-colored background (matching list item style)."""
         from pyqt_reactive.animation import get_widget_corner_radius
-        from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
+        from formbridge.forms.layout_constants import default_container_corner_radius_px
         from pyqt_reactive.widgets.shared.scope_visual_config import ScopeVisualConfig
 
         # Get border rect (accounts for margin-top offset)
@@ -1139,7 +1139,7 @@ class GroupBoxWithHelp(
         """
         rect = self._get_border_rect()
         from pyqt_reactive.animation import get_widget_corner_radius
-        from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
+        from formbridge.forms.layout_constants import default_container_corner_radius_px
         radius = get_widget_corner_radius(self)
         if radius == 0:
             radius = default_container_corner_radius_px()

@@ -13,8 +13,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from pyqt_reactive.services.help_document import HelpDocument
-from pyqt_reactive.services.parameter_help_service import (
+from formbridge.services.help_document import HelpDocument
+from formbridge.services.parameter_help_service import (
     ParameterHelpContent,
     docstring_info_for_target,
     parameter_help_content,

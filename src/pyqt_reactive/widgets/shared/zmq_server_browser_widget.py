@@ -24,11 +24,9 @@ from zmqruntime.startup import (
     EndpointStartupStatus,
 )
 
-from pyqt_reactive.services.coalesced_scan_requests import CoalescedScanRequests
-from pyqt_reactive.services.zmq_server_info import (
-    BaseServerInfo,
-)
-from pyqt_reactive.services.zmq_server_scan_service import (
+from formbridge.services.coalesced_scan_requests import CoalescedScanRequests
+from formbridge.services.zmq_server_info import BaseServerInfo
+from formbridge.services.zmq_server_scan_service import (
     EndpointObservationAuthority,
     EndpointObservationSnapshot,
     EndpointObservationTransition,

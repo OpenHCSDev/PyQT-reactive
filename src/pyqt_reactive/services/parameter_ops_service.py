@@ -17,11 +17,11 @@ from typing import Any, TYPE_CHECKING
 import logging
 from functools import wraps
 
-from .parameter_service_abc import ParameterServiceABC
+from formbridge.services.parameter_service_abc import ParameterServiceABC
 
 # Optional performance monitoring - stub if not available
 try:
-    from pyqt_reactive.core.performance_monitor import timer, get_monitor
+    from formbridge.core.performance_monitor import timer, get_monitor
 except ImportError:
     def timer(name):
         """No-op timer decorator when performance_monitor not available."""
@@ -37,7 +37,7 @@ except ImportError:
         return None
 
 if TYPE_CHECKING:
-    from pyqt_reactive.forms.parameter_info_types import (
+    from formbridge.forms.parameter_info_types import (
         OptionalDataclassInfo,
         DirectDataclassInfo,
         GenericInfo,

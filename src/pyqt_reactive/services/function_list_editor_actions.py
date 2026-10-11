@@ -6,7 +6,7 @@ from collections.abc import Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 
-from pyqt_reactive.services.executable_action import LabeledExecutableActionMixin
+from formbridge.services.executable_action import LabeledExecutableActionMixin
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QPushButton
@@ -66,7 +66,7 @@ class FunctionListEditorAction(LabeledExecutableActionMixin, StrEnum):
 
         from PyQt6.QtWidgets import QPushButton
 
-        from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+        from formbridge.forms.layout_constants import CURRENT_LAYOUT
 
         button = QPushButton(self.label)
         button.setObjectName(self.object_name)

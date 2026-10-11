@@ -13,10 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_reactive.forms.layout_constants import (
-    CURRENT_LAYOUT,
-    ParameterFormLayoutConfig,
-)
+from formbridge.forms.layout_constants import CURRENT_LAYOUT, ParameterFormLayoutConfig
 
 
 def _widget_required_width(widget: QWidget) -> int:

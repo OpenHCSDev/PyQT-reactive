@@ -58,7 +58,7 @@ def test_multiple_choice_field_renders_checkbox_per_choice(qapp):
 
 
 def test_choice_values_convert_from_choices_and_labels() -> None:
-    from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+    from formbridge.forms.parameter_form_service import ParameterFormService
 
     service = ParameterFormService()
 

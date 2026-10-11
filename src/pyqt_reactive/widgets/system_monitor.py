@@ -29,16 +29,13 @@ pg = None  # Will be set when pyqtgraph is imported
 from pyqt_reactive.animation import queue_visual_frame_callback
 from pyqt_reactive.theming import ColorScheme
 
-from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
+from formbridge.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.services.persistent_system_monitor import (
     PersistentSystemMonitor,
     PersistentSystemMonitorThread,
 )
-from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
-from pyqt_reactive.services.system_metrics_sampler import (
-    SystemMetrics,
-    SystemMetricsSampler,
-)
+from formbridge.services.system_monitor_config import PerformanceMonitorConfig
+from formbridge.services.system_metrics_sampler import SystemMetrics, SystemMetricsSampler
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import create_manager_header
 
 logger = logging.getLogger(__name__)

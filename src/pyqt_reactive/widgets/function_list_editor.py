@@ -16,21 +16,21 @@ from typing import List, Union, Dict, Optional, Any, Callable
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QScrollArea
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from pyqt_reactive.protocols import (
+from formbridge.protocols.component_selection import (
     get_component_selection_provider,
     get_function_selection_provider,
 )
-from pyqt_reactive.services.pattern_data_manager import PatternDataManager
-from pyqt_reactive.services.pattern_data_manager import FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY
-from pyqt_reactive.services.pattern_data_manager import FUNC_EDITOR_PATTERN_TOKENS_META_KEY
-from pyqt_reactive.services.function_navigation import (
+from formbridge.services.pattern_data_manager import PatternDataManager
+from formbridge.services.pattern_data_manager import FUNC_EDITOR_SELECTED_PATTERN_KEY_META_KEY
+from formbridge.services.pattern_data_manager import FUNC_EDITOR_PATTERN_TOKENS_META_KEY
+from formbridge.services.function_navigation import (
     FunctionPatternField,
     parse_function_field_target,
 )
 from pyqt_reactive.services.function_list_editor_actions import (
     FunctionListEditorAction,
 )
-from pyqt_reactive.services.function_pattern_code_document import (
+from formbridge.services.function_pattern_code_document import (
     FunctionAuthority,
     FunctionKwargs,
     FunctionPatternByKey,
@@ -44,7 +44,7 @@ from python_introspect import callable_declaration_kwargs
 from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
 from objectstate import ObjectStateRegistry, semantic_values_equal
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
-from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.widgets.shared.detachable_action_bar import (
     DetachableActionBar,
     DetachableActionBarHost,
@@ -1078,7 +1078,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
             editor_service = SimpleCodeEditorService(self)
 
-            from pyqt_reactive.services.window_code_document import use_external_code_editor
+            from formbridge.services.window_code_document import use_external_code_editor
 
             use_external = use_external_code_editor()
 

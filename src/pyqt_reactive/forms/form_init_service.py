@@ -29,9 +29,9 @@ import logging
 from contextlib import contextmanager
 
 from python_introspect import UnifiedParameterAnalyzer
-from pyqt_reactive.forms.parameter_form_base import ParameterFormConfig
-from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
-from pyqt_reactive.forms.parameter_value_contracts import (
+from formbridge.forms.parameter_form_base import ParameterFormConfig
+from formbridge.forms.parameter_form_constants import CONSTANTS
+from formbridge.forms.parameter_value_contracts import (
     FormContext,
     FormObject,
     GeneratedServiceNamespace,
@@ -44,10 +44,10 @@ from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 from objectstate import get_base_config_type, has_lazy_resolution
 
 if TYPE_CHECKING:
-    from pyqt_reactive.forms.parameter_form_service import FormStructure
+    from formbridge.forms.parameter_form_service import FormStructure
 
 try:
-    from pyqt_reactive.core.performance_monitor import timer
+    from formbridge.core.performance_monitor import timer
 except Exception:  # pragma: no cover - optional performance monitoring
     @contextmanager
     def timer(*args, **kwargs):
@@ -466,7 +466,7 @@ import pyqt_reactive.services.value_collection_service as value_collection_servi
 import pyqt_reactive.services.signal_service as signal_service
 import pyqt_reactive.services.parameter_ops_service as parameter_ops_service
 import pyqt_reactive.services.enabled_field_styling_service as enabled_field_styling_service
-import pyqt_reactive.services.enum_dispatch_service as enum_dispatch_service
+import formbridge.services.enum_dispatch_service as enum_dispatch_service
 
 
 class ServiceRegistryMeta(type):
@@ -556,7 +556,7 @@ def _auto_generate_builders():
         ctx = DerivationContext(context_obj, extracted, color_scheme)
         vars(config).update(vars(ctx))
 
-        from pyqt_reactive.forms.parameter_form_service import ParameterAnalysisInput
+        from formbridge.forms.parameter_form_service import ParameterAnalysisInput
         description = extracted.description
         analysis_input = ParameterAnalysisInput(
             field_id=field_id,

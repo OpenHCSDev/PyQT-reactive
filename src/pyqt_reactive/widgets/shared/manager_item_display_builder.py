@@ -10,11 +10,11 @@ from objectstate import DottedFieldPath, ObjectState, ObjectStateRegistry
 from objectstate.lazy_factory import ALWAYS_VIEWABLE_FIELDS_REGISTRY
 from python_introspect import Enableable, is_enableable
 
-from pyqt_reactive.strategies.preview_formatting import (
+from formbridge.strategies.preview_formatting import (
     ObjectStatePreviewFormattingService,
     PreviewSegment,
 )
-from pyqt_reactive.utils.preview_formatters import (
+from formbridge.utils.preview_formatters import (
     PreviewFieldFormatRequest,
     canonical_declaration_mro,
 )

@@ -345,7 +345,7 @@ def test_recursive_mapping_items_reach_object_state_as_declared_types(qapp):
     """Literal parsing and the semantic converter preserve nested item identity."""
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
 
-    from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+    from formbridge.forms.parameter_form_service import ParameterFormService
     from pyqt_reactive.forms.widget_strategies import create_pyqt6_widget
 
     class Mode(Enum):
@@ -515,19 +515,3 @@ def test_no_parallel_widget_factory_or_string_fallback_authority():
         and node.attr == "create_string"
     ]
     assert fallback_calls == []
-
-
-def test_union_and_nested_field_semantics_have_no_parallel_fallbacks():
-    """Static gate: union and field identity remain derived from declarations."""
-    forms_root = Path(__file__).parents[1] / "src" / "pyqt_reactive" / "forms"
-    parameter_info_source = (forms_root / "parameter_info_types.py").read_text()
-    parameter_type_source = (forms_root / "parameter_type_utils.py").read_text()
-    service_source = (forms_root / "parameter_form_service.py").read_text()
-
-    assert "get_origin(param_type) is Union" not in parameter_info_source
-    assert "get_origin(param_type) is Union" not in parameter_type_source
-    assert "get_obj_type_for_param" not in parameter_type_source
-    assert "resolve_union_type" not in parameter_type_source
-    assert "get_field_path_with_fail_loud" not in service_source
-    assert "__name__.lower().replace('config', '')" not in service_source
-    assert "Handle Union types" not in service_source

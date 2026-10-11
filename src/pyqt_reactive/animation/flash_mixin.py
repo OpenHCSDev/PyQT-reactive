@@ -80,10 +80,10 @@ from PyQt6 import sip
 
 from objectstate.time_travel_profile import TimeTravelProfiler
 from pyqt_reactive.animation.flash_config import FlashConfig, FlashPlayback, FlashPhase, get_flash_config
-from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
+from formbridge.forms.layout_constants import default_container_corner_radius_px
 from pyqt_reactive.services.window_snapshot import FlashPaintElement, FlashPaintFrame
 
-from ..flash_trace import flash_trace
+from formbridge.flash_trace import flash_trace
 from objectstate import ScopeKey
 
 

@@ -16,7 +16,7 @@ from zmqruntime.shutdown import (
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 from zmqruntime.transport import TransportEndpoint, get_default_transport_mode
 
-from pyqt_reactive.services.zmq_server_scan_service import (
+from formbridge.services.zmq_server_scan_service import (
     EndpointObservationAuthority,
     EndpointObservationSnapshot,
     EndpointScanResult,

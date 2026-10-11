@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from objectstate import ObjectState
     from PyQt6.QtGui import QColor
     from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
-    from pyqt_reactive.forms.parameter_info_types import InlineDataclassWidgetInfo
+    from formbridge.forms.parameter_info_types import InlineDataclassWidgetInfo
     from pyqt_reactive.theming import ColorScheme
 
 
@@ -171,7 +171,7 @@ class InlineDataclassFormContext:
         )
 
     def update_reset_button_styling(self, button, field_name: str) -> None:
-        from pyqt_reactive.utils.styling_utils import update_reset_button_styling
+        from formbridge.utils.styling_utils import update_reset_button_styling
 
         update_reset_button_styling(
             button,

@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from pyqt_reactive.services.window_code_document import (
+from formbridge.services.window_code_document import (
     PYTHON_MIME_TYPE,
     WindowCodeDocument,
     WindowCodeDocumentDriver,
@@ -640,7 +640,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             # Create Jedi script with current code
             # Use project parameter to tell Jedi where to find project modules
             # Use configured project roots for Jedi (defaults to cwd)
-            from pyqt_reactive.protocols import get_form_config
+            from formbridge.protocols.form_config import get_form_config
             config = get_form_config()
             project_paths = [Path(p) for p in getattr(config, "jedi_project_paths", []) if p]
             if not project_paths:
@@ -822,7 +822,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
 
     def _open_file(self):
         """Open file dialog and load content."""
-        from pyqt_reactive.core.path_cache import CodeEditor, cache_path, get_initial_path
+        from formbridge.core.path_cache import CodeEditor, cache_path, get_initial_path
 
         # Get cached initial directory
         initial_dir = str(get_initial_path(CodeEditor, fallback=Path.home()))
@@ -844,7 +844,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
 
     def _save_as(self):
         """Save content to file."""
-        from pyqt_reactive.core.path_cache import CodeEditor, cache_path, get_initial_path
+        from formbridge.core.path_cache import CodeEditor, cache_path, get_initial_path
 
         # Get cached initial directory
         initial_dir = str(get_initial_path(CodeEditor, fallback=Path.home()))
@@ -893,7 +893,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
         """Toggle between clean mode (minimal) and explicit mode (full)."""
         try:
             current_code = self.editor.text()
-            from pyqt_reactive.protocols import get_codegen_provider
+            from formbridge.protocols.codegen_provider import get_codegen_provider
             provider = get_codegen_provider()
             if provider is None:
                 from PyQt6.QtWidgets import QMessageBox

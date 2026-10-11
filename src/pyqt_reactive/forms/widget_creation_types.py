@@ -17,7 +17,7 @@ from typing import TypedDict, Callable, Optional, Any, Dict, Type
 from dataclasses import dataclass, replace as dataclass_replace
 
 # Import ParameterInfo ABC from shared UI module
-from .parameter_info_types import ParameterInfoBase as ParameterInfo
+from formbridge.forms.parameter_info_types import ParameterInfoBase as ParameterInfo
 
 
 class DisplayInfo(TypedDict, total=False):

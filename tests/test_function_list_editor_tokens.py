@@ -7,10 +7,8 @@ from types import SimpleNamespace
 import pytest
 from objectstate.object_state_registry import ObjectStateRegistry
 
-from pyqt_reactive.services.function_pattern_code_document import (
-    FunctionPatternCodeDocumentService,
-)
-from pyqt_reactive.services.scope_token_service import (
+from formbridge.services.function_pattern_code_document import FunctionPatternCodeDocumentService
+from formbridge.services.scope_token_service import (
     ScopeTokenService,
     ScopeTokenTarget,
     reconcile_occurrence_tokens,

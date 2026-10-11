@@ -61,14 +61,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_reactive.core.log_utils import LogFileInfo, LogType
-from pyqt_reactive.protocols import (
+from formbridge.core.log_utils import LogFileInfo, LogType
+from formbridge.protocols.log_providers import (
     LogDiscoveryProviderABC,
     get_log_discovery_provider,
     get_server_scan_provider,
 )
-from pyqt_reactive.services.coalesced_scan_requests import CoalescedScanRequests
-from pyqt_reactive.services.process_tracker import (
+from formbridge.services.coalesced_scan_requests import CoalescedScanRequests
+from formbridge.services.process_tracker import (
     ProcessLiveness,
     ProcessTracker,
     extract_pid_from_log_filename,
@@ -76,8 +76,8 @@ from pyqt_reactive.services.process_tracker import (
     get_log_tooltip,
 )
 from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
-from pyqt_reactive.utils.log_highlight_client import LogHighlightClient
-from pyqt_reactive.utils.log_highlighter import build_log_line_html
+from formbridge.utils.log_highlight_client import LogHighlightClient
+from formbridge.utils.log_highlighter import build_log_line_html
 
 logger = logging.getLogger(__name__)
 

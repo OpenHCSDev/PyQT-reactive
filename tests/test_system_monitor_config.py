@@ -7,8 +7,8 @@ from unittest.mock import Mock
 import pytest
 
 import pyqt_reactive.widgets.system_monitor as system_monitor_module
-from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
-from pyqt_reactive.services.system_monitor_config import (
+from formbridge.services.system_metrics_sampler import SystemMetricsSamplerConfig
+from formbridge.services.system_monitor_config import (
     PerformanceGraphColor,
     PerformanceMonitorColors,
     PerformanceMonitorConfig,

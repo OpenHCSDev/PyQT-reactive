@@ -30,13 +30,11 @@ from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
     ReflowingVerticalScrollArea,
 )
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
-from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
+from formbridge.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
-from pyqt_reactive.services.function_pattern_code_document import (
-    FunctionPatternCodeDocumentService,
-)
-from pyqt_reactive.services.function_navigation import FunctionPatternField
+from formbridge.services.function_pattern_code_document import FunctionPatternCodeDocumentService
+from formbridge.services.function_navigation import FunctionPatternField
 from metaclass_registry import AutoRegisterMeta
 from objectstate import ScopeKey
 
@@ -704,7 +702,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         Returns:
             Dict of kwargs suitable for passing to function at runtime
         """
-        from pyqt_reactive.services.function_pattern_code_document import (
+        from formbridge.services.function_pattern_code_document import (
             FunctionPatternCodeDocumentService,
         )
 

@@ -16,10 +16,7 @@ from typing import TYPE_CHECKING
 from python_introspect import project_dataclass
 from zmqruntime.timeouts import OperationDeadline
 
-from ..flash_trace import (
-    FlashTrace,
-    FlashTraceRecord,
-)
+from formbridge.flash_trace import FlashTrace, FlashTraceRecord
 
 if TYPE_CHECKING:
     from PyQt6.QtCore import pyqtBoundSignal

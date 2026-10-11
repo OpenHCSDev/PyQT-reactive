@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_reactive.services.widget_tree_projection_config import (
+from formbridge.services.widget_tree_projection_config import (
     DEFAULT_WIDGET_TREE_PROJECTION_POLICY,
     WidgetNodeIdentity,
     WidgetPath,

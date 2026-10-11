@@ -17,7 +17,7 @@ from PyQt6.QtCore import QSize, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLineEdit, QPushButton, QWidget
 from python_introspect import ParameterInfo
 
-from pyqt_reactive.core.path_cache import (
+from formbridge.core.path_cache import (
     DirectorySelection,
     FileSelection,
     General,

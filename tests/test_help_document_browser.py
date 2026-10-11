@@ -8,7 +8,7 @@ import pytest
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QTextCursor
 
-from pyqt_reactive.services.help_document import HelpDocument, HelpDocumentFormat
+from formbridge.services.help_document import HelpDocument, HelpDocumentFormat
 from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser
 from pyqt_reactive.windows.help_window_manager import (
     BaseHelpWindow,

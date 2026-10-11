@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.core.deferred_callback import DeferredCallback
 
-from ..flash_trace import flash_trace
+from formbridge.flash_trace import flash_trace
 
 
 if TYPE_CHECKING:
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 
 from contextlib import contextmanager
 
-from pyqt_reactive.forms.parameter_info_types import ParameterInfo
-from pyqt_reactive.forms.parameter_value_contracts import (
+from formbridge.forms.parameter_info_types import ParameterInfo
+from formbridge.forms.parameter_value_contracts import (
     FormContext,
     ParameterDefaultsByName,
     ParameterTypesByName,
@@ -40,7 +40,7 @@ from pyqt_reactive.forms.parameter_value_contracts import (
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 
 # LiveContextService deleted - functionality moved to ObjectStateRegistry
-from pyqt_reactive.services.flag_context_manager import FlagContextManager
+from formbridge.services.flag_context_manager import FlagContextManager
 from pyqt_reactive.services.signal_service import SignalService
 from pyqt_reactive.services.value_collection_service import ValueCollectionService
 from pyqt_reactive.services.window_navigation import ObjectStateNavigationTargetAuthority
@@ -48,7 +48,7 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.config_tree_contracts import ConfigTreeFlashManager
 
 from .form_init_service import FormBuildOrchestrator, FormBuildTransaction
-from .layout_constants import CURRENT_LAYOUT
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
 from .parameter_form_chrome_sync import ParameterFormChromeSync
 from .parameter_form_tree_index import ParameterFormTreeIndex
 from .widget_creation_types import ParameterFormManager as ParameterFormManagerABC
@@ -59,7 +59,7 @@ from .widget_operations import WidgetOperations
 from .widget_strategies import create_pyqt6_widget
 
 try:
-    from pyqt_reactive.core.performance_monitor import timer
+    from formbridge.core.performance_monitor import timer
 except Exception:  # pragma: no cover - optional performance monitoring
 
     @contextmanager
@@ -441,7 +441,7 @@ class ParameterFormManager(
                     ConfigBuilderService,
                     ExtractedParameters,
                 )
-                from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+                from formbridge.forms.parameter_form_service import ParameterFormService
 
                 self.service = ParameterFormService()
                 # Use the canonical dotted-path `field_id`. For nested PFMs a
@@ -904,7 +904,7 @@ class ParameterFormManager(
         if param_name not in self.reset_buttons:
             return
 
-        from pyqt_reactive.utils.styling_utils import update_reset_button_styling
+        from formbridge.utils.styling_utils import update_reset_button_styling
 
         reset_button = self.reset_buttons[param_name]
         update_reset_button_styling(reset_button, self.state, self.field_id, param_name)

@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_reactive.forms.layout_constants import COMPACT_LAYOUT
+from formbridge.forms.layout_constants import COMPACT_LAYOUT
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
 from pyqt_reactive.widgets.shared.abstract_table_browser import (

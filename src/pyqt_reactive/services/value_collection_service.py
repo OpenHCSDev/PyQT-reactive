@@ -16,7 +16,7 @@ from typing import Any, Optional, Dict, TYPE_CHECKING
 from dataclasses import fields as dataclass_fields
 import logging
 
-from .parameter_service_abc import ParameterServiceABC
+from formbridge.services.parameter_service_abc import ParameterServiceABC
 from .widget_service import WidgetService
 
 if TYPE_CHECKING:

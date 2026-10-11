@@ -6,9 +6,7 @@ from enum import Enum
 
 import pytest
 
-from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
-    TabLabelDeclarationMixin,
-)
+from formbridge.services.tab_identity import TabLabelDeclarationMixin
 
 
 class _ExampleTab(TabLabelDeclarationMixin, str, Enum):

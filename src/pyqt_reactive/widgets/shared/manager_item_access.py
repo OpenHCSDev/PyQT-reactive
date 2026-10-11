@@ -8,8 +8,8 @@ from typing import Any, Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QListWidgetItem
 
-from pyqt_reactive.widgets.shared.manager_item_hooks import ManagerItemHooks
-from pyqt_reactive.widgets.shared.manager_state_binding import ManagerStateBinding
+from formbridge.managers.item_hooks import ManagerItemHooks
+from formbridge.managers.state_binding import ManagerStateBinding
 
 
 @dataclass(frozen=True, slots=True)

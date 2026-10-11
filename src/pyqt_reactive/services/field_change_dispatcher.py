@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 
-from ..flash_trace import flash_trace
+from formbridge.flash_trace import flash_trace
 
 
 if TYPE_CHECKING:

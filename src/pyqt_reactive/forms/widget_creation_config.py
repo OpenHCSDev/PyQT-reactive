@@ -34,7 +34,7 @@ from .widget_creation_types import (
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 from pyqt_reactive.services.widget_service import WidgetService
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveParameterRow
-from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QGroupBox, QLayout, QWidget
@@ -337,7 +337,7 @@ class EnabledTitleWidgetMoveAuthority:
         if context.enabled_reset_button is None:
             return
 
-        from pyqt_reactive.utils.styling_utils import update_reset_button_styling
+        from formbridge.utils.styling_utils import update_reset_button_styling
 
         self.prepare_title_reset_button(
             context.enabled_reset_button,
@@ -565,7 +565,7 @@ class WidgetCreationHandlers:
         from PyQt6.QtGui import QFont
         from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
         from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
-        from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+        from formbridge.forms.layout_constants import CURRENT_LAYOUT
 
         manager = ctx.manager
         param_info = ctx.param_info
@@ -771,7 +771,7 @@ class WidgetCreationHandlers:
         ctx: WidgetBuildContext,
     ) -> QWidget:
         """Create the registered inline editor for a structural dataclass value."""
-        from .parameter_info_types import InlineDataclassWidgetInfo
+        from formbridge.forms.parameter_info_types import InlineDataclassWidgetInfo
 
         manager = ctx.manager
         param_info = ctx.param_info

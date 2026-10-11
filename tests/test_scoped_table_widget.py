@@ -18,7 +18,7 @@ from pyqt_reactive.widgets.shared.clickable_help_components import (
     GroupBoxWithHelp,
     InlineDataclassGroupBox,
 )
-from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
+from formbridge.theming.scope_color_receiver import ScopeColorSchemeReceiver
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 

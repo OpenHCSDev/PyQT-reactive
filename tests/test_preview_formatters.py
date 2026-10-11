@@ -13,11 +13,11 @@ from objectstate.lazy_factory import (
 )
 from python_introspect import Enableable
 
-from pyqt_reactive.strategies.preview_formatting import (
+from formbridge.strategies.preview_formatting import (
     FormattingConfig,
     ObjectStatePreviewFormattingService,
 )
-from pyqt_reactive.utils.preview_formatters import (
+from formbridge.utils.preview_formatters import (
     PreviewFieldFormatRequest,
     PreviewValueDetail,
     format_preview_value,
@@ -28,9 +28,7 @@ from pyqt_reactive.widgets.shared.manager_item_display_builder import (
     ListItemFormat,
     _ManagerItemDisplayBuilder,
 )
-from pyqt_reactive.widgets.shared.manager_preview_formatting import (
-    ManagerPreviewFieldFormatter,
-)
+from formbridge.managers.preview_formatting import ManagerPreviewFieldFormatter
 
 
 def _request(
