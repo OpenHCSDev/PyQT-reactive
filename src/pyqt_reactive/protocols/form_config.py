@@ -31,6 +31,8 @@ class FormGenConfig:
     performance_logger_name: str = "pyqt_reactive.performance"
     performance_log_filename: str = "performance.log"
     path_cache_file: Optional[str] = None
+    external_editor_env_var: str = "PYQT_REACTIVE_USE_EXTERNAL_EDITOR"
+    """Environment variable that, set to 1/true/yes, edits code in an external editor."""
 
 
 # Global config instance (set by application)

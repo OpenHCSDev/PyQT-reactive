@@ -110,3 +110,39 @@ def test_scrolling_manager_header_preserves_usable_status_viewport(
             assert parts.status_scroll.horizontalScrollBar().maximum() == 0
     finally:
         parts.header.close()
+
+
+def test_status_marquee_keeps_one_timer_across_messages(qapp) -> None:
+    from PyQt6.QtCore import Qt, QTimer
+
+    from pyqt_reactive.widgets.shared.manager_status_controller import ManagerStatusController
+
+    owner = QWidget()
+    parts = create_manager_header(
+        title="Manager",
+        color_scheme=ColorScheme(),
+        enable_status_scrolling=True,
+    )
+    parts.header.setParent(owner)
+    parts.header.resize(120, 40)
+    owner.show()
+    controller = ManagerStatusController(enable_scrolling=True)
+    try:
+        for index in range(20):
+            controller.update(
+                message=f"message {index} " + "too wide for the header " * 6,
+                context=owner,
+                manager_header=parts,
+            )
+            qapp.processEvents()
+
+        direct = Qt.FindChildOption.FindDirectChildrenOnly
+        timers = owner.findChildren(QTimer, options=direct)
+        assert timers == [controller.scroll_timer]
+        assert controller.scroll_timer.isActive()
+
+        controller.update(message="ok", context=owner, manager_header=parts)
+        assert owner.findChildren(QTimer, options=direct) == timers
+        assert not controller.scroll_timer.isActive()
+    finally:
+        owner.close()

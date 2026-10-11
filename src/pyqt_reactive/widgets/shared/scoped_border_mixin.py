@@ -12,6 +12,7 @@ from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRender
 from pyqt_reactive.widgets.shared.scope_color_utils import (
     get_scope_color_scheme,
 )
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +135,7 @@ class ScopedBorderMixin(ScopeColorSchemeHost):
 
     def _on_scope_color_changed(self, changed_scope_id: str) -> None:
         scope_id = self.scope_id
-        if scope_id is not None and (
-            scope_id == changed_scope_id or scope_id.startswith(f"{changed_scope_id}::")
-        ):
+        if scope_id is not None and ScopeKey(changed_scope_id).contains(scope_id):
             self._refresh_scope_border()
 
     def _on_all_colors_reset(self) -> None:

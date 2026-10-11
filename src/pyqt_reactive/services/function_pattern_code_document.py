@@ -41,6 +41,7 @@ from pyqt_reactive.services.window_code_document import (
     WindowCodeDocument,
     WindowCodeDocumentDriver,
 )
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 FUNCTION_PATTERN_AUTHORITY_ATTR = "__function_pattern_authority__"
@@ -244,20 +245,18 @@ class FunctionPatternChildScopeAddress:
     parent_scope_id: str
     token: str
 
-    separator: ClassVar[str] = "::"
-
     @classmethod
     def parse(cls, scope_id: str) -> FunctionPatternChildScopeAddress:
-        parent_scope_id, separator, token = scope_id.rpartition(cls.separator)
-        if separator != cls.separator or not parent_scope_id or not token:
+        scope = ScopeKey(scope_id)
+        if scope.depth < 2:
             raise FunctionPatternRoundTripError(
                 "Function-pattern child scopes must have a parent scope and "
-                f"entry token separated by {cls.separator!r}; got {scope_id!r}."
+                f"an entry token; got {scope_id!r}."
             )
         return cls(
-            scope_id=scope_id,
-            parent_scope_id=parent_scope_id,
-            token=token,
+            scope_id=scope,
+            parent_scope_id=scope.parent,
+            token=scope.last,
         )
 
 
@@ -523,17 +522,18 @@ class FunctionPatternCodeDocumentService:
         if not parent_scope_id:
             return []
 
+        parent_scope = ScopeKey(parent_scope_id)
         candidate_states = [
             state
             for state in ObjectStateRegistry.get_all()
-            if isinstance(state.scope_id, str) and state.scope_id.startswith(f"{parent_scope_id}::")
+            if isinstance(state.scope_id, str) and parent_scope.strictly_contains(state.scope_id)
         ]
         if not candidate_states:
             return []
 
         available = sorted(
             candidate_states,
-            key=lambda state: state.scope_id.rsplit("::", 1)[-1],
+            key=lambda state: ScopeKey(state.scope_id).last,
         )
         tokens: list[str] = []
         used_scope_ids: set[str] = set()
@@ -555,7 +555,7 @@ class FunctionPatternCodeDocumentService:
             if match is None:
                 return []
             used_scope_ids.add(match.scope_id)
-            tokens.append(match.scope_id.rsplit("::", 1)[-1])
+            tokens.append(ScopeKey(match.scope_id).last)
         return tokens
 
     def function_scope_tokens_match(
@@ -578,7 +578,7 @@ class FunctionPatternCodeDocumentService:
             if entry is None:
                 continue
             func, _kwargs = entry
-            state = ObjectStateRegistry.get_by_scope(f"{parent_scope_id}::{tokens[index]}")
+            state = ObjectStateRegistry.get_by_scope(ScopeKey(parent_scope_id).child(tokens[index]))
             if state is None:
                 return False
             if not self.same_function_authority(state.object_instance, func):
@@ -687,7 +687,7 @@ class FunctionPatternCodeDocumentService:
 
         for token in set(old_by_token) & set(new_by_token):
             new_value = new_by_token[token]
-            scope_id = f"{parent_scope_id}::{token}"
+            scope_id = ScopeKey(parent_scope_id).child(token)
             state = ObjectStateRegistry.get_by_scope(scope_id)
             if state is None:
                 continue
@@ -719,7 +719,7 @@ class FunctionPatternCodeDocumentService:
             return pattern
         resolved = pattern
         for entry in self.iter_tokenized_entries(pattern, tokens):
-            state = ObjectStateRegistry.get_by_scope(f"{parent_scope_id}::{entry.token}")
+            state = ObjectStateRegistry.get_by_scope(ScopeKey(parent_scope_id).child(entry.token))
             if state is None:
                 continue
             if not self.same_function_authority(entry.func, state.object_instance):
@@ -863,7 +863,7 @@ class FunctionPatternCodeDocumentService:
     @staticmethod
     def unregister_function_state(parent_scope_id: str, token: str) -> None:
         """Unregister one function child ObjectState if it is present."""
-        state = ObjectStateRegistry.get_by_scope(f"{parent_scope_id}::{token}")
+        state = ObjectStateRegistry.get_by_scope(ScopeKey(parent_scope_id).child(token))
         if state is not None:
             ObjectStateRegistry.unregister(state, _skip_snapshot=True)
 

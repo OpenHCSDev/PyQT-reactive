@@ -8,7 +8,6 @@ Displays a scrollable list of function panes with Add/Load/Save/Code controls.
 from __future__ import annotations
 
 import logging
-import os
 import copy
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
@@ -51,6 +50,7 @@ from pyqt_reactive.widgets.shared.detachable_action_bar import (
     DetachableActionBarHost,
 )
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -221,14 +221,14 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             return
 
         def _is_relevant_time_travel(dirty_states) -> bool:
-            scope = str(self.scope_id)
+            scope = ScopeKey(self.scope_id)
             for entry in dirty_states or []:
                 if not isinstance(entry, (tuple, list)) or len(entry) < 1:
                     continue
                 scope_id = entry[0]
                 if not isinstance(scope_id, str) or not scope_id:
                     continue
-                if scope_id == scope or scope_id.startswith(scope + "::"):
+                if scope.contains(scope_id):
                     return True
             return False
 
@@ -485,9 +485,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             new_tokens = []
         for index, item in enumerate(self.functions):
             func, _kwargs = PatternDataManager.extract_func_and_kwargs(item)
-            if func is None:
-                new_tokens = []
-                break
             token = str(new_tokens[index]) if index < len(new_tokens) else ""
             if not token:
                 new_tokens = []
@@ -686,8 +683,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
         for idx, item in enumerate(func_items):
             func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-            if func is None:
-                continue
 
             token = None
             if tokens is not None and idx < len(tokens):
@@ -864,8 +859,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         if self.invocation_badge_provider is None:
             return None
         func, _kwargs = self.data_manager.extract_func_and_kwargs(func_item)
-        if func is None:
-            return None
         group_key = (
             str(self.selected_pattern_key)
             if self.is_dict_mode and self.selected_pattern_key is not None
@@ -1085,12 +1078,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
             editor_service = SimpleCodeEditorService(self)
 
-            # Check if user wants external editor (check environment variable)
-            use_external = os.environ.get("OPENHCS_USE_EXTERNAL_EDITOR", "").lower() in (
-                "1",
-                "true",
-                "yes",
-            )
+            from pyqt_reactive.services.window_code_document import use_external_code_editor
+
+            use_external = use_external_code_editor()
 
             # Launch editor with the authored nominal declaration type.
             editor_service.edit_code(
@@ -1348,8 +1338,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 normalized_list = []
                 for item in value:
                     func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-                    if func is None:
-                        continue
                     pruned_kwargs = _prune_kwargs(func, kwargs)
                     normalized_list.append(func if not pruned_kwargs else (func, pruned_kwargs))
                 migrated_pattern[str_key] = normalized_list
@@ -1359,8 +1347,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             normalized_list = []
             for item in pattern:
                 func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-                if func is None:
-                    continue
                 pruned_kwargs = _prune_kwargs(func, kwargs)
                 normalized_list.append(func if not pruned_kwargs else (func, pruned_kwargs))
 
@@ -1897,8 +1883,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         sanitized_functions = []
         for item in self.functions:
             func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-            if func is None:
-                continue
             clean_kwargs = self._sanitize_pattern_kwargs(kwargs if isinstance(kwargs, dict) else {})
             sanitized_functions.append((func, clean_kwargs))
         self.functions = sanitized_functions

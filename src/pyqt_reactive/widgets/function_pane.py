@@ -38,6 +38,7 @@ from pyqt_reactive.services.function_pattern_code_document import (
 )
 from pyqt_reactive.services.function_navigation import FunctionPatternField
 from metaclass_registry import AutoRegisterMeta
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -453,7 +454,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             raise RuntimeError(
                 "FunctionPaneWidget requires func_scope_token for deterministic ObjectState scope."
             )
-        func_scope_id = f"{func_parent_scope}::{token}"
+        func_scope_id = ScopeKey(func_parent_scope).child(token)
         if self._flash_key == "":
             self._flash_key = func_scope_id
             self.register_flash_groupbox_full(self._flash_key, self)

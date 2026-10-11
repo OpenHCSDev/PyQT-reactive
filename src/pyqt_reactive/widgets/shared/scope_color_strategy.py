@@ -13,6 +13,7 @@ import hashlib
 import logging
 
 from metaclass_registry import AutoRegisterMeta
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +101,8 @@ class IndexBasedStrategy(ScopeColorStrategy):
 
     @staticmethod
     def _extract_orchestrator(scope_id: str) -> str:
-        """Extract orchestrator part (before ::) or return the whole scope_id."""
-        if "::" in scope_id:
-            return scope_id.split("::", 1)[0]
-        return scope_id
+        """Return the root segment of ``scope_id``."""
+        return ScopeKey(scope_id).root
 
 
 class MD5HashStrategy(ScopeColorStrategy):

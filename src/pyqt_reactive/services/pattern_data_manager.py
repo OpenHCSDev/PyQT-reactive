@@ -105,26 +105,23 @@ class PatternDataManager:
         return pattern
 
     @staticmethod
-    def extract_func_and_kwargs(func_item) -> tuple[Callable | None, dict]:
-        """
-        Parse (func, kwargs) tuples and bare callables.
+    def extract_func_and_kwargs(func_item) -> tuple[Callable, dict]:
+        """Return ``(callable, kwargs)`` for a ``(callable, kwargs)`` tuple or a bare callable.
 
-        Handles both tuple format and bare callable format exactly as current logic.
-
-        Args:
-            func_item: Either (callable, kwargs) tuple or bare callable
-
-        Returns:
-            Tuple of (callable, kwargs_dict)
+        Raises:
+            TypeError: for any other item, so a malformed entry is never dropped silently.
         """
         if isinstance(func_item, tuple) and len(func_item) == 2 and callable(func_item[0]):
-            _func, kwargs = func_item
+            func, kwargs = func_item
             if not isinstance(kwargs, Mapping):
                 raise TypeError("Function-pattern tuple entries must carry a kwargs mapping.")
-            return func_item[0], dict(kwargs)
+            return func, dict(kwargs)
         if callable(func_item):
             return func_item, {}
-        return None, {}
+        raise TypeError(
+            "Function-pattern entries are callables or (callable, kwargs) pairs, "
+            f"got {func_item!r}."
+        )
 
     @staticmethod
     def validate_pattern_structure(pattern: list | dict) -> bool:
@@ -143,10 +140,9 @@ class PatternDataManager:
         if isinstance(pattern, list):
             # Validate list items are callables or (callable, dict) tuples
             for item in pattern:
-                func, kwargs = PatternDataManager.extract_func_and_kwargs(item)
-                if func is None:
-                    return False
-                if not isinstance(kwargs, dict):
+                try:
+                    PatternDataManager.extract_func_and_kwargs(item)
+                except TypeError:
                     return False
             return True
 

@@ -9,6 +9,7 @@ from pyqt_reactive.widgets.shared.scope_color_strategy import (
     ManualColorStrategy,
     ColorStrategyType,
 )
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,6 @@ class ScopeColorService(QObject):
         """
         from pyqt_reactive.widgets.shared.scope_color_utils import (
             build_color_scheme_from_rgb,
-            extract_orchestrator_scope,
         )
         from pyqt_reactive.widgets.shared.scope_visual_config import (
             RootScopeColorScheme,
@@ -89,17 +89,17 @@ class ScopeColorService(QObject):
                 self._scheme_cache[scope_id] = RootScopeColorScheme.create()
             return self._scheme_cache[scope_id]
 
-        # For orchestrator-level scopes (no "::"), ignore step_index in cache key
-        # since orchestrator-level uses fixed tint regardless of step_index.
-        # This ensures plate list items and their config windows share the same scheme.
-        is_orchestrator_level = "::" not in (scope_id or "")
+        # Root-level scopes ignore step_index in the cache key since they use a
+        # fixed tint regardless of step_index, so list items and their config
+        # windows share the same scheme.
+        is_orchestrator_level = ScopeKey(scope_id).depth < 2
         if is_orchestrator_level:
             cache_key = scope_id
         else:
             cache_key = (scope_id, step_index) if step_index is not None else scope_id
 
         if cache_key not in self._scheme_cache:
-            orchestrator_scope = extract_orchestrator_scope(scope_id) or scope_id
+            orchestrator_scope = ScopeKey(scope_id).root
             # Pass step_index (used by some strategies, ignored by orchestrator-based)
             rgb = self.active_strategy.generate_color(orchestrator_scope, step_index=step_index)
             self._scheme_cache[cache_key] = build_color_scheme_from_rgb(
@@ -161,7 +161,7 @@ class ScopeColorService(QObject):
         return cached_scope == scope_id or (
             scope_id != ""
             and isinstance(cached_scope, str)
-            and cached_scope.startswith(f"{scope_id}::")
+            and ScopeKey(scope_id).contains(cached_scope)
         )
 
     def _invalidate_all(self) -> None:

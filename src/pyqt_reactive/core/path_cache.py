@@ -1,250 +1,141 @@
-"""
-Unified Path Cache System
+"""Last-used directories remembered per dialog context across sessions.
 
-Provides shared path caching functionality for both TUI and PyQt GUI implementations.
-Persists last used paths across application runs for improved user experience.
+A context is a :class:`PathCacheKey` subclass. The family is open: applications
+declare their own contexts by subclassing, and each context's key in the cache
+file is derived from its class name.
 """
 
 import json
 import logging
+import re
 from pathlib import Path
-from typing import Dict, Optional
-from enum import Enum
+
+from metaclass_registry import AutoRegisterMeta
 
 logger = logging.getLogger(__name__)
 
 
-class PathCacheKey(Enum):
+def _stored_key(name: str, cls: type) -> str | None:
+    if "__registry__" in vars(cls):
+        return None
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+class PathCacheKey(metaclass=AutoRegisterMeta):
+    """A dialog context whose last-used directory is remembered.
+
+    Subclass to declare a context; ``stored_key`` is the snake_case class name.
     """
-    Enumeration of path cache keys for different UI contexts.
-    
-    Used to maintain separate cached paths for different file operations
-    across both TUI and PyQt GUI implementations.
-    """
-    # Original keys from both implementations
-    FILE_SELECTION = "file_selection"
-    DIRECTORY_SELECTION = "directory_selection"
-    PLATE_IMPORT = "plate_import"
-    CONFIG_EXPORT = "config_export"
-    GENERAL = "general"
-    
-    # Specific file type contexts
-    FUNCTION_PATTERNS = "function_patterns"  # .func files
-    PIPELINE_FILES = "pipeline_files"        # .pipeline files
-    STEP_SETTINGS = "step_settings"          # .step files
-    DEBUG_FILES = "debug_files"              # .pkl debug files
-    CODE_EDITOR = "code_editor"              # .py files from code editor
-    
-    # Additional contexts for future use
-    PLATE_BROWSER = "plate_browser"
-    FUNCTION_BROWSER = "function_browser"
-    PIPELINE_BROWSER = "pipeline_browser"
-    EXPORT_BROWSER = "export_browser"
-    CONFIG_BROWSER = "config_browser"
-    ANALYSIS_BROWSER = "analysis_browser"
+
+    __registry_key__ = "stored_key"
+    __key_extractor__ = _stored_key
+    __skip_if_no_key__ = True
+
+    stored_key: str
+
+
+class General(PathCacheKey):
+    """A path parameter whose name declares no file or directory role."""
+
+
+class FileSelection(PathCacheKey):
+    """A file chosen for a file-valued parameter."""
+
+
+class DirectorySelection(PathCacheKey):
+    """A directory chosen for a directory-valued parameter."""
+
+
+class CodeEditor(PathCacheKey):
+    """A Python file loaded into or saved from the code editor."""
 
 
 class UnifiedPathCache:
-    """
-    Unified path cache for persisting directory paths across application sessions.
-    
-    Provides consistent caching behavior for both TUI browser widgets and
-    PyQt GUI file dialogs.
-    """
-    
-    def __init__(self, cache_file: Optional[Path] = None):
-        """
-        Initialize path cache.
+    """JSON file mapping each context's ``stored_key`` to its last directory."""
 
-        Args:
-            cache_file: Optional custom cache file location
-        """
+    def __init__(self, cache_file: Path | None = None):
         if cache_file is None:
             from pyqt_reactive.protocols import get_form_config
 
             config = get_form_config()
-            if getattr(config, "path_cache_file", None):
+            if config.path_cache_file:
                 cache_file = Path(config.path_cache_file)
             else:
                 cache_file = Path.home() / ".cache" / "pyqt_reactive" / "path_cache.json"
 
         self.cache_file = cache_file
-        self._cache: Dict[str, str] = {}
+        self._cache: dict[str, str] = {}
         self._load_cache()
-        logger.debug(f"UnifiedPathCache initialized with cache file: {self.cache_file}")
-    
+
     def _load_cache(self) -> None:
-        """Load cache from disk."""
         try:
             if self.cache_file.exists():
-                with open(self.cache_file, 'r') as f:
+                with open(self.cache_file) as f:
                     self._cache = json.load(f)
-                logger.debug(f"Loaded path cache with {len(self._cache)} entries")
-            else:
-                logger.debug("No existing path cache found, starting fresh")
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to load path cache: {e}")
             self._cache = {}
-    
+
     def _save_cache(self) -> None:
-        """Save cache to disk."""
         try:
-            # Ensure cache directory exists
             self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(self.cache_file, 'w') as f:
+            with open(self.cache_file, "w") as f:
                 json.dump(self._cache, f, indent=2)
-            logger.debug(f"Saved path cache with {len(self._cache)} entries")
         except OSError as e:
             logger.warning(f"Failed to save path cache: {e}")
-    
-    def get_cached_path(self, key: PathCacheKey) -> Optional[Path]:
-        """
-        Get cached path for a specific key.
-        
-        Args:
-            key: PathCacheKey identifying the context
-            
-        Returns:
-            Cached Path if exists and valid, None otherwise
-        """
-        cached_str = self._cache.get(key.value)
-        if cached_str:
-            cached_path = Path(cached_str)
-            if cached_path.exists():
-                logger.debug(f"Retrieved cached path for {key.value}: {cached_path}")
-                return cached_path
-            else:
-                # Remove invalid cached path
-                logger.debug(f"Removing invalid cached path for {key.value}: {cached_path}")
-                del self._cache[key.value]
-                self._save_cache()
-        
+
+    def get_cached_path(self, key: type[PathCacheKey]) -> Path | None:
+        """Return the remembered directory for ``key`` if it still exists."""
+
+        cached_str = self._cache.get(key.stored_key)
+        if not cached_str:
+            return None
+        cached_path = Path(cached_str)
+        if cached_path.exists():
+            return cached_path
+        del self._cache[key.stored_key]
+        self._save_cache()
         return None
-    
-    def set_cached_path(self, key: PathCacheKey, path: Path) -> None:
-        """
-        Set cached path for a specific key.
-        
-        Args:
-            key: PathCacheKey identifying the context
-            path: Path to cache
-        """
+
+    def set_cached_path(self, key: type[PathCacheKey], path: Path) -> None:
+        """Remember ``path`` for ``key``; a path that does not exist is ignored."""
+
         if path and path.exists():
-            self._cache[key.value] = str(path)
+            self._cache[key.stored_key] = str(path)
             self._save_cache()
-            logger.debug(f"Cached path for {key.value}: {path}")
         else:
-            logger.warning(f"Attempted to cache non-existent path for {key.value}: {path}")
-    
-    def get_initial_path(self, key: PathCacheKey, fallback: Optional[Path] = None) -> Path:
-        """
-        Get initial path with intelligent fallback hierarchy.
-        
-        Args:
-            key: PathCacheKey identifying the context
-            fallback: Optional fallback path if cached path unavailable
-            
-        Returns:
-            Best available path (cached > fallback > home directory)
-        """
-        # Try cached path first
+            logger.warning(f"Attempted to cache non-existent path for {key.stored_key}: {path}")
+
+    def get_initial_path(self, key: type[PathCacheKey], fallback: Path | None = None) -> Path:
+        """Return the remembered directory, else ``fallback``, else the home directory."""
+
         cached = self.get_cached_path(key)
         if cached:
             return cached
-        
-        # Try fallback
         if fallback and fallback.exists():
             return fallback
-        
-        # Ultimate fallback to home directory
         return Path.home()
-    
-    def clear_cache(self) -> None:
-        """Clear all cached paths."""
-        self._cache.clear()
-        self._save_cache()
-        logger.info("Cleared all cached paths")
-    
-    def remove_cached_path(self, key: PathCacheKey) -> None:
-        """
-        Remove specific cached path.
-        
-        Args:
-            key: PathCacheKey to remove
-        """
-        if key.value in self._cache:
-            del self._cache[key.value]
-            self._save_cache()
-            logger.debug(f"Removed cached path for {key.value}")
 
 
-# Global cache instance
-_global_path_cache: Optional[UnifiedPathCache] = None
+_global_path_cache: UnifiedPathCache | None = None
 
 
 def get_path_cache() -> UnifiedPathCache:
-    """Get global path cache instance."""
+    """Return the process-wide path cache."""
+
     global _global_path_cache
     if _global_path_cache is None:
         _global_path_cache = UnifiedPathCache()
     return _global_path_cache
 
 
-def cache_path(key: PathCacheKey, path: Path) -> None:
-    """
-    Convenience function to cache a path.
-    
-    Args:
-        key: PathCacheKey identifying the context
-        path: Path to cache
-    """
+def cache_path(key: type[PathCacheKey], path: Path) -> None:
+    """Remember ``path`` for ``key`` in the process-wide cache."""
+
     get_path_cache().set_cached_path(key, path)
 
 
-def get_cached_path(key: PathCacheKey) -> Optional[Path]:
-    """
-    Convenience function to get cached path.
-    
-    Args:
-        key: PathCacheKey identifying the context
-        
-    Returns:
-        Cached Path if exists and valid, None otherwise
-    """
-    return get_path_cache().get_cached_path(key)
+def get_initial_path(key: type[PathCacheKey], fallback: Path | None = None) -> Path:
+    """Return the starting directory for a dialog opened in context ``key``."""
 
-
-def get_initial_path(key: PathCacheKey, fallback: Optional[Path] = None) -> Path:
-    """
-    Convenience function to get initial path with fallback.
-    
-    Args:
-        key: PathCacheKey identifying the context
-        fallback: Optional fallback path
-        
-    Returns:
-        Best available path (cached > fallback > home directory)
-    """
     return get_path_cache().get_initial_path(key, fallback)
-
-
-# Backward compatibility aliases for existing code
-def cache_browser_path(key: PathCacheKey, path: Path) -> None:
-    """Backward compatibility alias for TUI code."""
-    cache_path(key, path)
-
-
-def cache_dialog_path(key: PathCacheKey, path: Path) -> None:
-    """Backward compatibility alias for PyQt code."""
-    cache_path(key, path)
-
-
-def get_cached_browser_path(key: PathCacheKey, fallback: Optional[Path] = None) -> Path:
-    """Backward compatibility alias for TUI code."""
-    return get_initial_path(key, fallback)
-
-
-def get_cached_dialog_path(key: PathCacheKey, fallback: Optional[Path] = None) -> Path:
-    """Backward compatibility alias for PyQt code."""
-    return get_initial_path(key, fallback)

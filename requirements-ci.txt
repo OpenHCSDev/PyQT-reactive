@@ -1,2 +1,2 @@
 # Source candidates needed to validate this checkout before coordinated publication.
-objectstate @ git+https://github.com/OpenHCSDev/ObjectState.git@44379b0c75fb5bb69c27b4c6a3f4ca6eb28712ca
+# Empty: every first-party dependency is released (objectstate 2.0.0, python-introspect 0.2.6).

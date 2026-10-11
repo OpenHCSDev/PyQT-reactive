@@ -822,10 +822,10 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
 
     def _open_file(self):
         """Open file dialog and load content."""
-        from pyqt_reactive.core.path_cache import PathCacheKey, get_cached_dialog_path, cache_dialog_path
+        from pyqt_reactive.core.path_cache import CodeEditor, cache_path, get_initial_path
 
         # Get cached initial directory
-        initial_dir = str(get_cached_dialog_path(PathCacheKey.CODE_EDITOR, fallback=Path.home()))
+        initial_dir = str(get_initial_path(CodeEditor, fallback=Path.home()))
 
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Python File", initial_dir, "Python Files (*.py);;All Files (*)"
@@ -834,7 +834,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             try:
                 selected_path = Path(file_path)
                 # Cache the parent directory for future dialogs
-                cache_dialog_path(PathCacheKey.CODE_EDITOR, selected_path.parent)
+                cache_path(CodeEditor, selected_path.parent)
 
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -844,10 +844,10 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
 
     def _save_as(self):
         """Save content to file."""
-        from pyqt_reactive.core.path_cache import PathCacheKey, get_cached_dialog_path, cache_dialog_path
+        from pyqt_reactive.core.path_cache import CodeEditor, cache_path, get_initial_path
 
         # Get cached initial directory
-        initial_dir = str(get_cached_dialog_path(PathCacheKey.CODE_EDITOR, fallback=Path.home()))
+        initial_dir = str(get_initial_path(CodeEditor, fallback=Path.home()))
 
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Python File", initial_dir, "Python Files (*.py);;All Files (*)"
@@ -862,7 +862,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
                     file_path = str(selected_path)
 
                 # Cache the parent directory for future dialogs
-                cache_dialog_path(PathCacheKey.CODE_EDITOR, selected_path.parent)
+                cache_path(CodeEditor, selected_path.parent)
 
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(self.editor.text())

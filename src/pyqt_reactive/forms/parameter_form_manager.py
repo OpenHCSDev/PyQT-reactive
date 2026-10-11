@@ -1078,7 +1078,7 @@ class ParameterFormManager(
         INCLUDING all sibling fields, but mask out the specific changed widget.
         This highlights "all fields that inherited the change".
 
-        TIME-TRAVEL: When _in_time_travel flag is set, also refresh widget values
+        TIME-TRAVEL: While a snapshot restore is in progress, also refresh widget values
         for the changed paths (since user didn't type - we need to sync widgets).
         """
         if self._parent_manager is not None:
@@ -1130,7 +1130,7 @@ class ParameterFormManager(
                 )
             self._pending_path_scoped_state_refresh = None
 
-        if ObjectStateRegistry._in_time_travel:
+        if ObjectStateRegistry.is_restoring_snapshot():
             # CRITICAL: Refresh enabled styling for all managers after time-travel
             # Widget updates bypass the FieldChangeDispatcher (signals blocked), so styling
             # isn't triggered automatically. We must manually sync styling to match restored state.

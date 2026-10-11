@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Optional, TypeVar
 
 from objectstate import semantic_values_equal
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -391,9 +392,9 @@ class ScopeTokenService:
     _scope_id_cache: dict[tuple[str, int], str] = {}
 
     @staticmethod
-    def _scope_id_for_token(parent_scope: str, token: str) -> str:
+    def _scope_id_for_token(parent_scope: str, token: str) -> ScopeKey:
         """The one serialization projection of nominal object-token identity."""
-        return f"{parent_scope}::{token}"
+        return ScopeKey(parent_scope).child(token)
 
     @classmethod
     def build_scope_id(cls, parent_scope, obj: ScopeTokenTarget) -> str:
@@ -439,12 +440,14 @@ class ScopeTokenService:
     def clear_scope(cls, parent_scope) -> None:
         """Clear all generators for a parent scope (and nested children)."""
         parent_scope = cls._normalize_scope(parent_scope)
-        keys_to_remove = [k for k in cls._generators if k[0].startswith(parent_scope)]
+        keys_to_remove = [k for k in cls._generators if ScopeKey(parent_scope).contains(k[0])]
         for key in keys_to_remove:
             del cls._generators[key]
 
         # PERFORMANCE: Also clear scope_id cache for this scope
-        cache_keys_to_remove = [k for k in cls._scope_id_cache if k[0].startswith(parent_scope)]
+        cache_keys_to_remove = [
+            k for k in cls._scope_id_cache if ScopeKey(parent_scope).contains(k[0])
+        ]
         for key in cache_keys_to_remove:
             del cls._scope_id_cache[key]
 

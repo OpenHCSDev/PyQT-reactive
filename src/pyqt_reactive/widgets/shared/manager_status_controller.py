@@ -17,11 +17,16 @@ from pyqt_reactive.widgets.shared.manager_ui_scaffold import ManagerHeaderParts
 
 @dataclass
 class ManagerStatusController:
-    """Owns manager status text rendering and optional marquee scrolling."""
+    """Owns manager status text rendering and optional marquee scrolling.
+
+    One marquee timer, parented to the manager widget, lives as long as the
+    widget; each status message restarts it.
+    """
 
     enable_scrolling: bool
     presentation_strategy: Any = None
     scroll_timer: QTimer | None = None
+    scroll_area: Any = None
     scroll_position: int = 0
     single_message_width: int = 0
     current_message: str = "Ready"
@@ -89,10 +94,9 @@ class ManagerStatusController:
         status_label.adjustSize()
 
         separator = "     "
-        temp_label = QLabel(f"{rendered_message}{separator}")
-        temp_label.setFont(status_label.font())
-        temp_label.adjustSize()
-        self.single_message_width = temp_label.width()
+        self.single_message_width = status_label.fontMetrics().horizontalAdvance(
+            f"{rendered_message}{separator}"
+        )
 
         label_width = status_label.width()
         scroll_width = status_scroll.viewport().width()
@@ -116,32 +120,27 @@ class ManagerStatusController:
         status_scroll: Any,
         timer_parent: Any,
     ) -> None:
-        if self.scroll_timer:
-            self.scroll_timer.stop()
-            self.scroll_timer = None
-
         status_scroll.horizontalScrollBar().setValue(0)
         self.scroll_position = 0
+        self.scroll_area = status_scroll
 
-        label_width = status_label.width()
-        scroll_width = status_scroll.viewport().width()
+        if status_label.width() <= status_scroll.viewport().width():
+            if self.scroll_timer is not None:
+                self.scroll_timer.stop()
+            return
 
-        if label_width > scroll_width:
+        if self.scroll_timer is None:
             self.scroll_timer = QTimer(timer_parent)
             self.scroll_timer.setTimerType(Qt.TimerType.PreciseTimer)
-            self.scroll_timer.timeout.connect(
-                lambda: self._auto_scroll(status_label=status_label, status_scroll=status_scroll)
-            )
-            self.scroll_timer.start(50)
+            self.scroll_timer.timeout.connect(self._auto_scroll)
+        self.scroll_timer.start(50)
 
-    def _auto_scroll(self, *, status_label: QLabel, status_scroll: Any) -> None:
-        del status_label
-        scrollbar = status_scroll.horizontalScrollBar()
+    def _auto_scroll(self) -> None:
+        scrollbar = self.scroll_area.horizontalScrollBar()
         max_scroll = scrollbar.maximum()
 
         if max_scroll == 0:
-            if self.scroll_timer:
-                self.scroll_timer.stop()
+            self.scroll_timer.stop()
             return
 
         self.scroll_position += 2

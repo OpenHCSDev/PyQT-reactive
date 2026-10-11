@@ -687,7 +687,6 @@ class AbstractManagerWidget(
         # Core dependencies (REQUIRED)
         self.service_adapter = service_adapter
         self.color_scheme = color_scheme
-        self.event_bus = service_adapter.get_event_bus()
         self.code_execution_workflow: ManagerCodeExecutionWorkflow = (
             NullManagerCodeExecutionWorkflow()
         )
