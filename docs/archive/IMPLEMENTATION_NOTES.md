@@ -69,7 +69,7 @@ if groupbox and hasattr(groupbox, 'title_layout'):
         break
 
 # Update reset button styling for ALL reset buttons
-from pyqt_reactive.utils.styling_utils import update_reset_button_styling
+from formbridge.utils.styling_utils import update_reset_button_styling
 for field_name, reset_button in source.reset_buttons.items():
     update_reset_button_styling(reset_button, source.state, source.field_id, field_name)
 ```

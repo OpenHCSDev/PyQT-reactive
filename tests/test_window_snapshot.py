@@ -12,10 +12,12 @@ from PyQt6.QtWidgets import QLabel, QWidget
 from pyqt_reactive.services.window_snapshot import (
     QtWindowSnapshotRequest,
     QtWindowSnapshotService,
+    WindowSnapshotRenderOwner,
+)
+from formbridge.services.window_snapshot import (
     WindowSnapshotCaptureScope,
     WindowSnapshotCaptureSpec,
     WindowSnapshotFrameCondition,
-    WindowSnapshotRenderOwner,
 )
 
 

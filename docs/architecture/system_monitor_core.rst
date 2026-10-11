@@ -3,7 +3,7 @@ System Monitor Core
 
 **Framework-agnostic system monitoring core for CPU, RAM, GPU, and VRAM metrics.**
 
-**Module**: ``pyqt_reactive.services.system_monitor_core``
+**Module**: ``formbridge.services.system_monitor_core``
 
 Overview
 --------
@@ -52,7 +52,7 @@ Basic Usage
 
 .. code-block:: python
 
-    from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
+    from formbridge.services.system_monitor_core import SystemMonitorCore
 
     # Create monitor with history length
     monitor = SystemMonitorCore(history_length=300)

@@ -22,7 +22,7 @@ Forms
 ``pyqt_reactive.forms.widget_strategies``
    Nominal widget creation strategies.
 
-``pyqt_reactive.forms.parameter_value_contracts``
+``formbridge.forms.parameter_value_contracts``
    Typed form contexts, parameter mappings, and widget values.
 
 Services and protocols

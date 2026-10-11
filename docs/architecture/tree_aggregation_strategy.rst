@@ -4,7 +4,7 @@ Tree Aggregation Strategy
 Module
 ------
 
-``pyqt_reactive.strategies.tree_aggregation``
+``formbridge.strategies.tree_aggregation``
 
 Purpose
 -------

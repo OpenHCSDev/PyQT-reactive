@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.0
+
+The Qt-free tier moved to [formbridge](https://github.com/OpenHCSDev/formbridge),
+which pyqt-reactive now depends on (`formbridge>=0.1,<0.2`). Import each moved
+module from `formbridge` with the same path; nothing is re-exported here.
+
+Removed (now in formbridge): `forms.parameter_form_service`,
+`forms.parameter_info_types`, `forms.parameter_type_utils` and the other
+Qt-free form modules; `services.help_document`, `services.parameter_help_service`,
+`services.function_pattern_code_document`, `services.window_code_document`,
+`services.scope_token_service`, `services.pattern_data_manager`,
+`services.async_operation_executor` and the other Qt-free services;
+`protocols.form_config`, `codegen_provider`, `component_selection`,
+`log_providers`, `preview_formatter`; `strategies`; `utils.preview_formatters`
+and the log utilities; `core.path_cache`, `core.log_utils`,
+`core.performance_monitor`, `core.sort_utils`; `flash_trace`,
+`pattern_metadata`, `weak_events`; the Qt-free manager hooks in
+`widgets.shared` (now `formbridge.managers`) and the scope colour strategy
+(now `formbridge.theming`). The unused `animation.flash_trace` shim is deleted.
+
+Changed:
+
+- `UiThreadDispatcher` is the Qt delivery of formbridge's `MainThreadDispatcher`;
+  its errors are formbridge's `MainThreadDispatch*` errors.
+- `services.window_snapshot` keeps the Qt capture service. The request,
+  frame condition and receipt types are formbridge's; each capture scope and
+  frame-observation kind has a registered Qt implementation
+  (`QtCaptureScope`, `QtFrameObservation`) instead of a callable stored in an
+  enum member.
+
+Added:
+
+- `bridge.windows`, `bridge.object_state_documents` and `bridge.host`: the Qt
+  window, widget-tree and snapshot projections and the ObjectState code-document
+  providers of formbridge's running-UI bridge. An application's main window
+  mixes in `UiBridgeHostWindow`.
+
 ## 0.5.0
 
 Generic Qt machinery moved here from OpenHCS, with the application's choices

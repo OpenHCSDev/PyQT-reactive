@@ -44,7 +44,6 @@ from python_introspect import callable_declaration_kwargs
 from pyqt_reactive.widgets.function_pane import FunctionPaneWidget
 from objectstate import ObjectStateRegistry, semantic_values_equal
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
-from formbridge.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.widgets.shared.detachable_action_bar import (
     DetachableActionBar,
     DetachableActionBarHost,

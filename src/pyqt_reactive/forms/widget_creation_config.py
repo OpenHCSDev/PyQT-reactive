@@ -21,8 +21,6 @@ from dataclasses import dataclass
 from enum import Enum
 import logging
 import itertools
-
-logger = logging.getLogger(__name__)
 from typing import Any, Callable, ClassVar, Optional, TYPE_CHECKING, Type, Tuple
 from metaclass_registry import AutoRegisterMeta
 from python_introspect import resolve_optional
@@ -35,6 +33,8 @@ from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher
 from pyqt_reactive.services.widget_service import WidgetService
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveParameterRow
 from formbridge.forms.layout_constants import CURRENT_LAYOUT
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QGroupBox, QLayout, QWidget

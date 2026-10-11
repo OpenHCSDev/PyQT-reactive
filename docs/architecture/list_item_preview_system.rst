@@ -54,7 +54,7 @@ ordinary segments supplied by the owning manager or formatting service.
 Preview policy and row controls
 -------------------------------
 
-``FormattingConfig`` in ``pyqt_reactive.strategies.preview_formatting`` owns
+``FormattingConfig`` in ``formbridge.strategies.preview_formatting`` owns
 shared display preferences, including detail visibility, collection formatting
 and the default wrapping policy. Pass that declaration to the manager's
 ``set_preview_config()`` method to update formatting and layout together.

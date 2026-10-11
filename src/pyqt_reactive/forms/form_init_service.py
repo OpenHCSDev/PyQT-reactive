@@ -466,7 +466,6 @@ import pyqt_reactive.services.value_collection_service as value_collection_servi
 import pyqt_reactive.services.signal_service as signal_service
 import pyqt_reactive.services.parameter_ops_service as parameter_ops_service
 import pyqt_reactive.services.enabled_field_styling_service as enabled_field_styling_service
-import formbridge.services.enum_dispatch_service as enum_dispatch_service
 
 
 class ServiceRegistryMeta(type):

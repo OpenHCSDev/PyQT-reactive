@@ -81,6 +81,7 @@ from formbridge.services.service_registry import AutoRegisterServiceMixin
 from pyqt_reactive.services.window_navigation import ListItemWindowNavigationDriver
 from formbridge.services.window_code_document import WindowCodeDocument, WindowCodeDocumentDriver
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
+from formbridge.services.host_services import UiHostServices
 
 # Backwards compat alias
 SEGMENTS_ROLE = LAYOUT_ROLE
@@ -642,7 +643,7 @@ class AbstractManagerWidget(
             return None
         return AbstractManagerWidgetCodeDocumentDriver(self)
 
-    def __init__(self, service_adapter, color_scheme=None, parent=None):
+    def __init__(self, service_adapter: UiHostServices, color_scheme=None, parent=None):
         """
         Initialize base widget.
 

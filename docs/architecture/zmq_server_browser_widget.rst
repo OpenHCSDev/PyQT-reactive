@@ -47,7 +47,7 @@ Related Infrastructure
   for standard manager header/layout assembly
 - ``pyqt_reactive.widgets.shared.tree_rebuild_coordinator``
   for state-preserving rebuilds
-- ``pyqt_reactive.services.zmq_server_scan_service``
+- ``formbridge.services.zmq_server_scan_service``
   for typed parallel ping scans
 
 Design Outcome
