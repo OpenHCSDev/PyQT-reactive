@@ -10,7 +10,7 @@ import pytest
 from formbridge.forms.raw_display_value import RawDisplayValue
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtCore import QEvent
-from PyQt6.QtWidgets import QComboBox, QPushButton
+from PyQt6.QtWidgets import QComboBox, QPushButton, QTableWidget
 from python_introspect import RegisteredClassChoices
 
 from pyqt_reactive.forms.inline_dataclass_chrome import StandaloneChildChrome
@@ -24,6 +24,7 @@ from pyqt_reactive.widgets.sectioned_dataclass_editor import (
     TupleFieldSection,
     TupleSummarySection,
 )
+from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnDef
 
 
 class Shape(ABC, metaclass=AutoRegisterMeta):
@@ -76,14 +77,14 @@ class DrawingEditor(SectionedDataclassEditor):
         return (
             ReadOnlyTableSection(
                 title="Totals",
-                columns=("Marks",),
-                rows=((str(len(self.shown.display_field("marks") or ())),),),
+                columns=(ColumnDef("Marks", "marks", value=len),),
+                rows=(self.shown.display_field("marks") or (),),
             ),
             TupleSummarySection(
                 title="Layers",
                 field_name="layers",
-                columns=("Layers",),
-                rows=((", ".join(layers),),) if layers else (),
+                columns=(ColumnDef("Layers", "layers", value=", ".join),),
+                rows=(layers,) if layers else (),
                 actions=(("Add layer", lambda: self.append_to_field("layers", "new")),),
             ),
             MARKS,
@@ -173,6 +174,28 @@ def test_summary_section_actions_edit_the_tuple_field(editor) -> None:
 
     assert editor.get_value().layers == ("base",)
     assert editor.table("layers").item(0, 0).text() == "base"
+
+
+def test_a_read_only_table_shows_each_row_through_its_columns(qapp) -> None:
+    """Headers and cells come from one declaration, a dataclass field's included."""
+
+    shape, label = (
+        DataclassFieldColumns.of(Mark).named(name).read_only() for name in ("shape", "label")
+    )
+    length = ColumnDef("Length", "length", value=lambda mark: len(mark.label))
+    table = QTableWidget(2, 3)
+
+    EditorSection.fill(table, (shape, label, length), (Mark(Circle, "rim"), Mark(Circle)))
+
+    assert [table.horizontalHeaderItem(index).text() for index in range(3)] == [
+        shape.name,
+        label.name,
+        "Length",
+    ]
+    assert [table.item(0, index).text() for index in range(3)] == ["circle", "rim", "3"]
+    assert [table.item(1, index).text() for index in range(3)] == ["circle", "", "0"]
+    table.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_standalone_reset_writes_the_dataclass_default(editor) -> None:

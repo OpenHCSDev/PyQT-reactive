@@ -59,6 +59,7 @@ from python_introspect import (
 
 from pyqt_reactive.forms.widget_strategies import PlaceholderConfig
 from pyqt_reactive.widgets.no_scroll_spinbox import NoScrollComboBox
+from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnDef
 from pyqt_reactive.widgets.structural_table import (
     EditableTableSemanticBinding,
     StructuralTableCellTarget,
@@ -452,6 +453,15 @@ class DataclassFieldColumn:
         for name in self.path:
             value = getattr(value, name)
         return value
+
+    def read_only(self) -> ColumnDef:
+        """This field as a column of a read-only table: same label, same shown text."""
+
+        return ColumnDef(
+            self.label,
+            ".".join(self.path),
+            value=lambda row: self.editor.display(self.value_of(row)),
+        )
 
     def replaced(self, row: object, value: object) -> object:
         """Return ``row`` with this field replaced; every other field is kept."""

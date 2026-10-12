@@ -9,9 +9,11 @@ rebuild generic filter or column-configuration UI.
 Authoritative columns
 ---------------------
 
-``ColumnDef`` is the column declaration. Its ``key`` is the stable semantic
+``ColumnDef`` is the column declaration, and the only one: table browsers and
+the read-only tables of a sectioned editor (``ReadOnlyTableSection``,
+``TupleSummarySection``) both take it. Its ``key`` is the stable semantic
 identity used by presentation and filter state; the visible ``name`` is only a
-label.
+label; ``value`` says what a row shows in the column.
 
 .. code-block:: python
 
@@ -25,8 +27,12 @@ label.
            "tags",
            filterable=True,
            filter_values=lambda item: item.tags,
+           value=lambda item: ", ".join(item.tags),
        ),
    ]
+
+``value`` is optional. Without it, the cell is the row's attribute named
+``key``. Headers and cells are never declared as two parallel tuples.
 
 ``filter_values`` is optional. Without it, the generic filter reads the value
 at the column's row-data index. With it, one row may expose several normalized
@@ -110,9 +116,6 @@ A concrete browser supplies row semantics:
    class ItemBrowser(AbstractTableBrowser[Item]):
        def get_columns(self):
            return columns
-
-       def extract_row_data(self, item):
-           return [item.name, item.category, ", ".join(item.tags)]
 
        def get_searchable_text(self, item):
            return f"{item.name} {item.category} {' '.join(item.tags)}"

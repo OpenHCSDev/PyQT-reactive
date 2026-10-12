@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from formbridge.services.search_service import SearchService
 from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, QTimer, pyqtSignal
@@ -59,14 +59,29 @@ class TableSelectionMode(Enum):
 
 @dataclass(frozen=True)
 class ColumnDef:
-    """Declarative column configuration for table browsers."""
+    """One table column: its header, its identity and what a row shows in it.
+
+    Every table declares its columns with this type. ``value`` says where a
+    cell comes from; left out, the cell is the row's attribute named ``key``.
+    """
     name: str
     key: str
     width: int | None = None
     sortable: bool = True
     resizable: bool = True
     filterable: bool = False
-    filter_values: Callable[[object], Iterable[object]] | None = None
+    filter_values: Callable[[Any], Iterable[object]] | None = None
+    value: Callable[[Any], object] | None = None
+
+    def value_of(self, row: object) -> object:
+        """What ``row`` holds for this column."""
+        if self.value is not None:
+            return self.value(row)
+        return getattr(row, self.key)
+
+    def text_of(self, row: object) -> str:
+        """What the cell shows."""
+        return str(self.value_of(row))
 
 
 @dataclass(frozen=True)
@@ -820,10 +835,9 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         """Return column definitions for the table."""
         raise NotImplementedError
 
-    @abstractmethod
     def extract_row_data(self, item: T) -> list[str]:
-        """Extract display values for a table row from an item."""
-        raise NotImplementedError
+        """One row's cell texts, each from its column's declared value."""
+        return [column.text_of(item) for column in self.get_columns()]
 
     @abstractmethod
     def get_searchable_text(self, item: T) -> str:

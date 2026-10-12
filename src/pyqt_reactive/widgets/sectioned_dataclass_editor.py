@@ -75,6 +75,7 @@ from pyqt_reactive.widgets.editable_table import (
     RowSuggestionMap,
 )
 from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnDef
 from pyqt_reactive.widgets.shared.clickable_help_components import InlineDataclassGroupBox
 from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 from pyqt_reactive.widgets.structural_table import (
@@ -199,15 +200,15 @@ class EditorSection(ABC):
     @staticmethod
     def fill(
         table: QTableWidget,
-        columns: tuple[str, ...],
-        rows: tuple[tuple[str, ...], ...],
+        columns: tuple[ColumnDef, ...],
+        rows: tuple[object, ...],
     ) -> None:
-        """Fill a read-only table and size it to its rows."""
+        """Fill a read-only table, each cell from its column, and size it to its rows."""
 
-        table.setHorizontalHeaderLabels(columns)
+        table.setHorizontalHeaderLabels([column.name for column in columns])
         for row_index, row in enumerate(rows):
-            for column_index, text in enumerate(row):
-                table.setItem(row_index, column_index, QTableWidgetItem(text))
+            for column_index, column in enumerate(columns):
+                table.setItem(row_index, column_index, QTableWidgetItem(column.text_of(row)))
         EditorSection.fit(table)
 
     @staticmethod
@@ -237,11 +238,14 @@ class EditorSection(ABC):
 
 @dataclass(frozen=True, kw_only=True)
 class ReadOnlyTableSection(EditorSection):
-    """A table of text computed by the declaring editor; nothing is edited."""
+    """A table that shows records the declaring editor supplies; nothing is edited.
+
+    Each column says what it shows of a row, so headers and cells cannot drift.
+    """
 
     title: str
-    columns: tuple[str, ...]
-    rows: tuple[tuple[str, ...], ...]
+    columns: tuple[ColumnDef, ...]
+    rows: tuple[object, ...]
 
     def build(self, editor: SectionedDataclassEditor) -> RenderedSection:
         group, layout = self.new_group()
@@ -277,11 +281,12 @@ class TupleSummarySection(FieldSection):
     """A tuple field shown as a read-only summary, edited through its actions.
 
     For records too wide for an inline row table: the declaring editor
-    computes the summary rows and supplies the buttons that edit the field.
+    supplies the summary rows, the columns that show them and the buttons
+    that edit the field.
     """
 
-    columns: tuple[str, ...]
-    rows: tuple[tuple[str, ...], ...]
+    columns: tuple[ColumnDef, ...]
+    rows: tuple[object, ...]
     actions: tuple[tuple[str, Callable[[], None]], ...]
 
     def shown(self, value: RawDisplayValue) -> object:
