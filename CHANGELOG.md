@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.8.0
+
+Requires ObjectState 4 (`objectstate>=4.0.0,<5`) and `formbridge>=0.1.4,<0.2`.
+
+In ObjectState 4 the state registered at the global scope holds the global
+config: an edit of that state is the live global config, `mark_saved` is the
+saved one, `restore_saved` and a checkpoint restore put both back. The config
+window therefore keeps nothing beside the state.
+
+Removed from `pyqt_reactive.windows.config_window`, and what to use instead:
+
+- `GlobalConfigContextCheckpoint`, `ConfigEditSession.capture_global_context`,
+  `ConfigEditSession.restore_global_context`: nothing;
+  `ObjectStateTransactionCheckpoint.capture(state)` / `.restore(state)` of the
+  global state restores the global config.
+- `ConfigEditSession.publish_saved_global_config`: nothing; `state.mark_saved()`
+  is the save.
+- `ConfigEditSession.apply_code_edit_context`: nothing; applying a code edit to
+  the form edits the state.
+- `ConfigEditSession.restore_global_context_if_dirty`,
+  `ConfigEditSession.global_context_dirty`,
+  `ConfigEditSession.mark_global_field_changed`: nothing; restoring the state
+  (`restore_saved`) restores the live global config. Ask `state.dirty_fields`
+  whether there are unsaved edits.
+- `ConfigEditSession.saving`, `begin_save_callback`, `end_save_callback`:
+  nothing; they only guarded `mark_global_field_changed`.
+- `ConfigEditSession.is_global_config`: `is_global_config_type(session.config_class)`.
+
+Behaviour: a config window whose global-config state is not registered at the
+global scope no longer changes the global config when it is edited or saved.
+
 ## 0.7.2
 
 Requires `metaclass-registry>=0.4.0`, `objectstate>=3.0.1,<4`,

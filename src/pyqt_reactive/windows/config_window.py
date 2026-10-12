@@ -10,18 +10,21 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import ClassVar, Generic, TypeVar, cast
 
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
+from formbridge.services.code_editor_form_updater import CodeEditorFormUpdater
+from formbridge.services.window_code_document import (
+    PYTHON_MIME_TYPE,
+    WindowCodeDocument,
+    WindowCodeDocumentDriver,
+    use_external_code_editor,
+)
 from objectstate import (
     DottedFieldPath,
     ObjectState,
     ObjectStateEditSession,
     ObjectStateRegistry,
     ObjectStateTransactionCheckpoint,
-    get_live_global_config,
-    get_saved_global_config,
-    is_global_config_type,
     patch_lazy_constructors,
-    set_live_global_config,
-    set_saved_global_config,
 )
 from objectstate.lazy_factory import LazyDataclass, retain_only_authored_paths
 from PyQt6.QtCore import QSize, pyqtSignal
@@ -35,19 +38,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from formbridge.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
     ParameterFormManager,
 )
-from formbridge.services.code_editor_form_updater import CodeEditorFormUpdater
 from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
-from formbridge.services.window_code_document import (
-    PYTHON_MIME_TYPE,
-    WindowCodeDocument,
-    WindowCodeDocumentDriver,
-    use_external_code_editor,
-)
 from pyqt_reactive.services.window_navigation import (
     RegisteredWindowNavigationRequest,
     WindowNavigationDriver,
@@ -100,31 +95,15 @@ class ConfigDocumentFormat(ABC):
         """Read the config a source document declares."""
 
 
-@dataclass(frozen=True, slots=True)
-class GlobalConfigContextCheckpoint(Generic[ConfigT]):
-    """Exact external and edit-session context at one transaction boundary."""
-
-    saved: ConfigT | None
-    live: ConfigT | None
-    original_live: ConfigT | None
-    dirty: bool
-
-
 @dataclass(slots=True)
 class ConfigEditSession(Generic[ConfigT]):
     """Own non-visual config edit state for ConfigWindow."""
 
     state: ObjectState
     original_config: ConfigT
-    global_context_dirty: bool = False
-    saving: bool = False
-    _original_live_global_config: ConfigT | None = field(init=False, repr=False)
     _object_session: ObjectStateEditSession[ConfigT] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._original_live_global_config = None
-        if self.is_global_config:
-            self._original_live_global_config = get_live_global_config(self.config_class)
         self._object_session = ObjectStateEditSession(
             state_provider=lambda: self.state,
             fallback_object=self.original_config,
@@ -134,10 +113,6 @@ class ConfigEditSession(Generic[ConfigT]):
     @property
     def config_class(self) -> type[ConfigT]:
         return type(self.original_config)
-
-    @property
-    def is_global_config(self) -> bool:
-        return is_global_config_type(self.config_class)
 
     def to_object(self) -> ConfigT:
         """Reconstruct the current config object from ObjectState storage."""
@@ -160,80 +135,6 @@ class ConfigEditSession(Generic[ConfigT]):
             ConfigT,
             retain_only_authored_paths(config, self.state.signature_diff_fields),
         )
-
-    def begin_save_callback(self, window_id: int) -> None:
-        self.saving = True
-        logger.info("SAVE_CONFIG: Set saving=True before callback (id=%s)", window_id)
-
-    def end_save_callback(self, window_id: int) -> None:
-        self.saving = False
-        logger.info("SAVE_CONFIG: Reset saving=False (id=%s)", window_id)
-
-    def mark_global_field_changed(self) -> None:
-        """Track unsaved global-context changes unless a save is in progress."""
-        if self.saving:
-            return
-        self.global_context_dirty = True
-
-    def apply_code_edit_context(self, new_config: ConfigT) -> None:
-        """Publish an unsaved code edit to the live UI context only."""
-        if not self.is_global_config:
-            return
-        set_live_global_config(self.config_class, new_config)
-        self.global_context_dirty = True
-        logger.debug(
-            "Updated LIVE thread-local %s context",
-            self.config_class.__name__,
-        )
-
-    def capture_global_context(self) -> GlobalConfigContextCheckpoint[ConfigT] | None:
-        """Capture saved and live stores independently before a fallible save."""
-
-        if not self.is_global_config:
-            return None
-        return GlobalConfigContextCheckpoint(
-            saved=get_saved_global_config(self.config_class),
-            live=get_live_global_config(self.config_class),
-            original_live=self._original_live_global_config,
-            dirty=self.global_context_dirty,
-        )
-
-    def restore_global_context(
-        self,
-        checkpoint: GlobalConfigContextCheckpoint[ConfigT] | None,
-    ) -> None:
-        """Restore the exact saved/live split captured before a save."""
-
-        if not self.is_global_config or checkpoint is None:
-            return
-        set_saved_global_config(self.config_class, checkpoint.saved)
-        set_live_global_config(self.config_class, checkpoint.live)
-        self._original_live_global_config = checkpoint.original_live
-        self.global_context_dirty = checkpoint.dirty
-
-    def publish_saved_global_config(self, new_config: ConfigT) -> None:
-        """Publish a saved global config to the saved/live thread-local stores."""
-        if not self.is_global_config:
-            return
-        set_saved_global_config(self.config_class, new_config)
-        set_live_global_config(self.config_class, new_config)
-        logger.debug(
-            "Updated SAVED and LIVE thread-local %s on SAVE",
-            self.config_class.__name__,
-        )
-        self._original_live_global_config = new_config
-        self.global_context_dirty = False
-
-    def restore_global_context_if_dirty(self) -> bool:
-        """Restore only the live context that preceded this edit session."""
-        if not self.is_global_config or not self.global_context_dirty:
-            return False
-        set_live_global_config(
-            self.config_class,
-            self._original_live_global_config,
-        )
-        self.global_context_dirty = False
-        return True
 
 
 class ConfigCodeDocumentDriver(WindowCodeDocumentDriver, Generic[ConfigT]):
@@ -553,12 +454,6 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
         form_config.field_id = ""
         form_manager = ParameterFormManager(state=state, config=form_config)
         form_manager.form_build_failed.connect(partial(self._on_form_build_failed, tab))
-        if session.is_global_config:
-            form_manager.parameter_changed.connect(
-                lambda _name, _value, current_session=session: (
-                    current_session.mark_global_field_changed()
-                )
-            )
 
         tree_helper = ConfigHierarchyTreeHelper()
         tree_widget = tree_helper.create_tree_from_root_dataclass(
@@ -586,8 +481,7 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
             config_type=config_type,
             current_config=session.to_code_document_object,
             apply_config=partial(
-                self._apply_config_from_code_document,
-                session,
+                CodeEditorFormUpdater.update_form_from_instance,
                 form_manager,
             ),
             before_read=partial(
@@ -809,7 +703,6 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
         attempted_participants: list[_ConfigEditorTab] = []
         committed: tuple[tuple[_ConfigEditorTab, object], ...] = ()
         state_checkpoints: list[tuple[ObjectState, ObjectStateTransactionCheckpoint]] = []
-        global_context_checkpoints: dict[int, object] = {}
         transaction_started = False
         try:
             # Widget validation and authorization precede even reconstruction
@@ -827,11 +720,6 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
                 (state, ObjectStateTransactionCheckpoint.capture(state)) for state in states
             ]
             previous_objects = {id(tab): tab.state.saved_object for tab in self._tabs}
-            global_context_checkpoints = {
-                id(tab): checkpoint
-                for tab in self._tabs
-                if (checkpoint := tab.session.capture_global_context()) is not None
-            }
             transaction_started = True
 
             with ObjectStateRegistry.atomic_success(
@@ -844,11 +732,10 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
                     tab.state.mark_saved()
 
                 committed = tuple((tab, tab.state.saved_object) for tab, _ in candidates)
-                for tab, config in committed:
-                    tab.session.publish_saved_global_config(config)
 
-                # External effects run only after every ObjectState and global
-                # context exposes the committed object. Include the current
+                # External effects run only after every ObjectState exposes the
+                # committed object (a saved global state is the saved global
+                # config). Include the current
                 # participant before invocation so its own partial apply is
                 # compensated if it raises.
                 for tab, config in committed:
@@ -856,11 +743,7 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
                     if participant is None:
                         continue
                     attempted_participants.append(tab)
-                    tab.session.begin_save_callback(id(self))
-                    try:
-                        participant.apply(config)
-                    finally:
-                        tab.session.end_save_callback(id(self))
+                    participant.apply(config)
 
         except Exception as error:
             rollback_errors: list[Exception] = []
@@ -872,16 +755,8 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
                     participant = tab.spec.save_participant
                     if participant is None:
                         continue
-                    tab.session.begin_save_callback(id(self))
                     try:
                         participant.rollback(previous_objects[id(tab)])
-                    except Exception as rollback_error:
-                        rollback_errors.append(rollback_error)
-                    finally:
-                        tab.session.end_save_callback(id(self))
-                for tab in self._tabs:
-                    try:
-                        tab.session.restore_global_context(global_context_checkpoints.get(id(tab)))
                     except Exception as rollback_error:
                         rollback_errors.append(rollback_error)
                 for state, checkpoint in state_checkpoints:
@@ -946,15 +821,6 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
                 f"Failed to view code:\n{error}",
             )
 
-    @staticmethod
-    def _apply_config_from_code_document(
-        session: ConfigEditSession,
-        form_manager: ParameterFormManager,
-        new_config: object,
-    ) -> None:
-        session.apply_code_edit_context(new_config)
-        CodeEditorFormUpdater.update_form_from_instance(form_manager, new_config)
-
     def require_managed_state_mutation_allowed(self) -> None:
         for tab in self._tabs:
             if tab.spec.before_mutation is not None:
@@ -963,7 +829,6 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
     def restore_managed_state(self) -> None:
         for tab in self._tabs:
             tab.restore_policy.restore(tab.state)
-            tab.session.restore_global_context_if_dirty()
 
     def before_managed_reject(self) -> None:
         self.config_cancelled.emit()
