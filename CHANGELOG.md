@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.7.1
+
+Requires ObjectState 3 (`objectstate>=3.0,<4`) and `formbridge>=0.1.2,<0.2`.
+No public name is removed.
+
+Changed:
+
+- An unset field's placeholder is one read: `WidgetService.
+  show_resolved_value_as_placeholder` shows `state.get_resolved_value(path)`.
+  The value-update path used to build its own context stack
+  (`build_context_stack(ancestor_objects=...)`, removed in ObjectState 3) and
+  read the object's attribute, and it used the default prefix instead of the
+  form's `placeholder_prefix`; the two refresh paths in `ParameterOpsService`
+  each repeated the resolve-and-format step. All three call the one method.
+- Provenance navigation reads `state.get_provenance(path)` once per action
+  (`ProvenanceNavigationMixin._provenance_source`). When another config of the
+  same object supplies the value, the source state is the widget's own state.
+  ObjectState 3 reports that source as `(None, source_type)` for a state
+  without a scope id; the target path used to be looked up in the global
+  state for that scope.
+- `AbstractManagerWidget` no longer builds a `LiveContextResolver` it never
+  called.
+
 ## 0.7.0
 
 Generic machinery moved here from three OpenHCS GUI classes. Needs

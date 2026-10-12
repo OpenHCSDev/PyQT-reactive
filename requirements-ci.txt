@@ -1,2 +1,4 @@
 # Source candidates needed to validate this checkout before coordinated publication.
-# Empty: every first-party dependency is released (formbridge 0.1.1, objectstate 2.1.1).
+# Remove once objectstate 3.0.0 and formbridge 0.1.2 are on PyPI.
+objectstate @ git+https://github.com/OpenHCSDev/ObjectState.git@abe763cbf58cbfbaa85649b1ef394a12778daca5
+formbridge @ git+https://github.com/OpenHCSDev/formbridge.git@1e73e6c9fbab365616516928731c86a8d435e2d3

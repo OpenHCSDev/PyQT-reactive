@@ -220,9 +220,6 @@ class ParameterOpsService(ParameterServiceABC):
         if not PyQt6WidgetEnhancer.supports_placeholder(widget):
             return
 
-        # Compute full dotted path for nested PFMs
-        full_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
-
         # Only refresh if value is None (needs placeholder)
         # Use manager.parameters (scoped) not state.parameters (full paths)
         current_value = manager.parameters.get(field_name)
@@ -231,26 +228,7 @@ class ParameterOpsService(ParameterServiceABC):
             logger.debug(f"🔬 RESET_TRACE: value is not None, no placeholder needed")
             return
 
-        logger.debug(f"🔬 RESET_TRACE: value is None, calling get_resolved_value...")
-
-        from objectstate import LazyDefaultPlaceholderService
-
-        # Get raw resolved value from ObjectState (handles context building internally)
-        # Use full_path for nested PFMs
-        resolved_value = manager.state.get_resolved_value(full_path)
-        logger.debug(f"🔬 RESET_TRACE: resolved_value={repr(resolved_value)[:50]}")
-
-        # Format for display (VIEW responsibility)
-        placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
-            resolved_value, manager.config.placeholder_prefix
-        )
-        logger.debug(f"        📝 Formatted placeholder: {repr(placeholder_text)[:50]}")
-
-        if placeholder_text:
-            # Use type-safe method that passes actual value for checkbox groups
-            PyQt6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
-            logger.debug(f"        ✅ Applied placeholder to widget")
-
+        if manager._widget_service.show_resolved_value_as_placeholder(widget, field_name, manager):
             # Keep enabled-field styling in sync when placeholder changes the visual state
             if field_name == 'enabled':
                 try:
@@ -321,7 +299,6 @@ class ParameterOpsService(ParameterServiceABC):
                 return
 
             from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
-            from objectstate import LazyDefaultPlaceholderService
             logger.debug(f"[PLACEHOLDER] {manager.field_id}: Refreshing placeholders via ObjectState")
 
             monitor = get_monitor("Placeholder resolution per field")
@@ -339,18 +316,10 @@ class ParameterOpsService(ParameterServiceABC):
                     continue
 
                 full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-                current_value = manager.state.parameters.get(full_path)
-                should_apply_placeholder = current_value is None
-                resolved_value = manager.state.get_resolved_value(full_path)
-
-                if should_apply_placeholder:
+                if manager.state.parameters.get(full_path) is None:
                     with monitor.measure():
-                        # Format for display (VIEW responsibility)
-                        placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
-                            resolved_value, manager.config.placeholder_prefix
+                        manager._widget_service.show_resolved_value_as_placeholder(
+                            widget, param_name, manager
                         )
-                        if placeholder_text:
-                            # Use type-safe method that passes actual value for checkbox groups
-                            PyQt6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
                 elif PyQt6WidgetEnhancer.has_placeholder_state(widget):
                     PyQt6WidgetEnhancer._clear_placeholder_state(widget)
