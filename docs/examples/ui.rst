@@ -138,7 +138,7 @@ The generic service registry is keyed by a service type:
 
    from abc import ABC, abstractmethod
 
-   from pyqt_reactive.services.service_registry import ServiceRegistry
+   from formbridge.services.service_registry import ServiceRegistry
 
    class StatusSink(ABC):
        @abstractmethod

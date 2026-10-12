@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_reactive.services.search_service import SearchService
+from formbridge.services.search_service import SearchService
 from pyqt_reactive.theming import ColorScheme
 
 T = TypeVar('T')

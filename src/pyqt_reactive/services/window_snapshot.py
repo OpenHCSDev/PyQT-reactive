@@ -3,186 +3,94 @@
 from __future__ import annotations
 
 import hashlib
-from abc import ABC, abstractmethod
 import re
 import time
-from math import isfinite
+from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
-from python_introspect import project_dataclass
-from zmqruntime.timeouts import OperationDeadline
+from typing import TYPE_CHECKING, ClassVar
 
-from ..flash_trace import (
-    FlashTrace,
-    FlashTraceRecord,
+from formbridge.flash_trace import FlashTrace
+from formbridge.services.window_snapshot import (
+    FlashObservation,
+    FrameObservation,
+    NoObservation,
+    RenderObservation,
+    WindowRenderFrame,
+    WindowSnapshotCaptureScope,
+    WindowSnapshotCaptureSpec,
+    WindowSnapshotObservationFailure,
+    WindowVisualObservation,
 )
+from metaclass_registry import AutoRegisterMeta
+from zmqruntime.timeouts import OperationDeadline
 
 if TYPE_CHECKING:
     from PyQt6.QtCore import pyqtBoundSignal
     from PyQt6.QtGui import QPixmap
-    from PyQt6.QtWidgets import QWidget
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-
-QtWindowCaptureCallable = Callable[["QWidget"], "QPixmap"]
-
-
-@dataclass(frozen=True, slots=True)
-class FlashPaintElement:
-    """One source actually painted, in owning-window coordinates."""
-
-    key: str
-    source_token: str
-    rect: tuple[int, int, int, int]
-    rgba: tuple[int, int, int, int]
+    from PyQt6.QtWidgets import QWidget
 
 
-@dataclass(frozen=True, slots=True)
-class FlashPaintFrame:
-    """Receipt emitted after the flash painter has ended."""
+class QtCaptureScope(ABC, metaclass=AutoRegisterMeta):
+    """Qt rendering of one capture scope; each scope is a subclass."""
 
-    window_identity: int
-    painted_at_monotonic: float
-    configured_maximum_alpha: int
-    configured_flash_duration_s: float
-    elements: tuple[FlashPaintElement, ...]
+    __registry_key__ = "scope"
+    __skip_if_no_key__ = True
 
-    @property
-    def has_maximum_alpha(self) -> bool:
-        return any(element.rgba[3] == self.configured_maximum_alpha for element in self.elements)
+    scope: ClassVar[WindowSnapshotCaptureScope | None] = None
 
+    @staticmethod
+    @abstractmethod
+    def render(widget: QWidget) -> QPixmap:
+        """Render the scope's pixels without sampling desktop pixels."""
 
-def _maximum_alpha_frame(frame: FlashPaintFrame) -> bool:
-    return frame.has_maximum_alpha
-
-
-def _no_frame(frame: FlashPaintFrame) -> bool:
-    return False
+    @staticmethod
+    def capture(scope: WindowSnapshotCaptureScope, widget: QWidget) -> QPixmap:
+        return QtCaptureScope.__registry__[scope].render(widget)
 
 
-def _observe_flash(*args):
-    _WindowFlashSnapshotObservation(*args)
+class QtWidgetCapture(QtCaptureScope):
+    scope = WindowSnapshotCaptureScope.WIDGET
+
+    @staticmethod
+    def render(widget: QWidget) -> QPixmap:
+        return widget.grab()
 
 
-def _observe_render(*args):
-    _WindowRenderSnapshotObservation(*args)
+class QtWindowCapture(QtCaptureScope):
+    scope = WindowSnapshotCaptureScope.WINDOW
+
+    @staticmethod
+    def render(widget: QWidget) -> QPixmap:
+        return widget.window().grab()
 
 
-def _capture_immediate(service, request, completed, failed):
-    completed(service.capture(request))
+class QtFrameObservation(ABC, metaclass=AutoRegisterMeta):
+    """Qt implementation of one frame observation kind; each kind is a subclass."""
+
+    __registry_key__ = "observation"
+    __skip_if_no_key__ = True
+
+    observation: ClassVar[type[FrameObservation] | None] = None
+
+    @staticmethod
+    def start(service, request, completed, failed) -> None:
+        """Run the requested condition's observation, then capture."""
+
+        condition = request.capture.frame_condition
+        QtFrameObservation.__registry__[condition.observation](
+            service, request, completed, failed
+        )
 
 
-def _validate_render_observation(observation):
-    if observation.render_frame is None:
-        raise ValueError("Render-complete capture has no native completion receipt.")
-    frame = observation.render_frame
-    if (
-        frame.window_identity != observation.window_identity
-        or not observation.started_at_monotonic
-        <= frame.completed_at_monotonic
-        <= observation.completed_at_monotonic
-    ):
-        raise ValueError("Native completion receipt is outside this window observation.")
+class _ImmediateSnapshot(QtFrameObservation):
+    observation = NoObservation
 
-
-def _validate_visual_observation(observation):
-    pass
-
-
-class WindowSnapshotFrameCondition(StrEnum):
-    """Closed capture conditions evaluated from real renderer receipts."""
-
-    IMMEDIATE = (
-        "immediate",
-        False,
-        _no_frame,
-        False,
-        False,
-        _capture_immediate,
-        _validate_visual_observation,
-    )
-    FLASH_MAXIMUM_ALPHA = (
-        "flash_maximum_alpha",
-        True,
-        _maximum_alpha_frame,
-        False,
-        True,
-        _observe_flash,
-        _validate_visual_observation,
-    )
-    NO_FLASH = (
-        "no_flash",
-        True,
-        _no_frame,
-        True,
-        False,
-        _observe_flash,
-        _validate_visual_observation,
-    )
-    RENDER_COMPLETE = (
-        "render_complete",
-        True,
-        _no_frame,
-        False,
-        False,
-        _observe_render,
-        _validate_render_observation,
-    )
-
-    def __new__(
-        cls,
-        value,
-        observes,
-        accepts_frame,
-        accepts_quiet,
-        requests_native_render,
-        observe,
-        validate,
-    ):
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member.observes = observes
-        member._accepts_frame = accepts_frame
-        member.accepts_quiet = accepts_quiet
-        member.requests_native_render = requests_native_render
-        member._observe = observe
-        member._validate = validate
-        return member
-
-    def accepts_frame(self, frame: FlashPaintFrame) -> bool:
-        return self._accepts_frame(frame)
-
-    def accepts_timeout(self, starts: int, frames: int) -> bool:
-        return self.accepts_quiet and starts == 0 and frames == 0
-
-    def observe(self, service, request, completed, failed) -> None:
-        if not self.observes:
-            raise ValueError("Immediate snapshots do not require observation.")
-        self._observe(service, request, completed, failed)
-
-    def request_capture(self, service, request, completed, failed) -> None:
-        self._observe(service, request, completed, failed)
-
-    def validate_observation(self, observation: WindowVisualObservation | None) -> None:
-        if observation is None:
-            if self.observes:
-                raise ValueError("Observed capture has no frame-condition receipt.")
-            return
-        if observation.condition is not self:
-            raise ValueError("Frame-condition receipt does not match the capture contract.")
-        self._validate(observation)
-
-
-@dataclass(frozen=True, slots=True)
-class WindowRenderFrame:
-    """Native renderer completion witnessed after this observation was armed."""
-
-    window_identity: int
-    renderer_identity: int
-    completed_at_monotonic: float
+    def __init__(self, service, request, completed, failed):
+        completed(service.capture(request))
 
 
 class WindowSnapshotRenderOwner(ABC):
@@ -219,106 +127,6 @@ class OpenGLWidgetSnapshotRenderOwner(WindowSnapshotRenderOwner):
 
     def request_frame(self) -> None:
         self.canvas.update()
-
-
-@dataclass(frozen=True, slots=True)
-class WindowVisualObservation:
-    """Actual target-window activity during one armed observation."""
-
-    condition: WindowSnapshotFrameCondition
-    window_identity: int
-    started_at_monotonic: float
-    completed_at_monotonic: float
-    configured_flash_duration_s: float
-    baseline_inactive: bool
-    flash_start_count: int
-    painted_frame_count: int
-    frame: FlashPaintFrame | None = None
-    # Failure diagnostics reuse the existing bounded process-local trace ring.
-    # These contextual records are not asserted to be target-window-only.
-    trace: tuple[FlashTraceRecord, ...] = ()
-    render_frame: WindowRenderFrame | None = None
-    observation_budget_s: float | None = None
-    operation_deadline: OperationDeadline | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class WindowSnapshotObservationFailure:
-    """Failed observation with its actual activity evidence preserved."""
-
-    error: Exception
-    observation: WindowVisualObservation
-
-
-def _widget_pixmap(widget: QWidget) -> QPixmap:
-    """Render the exact requested widget without sampling desktop pixels."""
-
-    return widget.grab()
-
-
-def _window_pixmap(widget: QWidget) -> QPixmap:
-    """Render the requested widget's owning Qt window."""
-
-    return widget.window().grab()
-
-
-class WindowSnapshotCaptureScope(StrEnum):
-    """Safe Qt-rendered screenshot scopes with declaration-owned capture logic."""
-
-    WIDGET = ("widget", _widget_pixmap)
-    WINDOW = ("window", _window_pixmap)
-
-    def __new__(
-        cls,
-        value: str,
-        capture: QtWindowCaptureCallable,
-    ) -> WindowSnapshotCaptureScope:
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member._capture = capture
-        return member
-
-    def capture(self, widget: QWidget) -> QPixmap:
-        """Capture through this member's Qt-rendered pixel authority."""
-
-        return self._capture(widget)
-
-
-@dataclass(frozen=True, kw_only=True)
-class WindowSnapshotCaptureSpec:
-    """Requested destination and safe Qt-rendered capture scope."""
-
-    output_dir_path: str
-    capture_scope: WindowSnapshotCaptureScope = WindowSnapshotCaptureScope.WIDGET
-    frame_condition: WindowSnapshotFrameCondition = WindowSnapshotFrameCondition.IMMEDIATE
-    observation_timeout_s: float = 5.0
-
-    def __post_init__(self) -> None:
-        if not isfinite(self.observation_timeout_s) or not 0 < self.observation_timeout_s <= 30:
-            raise ValueError("observation_timeout_s must be finite and in (0, 30].")
-
-    def snapshot_operation_deadline(self) -> OperationDeadline | None:
-        """Optional enclosing operation supplied by a product request owner."""
-        return None
-
-    @staticmethod
-    def observation_phase_budget(remaining_seconds: float) -> float:
-        """Reserve the other half of an operation for capture/reply delivery."""
-        return remaining_seconds / 2
-
-    def same_capture_contract(self, other: WindowSnapshotCaptureSpec) -> bool:
-        """Return whether two snapshot carriers request the same capture."""
-
-        return project_dataclass(WindowSnapshotCaptureSpec, self) == project_dataclass(
-            WindowSnapshotCaptureSpec, other
-        )
-
-    def capture_fields(self) -> dict[str, object]:
-        """Project every capture-owned field, excluding independent carrier fields."""
-        return {
-            declared.name: getattr(self, declared.name)
-            for declared in fields(WindowSnapshotCaptureSpec)
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,7 +199,7 @@ class QtWindowSnapshotService:
         failed: Callable[[WindowSnapshotObservationFailure], None],
     ) -> None:
         """Capture through the requested condition's declared implementation."""
-        request.capture.frame_condition.request_capture(self, request, completed, failed)
+        QtFrameObservation.start(self, request, completed, failed)
 
     def observe(
         self,
@@ -400,7 +208,9 @@ class QtWindowSnapshotService:
         failed: Callable[[WindowSnapshotObservationFailure], None],
     ) -> None:
         """Arm a bounded real-renderer observation without blocking UI mutations."""
-        request.capture.frame_condition.observe(self, request, completed, failed)
+        if not request.capture.frame_condition.observes:
+            raise ValueError("Immediate snapshots do not require observation.")
+        QtFrameObservation.start(self, request, completed, failed)
 
     def capture(
         self,
@@ -411,7 +221,7 @@ class QtWindowSnapshotService:
 
         request.capture.frame_condition.validate_observation(observation)
         request.require_operation_budget()
-        pixmap = request.capture.capture_scope.capture(request.widget)
+        pixmap = QtCaptureScope.capture(request.capture.capture_scope, request.widget)
         return self._persist(request, pixmap, observation)
 
     def _persist(
@@ -478,7 +288,7 @@ class QtWindowSnapshotService:
         return token[:80] if token else "window"
 
 
-class _WindowSnapshotObservation(ABC):
+class _WindowSnapshotObservation(QtFrameObservation):
     """One Qt-owned deadline, capture, failure and cleanup algorithm."""
 
     def __init__(self, service, request, completed, failed, owner, flash_duration_s=0.0):
@@ -606,6 +416,8 @@ class _WindowSnapshotObservation(ABC):
 class _WindowRenderSnapshotObservation(_WindowSnapshotObservation):
     """Small native-render hooks on the shared observation lifecycle."""
 
+    observation = RenderObservation
+
     def __init__(self, service, request, completed, failed):
         owner = request.render_owner
         if owner is None:
@@ -636,6 +448,8 @@ class _WindowRenderSnapshotObservation(_WindowSnapshotObservation):
 
 class _WindowFlashSnapshotObservation(_WindowSnapshotObservation):
     """Flash-owner hooks on the shared observation lifecycle."""
+
+    observation = FlashObservation
 
     def __init__(self, service, request, completed, failed):
         from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
@@ -677,7 +491,7 @@ class _WindowFlashSnapshotObservation(_WindowSnapshotObservation):
         self.rendering = True
         self.rendered_frame = None
         try:
-            pixmap = self.request.capture.capture_scope.capture(self.request.widget)
+            pixmap = QtCaptureScope.capture(self.request.capture.capture_scope, self.request.widget)
         except Exception as exc:
             self._fail(exc)
             return

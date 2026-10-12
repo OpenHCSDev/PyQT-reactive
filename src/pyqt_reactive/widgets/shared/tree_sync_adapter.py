@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidgetItem
 
-from pyqt_reactive.services.tree_item_key import TreeItemKeyProviderABC
+from formbridge.services.tree_item_key import TreeItemKeyProviderABC
 
 
 @dataclass

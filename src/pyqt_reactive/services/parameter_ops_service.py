@@ -13,35 +13,19 @@ Key features:
 """
 
 from __future__ import annotations
-from typing import Any, TYPE_CHECKING
+
 import logging
-from functools import wraps
+from typing import TYPE_CHECKING
 
-from .parameter_service_abc import ParameterServiceABC
-
-# Optional performance monitoring - stub if not available
-try:
-    from pyqt_reactive.core.performance_monitor import timer, get_monitor
-except ImportError:
-    def timer(name):
-        """No-op timer decorator when performance_monitor not available."""
-        def decorator(func):
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                return func(*args, **kwargs)
-            return wrapper
-        return decorator
-
-    def get_monitor():
-        """No-op monitor when performance_monitor not available."""
-        return None
+from formbridge.core.performance_monitor import get_monitor, timer
+from formbridge.services.parameter_service_abc import ParameterServiceABC
 
 if TYPE_CHECKING:
-    from pyqt_reactive.forms.parameter_info_types import (
-        OptionalDataclassInfo,
+    from formbridge.forms.parameter_info_types import (
         DirectDataclassInfo,
         GenericInfo,
         InlineDataclassWidgetInfo,
+        OptionalDataclassInfo,
     )
 
 logger = logging.getLogger(__name__)

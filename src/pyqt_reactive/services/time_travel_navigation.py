@@ -11,7 +11,7 @@ from objectstate import ObjectState, ObjectStateRegistry, ScopeKey
 from objectstate.time_travel_profile import TimeTravelProfiler
 from PyQt6.QtCore import QTimer
 
-from pyqt_reactive.services.function_navigation import (
+from formbridge.services.function_navigation import (
     FUNCTION_FIELD_ROOT,
     build_function_token_field_path,
     is_function_field_path,

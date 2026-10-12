@@ -35,14 +35,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.forms.parameter_form_manager import (
     FormManagerConfig,
     ParameterFormManager,
 )
-from pyqt_reactive.services.code_editor_form_updater import CodeEditorFormUpdater
+from formbridge.services.code_editor_form_updater import CodeEditorFormUpdater
 from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
-from pyqt_reactive.services.window_code_document import (
+from formbridge.services.window_code_document import (
     PYTHON_MIME_TYPE,
     WindowCodeDocument,
     WindowCodeDocumentDriver,

@@ -10,15 +10,15 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QStyleOptionViewItem
 from zmqruntime.messages import ProcessIdentity
 
-from pyqt_reactive.core.log_utils import LogType
-from pyqt_reactive.protocols import (
+from formbridge.core.log_utils import LogType
+from formbridge.protocols.log_providers import (
     LogDiscoveryProviderABC,
     ServerScanProviderABC,
     register_log_discovery_provider,
     register_server_scan_provider,
 )
-from pyqt_reactive.services.process_tracker import ProcessLiveness
-from pyqt_reactive.utils.log_highlighter import build_log_line_html
+from formbridge.services.process_tracker import ProcessLiveness
+from formbridge.utils.log_highlighter import build_log_line_html
 from pyqt_reactive.widgets.log_viewer import (
     LogFileDetector,
     LogFileInfo,
@@ -64,7 +64,7 @@ def test_log_delegate_cleanup_closes_and_joins_highlighting_tasks(
         return []
 
     monkeypatch.setattr(
-        "pyqt_reactive.utils.log_highlight_client.LogHighlightClient.parse_line",
+        "formbridge.utils.log_highlight_client.LogHighlightClient.parse_line",
         wait_until_closed,
     )
     delegate = LogItemDelegate()

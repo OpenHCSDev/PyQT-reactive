@@ -14,7 +14,7 @@ from pyqt_reactive.services.window_navigation import (
     NullWindowNavigationDriver,
     WindowNavigationDriver,
 )
-from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
+from formbridge.services.window_code_document import WindowCodeDocumentDriver
 
 logger = logging.getLogger(__name__)
 

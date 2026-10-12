@@ -12,7 +12,7 @@ from enum import Enum
 
 from PyQt6.QtGui import QColor
 
-from pyqt_reactive.forms import layout_constants
+from formbridge.forms import layout_constants
 
 from .accent_chrome import AccentChromeColorPolicy
 from .color_scheme import ColorScheme

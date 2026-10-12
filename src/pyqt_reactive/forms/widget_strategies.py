@@ -37,12 +37,8 @@ from python_introspect import (
     resolve_optional,
 )
 
-from pyqt_reactive.forms.parameter_info_types import ParameterInfo
-from pyqt_reactive.forms.parameter_value_contracts import (
-    FormObject,
-    ParameterValue,
-    WidgetValue,
-)
+from formbridge.forms.parameter_info_types import ParameterInfo
+from formbridge.forms.parameter_value_contracts import FormObject, ParameterValue, WidgetValue
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
     CurrentValueValidatable,
@@ -67,7 +63,7 @@ from pyqt_reactive.widgets import (
 from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
 
 try:
-    from pyqt_reactive.core.performance_monitor import timer
+    from formbridge.core.performance_monitor import timer
 except Exception:  # pragma: no cover - optional performance monitoring
     @contextmanager
     def timer(*args, **kwargs):
@@ -271,7 +267,7 @@ class TypedLiteralContainerEdit(
             return None
         value = parse_literal_container(text, self._container_type)
         self._validate_container(value)
-        from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+        from formbridge.forms.parameter_form_service import ParameterFormService
 
         return ParameterFormService().convert_value_to_type(
             value,
@@ -464,7 +460,7 @@ class TypedLiteralUnionEdit(
                 ) from exc
             value = text
 
-        from pyqt_reactive.forms.parameter_form_service import ParameterFormService
+        from formbridge.forms.parameter_form_service import ParameterFormService
 
         return ParameterFormService().convert_value_to_type(
             value,
@@ -999,7 +995,7 @@ def create_enum_widget_unified(
     accepts_none: bool = False,
 ) -> QComboBox:
     """Unified enum widget creator with consistent display text."""
-    from pyqt_reactive.forms.ui_utils import format_enum_display
+    from formbridge.forms.ui_utils import format_enum_display
 
     widget = NoScrollComboBox()
 
@@ -1698,7 +1694,7 @@ class PyQt6WidgetEnhancer:
 
                 # Format the placeholder text appropriately for different types
                 if isinstance(field_value, Enum):
-                    from pyqt_reactive.forms.ui_utils import format_enum_placeholder
+                    from formbridge.forms.ui_utils import format_enum_placeholder
                     placeholder_text = format_enum_placeholder(field_value)
                 else:
                     placeholder_text = f"Pipeline default: {field_value}"

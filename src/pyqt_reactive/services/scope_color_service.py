@@ -4,7 +4,7 @@ from typing import Optional, Dict, Tuple
 from PyQt6.QtCore import QObject, pyqtSignal
 import logging
 
-from pyqt_reactive.widgets.shared.scope_color_strategy import (
+from formbridge.theming.scope_color_strategy import (
     ScopeColorStrategy,
     ManualColorStrategy,
     ColorStrategyType,

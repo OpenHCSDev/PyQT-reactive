@@ -1,2 +1,2 @@
 # Source candidates needed to validate this checkout before coordinated publication.
-# Empty: every first-party dependency is released (objectstate 2.0.0, python-introspect 0.2.6).
+# Empty: every first-party dependency is released (formbridge 0.1.0, objectstate 2.1.1, python-introspect 0.2.8).

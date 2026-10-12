@@ -12,10 +12,12 @@ from PyQt6.QtWidgets import QLabel, QWidget
 from pyqt_reactive.services.window_snapshot import (
     QtWindowSnapshotRequest,
     QtWindowSnapshotService,
+    WindowSnapshotRenderOwner,
+)
+from formbridge.services.window_snapshot import (
     WindowSnapshotCaptureScope,
     WindowSnapshotCaptureSpec,
     WindowSnapshotFrameCondition,
-    WindowSnapshotRenderOwner,
 )
 
 
@@ -631,7 +633,7 @@ def test_nonmaximum_native_paint_is_preserved_only_as_failure_diagnostics(
     monkeypatch,
 ):
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay, _GlobalFlashCoordinator
-    from pyqt_reactive.flash_trace import FlashTrace, FlashTraceRecord
+    from formbridge.flash_trace import FlashTrace, FlashTraceRecord
 
     window, form = observed_form
     overlay = WindowFlashOverlay.get_for_window(window)
@@ -671,16 +673,6 @@ def test_nonmaximum_native_paint_is_preserved_only_as_failure_diagnostics(
         ), "A nonmaximum frame must never yield a captured PNG"
     finally:
         overlay.frame_painted.disconnect(stop_after_actual_paint)
-
-
-def test_legacy_trace_import_preserves_the_canonical_declaration_and_ring():
-    from pyqt_reactive import flash_trace as canonical
-    from pyqt_reactive.animation import flash_trace as legacy
-
-    assert legacy.FlashTrace is canonical.FlashTrace
-    assert legacy.FlashTraceRecord is canonical.FlashTraceRecord
-    assert legacy.flash_trace is canonical.flash_trace
-    assert legacy.logger is canonical.logger
 
 
 def test_native_stalled_render_presents_the_declared_maximum_without_duration_override(

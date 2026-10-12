@@ -35,10 +35,6 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.action_tabbed_window_body",
         "ActionTabbedWindowBody",
     ),
-    "TabLabelDeclarationMixin": (
-        "pyqt_reactive.services.tab_identity",
-        "TabLabelDeclarationMixin",
-    ),
     "BaseManagedWindow": (
         "pyqt_reactive.widgets.shared.base_form_dialog",
         "BaseManagedWindow",
@@ -151,10 +147,6 @@ _EXPORTS = {
         "pyqt_reactive.widgets.shared.tree_state_adapter",
         "TypedPayloadTreeItemKeyBuilder",
     ),
-    "TreeItemKeyProviderABC": (
-        "pyqt_reactive.services.tree_item_key",
-        "TreeItemKeyProviderABC",
-    ),
     "TreeStateAdapter": (
         "pyqt_reactive.widgets.shared.tree_state_adapter",
         "TreeStateAdapter",
@@ -162,10 +154,6 @@ _EXPORTS = {
     "TreeRebuildCoordinator": (
         "pyqt_reactive.widgets.shared.tree_rebuild_coordinator",
         "TreeRebuildCoordinator",
-    ),
-    "ScopeColorSchemeReceiver": (
-        "pyqt_reactive.widgets.shared.scope_color_receiver",
-        "ScopeColorSchemeReceiver",
     ),
     "ScopedTableWidget": (
         "pyqt_reactive.widgets.shared.scoped_table_widget",

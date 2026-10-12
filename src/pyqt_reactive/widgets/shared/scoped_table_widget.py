@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTableWidget, QWidget
 
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
-from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
+from formbridge.theming.scope_color_receiver import ScopeColorSchemeReceiver
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 

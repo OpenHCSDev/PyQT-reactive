@@ -7,20 +7,20 @@ import time
 
 import pytest
 
-from pyqt_reactive.services.ui_thread_dispatch import (
-    UiThreadDispatcher,
-    UiThreadDispatcherClosedError,
-    UiThreadDispatchTimeoutError,
+from formbridge.services.main_thread_dispatch import (
+    MainThreadDispatcherClosedError,
+    MainThreadDispatchTimeoutError,
 )
+from pyqt_reactive.services.ui_thread_dispatch import UiThreadDispatcher
 
 
-class CancelledBeforeStartError(UiThreadDispatchTimeoutError):
+class CancelledBeforeStartError(MainThreadDispatchTimeoutError):
     """A consumer's nominal projection of the owner's cancellation."""
 
 
 class ProjectedCancellationDispatcher(UiThreadDispatcher):
     @staticmethod
-    def _dispatch_timeout_error() -> UiThreadDispatchTimeoutError:
+    def _dispatch_timeout_error() -> MainThreadDispatchTimeoutError:
         return CancelledBeforeStartError("Cancelled before callback invocation.")
 
 
@@ -33,12 +33,12 @@ def test_close_cancels_a_posted_callback_before_qt_executes_it(qapp) -> None:
     qapp.processEvents()
 
     assert calls == []
-    with pytest.raises(UiThreadDispatcherClosedError):
+    with pytest.raises(MainThreadDispatcherClosedError):
         dispatcher.post(lambda: None)
 
 
 @pytest.mark.parametrize("dispatcher_type,error_type", (
-    (UiThreadDispatcher, UiThreadDispatchTimeoutError),
+    (UiThreadDispatcher, MainThreadDispatchTimeoutError),
     (ProjectedCancellationDispatcher, CancelledBeforeStartError),
 ))
 def test_call_timeout_cancels_callback_still_queued_for_qt(qapp, dispatcher_type, error_type) -> None:
@@ -66,7 +66,7 @@ def test_call_timeout_cancels_callback_still_queued_for_qt(qapp, dispatcher_type
 @pytest.mark.parametrize("queued", (False, True), ids=("ui-direct", "queued-started"))
 def test_callback_timeout_after_side_effect_keeps_its_own_outcome(qapp, qtbot, queued):
     dispatcher = ProjectedCancellationDispatcher()
-    original = UiThreadDispatchTimeoutError("Started callback failed after its side effect.")
+    original = MainThreadDispatchTimeoutError("Started callback failed after its side effect.")
     calls, errors = [], []
 
     def callback():
@@ -120,7 +120,7 @@ def test_close_unblocks_worker_waiting_for_queued_call(qapp) -> None:
 
     assert not worker.is_alive()
     assert len(errors) == 1
-    assert isinstance(errors[0], UiThreadDispatcherClosedError)
+    assert isinstance(errors[0], MainThreadDispatcherClosedError)
 
 
 def test_call_waits_for_atomic_callback_that_started_before_timeout(qapp, qtbot) -> None:

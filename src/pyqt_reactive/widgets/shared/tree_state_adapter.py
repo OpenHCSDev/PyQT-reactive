@@ -8,7 +8,7 @@ from collections.abc import Iterable, Iterator
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
 
-from pyqt_reactive.services.tree_item_key import TreeItemKeyProviderABC
+from formbridge.services.tree_item_key import TreeItemKeyProviderABC
 
 
 class TreeItemKeyBuilderABC(ABC):

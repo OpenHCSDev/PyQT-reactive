@@ -52,7 +52,7 @@ plugin families, or domain behavior.
 Declaration-to-help projection
 ------------------------------
 
-``pyqt_reactive.services.parameter_help_service`` is a Qt-free projection
+``formbridge.services.parameter_help_service`` is a Qt-free projection
 boundary shared by forms, help windows, and agent-facing consumers. It accepts a
 callable, authored dataclass, or registered ObjectState lazy dataclass and
 returns typed records such as ``DocstringInfo`` and ``ParameterHelpContent``.

@@ -9,7 +9,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, Generic, Optional, TypeAlias, TypeVar
 
-from pyqt_reactive.services.window_code_document import use_external_code_editor
+from formbridge.services.window_code_document import use_external_code_editor
 
 logger = logging.getLogger(__name__)
 

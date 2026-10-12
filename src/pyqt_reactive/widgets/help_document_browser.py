@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QBrush, QTextCharFormat, QTextCursor, QTextDocument, QTextOption
 from PyQt6.QtWidgets import QTextBrowser
 
-from pyqt_reactive.services.help_document import HelpDocument, HelpDocumentFormat
+from formbridge.services.help_document import HelpDocument, HelpDocumentFormat
 from pyqt_reactive.theming import ColorScheme
 
 HELP_DOCUMENT_PADDING = 8

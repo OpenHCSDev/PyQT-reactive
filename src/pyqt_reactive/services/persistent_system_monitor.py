@@ -10,14 +10,8 @@ import logging
 
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker, Qt
 
-from pyqt_reactive.services.system_metrics_sampler import (
-    SystemMetrics,
-    SystemMetricsSampler,
-)
-from pyqt_reactive.services.system_monitor_core import (
-    SystemMetricsHistory,
-    SystemMonitorCore,
-)
+from formbridge.services.system_metrics_sampler import SystemMetrics, SystemMetricsSampler
+from formbridge.services.system_monitor_core import SystemMetricsHistory, SystemMonitorCore
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ from typing import Any
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel
 
-from pyqt_reactive.strategies import (
+from formbridge.strategies.status_presentation import (
     DefaultStatusPresentationStrategy,
     StatusPresentationInput,
 )

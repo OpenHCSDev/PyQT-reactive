@@ -19,27 +19,21 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QResizeEvent
 
-from pyqt_reactive.services.system_monitor_actions import SystemMonitorAction
-
-# Lazy import of PyQtGraph to avoid blocking startup. PyQtGraph imports cupy at
-# module level, so the presentation backend is selected only after that import.
-pg = None  # Will be set when pyqtgraph is imported
-
-# Import the SystemMonitorCore service (framework-agnostic)
+from formbridge.services.system_metrics_sampler import SystemMetrics, SystemMetricsSampler
+from formbridge.services.system_monitor_config import PerformanceMonitorConfig
+from formbridge.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.animation import queue_visual_frame_callback
-from pyqt_reactive.theming import ColorScheme
-
-from pyqt_reactive.services.system_monitor_core import SystemMonitorCore
 from pyqt_reactive.services.persistent_system_monitor import (
     PersistentSystemMonitor,
     PersistentSystemMonitorThread,
 )
-from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
-from pyqt_reactive.services.system_metrics_sampler import (
-    SystemMetrics,
-    SystemMetricsSampler,
-)
+from pyqt_reactive.services.system_monitor_actions import SystemMonitorAction
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import create_manager_header
+
+# Lazy import of PyQtGraph to avoid blocking startup. PyQtGraph imports cupy at
+# module level, so the presentation backend is selected only after that import.
+pg = None  # Will be set when pyqtgraph is imported
 
 logger = logging.getLogger(__name__)
 

@@ -4,9 +4,9 @@ Server Scanning and Polling
 Modules
 -------
 
-- ``pyqt_reactive.services.zmq_server_scan_service``
-- ``pyqt_reactive.services.interval_snapshot_poller``
-- ``pyqt_reactive.services.zmq_server_info``
+- ``formbridge.services.zmq_server_scan_service``
+- ``formbridge.services.interval_snapshot_poller``
+- ``formbridge.services.zmq_server_info``
 
 ZMQServerScanService
 --------------------

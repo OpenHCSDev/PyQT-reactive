@@ -2,7 +2,7 @@
 
 import pytest
 
-from pyqt_reactive.core.path_cache import (
+from formbridge.core.path_cache import (
     DirectorySelection,
     FileSelection,
     PathCacheKey,

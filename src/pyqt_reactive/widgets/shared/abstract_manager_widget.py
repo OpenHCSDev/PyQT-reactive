@@ -18,7 +18,7 @@ from typing import ClassVar, Dict, List, Optional, Tuple, TypeVar
 import logging
 
 
-from pyqt_reactive.widgets.shared.manager_workflows import (
+from formbridge.managers.workflows import (
     ManagerCodeExecutionWorkflow,
     ManagerDeletionWorkflow,
     NullManagerCodeExecutionWorkflow,
@@ -38,24 +38,22 @@ from objectstate import DottedFieldPath, ObjectStateRegistry, patch_lazy_constru
 from pyqt_reactive.widgets.mixins import (
     CrossWindowPreviewMixin,
 )
-from pyqt_reactive.strategies.preview_formatting import (
+from formbridge.strategies.preview_formatting import (
     FormattingConfig,
     ObjectStatePreviewFormattingService,
 )
 from objectstate import LiveContextResolver
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import setup_manager_widget_ui
-from pyqt_reactive.widgets.shared.manager_item_hooks import (
-    ManagerItemHooks,
-)
+from formbridge.managers.item_hooks import ManagerItemHooks
 from pyqt_reactive.widgets.shared.manager_item_access import ManagerItemAccess
-from pyqt_reactive.widgets.shared.manager_preview_formatting import ManagerPreviewFieldFormatter
-from pyqt_reactive.widgets.shared.manager_state_binding import ManagerStateBinding
+from formbridge.managers.preview_formatting import ManagerPreviewFieldFormatter
+from formbridge.managers.state_binding import ManagerStateBinding
 from pyqt_reactive.widgets.shared.manager_list_updater import (
     ManagerListUpdater,
     ManagerListUpdateOperations,
 )
-from pyqt_reactive.widgets.shared.manager_time_travel_binding import ManagerTimeTravelBinding
+from formbridge.managers.time_travel_binding import ManagerTimeTravelBinding
 from pyqt_reactive.widgets.shared.manager_action_controller import (
     CodeEditorPayload,
     ManagerActionHandler,
@@ -74,18 +72,16 @@ from pyqt_reactive.widgets.shared.manager_selection_controller import (
     ManagerSelectionOperations,
     SelectionPayloadProjection,
 )
-from pyqt_reactive.widgets.shared.manager_reorder_controller import (
+from formbridge.managers.reorder_controller import (
     ManagerReorderController,
     ManagerReorderOperations,
 )
 from pyqt_reactive.widgets.shared.manager_status_controller import ManagerStatusController
-from pyqt_reactive.services.service_registry import AutoRegisterServiceMixin
+from formbridge.services.service_registry import AutoRegisterServiceMixin
 from pyqt_reactive.services.window_navigation import ListItemWindowNavigationDriver
-from pyqt_reactive.services.window_code_document import (
-    WindowCodeDocument,
-    WindowCodeDocumentDriver,
-)
+from formbridge.services.window_code_document import WindowCodeDocument, WindowCodeDocumentDriver
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
+from formbridge.services.host_services import UiHostServices
 
 # Backwards compat alias
 SEGMENTS_ROLE = LAYOUT_ROLE
@@ -647,7 +643,7 @@ class AbstractManagerWidget(
             return None
         return AbstractManagerWidgetCodeDocumentDriver(self)
 
-    def __init__(self, service_adapter, color_scheme=None, parent=None):
+    def __init__(self, service_adapter: UiHostServices, color_scheme=None, parent=None):
         """
         Initialize base widget.
 
@@ -674,7 +670,7 @@ class AbstractManagerWidget(
 
         # CRITICAL: Manually trigger AutoRegisterServiceMixin registration
         # Qt's C++ classes don't call super().__init__(), so we need to do it explicitly
-        from pyqt_reactive.services.service_registry import AutoRegisterServiceMixin
+        from formbridge.services.service_registry import AutoRegisterServiceMixin
         if isinstance(self, AutoRegisterServiceMixin):
             self._register_with_service_registry()
 

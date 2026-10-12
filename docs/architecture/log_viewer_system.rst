@@ -40,7 +40,7 @@ available.
 
 .. code-block:: python
 
-   from pyqt_reactive.protocols.log_providers import (
+   from formbridge.protocols.log_providers import (
        LogDiscoveryProviderABC,
        ServerScanProviderABC,
        register_log_discovery_provider,

@@ -316,7 +316,7 @@ def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
         FormManagerConfig,
         ParameterFormManager,
     )
-    from pyqt_reactive.services.function_pattern_code_document import (
+    from formbridge.services.function_pattern_code_document import (
         FunctionPatternCodeDocumentService,
     )
     from pyqt_reactive.forms.widget_strategies import TypedLiteralUnionEdit
@@ -386,7 +386,7 @@ def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
         FormManagerConfig,
         ParameterFormManager,
     )
-    from pyqt_reactive.services.function_pattern_code_document import (
+    from formbridge.services.function_pattern_code_document import (
         EditableFunctionPatternCallable,
         FunctionPatternCodeDocumentService,
     )
@@ -3213,7 +3213,7 @@ def test_parameter_reset_overwrites_invalid_typed_literal_editor(qapp):
 
     import pytest
 
-    from pyqt_reactive.forms.parameter_info_types import GenericInfo
+    from formbridge.forms.parameter_info_types import GenericInfo
     from pyqt_reactive.forms.widget_strategies import TypedLiteralContainerEdit
     from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
     from pyqt_reactive.services.widget_service import WidgetService
@@ -3521,11 +3521,8 @@ def test_manager_reorder_resolves_transport_safe_identity_after_qt_move(qapp):
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QListWidget, QListWidgetItem
 
-    from pyqt_reactive.widgets.shared.manager_item_hooks import (
-        DictItemIdProjection,
-        ManagerItemHooks,
-    )
-    from pyqt_reactive.widgets.shared.manager_reorder_controller import (
+    from formbridge.managers.item_hooks import DictItemIdProjection, ManagerItemHooks
+    from formbridge.managers.reorder_controller import (
         ManagerReorderController,
         ManagerReorderOperations,
     )

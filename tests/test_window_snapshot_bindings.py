@@ -10,6 +10,8 @@ from pyqt_reactive.services.window_snapshot import (
     OpenGLWidgetSnapshotRenderOwner,
     QtWindowSnapshotRequest,
     QtWindowSnapshotService,
+)
+from formbridge.services.window_snapshot import (
     WindowSnapshotCaptureSpec,
     WindowSnapshotFrameCondition,
 )
