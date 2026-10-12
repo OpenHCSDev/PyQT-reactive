@@ -284,7 +284,7 @@ class TabbedEditorWindow(BaseFormDialog):
     def form_managers(self) -> tuple[ParameterFormManager, ...]:
         return tuple(manager for tab in self.tabs for manager in tab.form_managers())
 
-    def window_navigation_driver(self) -> WindowNavigationDriver:
+    def window_navigation_driver(self) -> TabbedEditorNavigationDriver:
         return self._navigation_driver
 
     def window_code_document_driver(self) -> WindowCodeDocumentDriver | None:
