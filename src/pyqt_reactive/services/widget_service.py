@@ -302,35 +302,30 @@ class WidgetService:
             return
 
         if value is None:
-            logger.debug("Computing placeholder for None value")
-            from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
-            from objectstate import ObjectStateRegistry, build_context_stack
-
-            # Get ancestor objects for context stack
-            ancestor_objects = ObjectStateRegistry.get_ancestor_objects(manager.scope_id or "")
-
-            # Build context stack
-            stack = build_context_stack(
-                object_instance=manager.object_instance,
-                ancestor_objects=ancestor_objects,
-            )
-
-            with stack:
-                placeholder_text = manager.service.get_placeholder_text(param_name, type(manager.object_instance))
-                logger.debug("Resolved placeholder text: %r", placeholder_text)
-                if placeholder_text:
-                    # Get the resolved value directly for type-safe placeholder application
-                    try:
-                        resolved_value = getattr(manager.object_instance, param_name)
-                    except AttributeError:
-                        resolved_value = None
-                    self.widget_enhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
-                else:
-                    logger.debug("No placeholder text returned")
+            self.show_resolved_value_as_placeholder(widget, param_name, manager)
         elif value is not None:
             if self.widget_enhancer.has_placeholder_state(widget):
                 logger.debug("Clearing placeholder state for concrete value")
                 self.widget_enhancer._clear_placeholder_state(widget)
+
+    def show_resolved_value_as_placeholder(self, widget: QWidget, param_name: str, manager) -> bool:
+        """Preview an unset field: show the value it resolves to; return whether one was shown.
+
+        The preview is the state's resolved read of the field. The field's own
+        value stays unset, and the source of the shown value is the same state's
+        ``get_provenance`` answer for the same path.
+        """
+        from objectstate import LazyDefaultPlaceholderService
+
+        full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+        resolved_value = manager.state.get_resolved_value(full_path)
+        placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
+            resolved_value, manager.config.placeholder_prefix
+        )
+        if not placeholder_text:
+            return False
+        self.widget_enhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
+        return True
 
     def clear_widget_to_default_state(self, widget: QWidget) -> None:
         """Clear widget to its default/empty state for reset operations."""

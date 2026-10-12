@@ -42,7 +42,6 @@ from formbridge.strategies.preview_formatting import (
     FormattingConfig,
     ObjectStatePreviewFormattingService,
 )
-from objectstate import LiveContextResolver
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import setup_manager_widget_ui
 from formbridge.managers.item_hooks import ManagerItemHooks
@@ -692,9 +691,6 @@ class AbstractManagerWidget(
         self.buttons: Dict[str, QPushButton] = {}
         self.manager_header = None
         self.item_list: Optional[ReorderableListWidget] = None
-
-        # Live context resolver for config attribute resolution
-        self._live_context_resolver = LiveContextResolver()
 
         # Per-update-cycle scope cache: item_id -> scope_id (cleared at start of each update)
         self._item_scope_cache: Dict[int, str] = {}
