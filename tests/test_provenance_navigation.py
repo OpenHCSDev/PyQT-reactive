@@ -15,7 +15,7 @@ from objectstate import (
     ObjectStateRegistry,
     mark_global_config_type,
     set_base_config_type,
-    set_global_config_for_editing,
+    set_global_config,
 )
 
 from pyqt_reactive.services.scope_window_navigation import ScopeWindowNavigationService
@@ -57,7 +57,7 @@ def label(qapp, request, monkeypatch):
     previous_base = config_module._base_config_type
     ObjectStateRegistry.clear()
     set_base_config_type(SourceGlobalConfig)
-    set_global_config_for_editing(
+    set_global_config(
         SourceGlobalConfig, SourceGlobalConfig(SourceFilterConfig(well_filter=1))
     )
     state = ObjectState(SourcePipeline(), scope_id=request.param)
