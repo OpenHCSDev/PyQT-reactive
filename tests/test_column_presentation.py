@@ -20,7 +20,7 @@ from pyqt_reactive.widgets.shared.function_table_browser import (
     FunctionTableBrowser,
     FunctionTableRow,
 )
-from pyqt_reactive.widgets.shared.image_table_browser import ImageTableBrowser
+from pyqt_reactive.widgets.shared.record_table_browser import RecordTableBrowser
 
 
 class _ExampleTableBrowser(AbstractTableBrowser[Mapping[str, str]]):
@@ -158,11 +158,17 @@ def test_columns_control_remains_visible_when_filter_body_is_empty(qapp) -> None
         browser.close()
 
 
-def test_image_table_browser_acquires_dynamic_filters_from_column_declarations(
+def test_record_table_browser_acquires_filters_from_column_declarations(
     qapp,
 ) -> None:
-    browser = ImageTableBrowser()
-    browser.set_metadata_keys(["ome_UUID", "channel"])
+    browser = RecordTableBrowser()
+    browser.set_columns(
+        (
+            ColumnDef(name="Filename", key="filename"),
+            ColumnDef(name="Ome Uuid", key="ome_UUID", filterable=True),
+            ColumnDef(name="Channel", key="channel", filterable=True),
+        )
+    )
     browser.set_items(
         {
             "a": {"filename": "a.tif", "ome_UUID": "plate-A", "channel": "W1"},
