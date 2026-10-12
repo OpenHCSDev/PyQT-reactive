@@ -25,7 +25,7 @@ keywords = ["pyqt6", "forms", "reactive", "gui", "widgets", "dataclass"]
 
 dependencies = [
     "annotated-types>=0.7.0",
-    "formbridge>=0.1,<0.2",
+    "formbridge>=0.1.1,<0.2",
     "magicgui>=0.7.0",
     "metaclass-registry>=0.1.5",
     "PyQt6>=6.4.0",

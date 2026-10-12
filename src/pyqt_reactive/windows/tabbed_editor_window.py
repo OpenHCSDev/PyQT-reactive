@@ -12,12 +12,11 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, TypeVar
 
-from formbridge.forms.layout_constants import CURRENT_LAYOUT
 from formbridge.services.window_code_document import WindowCodeDocumentDriver
 from objectstate.object_state import ObjectState, ObjectStateRegistry
 from PyQt6.QtCore import QSize, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QShowEvent
-from PyQt6.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QMessageBox, QVBoxLayout
 
 from pyqt_reactive.services.window_navigation import (
     CompositeWindowNavigationDriver,
@@ -31,16 +30,8 @@ from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
     ActionTabMaterialization,
     ActionTabSpec,
 )
-from pyqt_reactive.widgets.shared.base_form_dialog import (
-    BaseFormDialog,
-    ManagedWindowActionCapabilities,
-)
+from pyqt_reactive.widgets.shared.cancel_save_window import CancelSaveWindow
 from pyqt_reactive.widgets.shared.dirty_window_presenter import DirtyWindowPresentation
-from pyqt_reactive.widgets.shared.form_window_action_header import (
-    FormWindowActionHeader,
-    HeaderAction,
-    HeaderActionGroup,
-)
 
 if TYPE_CHECKING:
     from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
@@ -175,7 +166,7 @@ class TabbedEditorNavigationDriver(CompositeWindowNavigationDriver):
         super().prepare(request)
 
 
-class TabbedEditorWindow(BaseFormDialog):
+class TabbedEditorWindow(CancelSaveWindow):
     """Edit one object through the tabs its tab family declares."""
 
     saved = pyqtSignal(object)
@@ -196,7 +187,6 @@ class TabbedEditorWindow(BaseFormDialog):
         self.setModal(False)
         self.scope_id = edited.scope_id
         self._step_index = edited.list_position
-        self._default_size_applied = False
 
         self.tabs: tuple[EditorTab, ...] = ()
         self._build_shell()
@@ -232,52 +222,26 @@ class TabbedEditorWindow(BaseFormDialog):
     # -- shell ----------------------------------------------------------------
 
     def _build_shell(self) -> None:
-        if self.size().isEmpty():
-            self.resize(self.default_size)
         layout = QVBoxLayout(self)
         layout.setSpacing(5)
         layout.setContentsMargins(5, 5, 5, 5)
-        compact_style = self.color_scheme.styles.generate_config_button_styles()["compact"]
-
-        cancel_button = QPushButton("Cancel")
-        cancel_button.clicked.connect(self.reject)
-        self.save_button = QPushButton(self.edited.save_label())
-        self.save_button.setEnabled(False)
-        self.setup_save_button(self.save_button, self.save_managed_window)
-        for button in (cancel_button, self.save_button):
-            button.setFixedHeight(CURRENT_LAYOUT.button_height)
-            button.setMinimumWidth(70)
-            button.setStyleSheet(compact_style)
-
-        header = FormWindowActionHeader(
+        header = self.build_cancel_save_header(
+            self.color_scheme,
             title_text="",
-            title_color=self.color_scheme.to_hex(self.color_scheme.text_accent),
-            action_groups=[
-                HeaderActionGroup(
-                    "group_save",
-                    [HeaderAction("cancel", cancel_button), HeaderAction("save", self.save_button)],
-                )
-            ],
-            stay_priority=["group_save"],
-            right_aligned_group_ids=["group_save"],
-            parent=self,
+            save_label=self.edited.save_label(),
+            save_callback=self.save_managed_window,
         )
+        for button in (self.cancel_button, self.save_button):
+            button.setMinimumWidth(70)
         header.setStyleSheet(
             "QWidget {"
             f" background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};"
             " border-radius: 3px; }"
         )
-        self.header_label: QLabel = header.header_label
         layout.addWidget(header)
 
         self.tab_body = ActionTabbedWindowBody(color_scheme=self.color_scheme, parent=self)
         layout.addWidget(self.tab_body, 1)
-
-    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt virtual method name
-        super().showEvent(event)
-        if not self._default_size_applied:
-            self.resize(self.default_size)
-            self._default_size_applied = True
 
     def tab(self, tab_type: type[TabT]) -> TabT:
         """The window's tab of the given declared type."""
@@ -307,21 +271,11 @@ class TabbedEditorWindow(BaseFormDialog):
                 return driver
         return None
 
-    def managed_window_action_capabilities(self) -> ManagedWindowActionCapabilities:
-        return ManagedWindowActionCapabilities(
-            save_and_close=True,
-            save_without_close=True,
-            discard_and_close=True,
-        )
-
     def agent_save_managed_window(self, *, close_window: bool) -> None:
         self.save_managed_window(close_window=close_window)
 
     def require_managed_state_mutation_allowed(self) -> None:
         self.edited.require_mutation_allowed()
-
-    def dirty_window_widgets(self) -> tuple[QLabel, QPushButton]:
-        return self.header_label, self.save_button
 
     def dirty_window_presentation(self) -> DirtyWindowPresentation:
         title = self.edited.title()
@@ -404,10 +358,7 @@ class TabbedEditorWindow(BaseFormDialog):
             raise RuntimeError(
                 "Scope accent color is missing; call init_scope_border() after setting scope_id"
             )
-        self.save_button.setStyleSheet(
-            self.color_scheme.styles.generate_scope_accent_button_style(accent_color)
-        )
-        self.header_label.setStyleSheet(f"color: {accent_color.name()};")
+        self.apply_commit_accent(self.color_scheme, accent_color)
         self.tab_body.apply_accent(accent_color)
         for tab in self.tabs:
             tab.apply_scope_accent(accent_color)

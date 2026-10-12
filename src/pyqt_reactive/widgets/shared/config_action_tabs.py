@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QPushButton, QWidget
+from python_introspect import Enableable
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.tabbed_form_widget import (
@@ -25,12 +26,11 @@ class ConfigAction:
     title: str
     """The config's tab title."""
     button_text: str
-    enabled_field: str = "enabled"
-    """The nested config's boolean field that switches the action on."""
 
     @property
     def enabled_path(self) -> str:
-        return f"{self.field_name}.{self.enabled_field}"
+        """The nested config's ``Enableable`` field, which switches the action on."""
+        return f"{self.field_name}.{Enableable.require_parameter_name()}"
 
 
 class ConfigActionTabs(TabbedFormWidget):
