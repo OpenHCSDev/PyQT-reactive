@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import QLabel, QMessageBox
 from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
 from pyqt_reactive.services.window_navigation import (
     FieldWindowNavigationDriver,
-    NavigationTargetClaimedTwice,
+    NavigationTargetClaimedTwiceError,
     NavigationWaitReason,
     RegisteredWindowNavigationReadiness,
     RegisteredWindowNavigationRequest,
@@ -263,9 +263,9 @@ def test_two_tabs_claiming_one_field_path_is_a_declaration_error(note_window) ->
         window=note_window, requested_scope_id=SCOPE, field_path="text"
     )
 
-    with pytest.raises(NavigationTargetClaimedTwice, match="'text' is claimed by 2 owners"):
+    with pytest.raises(NavigationTargetClaimedTwiceError, match="'text' is claimed by 2 owners"):
         driver.accepts_field_path(claimed_twice)
-    with pytest.raises(NavigationTargetClaimedTwice):
+    with pytest.raises(NavigationTargetClaimedTwiceError):
         driver.owning_tabs(claimed_twice)
     assert fields.visited == []
     assert summary.visited == []

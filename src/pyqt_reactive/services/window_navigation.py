@@ -58,7 +58,7 @@ class NavigationWaitReason(Enum):
     LIST_ITEMS = "list items"
 
 
-class NavigationTargetClaimedTwice(LookupError):
+class NavigationTargetClaimedTwiceError(LookupError):
     """Several owners in one window claim the same navigation target."""
 
 
@@ -73,7 +73,7 @@ def sole_owner(claimants: Sequence[OwnerT], target: str) -> OwnerT | None:
     """
 
     if len(claimants) > 1:
-        raise NavigationTargetClaimedTwice(
+        raise NavigationTargetClaimedTwiceError(
             f"{target} is claimed by {len(claimants)} owners: "
             + ", ".join(repr(claimant) for claimant in claimants)
             + ". Each owner must claim only the fields it shows."

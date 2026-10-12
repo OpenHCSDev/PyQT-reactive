@@ -48,7 +48,7 @@ Changed:
   removed.
 - One rule for a navigation target claimed by several owners, in
   `services.window_navigation.sole_owner`: it raises
-  `NavigationTargetClaimedTwice`. `CompositeWindowNavigationDriver` (so
+  `NavigationTargetClaimedTwiceError`. `CompositeWindowNavigationDriver` (so
   `TabbedEditorWindow`) and `ConfigWindow` both use it. `TabbedEditorWindow` no
   longer prefers the later tab, and `ConfigWindow` no longer rejects silently.
 - `AbstractTableBrowser.set_items` keeps the search text.
