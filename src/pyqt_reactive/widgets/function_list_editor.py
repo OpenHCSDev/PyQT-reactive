@@ -29,7 +29,6 @@ from formbridge.services.function_navigation import (
 )
 from pyqt_reactive.services.window_navigation import (
     FieldWindowNavigationDriver,
-    RegisteredWindowNavigationRequest,
     WindowNavigationDriver,
 )
 from pyqt_reactive.services.function_list_editor_actions import (
@@ -84,13 +83,6 @@ class PatternMutation:
         # callback only synchronizes the already-authorized value into the
         # owning pattern and must not introduce a second, post-write check.
         return cls(None, mutate, None, False, False)
-
-
-class FunctionFieldNavigationDriver(FieldWindowNavigationDriver):
-    """Navigate the field paths that belong to the function pattern, and no others."""
-
-    def accepts_field_path(self, request: RegisteredWindowNavigationRequest) -> bool:
-        return FunctionPatternField.owns_field_path(request.field_path)
 
 
 class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
@@ -799,7 +791,10 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
     def window_navigation_driver(self) -> WindowNavigationDriver:
         """Navigation to the function-pattern fields this editor shows."""
-        return FunctionFieldNavigationDriver(self.select_and_scroll_to_field)
+        return FieldWindowNavigationDriver(
+            self.select_and_scroll_to_field,
+            owns_field_path=FunctionPatternField.owns_field_path,
+        )
 
     def select_and_scroll_to_field(self, field_path: str) -> None:
         """Public API for WindowManager navigation protocol.

@@ -250,14 +250,20 @@ class CompositeWindowNavigationDriver(WindowNavigationDriver):
 class FieldWindowNavigationDriver(WindowNavigationDriver):
     """Navigate field paths through an explicit field-scrolling callable."""
 
-    def __init__(self, select_field: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        select_field: Callable[[str], None],
+        owns_field_path: Callable[[str], bool] = lambda _field_path: True,
+    ) -> None:
         self._select_field = select_field
+        self._owns_field_path = owns_field_path
 
     def accepts_field_path(
         self,
         request: RegisteredWindowNavigationRequest,
     ) -> bool:
-        return request.field_path is not None
+        """Ask the editor that shows the fields whether the path is one of its own."""
+        return request.field_path is not None and self._owns_field_path(request.field_path)
 
     def execute(self, request: RegisteredWindowNavigationRequest) -> None:
         if request.field_path is None:

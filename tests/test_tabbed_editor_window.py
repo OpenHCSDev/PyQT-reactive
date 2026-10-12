@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import QLabel, QMessageBox
 from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
 from pyqt_reactive.services.window_navigation import (
     FieldWindowNavigationDriver,
+    NavigationWaitReason,
+    RegisteredWindowNavigationReadiness,
     RegisteredWindowNavigationRequest,
 )
 from pyqt_reactive.widgets.shared.action_tabbed_window_body import ActionTabMaterialization
@@ -18,6 +20,7 @@ from pyqt_reactive.windows.tabbed_editor_window import (
     EditedObject,
     EditorTab,
     SaveRefused,
+    TabbedEditorNavigationDriver,
     TabbedEditorWindow,
 )
 
@@ -54,11 +57,6 @@ class NoteFieldsTab(NoteTab):
         return FieldWindowNavigationDriver(self.visited.append)
 
 
-class SummaryPathsOnly(FieldWindowNavigationDriver):
-    def accepts_field_path(self, request) -> bool:
-        return request.field_path is not None and request.field_path.startswith("summary")
-
-
 class NoteSummaryTab(NoteTab):
     label = "Summary"
 
@@ -73,7 +71,10 @@ class NoteSummaryTab(NoteTab):
         self.summary.setText(f"{values['text']} x{values['count']}")
 
     def navigation_driver(self):
-        return SummaryPathsOnly(self.visited.append)
+        return FieldWindowNavigationDriver(
+            self.visited.append,
+            owns_field_path=lambda field_path: field_path.startswith("summary"),
+        )
 
 
 class NoteEdit(EditedObject):
@@ -248,6 +249,45 @@ def test_navigation_shows_the_tab_whose_driver_owns_the_field(note_window) -> No
     driver.execute(elsewhere)
     assert fields.visited == ["text"]
     assert summary.visited == ["summary.total"]
+
+
+def test_readiness_and_its_callbacks_come_from_the_owning_tab_only(note_window) -> None:
+    class Waiting(FieldWindowNavigationDriver):
+        def __init__(self) -> None:
+            super().__init__(lambda _path: None)
+            self.callbacks: list[object] = []
+
+        def readiness(self, request):
+            return RegisteredWindowNavigationReadiness(
+                wait_reason=NavigationWaitReason.FIELD_TARGET
+            )
+
+        def register_readiness_callback(self, request, callback) -> bool:
+            self.callbacks.append(callback)
+            return True
+
+    fields, summary = note_window.tabs
+    general = Waiting()
+    fields.navigation_driver = lambda: general
+    driver = TabbedEditorNavigationDriver(note_window.tabs)
+
+    def retry() -> None:
+        pass
+
+    owned_by_fields = RegisteredWindowNavigationRequest(
+        window=note_window, requested_scope_id=SCOPE, field_path="text"
+    )
+    owned_by_summary = RegisteredWindowNavigationRequest(
+        window=note_window, requested_scope_id=SCOPE, field_path="summary.total"
+    )
+
+    assert driver.readiness(owned_by_fields).wait_reason is NavigationWaitReason.FIELD_TARGET
+    assert driver.register_readiness_callback(owned_by_fields, retry)
+    assert general.callbacks == [retry]
+
+    assert not driver.readiness(owned_by_summary).needs_wait
+    assert not driver.register_readiness_callback(owned_by_summary, retry)
+    assert general.callbacks == [retry]
 
 
 def test_cancel_restores_the_saved_state(note_window) -> None:
