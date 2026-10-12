@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QLabel, QMessageBox
 
 from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
@@ -120,7 +121,7 @@ def note_window(qapp):
     yield window
     window._cleanup_managed_resources()
     window.deleteLater()
-    qapp.processEvents()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def _tab_labels(window: TabbedEditorWindow) -> list[str]:
@@ -180,7 +181,7 @@ def test_a_new_object_and_a_new_tab_are_hosted_without_touching_the_window(qapp)
         second._cleanup_managed_resources()
         first.deleteLater()
         second.deleteLater()
-        qapp.processEvents()
+        qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_edit_marks_dirty_and_save_commits_the_edited_object(note_window, qapp) -> None:

@@ -9,6 +9,7 @@ from typing import Annotated, ClassVar
 import pytest
 from formbridge.forms.raw_display_value import RawDisplayValue
 from metaclass_registry import AutoRegisterMeta
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QComboBox, QPushButton
 from python_introspect import RegisteredClassChoices
 
@@ -95,6 +96,7 @@ def editor(qapp):
     widget = DrawingEditor.for_value(Drawing(marks=(Mark(Circle, "a"),)))
     yield widget
     widget.deleteLater()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_sections_are_built_from_declarations(editor) -> None:
@@ -194,6 +196,7 @@ def test_a_member_registered_later_is_offered_with_no_editor_change(qapp) -> Non
         assert {combo.itemText(index) for index in range(combo.count())} == {"circle", "square"}
         assert widget.get_value().marks[0].shape is Square
         widget.deleteLater()
+        qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     finally:
         del Shape.__registry__["square"]
 
