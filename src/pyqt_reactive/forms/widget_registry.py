@@ -64,12 +64,17 @@ class WidgetMeta(ABCMeta):
                 logger.debug(f"Skipping registration for {name} - no _widget_id attribute")
                 return new_class
             
-            # Check for duplicate registration
-            if widget_id in WIDGET_IMPLEMENTATIONS:
-                existing = WIDGET_IMPLEMENTATIONS[widget_id]
-                logger.warning(
-                    f"Widget ID '{widget_id}' already registered to {existing.__name__}. "
-                    f"Overwriting with {name}."
+            # A widget id names one widget class. The same class statement
+            # run again (a reload) takes its id back.
+            existing = WIDGET_IMPLEMENTATIONS.get(widget_id)
+            if existing is not None and (
+                existing.__module__ != new_class.__module__
+                or existing.__qualname__ != new_class.__qualname__
+            ):
+                raise ValueError(
+                    f"Widget ID '{widget_id}' is already registered to "
+                    f"{existing.__module__}.{existing.__qualname__}; "
+                    f"{new_class.__module__}.{new_class.__qualname__} cannot use it too."
                 )
             
             # Auto-register in global registry
