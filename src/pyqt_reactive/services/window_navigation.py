@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
-from objectstate import DottedFieldPath, ObjectState
+from objectstate import ObjectState
 from PyQt6.QtWidgets import QWidget
 
 if TYPE_CHECKING:
     from pyqt_reactive.forms.widget_creation_types import ParameterFormManager
+
+OwnerT = TypeVar("OwnerT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,15 +58,27 @@ class NavigationWaitReason(Enum):
     LIST_ITEMS = "list items"
 
 
-class ObjectStateNavigationTargetAuthority:
-    """Resolve whether ObjectState parameters own a contextual field target."""
+class NavigationTargetClaimedTwice(LookupError):
+    """Several owners in one window claim the same navigation target."""
 
-    @staticmethod
-    def owns_field_path(state: ObjectState, field_path: str) -> bool:
-        return any(
-            DottedFieldPath(parameter_path).contains_path(field_path)
-            for parameter_path in state.parameters
+
+def sole_owner(claimants: Sequence[OwnerT], target: str) -> OwnerT | None:
+    """The one owner of a navigation target, or ``None`` when nobody claims it.
+
+    This is the only place that says what happens when owners overlap. Each
+    owner (a tab, a form, an editor) claims the field paths it shows, from its
+    own declared fields. The owners of one window partition its targets, so two
+    claims on one target are a declaration error: this raises and names the
+    claimants. Nothing picks a winner by position.
+    """
+
+    if len(claimants) > 1:
+        raise NavigationTargetClaimedTwice(
+            f"{target} is claimed by {len(claimants)} owners: "
+            + ", ".join(repr(claimant) for claimant in claimants)
+            + ". Each owner must claim only the fields it shows."
         )
+    return claimants[0] if claimants else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +196,11 @@ class NullWindowNavigationDriver(WindowNavigationDriver):
 
 
 class CompositeWindowNavigationDriver(WindowNavigationDriver):
-    """Combine independent navigation drivers declared by one window."""
+    """Navigate through whichever of one window's drivers owns the target.
+
+    Every driver says what it accepts in its own terms. A field path or an
+    item has at most one owner among them (:func:`sole_owner`).
+    """
 
     def __init__(self, drivers: tuple[WindowNavigationDriver, ...]) -> None:
         self._drivers = drivers
@@ -191,13 +209,35 @@ class CompositeWindowNavigationDriver(WindowNavigationDriver):
         self,
         request: RegisteredWindowNavigationRequest,
     ) -> bool:
-        return any(driver.accepts_field_path(request) for driver in self._drivers)
+        return self._field_path_owner(request) is not None
 
     def accepts_item_id(
         self,
         request: RegisteredWindowNavigationRequest,
     ) -> bool:
-        return any(driver.accepts_item_id(request) for driver in self._drivers)
+        return self._item_owner(request) is not None
+
+    def _field_path_owner(
+        self,
+        request: RegisteredWindowNavigationRequest,
+    ) -> WindowNavigationDriver | None:
+        if request.field_path is None:
+            return None
+        return sole_owner(
+            tuple(driver for driver in self._drivers if driver.accepts_field_path(request)),
+            f"Field path {request.field_path!r}",
+        )
+
+    def _item_owner(
+        self,
+        request: RegisteredWindowNavigationRequest,
+    ) -> WindowNavigationDriver | None:
+        if request.item_id is None:
+            return None
+        return sole_owner(
+            tuple(driver for driver in self._drivers if driver.accepts_item_id(request)),
+            f"Item {request.item_id!r}",
+        )
 
     def prepare(self, request: RegisteredWindowNavigationRequest) -> None:
         for driver in self._matching_drivers(request):
@@ -239,21 +279,27 @@ class CompositeWindowNavigationDriver(WindowNavigationDriver):
         self,
         request: RegisteredWindowNavigationRequest,
     ) -> tuple[WindowNavigationDriver, ...]:
+        """The owner of the request's field path and the owner of its item."""
+        owners = (self._field_path_owner(request), self._item_owner(request))
         return tuple(
             driver
-            for driver in self._drivers
-            if (request.field_path is not None and driver.accepts_field_path(request))
-            or (request.item_id is not None and driver.accepts_item_id(request))
+            for index, driver in enumerate(owners)
+            if driver is not None and driver not in owners[:index]
         )
 
 
 class FieldWindowNavigationDriver(WindowNavigationDriver):
-    """Navigate field paths through an explicit field-scrolling callable."""
+    """Navigate to the field paths of one thing that shows fields.
+
+    The driver holds no field list. ``owns_field_path`` and ``select_field``
+    are that thing's own answers: whether a path is one of the fields it
+    shows, and how to reveal it.
+    """
 
     def __init__(
         self,
         select_field: Callable[[str], None],
-        owns_field_path: Callable[[str], bool] = lambda _field_path: True,
+        owns_field_path: Callable[[str], bool],
     ) -> None:
         self._select_field = select_field
         self._owns_field_path = owns_field_path
@@ -262,7 +308,6 @@ class FieldWindowNavigationDriver(WindowNavigationDriver):
         self,
         request: RegisteredWindowNavigationRequest,
     ) -> bool:
-        """Ask the editor that shows the fields whether the path is one of its own."""
         return request.field_path is not None and self._owns_field_path(request.field_path)
 
     def execute(self, request: RegisteredWindowNavigationRequest) -> None:
@@ -283,19 +328,15 @@ class FormFieldWindowNavigationDriver(FieldWindowNavigationDriver):
         select_field: Callable[[str], None],
         form_manager: Callable[[], ParameterFormManager | None],
     ) -> None:
-        super().__init__(select_field)
+        super().__init__(select_field, self._form_owns_field_path)
         self._form_manager = form_manager
 
-    def accepts_field_path(
-        self,
-        request: RegisteredWindowNavigationRequest,
-    ) -> bool:
-        if request.field_path is None:
-            return False
+    def _form_owns_field_path(self, field_path: str) -> bool:
+        """Ask the form. Until it exists the target is accepted, and readiness waits for it."""
         form_manager = self._form_manager()
         if form_manager is None:
             return True
-        return form_manager.owns_navigation_field_path(request.field_path)
+        return form_manager.owns_field_path(field_path)
 
     def readiness(
         self,

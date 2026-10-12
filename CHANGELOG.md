@@ -34,7 +34,23 @@ Added:
 
 Changed:
 
-- `FieldWindowNavigationDriver` takes `owns_field_path`.
+- One column declaration. `ReadOnlyTableSection` and `TupleSummarySection`
+  take `ColumnDef` columns and row records instead of header and cell tuples.
+  `ColumnDef` gains `value` (what a row shows in the column; the attribute
+  named `key` when left out), and `AbstractTableBrowser.extract_row_data` is
+  derived from the columns. `DataclassFieldColumn.read_only()` gives an
+  editable field's read-only column.
+- One `owns_field_path(field_path) -> bool`, asked of the thing that shows the
+  fields. `FieldWindowNavigationDriver` requires it (no accept-everything
+  default). `ParameterFormManager.owns_navigation_field_path` is
+  `owns_field_path` and answers from the fields the form shows, not from every
+  parameter of its ObjectState. `ObjectStateNavigationTargetAuthority` is
+  removed.
+- One rule for a navigation target claimed by several owners, in
+  `services.window_navigation.sole_owner`: it raises
+  `NavigationTargetClaimedTwice`. `CompositeWindowNavigationDriver` (so
+  `TabbedEditorWindow`) and `ConfigWindow` both use it. `TabbedEditorWindow` no
+  longer prefers the later tab, and `ConfigWindow` no longer rejects silently.
 - `AbstractTableBrowser.set_items` keeps the search text.
 - `ConfigWindow` is a `CancelSaveWindow`; its private `_save_button` and
   `_header_label` are `save_button` and `header_label`.

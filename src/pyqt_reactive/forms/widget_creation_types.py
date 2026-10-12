@@ -109,8 +109,8 @@ class ParameterFormManager(ABC, metaclass=_CombinedMeta):
     _on_build_complete_callbacks: list
 
     @abstractmethod
-    def owns_navigation_field_path(self, field_path: str) -> bool:
-        """Return whether this form owns an exact or contextual field target."""
+    def owns_field_path(self, field_path: str) -> bool:
+        """Whether the path is, or lies under, a field this form shows."""
         raise NotImplementedError
 
     @abstractmethod

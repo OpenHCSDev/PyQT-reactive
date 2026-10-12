@@ -11,6 +11,7 @@ from functools import partial
 from typing import ClassVar, Generic, TypeVar, cast
 
 from objectstate import (
+    DottedFieldPath,
     ObjectState,
     ObjectStateEditSession,
     ObjectStateRegistry,
@@ -48,9 +49,9 @@ from formbridge.services.window_code_document import (
     use_external_code_editor,
 )
 from pyqt_reactive.services.window_navigation import (
-    ObjectStateNavigationTargetAuthority,
     RegisteredWindowNavigationRequest,
     WindowNavigationDriver,
+    sole_owner,
 )
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
@@ -330,6 +331,18 @@ class _ConfigEditorTab:
     help_button: HelpButton | None
     view: _ConfigEditorTabView | None = None
 
+    def owns_field_path(self, field_path: str) -> bool:
+        """Whether the path is, or lies under, a field of this tab's config.
+
+        A config tab shows its whole ObjectState, and it is asked before its
+        form is built, so it answers from the state's declared parameters.
+        """
+
+        return any(
+            DottedFieldPath(parameter_path).contains_path(field_path)
+            for parameter_path in self.state.parameters
+        )
+
     def require_view(self) -> _ConfigEditorTabView:
         if self.view is None:
             raise RuntimeError(f"Config tab {self.spec.label} is not materialized.")
@@ -413,17 +426,14 @@ class ConfigWindowNavigationDriver(ScrollableFormWindowNavigationDriver):
             if tab.state.scope_id == request.requested_scope_id
         )
         candidate_indices = scoped_indices or tuple(range(len(self._owner._tabs)))
-        matching_indices = tuple(
-            index
-            for index in candidate_indices
-            if ObjectStateNavigationTargetAuthority.owns_field_path(
-                self._owner._tabs[index].state,
-                field_path,
-            )
+        return sole_owner(
+            tuple(
+                index
+                for index in candidate_indices
+                if self._owner._tabs[index].owns_field_path(field_path)
+            ),
+            f"Field path {field_path!r} of config tab",
         )
-        if len(matching_indices) != 1:
-            return None
-        return matching_indices[0]
 
 
 class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):

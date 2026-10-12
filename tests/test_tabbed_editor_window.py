@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QLabel, QMessageBox
 from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
 from pyqt_reactive.services.window_navigation import (
     FieldWindowNavigationDriver,
+    NavigationTargetClaimedTwice,
     NavigationWaitReason,
     RegisteredWindowNavigationReadiness,
     RegisteredWindowNavigationRequest,
@@ -55,7 +56,7 @@ class NoteFieldsTab(NoteTab):
 
     def navigation_driver(self):
         self.visited: list[str] = []
-        return FieldWindowNavigationDriver(self.visited.append)
+        return FieldWindowNavigationDriver(self.visited.append, self.form_manager.owns_field_path)
 
 
 class NoteSummaryTab(NoteTab):
@@ -72,10 +73,10 @@ class NoteSummaryTab(NoteTab):
         self.summary.setText(f"{values['text']} x{values['count']}")
 
     def navigation_driver(self):
-        return FieldWindowNavigationDriver(
-            self.visited.append,
-            owns_field_path=lambda field_path: field_path.startswith("summary"),
-        )
+        return FieldWindowNavigationDriver(self.visited.append, self.owns_field_path)
+
+    def owns_field_path(self, field_path: str) -> bool:
+        return field_path.startswith("summary")
 
 
 class NoteEdit(EditedObject):
@@ -240,7 +241,7 @@ def test_navigation_shows_the_tab_whose_driver_owns_the_field(note_window) -> No
     assert note_window.tab_body.current_index() == note_window.tabs.index(summary)
     assert summary.visited == ["summary.total"]
 
-    # The general form accepts every path; the later, dedicated tab took the one it owns.
+    # The form shows no ``summary`` field, so it never claimed the path.
     fields = note_window.tab(NoteFieldsTab)
     assert fields.visited == []
     elsewhere = RegisteredWindowNavigationRequest(
@@ -252,10 +253,34 @@ def test_navigation_shows_the_tab_whose_driver_owns_the_field(note_window) -> No
     assert summary.visited == ["summary.total"]
 
 
+def test_two_tabs_claiming_one_field_path_is_a_declaration_error(note_window) -> None:
+    """No tab wins by position: an overlap is refused, naming both claimants."""
+
+    fields, summary = note_window.tabs
+    summary.owns_field_path = lambda field_path: True
+    driver = TabbedEditorNavigationDriver(note_window.tabs)
+    claimed_twice = RegisteredWindowNavigationRequest(
+        window=note_window, requested_scope_id=SCOPE, field_path="text"
+    )
+
+    with pytest.raises(NavigationTargetClaimedTwice, match="'text' is claimed by 2 owners"):
+        driver.accepts_field_path(claimed_twice)
+    with pytest.raises(NavigationTargetClaimedTwice):
+        driver.owning_tabs(claimed_twice)
+    assert fields.visited == []
+    assert summary.visited == []
+
+    shown_by_nobody = RegisteredWindowNavigationRequest(
+        window=note_window, requested_scope_id=SCOPE, field_path="absent"
+    )
+    summary.owns_field_path = lambda field_path: False
+    assert not TabbedEditorNavigationDriver(note_window.tabs).accepts_field_path(shown_by_nobody)
+
+
 def test_readiness_and_its_callbacks_come_from_the_owning_tab_only(note_window) -> None:
     class Waiting(FieldWindowNavigationDriver):
-        def __init__(self) -> None:
-            super().__init__(lambda _path: None)
+        def __init__(self, owns_field_path) -> None:
+            super().__init__(lambda _path: None, owns_field_path)
             self.callbacks: list[object] = []
 
         def readiness(self, request):
@@ -268,7 +293,7 @@ def test_readiness_and_its_callbacks_come_from_the_owning_tab_only(note_window) 
             return True
 
     fields, summary = note_window.tabs
-    general = Waiting()
+    general = Waiting(fields.form_manager.owns_field_path)
     fields.navigation_driver = lambda: general
     driver = TabbedEditorNavigationDriver(note_window.tabs)
 
