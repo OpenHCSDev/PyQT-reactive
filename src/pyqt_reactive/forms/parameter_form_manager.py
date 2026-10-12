@@ -43,7 +43,6 @@ from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher
 from formbridge.services.flag_context_manager import FlagContextManager
 from pyqt_reactive.services.signal_service import SignalService
 from pyqt_reactive.services.value_collection_service import ValueCollectionService
-from pyqt_reactive.services.window_navigation import ObjectStateNavigationTargetAuthority
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.config_tree_contracts import ConfigTreeFlashManager
 
@@ -1454,12 +1453,19 @@ class ParameterFormManager(
 
         return f"{self.field_id}.{field_name}" if self.field_id else field_name
 
-    def owns_navigation_field_path(self, field_path: str) -> bool:
-        """Return whether this form can reveal the declared field or an ancestor."""
+    def owns_field_path(self, field_path: str) -> bool:
+        """Whether the path is, or lies under, a field this form shows.
 
-        return ObjectStateNavigationTargetAuthority.owns_field_path(
-            self.state,
-            field_path,
+        The answer comes from the fields the form declares (its form
+        structure), not from everything its ObjectState holds: a field the
+        state has and the form hides belongs to whichever editor shows it.
+        """
+
+        return any(
+            DottedFieldPath(self._object_state_path_for_field(parameter.name)).contains_path(
+                field_path
+            )
+            for parameter in self.form_structure.parameters
         )
 
     @staticmethod

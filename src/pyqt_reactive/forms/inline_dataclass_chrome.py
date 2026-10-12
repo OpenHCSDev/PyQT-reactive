@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
+from objectstate import DottedFieldPath
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QSizePolicy,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -18,8 +23,10 @@ from pyqt_reactive.forms.inline_dataclass_context import (
     InlineDataclassChildFieldIdentity,
     InlineDataclassFormContext,
 )
-from formbridge.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.forms.widget_creation_config import ResetButtonStyler
+from pyqt_reactive.forms.widget_creation_config import (
+    EnabledTitleWidgetMoveAuthority,
+    ResetButtonStyler,
+)
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.clickable_help_components import (
     HelpContext,
@@ -27,8 +34,139 @@ from pyqt_reactive.widgets.shared.clickable_help_components import (
 )
 
 
+class ChildFieldChrome(ABC):
+    """Section headers and markers for the child fields of one dataclass editor.
+
+    An editor is either a child of a form (its fields have ObjectState paths,
+    help labels, reset buttons and dirty markers) or it stands alone. The two
+    cases are the two members of this family, so an editor asks its chrome
+    instead of testing whether it has a form.
+    """
+
+    __slots__ = ()
+
+    @abstractmethod
+    def add_section_header(
+        self,
+        layout: QVBoxLayout,
+        group: QWidget,
+        title: str,
+        field_name: str,
+    ) -> None:
+        """Add the header of the section that edits ``field_name``."""
+
+    @abstractmethod
+    def navigation_target(self, field_name: str) -> QWidget | None:
+        """The section widget a form scrolls to for ``field_name``, if it has one."""
+
+    @abstractmethod
+    def refresh_markers(self, field_names: Iterable[str] | None = None) -> None:
+        """Redraw dirty, signature-diff, reset and inherited markers."""
+
+    @abstractmethod
+    def has_inherited_preview(self, field_name: str) -> bool:
+        """Whether the form shows an inherited value for ``field_name``."""
+
+    @abstractmethod
+    def field_names_under(
+        self,
+        owner_field_paths: tuple[DottedFieldPath, ...],
+    ) -> tuple[str, ...]:
+        """The direct child fields of this editor among ObjectState paths."""
+
+    @abstractmethod
+    def child_paths(self, field_names: Iterable[str]) -> tuple[DottedFieldPath, ...]:
+        """The ObjectState paths of child fields."""
+
+    @abstractmethod
+    def reset_child(self, field_name: str) -> None:
+        """Reset one child field to its default."""
+
+    @abstractmethod
+    def reset_children(self) -> None:
+        """Reset every child field to its default."""
+
+    @abstractmethod
+    def style_reset_button(self, button: QPushButton, field_name: str) -> None:
+        """Style a reset button by whether ``field_name`` differs from its default."""
+
+    @abstractmethod
+    def provenance_button(self, field_name: str, color_scheme) -> QWidget | None:
+        """A button that shows which scope supplied ``field_name``, if one exists."""
+
+    @abstractmethod
+    def emptied(self) -> ChildFieldChrome:
+        """The same chrome with no sections registered, for a rebuilt editor."""
+
+    @staticmethod
+    def add_plain_header(layout: QVBoxLayout, group: QWidget, title: str) -> None:
+        """Add a bold title with no field behind it."""
+
+        label = QLabel(title, group)
+        font = label.font()
+        font.setBold(True)
+        label.setFont(font)
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout.addWidget(label)
+
+
 @dataclass(slots=True)
-class InlineDataclassChildChrome:
+class StandaloneChildChrome(ChildFieldChrome):
+    """Chrome of an editor that is not a child of a form.
+
+    There is no ObjectState behind the fields, so there are no paths, no dirty
+    markers and no inherited values. Reset writes the dataclass default back
+    through ``reset_field``, which the editor supplies.
+    """
+
+    reset_field: Callable[[str], None]
+
+    def add_section_header(
+        self,
+        layout: QVBoxLayout,
+        group: QWidget,
+        title: str,
+        field_name: str,
+    ) -> None:
+        self.add_plain_header(layout, group, title)
+
+    def navigation_target(self, field_name: str) -> QWidget | None:
+        return None
+
+    def refresh_markers(self, field_names: Iterable[str] | None = None) -> None:
+        return
+
+    def has_inherited_preview(self, field_name: str) -> bool:
+        return False
+
+    def field_names_under(
+        self,
+        owner_field_paths: tuple[DottedFieldPath, ...],
+    ) -> tuple[str, ...]:
+        return ()
+
+    def child_paths(self, field_names: Iterable[str]) -> tuple[DottedFieldPath, ...]:
+        return ()
+
+    def reset_child(self, field_name: str) -> None:
+        self.reset_field(field_name)
+
+    def reset_children(self) -> None:
+        raise RuntimeError("Resetting every child field requires a form.")
+
+    def style_reset_button(self, button: QPushButton, field_name: str) -> None:
+        return
+
+    def provenance_button(self, field_name: str, color_scheme) -> QWidget | None:
+        return None
+
+    def emptied(self) -> StandaloneChildChrome:
+        return self
+
+
+@dataclass(slots=True)
+class InlineDataclassChildChrome(ChildFieldChrome):
     """Own labels, reset controls, and navigation targets for inline children."""
 
     context: InlineDataclassFormContext
@@ -108,8 +246,57 @@ class InlineDataclassChildChrome:
         self.context.update_reset_button_styling(button, identity.field_name)
         return button
 
+    def add_section_header(
+        self,
+        layout: QVBoxLayout,
+        group: QWidget,
+        title: str,
+        field_name: str,
+    ) -> None:
+        self.register_section_group(field_name, group)
+        layout.addLayout(self.create_section_header(title=title, field_name=field_name))
+
     def navigation_target(self, field_name: str) -> QWidget | None:
         return self.groups.get(self.child_identity(field_name))
+
+    def has_inherited_preview(self, field_name: str) -> bool:
+        return self.context.child_has_inherited_preview(field_name)
+
+    def field_names_under(
+        self,
+        owner_field_paths: tuple[DottedFieldPath, ...],
+    ) -> tuple[str, ...]:
+        owner_parts = self.context.owner_path.parts
+        return tuple(
+            dict.fromkeys(
+                path.parts[-1]
+                for path in owner_field_paths
+                if len(path.parts) == len(owner_parts) + 1
+                and path.parts[: len(owner_parts)] == owner_parts
+            )
+        )
+
+    def child_paths(self, field_names: Iterable[str]) -> tuple[DottedFieldPath, ...]:
+        return tuple(self.context.child_path(name) for name in field_names)
+
+    def reset_child(self, field_name: str) -> None:
+        self.context.reset_child(field_name)
+
+    def reset_children(self) -> None:
+        self.context.reset_children()
+
+    def style_reset_button(self, button: QPushButton, field_name: str) -> None:
+        self.context.update_reset_button_styling(button, field_name)
+
+    def provenance_button(self, field_name: str, color_scheme) -> QWidget | None:
+        return EnabledTitleWidgetMoveAuthority.create_title_provenance_button(
+            state=self.context.state,
+            dotted_path=self.context.child_path(field_name).value,
+            color_scheme=color_scheme,
+        )
+
+    def emptied(self) -> InlineDataclassChildChrome:
+        return InlineDataclassChildChrome(self.context)
 
     def refresh_markers(self, field_names: Iterable[str] | None = None) -> None:
         target_identities = self._target_identities(field_names)

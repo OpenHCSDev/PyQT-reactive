@@ -11,6 +11,7 @@ from functools import partial
 from typing import ClassVar, Generic, TypeVar, cast
 
 from objectstate import (
+    DottedFieldPath,
     ObjectState,
     ObjectStateEditSession,
     ObjectStateRegistry,
@@ -23,10 +24,9 @@ from objectstate import (
     set_saved_global_config,
 )
 from objectstate.lazy_factory import LazyDataclass, retain_only_authored_paths
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QSize, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout,
-    QLabel,
     QMessageBox,
     QPushButton,
     QTreeWidget,
@@ -49,9 +49,9 @@ from formbridge.services.window_code_document import (
     use_external_code_editor,
 )
 from pyqt_reactive.services.window_navigation import (
-    ObjectStateNavigationTargetAuthority,
     RegisteredWindowNavigationRequest,
     WindowNavigationDriver,
+    sole_owner,
 )
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
@@ -59,15 +59,14 @@ from pyqt_reactive.widgets.shared import (
     ActionTabbedWindowBody,
     ActionTabMaterialization,
     ActionTabSpec,
-    BaseFormDialog,
     DirtyWindowPresentation,
     FormWindowActionHeader,
     HeaderAction,
     HeaderActionGroup,
     ManagedStateRestorePolicy,
-    ManagedWindowActionCapabilities,
     create_scrollable_form_body,
 )
+from pyqt_reactive.widgets.shared.cancel_save_window import CancelSaveWindow
 from pyqt_reactive.widgets.shared.clickable_help_components import (
     HelpButton,
     HelpContext,
@@ -332,6 +331,18 @@ class _ConfigEditorTab:
     help_button: HelpButton | None
     view: _ConfigEditorTabView | None = None
 
+    def owns_field_path(self, field_path: str) -> bool:
+        """Whether the path is, or lies under, a field of this tab's config.
+
+        A config tab shows its whole ObjectState, and it is asked before its
+        form is built, so it answers from the state's declared parameters.
+        """
+
+        return any(
+            DottedFieldPath(parameter_path).contains_path(field_path)
+            for parameter_path in self.state.parameters
+        )
+
     def require_view(self) -> _ConfigEditorTabView:
         if self.view is None:
             raise RuntimeError(f"Config tab {self.spec.label} is not materialized.")
@@ -415,20 +426,17 @@ class ConfigWindowNavigationDriver(ScrollableFormWindowNavigationDriver):
             if tab.state.scope_id == request.requested_scope_id
         )
         candidate_indices = scoped_indices or tuple(range(len(self._owner._tabs)))
-        matching_indices = tuple(
-            index
-            for index in candidate_indices
-            if ObjectStateNavigationTargetAuthority.owns_field_path(
-                self._owner._tabs[index].state,
-                field_path,
-            )
+        return sole_owner(
+            tuple(
+                index
+                for index in candidate_indices
+                if self._owner._tabs[index].owns_field_path(field_path)
+            ),
+            f"Field path {field_path!r} of config tab",
         )
-        if len(matching_indices) != 1:
-            return None
-        return matching_indices[0]
 
 
-class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
+class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
     """Edit one or more configuration objects over ObjectState, one tab each.
 
     Each tab shows a field tree and a form for one config's ObjectState, with
@@ -438,6 +446,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     """
 
     document_format: ClassVar[ConfigDocumentFormat]
+    default_size: ClassVar[QSize] = QSize(650, 650)
 
     config_saved = pyqtSignal(object)
     config_cancelled = pyqtSignal()
@@ -457,9 +466,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self.scope_id = scope_id
         self.theme = WidgetTheme.from_optional(color_scheme)
         self._scope_accent_color = None
-        self._header_label: QLabel | None = None
-        self._save_button: QPushButton | None = None
-        self._default_size_applied = False
         self._base_window_title = title_text or f"Config {tabs[0].label}"
         self._action_header: FormWindowActionHeader | None = None
         self._tabs = [self._create_tab_model(spec) for spec in tabs]
@@ -696,22 +702,8 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def window_navigation_driver(self) -> WindowNavigationDriver:
         return ConfigWindowNavigationDriver(self)
 
-    def managed_window_action_capabilities(
-        self,
-    ) -> ManagedWindowActionCapabilities:
-        return ManagedWindowActionCapabilities(
-            save_and_close=True,
-            save_without_close=True,
-            discard_and_close=True,
-        )
-
     def agent_save_managed_window(self, *, close_window: bool) -> None:
         self.save_config(close_window=close_window)
-
-    def dirty_window_widgets(self) -> tuple[QLabel, QPushButton] | None:
-        if self._header_label is None or self._save_button is None:
-            return None
-        return self._header_label, self._save_button
 
     def dirty_window_presentation(self) -> DirtyWindowPresentation:
         is_dirty = any(tab.state.is_raw_dirty for tab in self._tabs)
@@ -736,32 +728,17 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def setup_ui(self) -> None:
         self.setWindowTitle(self._base_window_title)
         self.setModal(False)
-        if self.size().isEmpty():
-            self.resize(650, 650)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
-        button_styles = self.theme.scheme.styles.generate_config_button_styles()
-
-        cancel_button = QPushButton("Cancel")
-        cancel_button.clicked.connect(self.reject)
-        cancel_button.setStyleSheet(button_styles["compact"])
-
-        self._save_button = QPushButton("Save")
-        self._save_button.setEnabled(False)
-        self.setup_save_button(self._save_button, self.save_config)
-        self._save_button.setStyleSheet(button_styles["compact"])
-
-        for button in (cancel_button, self._save_button):
-            button.setFixedHeight(CURRENT_LAYOUT.button_height)
 
         active_tab_actions = self._tab_body.release_active_actions_widget()
-
-        header = FormWindowActionHeader(
+        header = self.build_cancel_save_header(
+            self.theme.scheme,
             title_text=self._base_window_title,
-            title_color=self.theme.scheme.to_hex(self.theme.scheme.text_accent),
-            action_groups=(
+            save_label="Save",
+            save_callback=self.save_config,
+            other_groups=(
                 HeaderActionGroup(
                     "group_title_companion",
                     tuple(
@@ -776,19 +753,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                     (HeaderAction("active_tab_actions", active_tab_actions),),
                     role=HeaderActionGroupRole.AUXILIARY,
                 ),
-                HeaderActionGroup(
-                    "group_commit",
-                    (
-                        HeaderAction("cancel", cancel_button),
-                        HeaderAction("save", self._save_button),
-                    ),
-                    role=HeaderActionGroupRole.COMMIT,
-                ),
             ),
-            parent=self,
         )
         self._action_header = header
-        self._header_label = header.header_label
         self._sync_tab_action_visibility()
         layout.addWidget(header)
         layout.addWidget(self._tab_body, 1)
@@ -1004,24 +971,12 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
     def after_managed_reject(self) -> None:
         ObjectStateRegistry.increment_token()
 
-    def showEvent(self, event) -> None:  # noqa: N802 - Qt virtual method name
-        super().showEvent(event)
-        if not self._default_size_applied:
-            self.resize(650, 650)
-            self._default_size_applied = True
-            self.setProperty("_fixed_default_size", True)
-
     def apply_scope_accent_styling(self) -> None:
         super().apply_scope_accent_styling()
         accent_color = self.get_scope_accent_color()
         if not accent_color:
             return
-        if self._save_button is not None:
-            self._save_button.setStyleSheet(
-                self.theme.scheme.styles.generate_scope_accent_button_style(accent_color)
-            )
-        if self._header_label is not None:
-            self._header_label.setStyleSheet(f"color: {accent_color.name()};")
+        self.apply_commit_accent(self.theme.scheme, accent_color)
         tree_style = self.get_scope_tree_selection_stylesheet()
         for tab in self._tabs:
             if tree_style and tab.view is not None:

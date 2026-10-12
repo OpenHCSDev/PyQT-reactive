@@ -5,10 +5,10 @@ Displays function metadata in a searchable table with static columns.
 Used as the table portion of FunctionSelectorDialog.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
 from operator import attrgetter
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
@@ -28,16 +28,26 @@ class FunctionTableColumnPresentation:
     width: int
     filterable: bool = False
     multivalued: bool = False
+    shown: Callable[[Any], str] = str
+    """The cell text for the field's value."""
 
     def column_def(self, field_name: str) -> ColumnDef:
         """Derive a generic table declaration for the owning field."""
+        field_value = attrgetter(field_name)
         return ColumnDef(
             self.title,
             field_name,
             self.width,
             filterable=self.filterable,
-            filter_values=(attrgetter(field_name) if self.multivalued else None),
+            filter_values=(field_value if self.multivalued else None),
+            value=lambda row: self.shown(field_value(row)),
         )
+
+
+def _shortened_summary(summary: str | None) -> str:
+    """A function's description, cut to fit a table cell."""
+    text = summary or ""
+    return text[:150] + "..." if len(text) > 150 else text
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +86,7 @@ class FunctionTableRow:
                 120,
                 filterable=True,
                 multivalued=True,
+                shown=", ".join,
             )
         }
     )
@@ -84,6 +95,7 @@ class FunctionTableRow:
             FUNCTION_TABLE_COLUMN_METADATA_KEY: FunctionTableColumnPresentation(
                 "Description",
                 300,
+                shown=_shortened_summary,
             )
         }
     )
@@ -143,24 +155,6 @@ class FunctionTableBrowser(AbstractTableBrowser[FunctionTableRow]):
     def get_columns(self) -> list[ColumnDef]:
         """Static column definitions for function table."""
         return list(self.COLUMNS)
-
-    def extract_row_data(self, item: FunctionTableRow) -> list[str]:
-        """Extract display values from function metadata."""
-        item = _require_function_table_row(item)
-        tags_str = ", ".join(item.backend_tags)
-
-        summary = item.summary
-        if summary is None:
-            summary = ""
-        description = summary[:150] + "..." if len(summary) > 150 else summary
-
-        return [
-            item.name,
-            item.module,
-            item.library,
-            tags_str,
-            description,
-        ]
 
     def get_searchable_text(self, item: FunctionTableRow) -> str:
         """Return searchable text for function metadata."""

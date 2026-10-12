@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.7.0
+
+Generic machinery moved here from three OpenHCS GUI classes. Needs
+`formbridge>=0.1.1,<0.2` (`RawDisplayValue`).
+
+Removed:
+
+- `widgets.shared.image_table_browser` (`ImageTableBrowser`). Use
+  `widgets.shared.record_table_browser.RecordTableBrowser` with declared
+  `ColumnDef`s.
+
+Added:
+
+- `windows.tabbed_editor_window`: `TabbedEditorWindow`, `EditorTab`,
+  `EditedObject`, `SaveRefused`, `TabbedEditorNavigationDriver`.
+- `widgets.shared.cancel_save_window.CancelSaveWindow`: the Cancel/Save header,
+  first-show default size, dirty-marker widgets, commit accent and agent save
+  actions shared by `ConfigWindow` and `TabbedEditorWindow`.
+- `widgets.sectioned_dataclass_editor`: `SectionedDataclassEditor` and the
+  `EditorSection` family (`ReadOnlyTableSection`, `TupleSummarySection`,
+  `RowTableSection`, `TupleFieldSection`); `TitleCheckbox` family.
+- `forms.inline_dataclass_chrome`: `ChildFieldChrome` with
+  `StandaloneChildChrome` beside `InlineDataclassChildChrome`.
+- `widgets.shared.record_table_browser` (`RecordTableBrowser`, `ValueLabels`,
+  `LabelledValue`), `folder_tree` (`FolderTreeWidget`, `FolderSelection`,
+  `FolderRowFilter`), `grid_column_filter` (`GridColumnFilterLink`),
+  `detachable_panel` (`DetachablePanel`, `PanelPlacement`) and
+  `config_action_tabs` (`ConfigActionTabs`, `ConfigAction`).
+- `AbstractTableBrowser`: `RowFilter`, `add_row_filter`, `apply_row_filters`,
+  `reveal_key`, `reveal_path`, `item_noun`.
+- `ActionTabbedWindowBody.apply_accent`.
+
+Changed:
+
+- One column declaration. `ReadOnlyTableSection` and `TupleSummarySection`
+  take `ColumnDef` columns and row records instead of header and cell tuples.
+  `ColumnDef` gains `value` (what a row shows in the column; the attribute
+  named `key` when left out), and `AbstractTableBrowser.extract_row_data` is
+  derived from the columns. `DataclassFieldColumn.read_only()` gives an
+  editable field's read-only column.
+- One `owns_field_path(field_path) -> bool`, asked of the thing that shows the
+  fields. `FieldWindowNavigationDriver` requires it (no accept-everything
+  default). `ParameterFormManager.owns_navigation_field_path` is
+  `owns_field_path` and answers from the fields the form shows, not from every
+  parameter of its ObjectState. `ObjectStateNavigationTargetAuthority` is
+  removed.
+- One rule for a navigation target claimed by several owners, in
+  `services.window_navigation.sole_owner`: it raises
+  `NavigationTargetClaimedTwiceError`. `CompositeWindowNavigationDriver` (so
+  `TabbedEditorWindow`) and `ConfigWindow` both use it. `TabbedEditorWindow` no
+  longer prefers the later tab, and `ConfigWindow` no longer rejects silently.
+- `AbstractTableBrowser.set_items` keeps the search text.
+- `ConfigWindow` is a `CancelSaveWindow`; its private `_save_button` and
+  `_header_label` are `save_button` and `header_label`.
+
 ## 0.6.0
 
 The Qt-free tier moved to [formbridge](https://github.com/OpenHCSDev/formbridge),
