@@ -6,12 +6,14 @@ table views of item collections. Subclasses implement the abstract methods
 to customize column layout, row population, and event handling.
 """
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Generic, TypeVar
+from pathlib import Path
+from typing import Any, Generic, TypeVar
 
+from formbridge.services.search_service import SearchService
 from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -25,10 +27,22 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from formbridge.services.search_service import SearchService
 from pyqt_reactive.theming import ColorScheme
 
 T = TypeVar('T')
+
+
+class RowFilter(ABC, Generic[T]):
+    """One row filter a table browser composes with its search and column filters.
+
+    A filter reads its own state (a tree selection, a toggle) when asked; its
+    owner calls :meth:`AbstractTableBrowser.apply_row_filters` when that state
+    changes.
+    """
+
+    @abstractmethod
+    def admits(self, key: str, item: T) -> bool:
+        """Whether the row stays visible."""
 
 class TableSelectionMode(Enum):
     """Selection cardinality for table browser rows."""
@@ -45,14 +59,29 @@ class TableSelectionMode(Enum):
 
 @dataclass(frozen=True)
 class ColumnDef:
-    """Declarative column configuration for table browsers."""
+    """One table column: its header, its identity and what a row shows in it.
+
+    Every table declares its columns with this type. ``value`` says where a
+    cell comes from; left out, the cell is the row's attribute named ``key``.
+    """
     name: str
     key: str
     width: int | None = None
     sortable: bool = True
     resizable: bool = True
     filterable: bool = False
-    filter_values: Callable[[object], Iterable[object]] | None = None
+    filter_values: Callable[[Any], Iterable[object]] | None = None
+    value: Callable[[Any], object] | None = None
+
+    def value_of(self, row: object) -> object:
+        """What ``row`` holds for this column."""
+        if self.value is not None:
+            return self.value(row)
+        return getattr(row, self.key)
+
+    def text_of(self, row: object) -> str:
+        """What the cell shows."""
+        return str(self.value_of(row))
 
 
 @dataclass(frozen=True)
@@ -200,6 +229,9 @@ class AbstractTableBrowser(QWidget, Generic[T]):
     items_selected = pyqtSignal(list)  # list of keys (for multi-select)
     column_filter_selection_changed = pyqtSignal(str, object)
 
+    item_noun = "items"
+    """What one row is called in the status line."""
+
     INCREMENTAL_POPULATE_THRESHOLD = 750
     INCREMENTAL_BATCH_SIZE = 200
 
@@ -227,6 +259,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
 
         # Will be set by subclass or set_items()
         self._search_service: SearchService[T] | None = None
+        self._row_filters: list[RowFilter[T]] = []
         self._populate_token = 0
 
         # Create UI components
@@ -435,9 +468,23 @@ class AbstractTableBrowser(QWidget, Generic[T]):
             )
         )
 
-    def _on_search_changed(self, search_term: str):
+    def _on_search_changed(self, _search_term: str):
         """Handle search input changes."""
-        self.set_filtered_items(self.search_items(search_term))
+        self.apply_row_filters()
+
+    def add_row_filter(self, row_filter: RowFilter[T]) -> None:
+        """Compose one more row filter with search and the column filters."""
+        self._row_filters.append(row_filter)
+
+    def apply_row_filters(self) -> None:
+        """Show the rows the search text and every row filter admit."""
+        self.set_filtered_items(
+            {
+                key: item
+                for key, item in self.search_items(self.search_input.text()).items()
+                if all(row_filter.admits(key, item) for row_filter in self._row_filters)
+            }
+        )
 
     def search_items(self, search_term: str) -> dict[str, T]:
         """Return items matching the table browser's configured search semantics."""
@@ -489,6 +536,33 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         """Select one row by semantic item key."""
         return bool(self.select_keys([key]))
 
+    def reveal_key(self, key: str) -> bool:
+        """Select one loaded row, showing it alone when the filters hide it."""
+        if key not in self.all_items:
+            return False
+        if key not in self.filtered_items:
+            self.set_filtered_items({key: self.all_items[key]})
+        return self.select_key(key)
+
+    def reveal_path(self, path: str | Path, *, root: str | Path | None = None) -> bool:
+        """Select the row a file path names.
+
+        Keys are tried in order: the path as written, the path relative to
+        ``root``, the file name, then the only key with that file name.
+        """
+        named = Path(path)
+        candidates = [str(path)]
+        if root is not None and named.is_absolute() and named.is_relative_to(root):
+            candidates.append(str(named.relative_to(root)))
+        candidates.append(named.name)
+        for candidate in candidates:
+            if candidate and candidate in self.all_items:
+                return self.reveal_key(candidate)
+        same_name = [key for key in self.all_items if Path(key).name == named.name]
+        if named.name and len(same_name) == 1:
+            return self.reveal_key(same_name[0])
+        return False
+
     def select_keys(self, keys: list[str]) -> list[str]:
         """Select rows by semantic item keys and return the keys found."""
         key_set = set(keys)
@@ -523,7 +597,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         """Update status label with current counts."""
         total = len(self.all_items)
         filtered = len(self.filtered_items)
-        self.status_label.setText(f"Showing {filtered}/{total} items")
+        self.status_label.setText(f"Showing {filtered}/{total} {self.item_noun}")
 
     def set_items(self, items: dict[str, T]):
         """Set items to display in the table."""
@@ -540,7 +614,7 @@ class AbstractTableBrowser(QWidget, Generic[T]):
             self._search_service.update_items(self.all_items)
 
         self._rebuild_column_filters()
-        self._apply_column_filters()
+        self.apply_row_filters()
 
     def set_filtered_items(self, filtered_items: dict[str, T]):
         """Set the external/base item projection and apply column filters.
@@ -761,10 +835,9 @@ class AbstractTableBrowser(QWidget, Generic[T]):
         """Return column definitions for the table."""
         raise NotImplementedError
 
-    @abstractmethod
     def extract_row_data(self, item: T) -> list[str]:
-        """Extract display values for a table row from an item."""
-        raise NotImplementedError
+        """One row's cell texts, each from its column's declared value."""
+        return [column.text_of(item) for column in self.get_columns()]
 
     @abstractmethod
     def get_searchable_text(self, item: T) -> str:

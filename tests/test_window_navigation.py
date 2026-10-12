@@ -25,7 +25,7 @@ def test_scope_route_preserves_requested_scope_for_registered_driver(qapp) -> No
             prepared_scopes.append(request.requested_scope_id)
 
     window = QWidget()
-    driver = CapturingFieldDriver(selected_fields.append)
+    driver = CapturingFieldDriver(selected_fields.append, lambda field_path: True)
     WindowManager.register("shared_window", window, navigation_driver=driver)
     ScopeWindowRegistry.register_handler(
         pattern=r"^declared_scope$",
@@ -255,7 +255,9 @@ def test_terminal_navigation_reports_exhausted_readiness(qtbot):
     qtbot.addWidget(window)
     completed, selected = [], []
     WindowManager.dispatch_widget_navigation(
-        window, WaitingDriver(selected.append), requested_scope_id="never-ready",
+        window,
+        WaitingDriver(selected.append, lambda field_path: True),
+        requested_scope_id="never-ready",
         field_path="value", completed=completed.append,
     )
     qtbot.waitUntil(lambda: bool(completed), timeout=1500)
@@ -273,7 +275,9 @@ def test_terminal_navigation_reports_destroyed_window_once(qapp, qtbot):
     window = QWidget()
     selected, completed = [], []
     WindowManager.dispatch_widget_navigation(
-        window, FieldWindowNavigationDriver(selected.append), requested_scope_id="destroyed",
+        window,
+        FieldWindowNavigationDriver(selected.append, lambda field_path: True),
+        requested_scope_id="destroyed",
         field_path="value", completed=completed.append,
     )
     window.deleteLater()

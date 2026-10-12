@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from objectstate import ObjectState
+from objectstate import ObjectState, ObjectStateRegistry
 from PyQt6.QtCore import QRect, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter
 from PyQt6.QtWidgets import (
@@ -521,31 +521,30 @@ class ProvenanceNavigationMixin:
         self._state = state
         self._dotted_path = dotted_path
 
-    def _has_provenance(self) -> bool:
-        """Check if this field has a provenance source (inherited from ancestor).
+    def _provenance_source(self) -> tuple[str | None, type] | None:
+        """The scope and type that supply this field's inherited value.
 
-        Returns True if the field inherits from an ancestor, even if that ancestor
-        is the root scope (GlobalPipelineConfig, scope_id='').
+        ``None`` when the field is set on this field itself. The scope is ``''``
+        for the global config and this state's own scope id (``None`` for a state
+        without one) when another config of the same object supplies the value.
         """
         if not self._state or not self._dotted_path:
-            logger.debug(f"ProvenanceMixin._has_provenance: NO - state={self._state}, dotted_path={self._dotted_path}")
-            return False
-        try:
-            result = self._state.get_provenance(self._dotted_path)
-            logger.debug(f"ProvenanceMixin._has_provenance: result={result}, dotted_path={self._dotted_path}")
-            # Check if result is a valid tuple with a type class
-            # Empty scope_id ('') means GlobalPipelineConfig (root scope)
-            if not result or not isinstance(result, tuple) or len(result) != 2:
-                return False
-            scope_id, source_type = result
-            # Empty scope_id is valid (represents root/GlobalPipelineConfig)
-            # Just need a valid type class
-            return source_type is not None
-        except Exception as e:
-            logger.debug(f"ProvenanceMixin._has_provenance: EXCEPTION - {e}")
-            return False
+            return None
+        return self._state.get_provenance(self._dotted_path)
 
-    def _navigate_to_source(self, source_scope_id: str, source_type: type) -> None:
+    def _has_provenance(self) -> bool:
+        """Whether this field's value is inherited from another field."""
+        return self._provenance_source() is not None
+
+    def _navigate_to_provenance_source(self) -> bool:
+        """Go to the field that supplies this field's value; False when it is set here."""
+        source = self._provenance_source()
+        if source is None:
+            return False
+        self._navigate_to_source(*source)
+        return True
+
+    def _navigate_to_source(self, source_scope_id: str | None, source_type: type) -> None:
         """Open the source window (creating if needed) and scroll to the field.
 
         Args:
@@ -553,28 +552,27 @@ class ProvenanceNavigationMixin:
             source_type: The TYPE that has the concrete value (may differ from local
                          container type due to MRO inheritance)
         """
-        # Extract field_name from our local dotted path
-        field_name = self._dotted_path.split('.')[-1] if '.' in self._dotted_path else self._dotted_path
+        field_name = self._dotted_path.rsplit(".", 1)[-1]
 
-        logger.debug(f"_navigate_to_source: local_path={self._dotted_path}, field_name={field_name}, "
-                    f"source_scope_id={source_scope_id}, source_type={source_type.__name__}")
-
-        # Compute the target path in the source window:
-        # We need to find what path source_type is at in the target window's ObjectState
+        # Another config of this same object supplies the value: the source state is
+        # this state, whether or not it is registered under a scope id.
+        same_window = (
+            isinstance(self._state, ObjectState) and self._state.scope_id == source_scope_id
+        )
+        source_state = (
+            self._state if same_window else ObjectStateRegistry.get_by_scope(source_scope_id)
+        )
         try:
-            target_path = self._compute_target_path(source_scope_id, source_type, field_name)
+            target_path = self._compute_target_path(
+                source_state, source_scope_id, source_type, field_name
+            )
         except ProvenanceNavigationUnavailable as exc:
             logger.warning("Provenance navigation unavailable: %s", exc)
             return
 
         logger.info("Navigate: %s -> %s field %s", self._dotted_path, source_scope_id, target_path)
 
-        # Check if source is in the SAME window (sibling MRO inheritance within same scope)
-        if (
-            isinstance(self._state, ObjectState)
-            and self._state.scope_id == source_scope_id
-        ):
-            logger.info(f"🔄 Same-window navigation: scrolling to {target_path}")
+        if same_window:
             self._scroll_within_current_window(target_path)
             return
 
@@ -618,42 +616,33 @@ class ProvenanceNavigationMixin:
 
         logger.warning(f"Could not find scrollable parent to navigate to {target_path}")
 
-    def _compute_target_path(self, source_scope_id: str, source_type: type, field_name: str) -> str:
-        """Compute the dotted path for source_type.field_name in the target window.
+    @staticmethod
+    def _compute_target_path(
+        source_state: ObjectState | None,
+        source_scope_id: str | None,
+        source_type: type,
+        field_name: str,
+    ) -> str:
+        """The dotted path of ``source_type.field_name`` in the source state's window.
 
-        The source_type might be at a different path in the target window than in our window.
-        For example:
-        - Local: WellFilterConfig at 'well_filter_config'
-        - Source: PathPlanningConfig at 'path_planning_config'
-
-        We need to find what path source_type is at in the target window's ObjectState.
-
-        IMPORTANT: If source_type is ui_hidden (not shown in the UI), we find the closest
-        visible subclass in the MRO that also has this field. For example:
-        - NapariDisplayConfig is ui_hidden=True
-        - NapariStreamingConfig inherits from NapariDisplayConfig and IS visible
-        - So we navigate to napari_streaming_config.field instead of napari_display_config.field
+        The source type can sit at another path there than in this window (local
+        ``well_filter_config``, source ``path_planning_config``). A source type that
+        is hidden in the UI answers with its closest visible subclass holding the
+        field, which ``project_ui_visible_field_path`` decides.
         """
-        from objectstate import ObjectStateRegistry
-
-        logger.debug(f"_compute_target_path: scope={source_scope_id}, source_type={source_type.__name__}, field={field_name}")
-
-        # Get the target window's ObjectState
-        target_state = ObjectStateRegistry.get_by_scope(source_scope_id)
-        if target_state is None:
+        if source_state is None:
             raise ProvenanceNavigationUnavailable(
                 f"no ObjectState registered for scope {source_scope_id!r}"
             )
 
-        target_path = target_state.project_ui_visible_field_path(source_type, field_name)
+        target_path = source_state.project_ui_visible_field_path(source_type, field_name)
         if target_path is None:
             raise ProvenanceNavigationUnavailable(
                 f"no visible UI path for type {source_type.__name__}.{field_name} "
                 f"in scope {source_scope_id!r}"
             )
-
-        logger.info(f"Computed target path: {target_path} (source_type={source_type.__name__}, field={field_name})")
         return target_path
+
 
 class ProvenanceLabel(QLabel, ProvenanceNavigationMixin):
     """QLabel that supports provenance navigation on hover/click.
@@ -703,12 +692,11 @@ class ProvenanceLabel(QLabel, ProvenanceNavigationMixin):
 
     def mousePressEvent(self, event) -> None:
         """On click: navigate to provenance source window and field."""
-        if event.button() == Qt.MouseButton.LeftButton and self._has_provenance():
-            result = self._state.get_provenance(self._dotted_path)
-            if result is not None:
-                source_scope_id, source_type = result
-                self._navigate_to_source(source_scope_id, source_type)
-                return
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._navigate_to_provenance_source()
+        ):
+            return
         super().mousePressEvent(event)
 
 
@@ -731,11 +719,7 @@ class ProvenanceButton(QPushButton, ProvenanceNavigationMixin):
 
     def _on_click(self):
         """Handle button click - navigate to provenance source."""
-        if self._has_provenance():
-            result = self._state.get_provenance(self._dotted_path)
-            if result:
-                source_scope_id, source_type = result
-                self._navigate_to_source(source_scope_id, source_type)
+        self._navigate_to_provenance_source()
 
     def enterEvent(self, event):
         """Show pointer cursor if field has provenance."""

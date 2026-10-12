@@ -55,19 +55,15 @@ class SnapshotTableBrowser(AbstractTableBrowser[SnapshotInfo]):
 
     def get_columns(self) -> list[ColumnDef]:
         return [
-            ColumnDef("Index", "index", width=60),
+            ColumnDef(
+                "Index",
+                "index",
+                width=60,
+                value=lambda item: f"→ {item.index}" if item.is_current else str(item.index),
+            ),
             ColumnDef("Time", "timestamp", width=100),
             ColumnDef("Label", "label", width=250),
             ColumnDef("States", "num_states", width=60),
-        ]
-
-    def extract_row_data(self, item: SnapshotInfo) -> list[str]:
-        prefix = "→ " if item.is_current else ""
-        return [
-            f"{prefix}{item.index}",
-            item.timestamp,
-            item.label,
-            str(item.num_states),
         ]
 
     def get_searchable_text(self, item: SnapshotInfo) -> str:

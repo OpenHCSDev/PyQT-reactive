@@ -27,6 +27,10 @@ from formbridge.services.function_navigation import (
     FunctionPatternField,
     parse_function_field_target,
 )
+from pyqt_reactive.services.window_navigation import (
+    FieldWindowNavigationDriver,
+    WindowNavigationDriver,
+)
 from pyqt_reactive.services.function_list_editor_actions import (
     FunctionListEditorAction,
 )
@@ -784,6 +788,13 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
         self.scroll_area.setWidget(self.function_container)
         layout.addWidget(self.scroll_area)
+
+    def window_navigation_driver(self) -> WindowNavigationDriver:
+        """Navigation to the function-pattern fields this editor shows."""
+        return FieldWindowNavigationDriver(
+            self.select_and_scroll_to_field,
+            owns_field_path=FunctionPatternField.owns_field_path,
+        )
 
     def select_and_scroll_to_field(self, field_path: str) -> None:
         """Public API for WindowManager navigation protocol.

@@ -7,9 +7,9 @@ from enum import StrEnum
 import pytest
 from objectstate.lazy_factory import (
     FIELD_ABBREVIATIONS_REGISTRY,
-    GROUP_ABBREVIATIONS_REGISTRY,
     PREVIEW_LABEL_REGISTRY,
     LazyDataclassFactory,
+    abbreviation,
 )
 from python_introspect import Enableable
 
@@ -214,9 +214,8 @@ def test_preview_strategy_supplies_objectstate_declaration_to_formatter() -> Non
     assert segments == [("owned:5", "nested.value", None)]
 
 
-def test_preview_groups_derive_identity_and_order_from_declared_types(
-    monkeypatch,
-) -> None:
+def test_preview_groups_derive_identity_and_order_from_declared_types() -> None:
+    @abbreviation("cfg")
     @dataclass
     class Config:
         first: int = 1
@@ -226,8 +225,6 @@ def test_preview_groups_derive_identity_and_order_from_declared_types(
         Config,
         "LazyPreviewGroupConfig",
     )
-    monkeypatch.setitem(GROUP_ABBREVIATIONS_REGISTRY, Config, "cfg")
-    monkeypatch.setitem(GROUP_ABBREVIATIONS_REGISTRY, lazy_type, "copied")
     values = {
         "workers": 4,
         "config.first": 1,
@@ -269,14 +266,12 @@ def test_preview_groups_derive_identity_and_order_from_declared_types(
     ]
 
 
-def test_preview_groups_keep_distinct_paths_with_the_same_declaration(
-    monkeypatch,
-) -> None:
+def test_preview_groups_keep_distinct_paths_with_the_same_declaration() -> None:
+    @abbreviation("cfg")
     @dataclass
     class Config:
         value: int = 1
 
-    monkeypatch.setitem(GROUP_ABBREVIATIONS_REGISTRY, Config, "cfg")
     values = {"left.value": 1, "right.value": 2}
 
     class State:
