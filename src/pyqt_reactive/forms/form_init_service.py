@@ -400,6 +400,11 @@ class InitializationServiceCatalog:
     def builder_for(self, output_type: Type, service_name: str):
         """Decorator to register builder function and auto-generate service class."""
         def decorator(func: Callable) -> Callable:
+            if output_type in self._builders_by_output:
+                raise ValueError(
+                    f"{output_type.__qualname__} already has a builder "
+                    f"({self._builders_by_output[output_type].service_name})."
+                )
             self._builders_by_output[output_type] = BuilderSpec(output_type, service_name, func)
             return func
         return decorator
