@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.2
+
+Requires `metaclass-registry>=0.4.0`, `objectstate>=3.0.1,<4`,
+`formbridge>=0.1.3,<0.2` and `zmqruntime>=0.6.4,<0.7`.
+
+Changed:
+
+- A widget id names one widget class. Registering a different class under an
+  id that is already taken raises `ValueError`; it used to log a warning and
+  replace the first class. The same class statement run again (a reload)
+  takes its id back.
+- A form output type has one builder: `InitializationServiceCatalog` raises
+  `ValueError` when a second builder declares an output type that already
+  has one.
+
 ## 0.7.1
 
 Requires ObjectState 3 (`objectstate>=3.0,<4`) and `formbridge>=0.1.2,<0.2`.
