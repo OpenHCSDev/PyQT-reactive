@@ -144,7 +144,12 @@ class EditedObject(ABC):
 
 
 class TabbedEditorNavigationDriver(CompositeWindowNavigationDriver):
-    """Navigate through the tab that owns the target, showing that tab first.
+    """Navigate through the one tab that owns the target, showing that tab first.
+
+    Every tab's driver says what it accepts in its own terms. Where two accept
+    the same target, the tab declared later owns it: a later tab is a dedicated
+    editor for part of what an earlier, more general tab also shows. That rule
+    lives here only, so no driver has to know what another tab owns.
 
     Each driver is kept with the tab that supplied it, so a navigation can be
     traced to the tab declaration that handled it.
@@ -153,6 +158,12 @@ class TabbedEditorNavigationDriver(CompositeWindowNavigationDriver):
     def __init__(self, tabs: tuple[EditorTab, ...]) -> None:
         self.tab_drivers = tuple((tab, tab.navigation_driver()) for tab in tabs)
         super().__init__(tuple(driver for _tab, driver in self.tab_drivers))
+
+    def _matching_drivers(
+        self,
+        request: RegisteredWindowNavigationRequest,
+    ) -> tuple[WindowNavigationDriver, ...]:
+        return super()._matching_drivers(request)[-1:]
 
     def owning_tabs(self, request: RegisteredWindowNavigationRequest) -> tuple[EditorTab, ...]:
         matching = self._matching_drivers(request)

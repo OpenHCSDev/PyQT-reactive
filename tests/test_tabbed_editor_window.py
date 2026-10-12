@@ -49,6 +49,10 @@ class NoteFieldsTab(NoteTab):
     def form_managers(self):
         return (self.form_manager,)
 
+    def navigation_driver(self):
+        self.visited: list[str] = []
+        return FieldWindowNavigationDriver(self.visited.append)
+
 
 class SummaryPathsOnly(FieldWindowNavigationDriver):
     def accepts_field_path(self, request) -> bool:
@@ -233,11 +237,17 @@ def test_navigation_shows_the_tab_whose_driver_owns_the_field(note_window) -> No
 
     assert note_window.tab_body.current_index() == note_window.tabs.index(summary)
     assert summary.visited == ["summary.total"]
-    assert not driver.accepts(
-        RegisteredWindowNavigationRequest(
-            window=note_window, requested_scope_id=SCOPE, field_path="elsewhere"
-        )
+
+    # The general form accepts every path; the later, dedicated tab took the one it owns.
+    fields = note_window.tab(NoteFieldsTab)
+    assert fields.visited == []
+    elsewhere = RegisteredWindowNavigationRequest(
+        window=note_window, requested_scope_id=SCOPE, field_path="text"
     )
+    assert driver.owning_tabs(elsewhere) == (fields,)
+    driver.execute(elsewhere)
+    assert fields.visited == ["text"]
+    assert summary.visited == ["summary.total"]
 
 
 def test_cancel_restores_the_saved_state(note_window) -> None:
