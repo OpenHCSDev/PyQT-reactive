@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 TabT = TypeVar("TabT", bound="EditorTab")
 
 
-class SaveRefused(Exception):
+class SaveRefused(Exception):  # noqa: N818 - a refusal shown to the user, not a fault
     """The edited object cannot be saved as it stands; the message is shown to the user."""
 
 

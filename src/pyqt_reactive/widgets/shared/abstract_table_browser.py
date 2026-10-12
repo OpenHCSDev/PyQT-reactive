@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Generic, TypeVar
 
+from formbridge.services.search_service import SearchService
 from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -26,7 +27,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from formbridge.services.search_service import SearchService
 from pyqt_reactive.theming import ColorScheme
 
 T = TypeVar('T')
