@@ -1,3 +1,2 @@
 # Source candidates needed to validate this checkout before coordinated publication.
-# Remove once formbridge 0.1.0 is on PyPI.
-formbridge @ git+https://github.com/OpenHCSDev/formbridge.git@dac016354f8d88924fd40073dac6b06f650bbc19
+# Empty: every first-party dependency is released (formbridge 0.1.0, objectstate 2.1.1, python-introspect 0.2.8).
