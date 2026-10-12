@@ -273,6 +273,30 @@ class FieldSection(EditorSection):
 
 
 @dataclass(frozen=True, kw_only=True)
+class TupleSummarySection(FieldSection):
+    """A tuple field shown as a read-only summary, edited through its actions.
+
+    For records too wide for an inline row table: the declaring editor
+    computes the summary rows and supplies the buttons that edit the field.
+    """
+
+    columns: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    actions: tuple[tuple[str, Callable[[], None]], ...]
+
+    def shown(self, value: RawDisplayValue) -> object:
+        return tuple(cast(tuple, value.display_field(self.field_name)) or ())
+
+    def build(self, editor: SectionedDataclassEditor) -> RenderedFieldSection:
+        group, layout = self.field_group(editor)
+        table = editor.new_table(len(self.rows), len(self.columns))
+        self.fill(table, self.columns, self.rows)
+        layout.addWidget(table)
+        self.button_row(layout, *self.actions)
+        return RenderedFieldSection(group=group, section=self, table=table)
+
+
+@dataclass(frozen=True, kw_only=True)
 class RowTableSection(FieldSection):
     """A section that edits a field through a table of typed rows.
 
@@ -546,13 +570,13 @@ class EditsRawDisplayValue(
         resolved_value: object | None,
     ) -> None:
         raw = self._raw_or_empty(raw_value)
-        self.show_value(
-            RawDisplayValue(
-                self._value.value_type,
-                raw,
-                resolved_value if resolved_value is not None else raw,
-            )
+        incoming = RawDisplayValue(
+            self._value.value_type,
+            raw,
+            resolved_value if resolved_value is not None else raw,
         )
+        if incoming != self._value:
+            self.show_value(incoming)
 
     def connect_change_signal(self, callback: Callable[[object], None]) -> None:
         def emit_value() -> None:
@@ -644,7 +668,7 @@ class ShowsFieldSections(
         return self.chrome.navigation_target(field_name)
 
     def child_field_section_group(self, field_name: str) -> QWidget:
-        target = self.chrome.navigation_target(field_name)
+        target = self.child_field_navigation_target(field_name)
         if target is None:
             raise RuntimeError(f"Child section {field_name!r} is not rendered.")
         return target
@@ -674,7 +698,7 @@ class ShowsFieldSections(
         """The section, or one of its cells, that a form flashes and scrolls to."""
 
         field_name = child_identity.field_name
-        group = self.chrome.navigation_target(field_name)
+        group = self.child_field_navigation_target(field_name)
         if group is None:
             return None
         label = self.child_field_label(field_name)
@@ -785,6 +809,44 @@ class SectionedDataclassEditor(
         self.sections_layout.setSpacing(3)
         self.refresh()
 
+    @classmethod
+    def for_value(cls, raw: object, **context) -> SectionedDataclassEditor:
+        """An editor that shows ``raw`` exactly as edited (nothing inherited)."""
+
+        return cls(RawDisplayValue.shown_as_edited(cls.value_type, raw), **context)
+
+    @classmethod
+    def in_form(
+        cls,
+        *,
+        current_value: object,
+        manager,
+        param_info,
+        parent: QWidget | None = None,
+        **_: object,
+    ) -> SectionedDataclassEditor:
+        """Inline dataclass widget factory: the editor as a child of a form.
+
+        The shown value is the form state's resolved value, so inherited
+        fields appear as placeholders.
+        """
+
+        context = InlineDataclassFormContext.from_inline_widget(
+            manager=manager,
+            param_info=param_info,
+            current_value=current_value,
+        )
+        resolved = context.state.get_resolved_value(context.owner_path.value)
+        return cls(
+            RawDisplayValue(
+                cls.value_type,
+                current_value,
+                current_value if resolved is None else resolved,
+            ),
+            form_context=context,
+            parent=parent,
+        )
+
     # -- rendering an incoming value
 
     def _enabled_shown(self, value: RawDisplayValue) -> object:
@@ -887,6 +949,12 @@ class SectionedDataclassEditor(
         self.refresh()
         self.changed.emit()
 
+    def append_to_field(self, field_name: str, item: object) -> None:
+        """Append one item to a tuple field, declaring any inherited items."""
+
+        shown = cast(tuple, self._value.display_field(field_name)) or ()
+        self.replace_field(field_name, (*shown, item))
+
     def _reset_field_to_default(self, field_name: str) -> None:
         self.replace_field(field_name, self._value.field_default(field_name))
 
@@ -951,4 +1019,5 @@ __all__ = (
     "ShowsFieldSections",
     "TitleCheckbox",
     "TupleFieldSection",
+    "TupleSummarySection",
 )
