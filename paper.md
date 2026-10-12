@@ -1,5 +1,5 @@
 ---
-title: 'pyqt-reactor: A Reactive Application Framework for PyQt6 Desktop Software'
+title: 'pyqt-reactive: A Reactive Application Framework for PyQt6 Desktop Software'
 tags:
   - Python
   - PyQt6
@@ -20,119 +20,123 @@ bibliography: paper.bib
 
 # Summary
 
-Every PyQt application with configuration forms eventually reimplements the same patterns: list managers with add/edit/delete, cross-window state synchronization, hierarchical settings inheritance, visual feedback for unsaved changes. These patterns are tedious to build correctly and painful to maintain.
-
-`pyqt-reactor` eliminates this work. Declare what your UI should do; the framework handles how:
+`pyqt-reactive` is a PyQt6 library for desktop applications whose windows edit shared, hierarchical configuration. A form is a view of an `ObjectState` [@objectstate]. The state holds the values, the saved baseline, inheritance and history; the form holds widgets. Windows that show the same state, or states that inherit from one another, stay consistent without synchronization code in the application.
 
 ```python
-class PipelineEditor(AbstractManagerWidget):
-    TITLE = "Pipeline Editor"
-    BUTTON_CONFIGS = [("Add", "add_step"), ("Del", "del_step"), ("Edit", "edit_step")]
-    ITEM_HOOKS = {'backing_attr': 'steps', 'selection_signal': 'step_selected'}
-    PREVIEW_FIELD_CONFIGS = ['streaming_config', 'output_config']
+from dataclasses import dataclass
+from PyQt6.QtWidgets import QApplication
+from objectstate import ObjectState, set_base_config_type
+from pyqt_reactive.forms.parameter_form_manager import (
+    FormManagerConfig, ParameterFormManager)
+from pyqt_reactive.theming import ColorScheme
+
+@dataclass
+class MyConfig:
+    name: str = "default"
+    count: int = 10
+
+app = QApplication([])
+set_base_config_type(MyConfig)
+state = ObjectState(MyConfig(), scope_id="example")
+form = ParameterFormManager(
+    state, config=FormManagerConfig(color_scheme=ColorScheme()))
+form.show()
+app.exec()
 ```
 
-This configuration inherits complete CRUD infrastructure, cross-window reactivity, flash animations, dirty tracking, undo/redo, and live preview formatting. When a value changes in one window, every related window updates. When a user clears a field, it inherits from the parent scope. When an item is modified, it flashes. The framework composes these behaviors; applications declare their structure.
+The library also provides a base class for list managers, a tabbed configuration window with a transactional save, navigation to the window that shows a given field, flash feedback for changed values, and a time-travel widget over ObjectState history. The parts that do not need Qt (form structure, service contracts, list-manager workflows) live in the companion package `formbridge` [@formbridge], which `pyqt-reactive` depends on.
 
 # Statement of Need
 
-Desktop applications with complex state share a common fate: teams rebuild the same infrastructure repeatedly. Cross-window synchronization. Hierarchical configuration. CRUD list managers. Visual feedback systems. Each project reimplements these patterns from scratch because no framework provides them.
+Desktop applications with several windows over one configuration hierarchy need the same infrastructure each time: views that follow edits made elsewhere, fields that show the value they inherit, list managers, and feedback that shows what an edit changed. PyQt6 [@pyqt6] supplies widgets and signals, not this layer.
 
-| Capability | Qt Designer | magicgui | Streamlit | React | pyqt-reactor |
-|------------|:-----------:|:--------:|:---------:|:-----:|:------------:|
-| Cross-window sync | — | — | — | ✓ | ✓ |
-| Hierarchical config | — | — | — | ✓¹ | ✓ |
-| CRUD abstractions | — | — | — | — | ✓ |
-| Desktop native | ✓ | ✓ | — | — | ✓ |
-| Type-driven widgets | — | ✓ | ✓ | — | ✓ |
-| O(1) animations | — | — | — | — | ✓ |
+| Capability | Qt Designer | magicgui | Streamlit | pyqt-reactive |
+|------------|:-----------:|:--------:|:---------:|:-------------:|
+| Views of one state follow each other across windows | no | no | no | yes |
+| Inherited values shown in the form | no | no | no | yes |
+| List-manager base class | no | no | no | yes |
+| Desktop native | yes | yes | no | yes |
+| Widgets from type annotations | no | yes | yes | yes |
 
-¹ React Context provides hierarchy but requires manual inheritance implementation.
-
-**Qt Designer** handles layout, not behavior. **magicgui** [@magicgui] generates widgets from signatures but stops there—no synchronization, no CRUD patterns. **Streamlit** [@streamlit] is reactive but web-only. **React** [@react] pioneered declarative UI but JavaScript cannot introspect types at runtime the way Python can.
-
-`pyqt-reactor` fills the gap: the framework layer that PyQt6 lacks.
+**Qt Designer** handles layout, not behavior. **magicgui** [@magicgui] builds a widget from a type annotation; `pyqt-reactive` calls it for leaf widgets it has no widget of its own for, and adds the state model around them. **Streamlit** [@streamlit] is reactive but runs in the browser. The design follows React [@react] in one respect: a view is derived from state and never holds its own copy.
 
 # Software Design
 
 ## Cross-Window Reactivity
 
-Change a value in Window A; Window B updates. No save button. No reload. No explicit synchronization code.
+Every edit takes one path. `FieldChangeDispatcher.dispatch` writes the value to the form's `ObjectState`, refreshes the same-named field in sibling nested forms, notifies the listeners of `ObjectStateRegistry`, and emits `parameter_changed` and `context_changed` from the root form. A per-form flag drops a dispatch that arrives while that form is already dispatching.
 
-The mechanism: `FieldChangeDispatcher` routes changes with reentrancy guards. `ObjectStateRegistry` notifies listeners via `contextvars` isolation. `CrossWindowPreviewMixin` debounces updates to prevent storms during rapid typing. Windows refresh only affected fields based on type-hierarchy matching.
+Other windows do not listen to the edited form. Each root form subscribes to its own state (`state.on_resolved_changed`), and ObjectState calls it with the set of paths whose resolved values changed. The form refreshes the widgets for those paths and flashes them. List managers listen on the registry and refresh their rows.
 
-**Example**: A user opens two windows—one editing a Pipeline's global settings, another editing a Step's settings. The Step inherits from the Pipeline. When the user changes `num_workers=8` in the Pipeline window, the Step window immediately shows the new inherited value in its placeholder text. No explicit synchronization code. The framework detects that both windows reference the same configuration hierarchy and updates both.
-
-This is what React does for web components. `pyqt-reactor` brings it to PyQt6 desktop applications.
+**Example**: one window edits a Pipeline and another a Step that inherits from it. Setting `num_workers=8` in the Pipeline window changes the resolved value of the Step's unset `num_workers`; the Step window shows the new value as placeholder text and flashes the field.
 
 ## CRUD Abstractions
 
-`AbstractManagerWidget` is a template-method base class for list managers. Declare your structure:
+`AbstractManagerWidget` is a template-method base class for list managers. A subclass declares its structure:
 
-- **BUTTON_CONFIGS**: Toolbar buttons mapping to actions
-- **ITEM_HOOKS**: Selection tracking, backing storage, signal emission
-- **PREVIEW_FIELD_CONFIGS**: Fields shown in list item previews
-- **LIST_ITEM_FORMAT**: Multiline display with formatters
-
-Implement the domain hooks. The base class provides everything else: list widget creation, selection with dirty-check prevention, drag-and-drop with undo, cross-window preview updates, flash animations, dirty tracking. Build a complete list manager by declaring what it manages.
-
-**Example**: A pipeline editor needs to manage a list of processing steps. Without `AbstractManagerWidget`, the developer would write:
-- A `QListWidget` subclass with selection handling
-- Add/delete/edit button handlers
-- Dirty tracking (mark as modified when items change)
-- Undo/redo integration
-- Cross-window updates when steps are modified elsewhere
-- Flash animations when items are added/removed
-
-With `AbstractManagerWidget`, the developer declares:
 ```python
-class StepListManager(AbstractManagerWidget):
-    ITEM_HOOKS = {'backing_attr': 'steps', 'selection_signal': 'step_selected'}
-    BUTTON_CONFIGS = [("Add", "add_step"), ("Delete", "del_step"), ("Edit", "edit_step")]
-    PREVIEW_FIELD_CONFIGS = ['function_name', 'parameters']
+from formbridge.managers.item_hooks import (
+    AttributeItemIdProjection, ManagerItemHooks)
+from formbridge.managers.state_binding import ManagerStateBinding
+from pyqt_reactive.widgets.shared.abstract_manager_widget import (
+    AbstractManagerWidget)
+from pyqt_reactive.widgets.shared.manager_item_display_builder import (
+    ListItemFormat)
+
+class StepList(AbstractManagerWidget):
+    TITLE = "Steps"
+    BUTTON_CONFIGS = [("Add", "add", "Add a step"),
+                      ("Del", "del", "Delete selected steps")]
+    STATE_BINDING = ManagerStateBinding(
+        items_attr="steps", selection_attr="selected_step",
+        selection_signal_attr="step_selected")
+    ITEM_HOOKS = ManagerItemHooks(
+        id_projection=AttributeItemIdProjection("name"))
+    LIST_ITEM_FORMAT = ListItemFormat(first_line=("func",))
+
+    def _action_handlers(self):
+        return {"add": self.action_add, "del": self.action_delete}
 ```
 
-And implements three methods: `add_step()`, `del_step()`, `edit_step()`. The base class handles everything else.
+The subclass also implements seven abstract methods: `action_add`, `update_button_states`, `show_item_editor`, `_format_item_content`, `_get_list_item_tooltip`, `_get_scope_for_item` and `_get_item_scope_id`. The base class supplies the list widget with drag-and-drop reordering, the button panel, selection handling, the delete and edit actions, a code-editor action, row refresh when a state changes, row flashes, and refresh after time travel.
 
 ## Hierarchical Configuration
 
-Forms integrate with ObjectState [@objectstate] for dual-axis inheritance. Values resolve through both context hierarchy (Step → Pipeline → Global) and class hierarchy (StepConfig → PipelineConfig → BaseConfig).
+Inheritance is ObjectState's: a value resolves through the scope hierarchy (Step → Pipeline → Global) and the class hierarchy of the configuration types. `pyqt-reactive` displays it. `None` means "inherit". An unset field shows `state.get_resolved_value(path)` as placeholder text; typing a value overrides it and resetting returns the field to its default. The label of an inherited field can navigate to the state that supplied the value, read from `state.get_provenance(path)`.
 
-The key insight: `None` means "inherit." Placeholder text shows the inherited value in real-time. Users see what they'll get. Clear a field to restore inheritance. Type a value to override. The UI model and data model are unified—no synchronization bugs, no hidden state.
+## One Owner per Field
+
+Each fact has one owner. The values are owned by the state: since 0.8.0 the configuration window keeps no copy of the global configuration. Save is `state.mark_saved()` for every tab inside one `ObjectStateRegistry.atomic_success` block. If a tab's save participant raises, the participants already applied are rolled back and every state is restored from a checkpoint taken before the save.
+
+Which window shows a field is owned by the thing that shows it. `ParameterFormManager.owns_field_path` answers from the fields the form displays, not from every parameter of its state, so a field the form hides belongs to whichever editor shows it. `sole_owner` is the one rule for overlap: if two owners in a window claim the same target it raises `NavigationTargetClaimedTwiceError` and names them.
 
 ## Registered Extensibility
 
-The framework knows nothing about the host application's domain. Registered service contracts such as `CodegenProviderABC` and declaration registries such as `PreviewFormatterRegistry` define integration points. Host applications register their implementations at startup, and the generic widgets consume those nominal boundaries without importing domain types.
+The package does not import its host application. A host supplies implementations of abstract classes: `UiHostServices` (dialogs, color scheme, asynchronous execution) is passed to every manager widget, `ConfigDocumentFormat` renders a configuration as source for the configuration window, and `EditorTab` and `EditedObject` define the tabs of a `TabbedEditorWindow`. `CodegenProviderABC` and `PreviewFormatterRegistry` are registered through `formbridge`.
 
 ## Flash Animation Architecture
 
-Visual feedback matters. Modified items flash. Dirty fields highlight. But naive implementations scale O(n) with widget count—unacceptable for complex UIs.
-
-Game-engine solution: `GlobalFlashCoordinator` runs a single timer, pre-computes all interpolated colors. `WindowFlashOverlay` renders every flash rectangle in one `paintEvent`. Cost scales with animating elements, not total widgets.
+Changed fields and list rows flash. One coordinator runs a single `QTimer` for all windows, at the screen refresh rate capped at 60 frames per second by default, and computes the current color of each flashing key on each tick. `WindowFlashOverlay`, one transparent widget per top-level window, paints every flash rectangle of that window in one `paintEvent` from cached geometry. Work per tick grows with the number of flashing elements, not with the number of widgets. The repository contains no timing measurements of this path.
 
 ## Universal Callable Introspection
 
-Forms generate from any callable: functions, dataclasses, classes (via `__init__`), or objects with `__call__`. The `python-introspect` [@pythonintrospect] dependency provides unified parameter analysis—one interface for all callable types. Pass a function, get a form. Pass a dataclass, get a form. Pass a callable object, get a form. The framework doesn't care which; the introspection layer normalizes them.
+A form is built from whatever object its state wraps. `ParameterFormManager` obtains parameter names and types from one call, `UnifiedParameterAnalyzer.analyze`, in `python-introspect` [@pythonintrospect], and has no branch per kind of object.
 
 ## Type Dispatch
 
-Widget creation uses discriminated unions. `ParameterInfo` subclasses define `matches()` predicates; the factory selects the first match. Services dispatch by class name (`_reset_OptionalDataclassInfo`). No dispatch tables. Exhaustive handling. Type-safe throughout.
+Each parameter is classified into a `ParameterInfo` class from `formbridge` (`OptionalDataclassInfo`, `DirectDataclassInfo`, `InlineDataclassWidgetInfo`, `GenericInfo`). Each class has a `matches()` predicate and registers itself when it is defined; the factory returns the first class that matches. Services dispatch on the class name (`_reset_OptionalDataclassInfo`) and raise if a handler is missing. There is no hand-written dispatch table.
 
 # Research Application
 
-`pyqt-reactor` powers OpenHCS, an open-source high-content screening platform for automated microscopy. Multiple synchronized windows. Deeply nested configuration hierarchies. Multi-level scopes (Global → Plate → Pipeline → Step). Real-time inherited value preview. Git-style undo/redo with branching timelines.
-
-Step-level settings inherit from pipeline defaults, which inherit from global configuration. Function editors generate forms from any callable signature—arbitrary Python functions become pipeline steps. Responsive updates across all windows during active editing. No perceptible lag.
+`pyqt-reactive` is the GUI layer of OpenHCS, an open-source high-content screening platform for automated microscopy. OpenHCS's plate manager and pipeline editor subclass `AbstractManagerWidget`, its step and configuration editors are `ParameterFormManager` forms, and its main window embeds the time-travel widget. Step settings inherit from pipeline defaults, which inherit from the global configuration.
 
 ## Broader Applicability
 
-The patterns generalize. Video editors need timeline sync and effect parameter inheritance. Game engines need entity inspectors with prefab hierarchies. CAD software needs assembly parameters flowing to child components. Audio DAWs need track configs inheriting from master settings.
-
-These are the same patterns. `pyqt-reactor` provides them once.
+The same structure occurs wherever several windows edit one hierarchy of settings: effect parameters in a video editor, entity inspectors in a game engine, assembly parameters in CAD software.
 
 # AI Usage Disclosure
 
-Generative AI (Claude claude-sonnet-4-5) assisted with code generation and documentation. All content was reviewed, tested, and integrated by human developers. Core architectural decisions—CRUD abstractions, cross-window reactivity, game-engine animation, ObjectState integration—were human-designed based on production requirements from OpenHCS development.
+Generative AI (Claude claude-sonnet-4-5) assisted with code generation and documentation. All content was reviewed, tested, and integrated by human developers. Core architectural decisions (CRUD abstractions, cross-window reactivity, game-engine animation, ObjectState integration) were human-designed based on production requirements from OpenHCS development.
 
 # Acknowledgements
 
