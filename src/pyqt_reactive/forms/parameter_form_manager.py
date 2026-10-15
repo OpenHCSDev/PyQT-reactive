@@ -137,7 +137,7 @@ class ParameterFormTypeResolver:
 
     @staticmethod
     def field_type(manager: "ParameterFormManager", field_name: str, signature_type: Type) -> Type:
-        dotted_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
+        dotted_path = manager._object_state_path_for_field(field_name).value
         if not manager.state.has_parameter_descendants(dotted_path):
             return signature_type
 
@@ -729,7 +729,7 @@ class ParameterFormManager(
             current_value: Ignored (kept for ABC compatibility)
         """
         # Build nested field id (dotted path)
-        nested_id = f"{self.field_id}.{param_name}" if self.field_id else param_name
+        nested_id = self._object_state_path_for_field(param_name).value
 
         # Create nested PFM (VIEW) that shares the same ObjectState (MODEL)
         nested_config = FormManagerConfig(
@@ -1400,15 +1400,13 @@ class ParameterFormManager(
 
         for manager in self._iter_form_managers():
             for field_name, widget in manager.widgets.items():
-                owner_path = DottedFieldPath(manager._object_state_path_for_field(field_name))
+                owner_path = manager._object_state_path_for_field(field_name)
                 if not owner_path.contains_path(path):
                     continue
-                child_field_name = owner_path.direct_child_name(path)
                 structural_result = resolve_inline_dataclass_structural_target(
                     inline_widget=widget,
-                    inline_field_path=owner_path.parts,
+                    inline_field_path=owner_path,
                     display_path=path,
-                    owner_child_field_name=child_field_name,
                 )
                 if structural_result is None:
                     continue
@@ -1439,10 +1437,10 @@ class ParameterFormManager(
         for nested_manager in self.nested_managers.values():
             yield from nested_manager._iter_form_managers()
 
-    def _object_state_path_for_field(self, field_name: str) -> str:
-        """Return the ObjectState display path for a direct field."""
+    def _object_state_path_for_field(self, field_name: str) -> DottedFieldPath:
+        """Bind a direct field to this manager's absolute ObjectState scope."""
 
-        return f"{self.field_id}.{field_name}" if self.field_id else field_name
+        return DottedFieldPath(self.field_id).child(field_name)
 
     def owns_field_path(self, field_path: str) -> bool:
         """Whether the path is, or lies under, a field this form shows.
@@ -1453,7 +1451,7 @@ class ParameterFormManager(
         """
 
         return any(
-            DottedFieldPath(self._object_state_path_for_field(parameter.name)).contains_path(
+            self._object_state_path_for_field(parameter.name).contains_path(
                 field_path
             )
             for parameter in self.form_structure.parameters

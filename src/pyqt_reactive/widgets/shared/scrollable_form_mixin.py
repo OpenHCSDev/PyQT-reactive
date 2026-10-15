@@ -223,20 +223,18 @@ class ScrollableFormMixin:
     ) -> Optional[ScrollTarget]:
         """Resolve a dotted form path to a concrete widget and section path."""
         path = DottedFieldPath(field_name)
-        parts = path.parts
-        if not parts:
+        if not path.parts:
             return None
         current_manager = self.form_manager
-        section_parts = []
+        section_path = DottedFieldPath("")
 
         for i, part in enumerate(path.parent.parts):
             if part not in current_manager.nested_managers:
                 inline_target = self._resolve_inline_dataclass_child_target(
-                    field_name=field_name,
+                    field_path=path,
                     current_manager=current_manager,
-                    section_parts=section_parts,
+                    section_path=section_path,
                     inline_field_name=part,
-                    child_field_name=parts[i + 1],
                 )
                 if inline_target is not None:
                     return inline_target
@@ -244,27 +242,25 @@ class ScrollableFormMixin:
                     logger.warning(f"❌ Part '{part}' not in nested_managers at depth {i}")
                 return None
             current_manager = current_manager.nested_managers[part]
-            section_parts.append(part)
+            section_path = section_path.child(part)
 
         leaf_name = path.field_name
-        section_path = ".".join(section_parts)
         groupbox_widget = None
         target_widget = None
 
         if leaf_name in current_manager.nested_managers:
             nested_manager = current_manager.nested_managers[leaf_name]
-            section_parts.append(leaf_name)
-            section_path = ".".join(section_parts)
-            groupbox_widget = self.form_manager.form_tree.groupbox_for_prefix(section_path)
+            section_path = section_path.child(leaf_name)
+            groupbox_widget = self.form_manager.form_tree.groupbox_for_prefix(section_path.value)
             if nested_manager.widgets:
                 first_param_name = next(iter(nested_manager.widgets.keys()))
                 target_widget = nested_manager.widgets[first_param_name]
         elif leaf_name in current_manager.widgets:
             target_widget = current_manager.widgets[leaf_name]
             inline_owner_target = self._resolve_inline_dataclass_owner_target(
-                field_name=field_name,
+                field_path=path,
                 current_manager=current_manager,
-                section_parts=section_parts,
+                section_path=section_path,
                 inline_field_name=leaf_name,
             )
             if inline_owner_target is not None:
@@ -283,7 +279,7 @@ class ScrollableFormMixin:
         return ScrollTarget(
             field_name=field_name,
             leaf_name=leaf_name,
-            section_path=section_path,
+            section_path=section_path.value,
             target_widget=target_widget,
             groupbox_widget=groupbox_widget,
             current_manager=current_manager,
@@ -293,9 +289,9 @@ class ScrollableFormMixin:
     def _resolve_inline_dataclass_owner_target(
         self,
         *,
-        field_name: str,
+        field_path: DottedFieldPath,
         current_manager: Any,
-        section_parts: list[str],
+        section_path: DottedFieldPath,
         inline_field_name: str,
     ) -> Optional[ScrollTarget]:
         """Resolve an inline dataclass owner path to its structural container."""
@@ -307,20 +303,20 @@ class ScrollableFormMixin:
         if not isinstance(inline_widget, QWidget):
             return None
 
-        inline_prefix = tuple(section_parts + [inline_field_name])
+        inline_field_path = section_path.child(inline_field_name)
         structural_result = resolve_inline_dataclass_structural_target(
             inline_widget=inline_widget,
-            inline_field_path=inline_prefix,
-            display_path=field_name,
+            inline_field_path=inline_field_path,
+            display_path=field_path.value,
         )
         if structural_result is None:
             return None
 
         structural_target = structural_result.target
         return ScrollTarget(
-            field_name=field_name,
+            field_name=field_path.value,
             leaf_name=structural_result.child_field_name,
-            section_path=".".join(inline_prefix),
+            section_path=inline_field_path.value,
             target_widget=structural_target.scroll_widget(),
             groupbox_widget=None,
             current_manager=current_manager,
@@ -331,11 +327,10 @@ class ScrollableFormMixin:
     def _resolve_inline_dataclass_child_target(
         self,
         *,
-        field_name: str,
+        field_path: DottedFieldPath,
         current_manager: Any,
-        section_parts: list[str],
+        section_path: DottedFieldPath,
         inline_field_name: str,
-        child_field_name: str,
     ) -> Optional[ScrollTarget]:
         """Resolve a child field rendered inside an inline dataclass widget."""
         from pyqt_reactive.protocols import (
@@ -352,19 +347,18 @@ class ScrollableFormMixin:
         if not isinstance(inline_widget, InlineDataclassGroupBox):
             return None
 
-        inline_prefix = tuple(section_parts + [inline_field_name])
+        inline_field_path = section_path.child(inline_field_name)
         structural_result = resolve_inline_dataclass_structural_target(
             inline_widget=inline_widget,
-            inline_field_path=inline_prefix,
-            display_path=field_name,
-            owner_child_field_name=child_field_name,
+            inline_field_path=inline_field_path,
+            display_path=field_path.value,
         )
         if structural_result is not None:
             structural_target = structural_result.target
             return ScrollTarget(
-                field_name=field_name,
+                field_name=field_path.value,
                 leaf_name=structural_result.child_field_name,
-                section_path=".".join(section_parts + [inline_field_name]),
+                section_path=inline_field_path.value,
                 target_widget=structural_target.scroll_widget(),
                 groupbox_widget=None,
                 current_manager=current_manager,
@@ -372,6 +366,9 @@ class ScrollableFormMixin:
                 structural_flash_target=structural_target,
             )
 
+        child_field_name = inline_field_path.direct_child_name(field_path)
+        if child_field_name is None:
+            return None
         target_widget: QWidget
         if isinstance(inline_widget, ChildFieldNavigationTargetProvider):
             child_widget = inline_widget.child_field_navigation_target(child_field_name)
@@ -381,11 +378,10 @@ class ScrollableFormMixin:
         else:
             target_widget = inline_widget
 
-        section_path = ".".join(section_parts + [inline_field_name])
         return ScrollTarget(
-            field_name=field_name,
+            field_name=field_path.value,
             leaf_name=child_field_name,
-            section_path=section_path,
+            section_path=inline_field_path.value,
             target_widget=target_widget,
             groupbox_widget=None,
             current_manager=current_manager,

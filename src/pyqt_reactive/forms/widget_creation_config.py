@@ -48,14 +48,6 @@ if TYPE_CHECKING:
 _WIDGET_CREATE_SEQ = itertools.count(1)
 
 
-def _root_manager(manager: ParameterFormManager) -> ParameterFormManager:
-    """Return the root ParameterFormManager for a nested manager tree."""
-    root = manager
-    while root._parent_manager is not None:
-        root = root._parent_manager
-    return root
-
-
 class WidgetCreationType(Enum):
     """
     Enum for widget creation strategies - mirrors MemoryType pattern.
@@ -413,11 +405,9 @@ class EnabledTitleWidgetMoveAuthority:
         self,
         context: EnabledTitleWidgetMoveContext,
     ) -> ProvenanceButton:
-        dotted_path = (
-            f"{context.request.nested_manager.field_id}.{context.request.enabled_field}"
-            if context.request.nested_manager.field_id
-            else context.request.enabled_field
-        )
+        dotted_path = context.request.nested_manager._object_state_path_for_field(
+            context.request.enabled_field
+        ).value
         return self.create_title_provenance_button(
             state=context.request.nested_manager.state,
             dotted_path=dotted_path,
@@ -712,10 +702,10 @@ class WidgetCreationHandlers:
         unwrapped_type = ctx.unwrapped_type
         color_scheme = manager.config.color_scheme or PCS()
         # Get root manager for flash - nested managers share root's _flash_colors dict
-        root_manager = _root_manager(manager)
+        root_manager = manager.form_tree.root()
         # Flash keys must identify the *section* via a canonical dotted path.
         # Example: "processing_config.path_planning_config" (not just "path_planning_config").
-        flash_key = f"{manager.field_id}.{param_info.name}" if manager.field_id else param_info.name
+        flash_key = manager._object_state_path_for_field(param_info.name).value
 
         # CRITICAL: Use scope_accent_color from manager config (passed from parent window)
         # No need to walk parent chain - it's stored directly in the manager
@@ -754,8 +744,8 @@ class WidgetCreationHandlers:
         display_info = ctx.display_info
         unwrapped_type = ctx.unwrapped_type
         color_scheme = manager.config.color_scheme or PCS()
-        root_manager = _root_manager(manager)
-        flash_key = f"{manager.field_id}.{param_info.name}" if manager.field_id else param_info.name
+        root_manager = manager.form_tree.root()
+        flash_key = manager._object_state_path_for_field(param_info.name).value
         scope_accent_color = manager._scope_accent_color
 
         return InlineDataclassGroupBox(
@@ -1129,10 +1119,11 @@ class WidgetCreationPipeline:
         if not (rt.config.is_nested and isinstance(rt.container, GroupBoxWithHelp)):
             return
 
-        _root_manager(rt.manager).register_flash_groupbox(rt.container._flash_key, rt.container)
+        root_manager = rt.manager.form_tree.root()
+        root_manager.register_flash_groupbox(rt.container._flash_key, rt.container)
         scope_color_scheme = rt.manager._scope_color_scheme
         if scope_color_scheme is None:
-            scope_color_scheme = _root_manager(rt.manager)._scope_color_scheme
+            scope_color_scheme = root_manager._scope_color_scheme
         if scope_color_scheme:
             rt.container.set_scope_color_scheme(scope_color_scheme)
 
@@ -1179,7 +1170,7 @@ class WidgetCreationPipeline:
         if not rt.config.needs_label:
             return
 
-        dotted_path = f'{rt.manager.field_id}.{rt.param_info.name}' if rt.manager.field_id else rt.param_info.name
+        dotted_path = rt.manager._object_state_path_for_field(rt.param_info.name).value
         label = LabelWithHelp(
             text=rt.ctx.display_info['field_label'],
             help_context=HelpContext(

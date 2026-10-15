@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 
+import pytest
+
 
 class QuotedAnnotationMode(Enum):
     A = "a"
@@ -3599,24 +3601,78 @@ def test_visual_update_batch_repaints_after_text_update(qapp):
     assert widget.repaint_updates == 1
 
 
-def test_dispatch_context_skips_empty_root_field_id():
-    """Root form managers use empty field ids and must not prefix dotted paths."""
-    from types import SimpleNamespace
-
+@pytest.mark.parametrize("root_id", ("", "config"))
+@pytest.mark.parametrize("is_reset", (False, True))
+def test_nested_dispatch_uses_one_state_address_for_mutation_and_signals(qapp, root_id, is_reset):
+    from dataclasses import dataclass, field
+    from objectstate import DottedFieldPath, ObjectState, ObjectStateRegistry, set_base_config_type
+    from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
     from pyqt_reactive.services.field_change_dispatcher import (
-        FieldChangeEvent,
-        FieldDispatchContextFactory,
+        FieldChangeDispatcher, FieldChangeEvent, FieldDispatchContext,
     )
+    from pyqt_reactive.theming import ColorScheme
 
-    root = SimpleNamespace(field_id="", _parent_manager=None)
-    child = SimpleNamespace(
-        field_id="well_filter_config",
-        _parent_manager=root,
+    @dataclass
+    class DispatchBase:
+        pass
+
+    @dataclass
+    class DispatchChild:
+        value: int = 1
+
+    @dataclass
+    class DispatchConfig:
+        child: DispatchChild = field(default_factory=DispatchChild)
+
+    @dataclass
+    class DispatchRoot:
+        config: DispatchConfig = field(default_factory=DispatchConfig)
+
+    set_base_config_type(DispatchBase)
+    state = ObjectState(DispatchRoot(), scope_id="dispatch-scope")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    path = "config.child.value"
+    callbacks = []
+
+    def before_mutation():
+        callbacks.append(state.parameters[path])
+        source.update_parameter("value", 99)
+
+    root = ParameterFormManager(
+        state=state,
+        config=FormManagerConfig(
+            field_id=root_id,
+            scope_id="dispatch-scope",
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            before_mutation=before_mutation,
+        ),
     )
-
-    context = FieldDispatchContextFactory().build(
-        FieldChangeEvent("well_filter", "A01", child)
-    )
-
-    assert context.source_path == "well_filter_config.well_filter"
-    assert context.root_path == "well_filter_config.well_filter"
+    try:
+        parent = root.nested_managers["config"] if not root_id else root
+        source = parent.nested_managers["child"]
+        changed, contexts = [], []
+        root.parameter_changed.connect(lambda name, value: changed.append((name, value)))
+        root.context_changed.connect(lambda scope, name: contexts.append((scope, name)))
+        event = FieldChangeEvent("value", 7, source, is_reset=is_reset)
+        context = FieldDispatchContext.from_event(event)
+        assert context.field_path == DottedFieldPath(path)
+        assert context.source is source
+        assert context.root is root
+        source._in_reset = is_reset
+        FieldChangeDispatcher.instance().dispatch(event)
+        assert state.parameters[path] == 7
+        assert "config.config.child.value" not in state.parameters
+        assert changed == [(path, 7)]
+        assert contexts == [("dispatch-scope", path)]
+        assert callbacks == [1]
+        assert source._dispatching is False
+        if not is_reset:
+            source.reset_parameter("value")
+            assert state.parameters[path] == 1
+            assert changed == [(path, 7), (path, 1)]
+            assert contexts == [("dispatch-scope", path), ("dispatch-scope", path)]
+            assert source._dispatching is False
+    finally:
+        root.deleteLater()
+        ObjectStateRegistry.clear()

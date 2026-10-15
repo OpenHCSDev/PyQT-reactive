@@ -26,7 +26,7 @@ class ParameterFormChromeSync:
             param_name,
             changed_paths,
             refresh_compound_semantics=(
-                self._owner_path(param_name).value not in refreshed_compound_owner_paths
+                DottedFieldPath(self.manager.field_id).child(param_name).value not in refreshed_compound_owner_paths
             ),
         )
         self.update_owning_groupbox_dirty_marker()
@@ -107,7 +107,7 @@ class ParameterFormChromeSync:
             manager_field_id=manager.field_id,
             param_name=param_name,
         ):
-            dotted_path = self._owner_path(param_name)
+            dotted_path = DottedFieldPath(manager.field_id).child(param_name)
             should_underline = dotted_path.contains_any(manager.state.signature_diff_fields)
             is_dirty = dotted_path.contains_any(manager.state.dirty_fields)
 
@@ -125,12 +125,6 @@ class ParameterFormChromeSync:
                     self._compound_child_owner_paths(param_name, changed_paths),
                 )
 
-    def _owner_path(self, param_name: str) -> DottedFieldPath:
-        manager = self.manager
-        return DottedFieldPath(
-            f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-        )
-
     def _compound_child_owner_paths(
         self,
         param_name: str,
@@ -139,7 +133,7 @@ class ParameterFormChromeSync:
         if changed_paths is None:
             return None
 
-        owner_path = self._owner_path(param_name)
+        owner_path = DottedFieldPath(self.manager.field_id).child(param_name)
         child_paths: list[DottedFieldPath] = []
         seen: set[str] = set()
         for changed_path in changed_paths:
@@ -222,7 +216,7 @@ class ParameterFormChromeSync:
                 refreshed_fields.add(field_path.field_name)
 
         for param_name in refreshed_fields:
-            owner_path = self._owner_path(param_name).value
+            owner_path = DottedFieldPath(manager.field_id).child(param_name).value
             refresh_compound_semantics = owner_path not in refreshed_compound_owner_paths
             refreshed_compound_owner_paths.add(owner_path)
             self.update_label_styling(
@@ -277,7 +271,7 @@ class ParameterFormChromeSync:
         manager = self.manager
         for param_name, widget in manager.widgets.items():
             if isinstance(widget, ValueSettable):
-                dotted_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+                dotted_path = DottedFieldPath(manager.field_id).child(param_name).value
                 if dotted_path in manager.state.parameters:
                     value = manager.state.parameters.get(dotted_path)
                     manager._widget_service.update_widget_value(widget, value, param_name, False, manager)
@@ -402,7 +396,7 @@ class ParameterFormChromeSync:
         return refreshed_compound_owner_paths
 
     def dispatch_reset(self, param_name: str) -> None:
-        dotted_path = f"{self.manager.field_id}.{param_name}" if self.manager.field_id else param_name
+        dotted_path = DottedFieldPath(self.manager.field_id).child(param_name).value
         reset_value = self.manager.state.parameters.get(dotted_path)
         event = FieldChangeEvent(param_name, reset_value, self.manager, is_reset=True)
         FieldChangeDispatcher.instance().dispatch(event)

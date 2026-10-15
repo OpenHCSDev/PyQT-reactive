@@ -41,7 +41,7 @@ from formbridge.forms.parameter_value_contracts import (
     ParameterInfoSequence,
 )
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
-from objectstate import get_base_config_type, has_lazy_resolution
+from objectstate import DottedFieldPath, get_base_config_type, has_lazy_resolution
 
 if TYPE_CHECKING:
     from formbridge.forms.parameter_form_service import FormStructure
@@ -77,8 +77,8 @@ class ExtractedParameters:
     description: ParameterDescriptionByPath | ParameterDescriptionProvider = field(
         default_factory=ParameterDescriptionByPath,
         metadata={
-            'project': lambda name, info, field_id: (
-                f"{field_id}.{name}" if field_id else name,
+            'project': lambda name, info, scope_path: (
+                scope_path.child(name).value,
                 info.description,
             )
         }
@@ -509,6 +509,7 @@ def _auto_generate_builders():
     """Auto-generate all builder functions via introspection of their output types."""
 
     def _extract_parameters(object_instance, exclude_params, initial_values, field_id=None):
+        scope_path = DottedFieldPath(field_id or "")
         param_info_dict = UnifiedParameterAnalyzer.analyze(object_instance, exclude_params=exclude_params or [])
         extracted = {}
         computed = {}
@@ -521,7 +522,7 @@ def _auto_generate_builders():
             if projection is None:
                 raise ValueError(f"Unsupported extracted parameter field: {fld.name}")
             extracted[fld.name] = dict(
-                projection(name, info, field_id)
+                projection(name, info, scope_path)
                 for name, info in param_info_dict.items()
             )
             if initial_values and fld.metadata.get('initial_values'):

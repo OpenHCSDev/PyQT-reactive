@@ -84,7 +84,7 @@ class ParameterOpsService(ParameterServiceABC):
         if info is None:
             # Parameter not in form structure (e.g., enabled rendered in header)
             # Fall back to direct state reset
-            dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
+            dotted_path = manager._object_state_path_for_field(param_name).value
             manager.state.reset_parameter(dotted_path)
             reset_value = manager.state.parameters.get(dotted_path)
 
@@ -110,8 +110,7 @@ class ParameterOpsService(ParameterServiceABC):
     def _reset_OptionalDataclassInfo(self, info: OptionalDataclassInfo, manager) -> None:
         """Reset Optional[Dataclass] field - sync checkbox and reset nested manager."""
         param_name = info.name
-        # CRITICAL: Compute full dotted path for nested PFMs
-        dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
+        dotted_path = manager._object_state_path_for_field(param_name).value
         # MODEL mutation through ObjectState (handles tracking)
         manager.state.reset_parameter(dotted_path)
         reset_value = manager.state.parameters.get(dotted_path)
@@ -164,7 +163,7 @@ class ParameterOpsService(ParameterServiceABC):
 
     def _reset_value_widget_parameter(self, param_name: str, manager) -> None:
         """Reset a parameter whose form widget owns its value directly."""
-        dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
+        dotted_path = manager._object_state_path_for_field(param_name).value
         manager.state.reset_parameter(dotted_path)
         reset_value = manager.state.parameters.get(dotted_path)
 
@@ -315,7 +314,7 @@ class ParameterOpsService(ParameterServiceABC):
                 if not PyQt6WidgetEnhancer.supports_placeholder(widget):
                     continue
 
-                full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+                full_path = manager._object_state_path_for_field(param_name).value
                 if manager.state.parameters.get(full_path) is None:
                     with monitor.measure():
                         manager._widget_service.show_resolved_value_as_placeholder(

@@ -133,7 +133,7 @@ class WidgetService:
             resolved_description = param_info.description
 
         if resolved_description is None:
-            dotted = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+            dotted = manager._object_state_path_for_field(param_name).value
             raw = manager.state.parameter_descriptions.get(dotted)
             if raw is not None:
                 resolved_description = raw if isinstance(raw, str) else raw.description
@@ -317,7 +317,7 @@ class WidgetService:
         """
         from objectstate import LazyDefaultPlaceholderService
 
-        full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+        full_path = manager._object_state_path_for_field(param_name).value
         resolved_value = manager.state.get_resolved_value(full_path)
         placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
             resolved_value, manager.config.placeholder_prefix

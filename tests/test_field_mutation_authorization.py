@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from objectstate import DottedFieldPath
 
 from pyqt_reactive.services.field_change_dispatcher import (
     FieldChangeEvent,
@@ -36,8 +37,7 @@ def test_field_mutation_authorization_precedes_object_state_write() -> None:
         event=event,
         source=source,
         root=source,
-        source_path="threshold",
-        root_path="threshold",
+        field_path=DottedFieldPath("threshold"),
     )
 
     with pytest.raises(RuntimeError, match="mutation rejected"):

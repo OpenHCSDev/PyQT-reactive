@@ -632,7 +632,7 @@ class ConfigHierarchyTreeHelper:
                 continue
 
             label = display_name if is_root else f"{field.name} ({display_name})"
-            path = field.name if not parent_path else f"{parent_path}.{field.name}"
+            path = DottedFieldPath(parent_path).child(field.name).value
             alt_name = self._to_snake_case(base_type.__name__)
             alt_path = alt_name if not parent_path else f"{parent_path}.{alt_name}"
 

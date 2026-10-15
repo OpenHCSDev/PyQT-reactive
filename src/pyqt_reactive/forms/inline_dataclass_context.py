@@ -52,11 +52,7 @@ class InlineDataclassFormContext:
         param_info: "InlineDataclassWidgetInfo",
         current_value,
     ) -> "InlineDataclassFormContext":
-        owner_path = (
-            DottedFieldPath(manager.field_id).child(param_info.name)
-            if manager.field_id
-            else DottedFieldPath(param_info.name)
-        )
+        owner_path = manager._object_state_path_for_field(param_info.name)
         base_type = get_base_type_for_lazy(type(current_value)) or param_info.type
         return cls(
             state=manager.state,

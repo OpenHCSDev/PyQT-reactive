@@ -9,6 +9,7 @@ from PyQt6.QtCore import QPoint, QRect
 from PyQt6.QtGui import QPainterPath
 from PyQt6.QtWidgets import QWidget, QTableWidget
 from objectstate import (
+    DottedFieldPath,
     ObjectStateSubfieldSemantic,
     ObjectStateSubfieldSemanticIndex,
     StructuralFieldPath,
@@ -273,9 +274,8 @@ class InlineDataclassStructuralTarget:
 def resolve_inline_dataclass_structural_target(
     *,
     inline_widget: QWidget | None,
-    inline_field_path: tuple[str, ...],
+    inline_field_path: DottedFieldPath,
     display_path: str,
-    owner_child_field_name: str | None = None,
 ) -> InlineDataclassStructuralTarget | None:
     """Resolve an inline dataclass structural visual target through widget contracts."""
 
@@ -290,35 +290,31 @@ def resolve_inline_dataclass_structural_target(
     ):
         return None
 
-    if tuple(display_path.split(".")) == inline_field_path:
+    if inline_field_path.value and display_path == inline_field_path.value:
         return InlineDataclassStructuralTarget(
-            child_field_name=inline_field_path[-1],
+            child_field_name=inline_field_path.field_name,
             target=StructuralDescendantMaskTarget(inline_widget),
         )
 
     structural_path = StructuralFieldPath.from_display_path(display_path)
-    if structural_path is not None:
-        owner_parts = structural_path.owner_field_path.parts
-        if (
-            len(owner_parts) > len(inline_field_path)
-            and owner_parts[: len(inline_field_path)] == inline_field_path
-        ):
-            child_field_name = owner_parts[len(inline_field_path)]
-            child_identity = inline_widget.child_field_identity(child_field_name)
-            target = inline_widget.child_subfield_navigation_target(
-                child_identity,
-                structural_path.relative_path,
-            )
-            if target is not None:
-                return InlineDataclassStructuralTarget(
-                    child_field_name=child_field_name,
-                    target=target,
-                )
-
-    if owner_child_field_name is None:
+    child_field_name = inline_field_path.direct_child_name(
+        structural_path.owner_field_path if structural_path is not None else display_path
+    )
+    if child_field_name is None:
         return None
 
-    child_identity = inline_widget.child_field_identity(owner_child_field_name)
+    child_identity = inline_widget.child_field_identity(child_field_name)
+    if structural_path is not None:
+        target = inline_widget.child_subfield_navigation_target(
+            child_identity,
+            structural_path.relative_path,
+        )
+        if target is not None:
+            return InlineDataclassStructuralTarget(
+                child_field_name=child_field_name,
+                target=target,
+            )
+
     target = inline_widget.child_subfield_navigation_target(
         child_identity,
         StructuralValuePath(),
@@ -326,7 +322,7 @@ def resolve_inline_dataclass_structural_target(
     if target is None:
         return None
     return InlineDataclassStructuralTarget(
-        child_field_name=owner_child_field_name,
+        child_field_name=child_field_name,
         target=target,
     )
 

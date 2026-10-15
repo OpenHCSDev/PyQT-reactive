@@ -171,7 +171,7 @@ class EnabledFieldStylingService:
         if value is None:
             # Lazy field - get the resolved value from ObjectState
             # This ensures we get the actual resolved value, not the raw parameter
-            full_path = f"{manager.field_id}.enabled" if manager.field_id else "enabled"
+            full_path = manager._object_state_path_for_field(param_name).value
             resolved_value = manager.state.get_resolved_value(full_path)
             if resolved_value is None:
                 # True is the default for enabled fields
