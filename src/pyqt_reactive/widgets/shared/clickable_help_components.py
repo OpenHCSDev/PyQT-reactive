@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from objectstate import ObjectState, ObjectStateRegistry
+from objectstate import DottedFieldPath, ObjectState, ObjectStateRegistry
 from PyQt6.QtCore import QRect, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter
 from PyQt6.QtWidgets import (
@@ -552,7 +552,7 @@ class ProvenanceNavigationMixin:
             source_type: The TYPE that has the concrete value (may differ from local
                          container type due to MRO inheritance)
         """
-        field_name = self._dotted_path.rsplit(".", 1)[-1]
+        field_name = DottedFieldPath(self._dotted_path).field_name
 
         # Another config of this same object supplies the value: the source state is
         # this state, whether or not it is registered under a scope id.

@@ -54,17 +54,15 @@ class ParameterFormTreeIndex:
         field_id = manager.field_id
         if not field_id:
             return set(paths)
-        return {
-            path
-            for path in paths
-            if self.path_intersects_field_scope(path, field_id)
-        }
+        field_path = DottedFieldPath(field_id)
+        return {path for path in paths if field_path.intersects_path(path)}
 
     def child_managers_for_paths(self, manager: Any, paths: set[str]) -> tuple[tuple[Any, set[str]], ...]:
         """Return direct child managers whose field scope intersects changed paths."""
         routed_paths: dict[int, tuple[Any, set[str]]] = {}
+        owner_path = DottedFieldPath(manager.field_id)
         for path in paths:
-            child_field = self.direct_child_field_for_path(manager.field_id, path)
+            child_field = owner_path.direct_child_name(path)
             if child_field is None:
                 continue
             nested_manager = manager.nested_managers.get(child_field)
@@ -75,26 +73,6 @@ class ParameterFormTreeIndex:
                 routed_paths[manager_id] = (nested_manager, set())
             routed_paths[manager_id][1].add(path)
         return tuple(routed_paths.values())
-
-    @staticmethod
-    def direct_child_field_for_path(field_id: str, path: str) -> Optional[str]:
-        """Return the direct child field owning a dotted ObjectState path."""
-        if field_id:
-            return DottedFieldPath(field_id).direct_child_name(path)
-
-        if not path:
-            return None
-        return path.split(".", 1)[0].split("[", 1)[0] or None
-
-    @staticmethod
-    def path_intersects_field_scope(path: str, field_id: str) -> bool:
-        path_field = DottedFieldPath(path)
-        field = DottedFieldPath(field_id)
-        return path_field.contains_path(field) or field.contains_path(path_field)
-
-    @staticmethod
-    def path_belongs_to_field_scope(path: str, field_id: str) -> bool:
-        return DottedFieldPath(field_id).contains_path(path)
 
     def _nested_manager_recursive(self, prefix: str, manager: Any) -> Optional[Any]:
         for nested_manager in manager.nested_managers.values():
@@ -108,7 +86,7 @@ class ParameterFormTreeIndex:
     def _matching_prefix_recursive(self, path: str, manager: Any) -> Optional[str]:
         for nested_manager in manager.nested_managers.values():
             prefix = nested_manager.field_id
-            if self.path_belongs_to_field_scope(path, prefix):
+            if DottedFieldPath(prefix).contains_path(path):
                 deeper = self._matching_prefix_recursive(path, nested_manager)
                 return deeper if deeper else prefix
         return None

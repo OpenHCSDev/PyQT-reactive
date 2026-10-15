@@ -26,10 +26,10 @@ class InlineDataclassChildFieldIdentity:
 
     @property
     def field_name(self) -> str:
-        parts = self.object_state_path.parts
-        if not parts:
+        field_name = self.object_state_path.field_name
+        if not field_name:
             raise ValueError("Inline dataclass child field identity cannot be root.")
-        return parts[-1]
+        return field_name
 
 
 @dataclass(frozen=True, slots=True)

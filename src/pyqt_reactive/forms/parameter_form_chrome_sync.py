@@ -210,19 +210,16 @@ class ParameterFormChromeSync:
             else set()
         )
         refreshed_fields: set[str] = set()
+        manager_path = DottedFieldPath(manager.field_id)
 
         for path in paths:
-            owner_field = self._direct_child_field_for_path(path)
+            field_path = DottedFieldPath(path)
+            owner_field = manager_path.direct_child_name(field_path)
             if owner_field is not None:
                 refreshed_fields.add(owner_field)
 
-            if "." in path:
-                path_prefix, leaf_field = path.rsplit(".", 1)
-            else:
-                path_prefix = ""
-                leaf_field = path
-            if path_prefix == manager.field_id:
-                refreshed_fields.add(leaf_field)
+            if field_path.parent == manager_path:
+                refreshed_fields.add(field_path.field_name)
 
         for param_name in refreshed_fields:
             owner_path = self._owner_path(param_name).value
@@ -298,6 +295,7 @@ class ParameterFormChromeSync:
         from objectstate.time_travel_profile import TimeTravelProfiler
 
         manager = self.manager
+        manager_path = DottedFieldPath(manager.field_id)
         missing = object()
         refreshed_container_paths: set[str] = set()
         refreshed_compound_owner_paths: set[str] = set()
@@ -309,19 +307,10 @@ class ParameterFormChromeSync:
             widgets=len(manager.widgets),
         ):
             for path in paths:
-                if "." in path:
-                    path_prefix, leaf_field = path.rsplit(".", 1)
-                else:
-                    path_prefix = ""
-                    leaf_field = path
-
-                owner_field = self._direct_child_field_for_path(path)
+                field_path = DottedFieldPath(path)
+                owner_field = manager_path.direct_child_name(field_path)
                 if owner_field is not None:
-                    owner_path = (
-                        f"{manager.field_id}.{owner_field}"
-                        if manager.field_id
-                        else owner_field
-                    )
+                    owner_path = manager_path.child(owner_field).value
                     if owner_path != path and owner_path not in refreshed_container_paths:
                         owner_widget = manager.widgets.get(owner_field)
                         raw_value = manager.state.parameters.get(owner_path, missing)
@@ -379,7 +368,8 @@ class ParameterFormChromeSync:
                             refreshed_container_paths.add(owner_path)
                             refreshed_compound_owner_paths.add(owner_path)
 
-                if path_prefix == manager.field_id:
+                if field_path.parent == manager_path:
+                    leaf_field = field_path.field_name
                     widget = manager.widgets.get(leaf_field)
                     if isinstance(widget, ValueSettable):
                         value = manager.state.parameters.get(path, missing)
@@ -410,12 +400,6 @@ class ParameterFormChromeSync:
                 )
 
         return refreshed_compound_owner_paths
-
-    def _direct_child_field_for_path(self, path: str) -> str | None:
-        return self.manager.form_tree.direct_child_field_for_path(
-            self.manager.field_id,
-            path,
-        )
 
     def dispatch_reset(self, param_name: str) -> None:
         dotted_path = f"{self.manager.field_id}.{param_name}" if self.manager.field_id else param_name

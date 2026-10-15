@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
-from objectstate import ObjectState
+from objectstate import DottedFieldPath, ObjectState
 from PyQt6.QtWidgets import QWidget
 
 if TYPE_CHECKING:
@@ -354,7 +354,7 @@ class FormFieldWindowNavigationDriver(FieldWindowNavigationDriver):
             return RegisteredWindowNavigationReadiness(
                 wait_reason=NavigationWaitReason.ROOT_WIDGETS,
             )
-        if "." in request.field_path and not self._nested_manager_exists(
+        if DottedFieldPath(request.field_path).parent.value and not self._nested_manager_exists(
             form_manager,
             request.field_path,
         ):
@@ -379,9 +379,7 @@ class FormFieldWindowNavigationDriver(FieldWindowNavigationDriver):
         field_path: str,
     ) -> bool:
         current_manager = form_manager
-        path_parts = field_path.split(".")
-
-        for part in path_parts[:-1]:
+        for part in DottedFieldPath(field_path).parent.parts:
             if part not in current_manager.nested_managers:
                 return FormFieldWindowNavigationDriver._is_inline_dataclass_field(
                     current_manager,

@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
+from objectstate import DottedFieldPath
 from PyQt6.QtWidgets import QScrollArea, QWidget
 
 from pyqt_reactive.services.window_navigation import (
@@ -221,11 +222,14 @@ class ScrollableFormMixin:
         warn_missing: bool = True,
     ) -> Optional[ScrollTarget]:
         """Resolve a dotted form path to a concrete widget and section path."""
-        parts = field_name.split('.')
+        path = DottedFieldPath(field_name)
+        parts = path.parts
+        if not parts:
+            return None
         current_manager = self.form_manager
         section_parts = []
 
-        for i, part in enumerate(parts[:-1]):
+        for i, part in enumerate(path.parent.parts):
             if part not in current_manager.nested_managers:
                 inline_target = self._resolve_inline_dataclass_child_target(
                     field_name=field_name,
@@ -242,7 +246,7 @@ class ScrollableFormMixin:
             current_manager = current_manager.nested_managers[part]
             section_parts.append(part)
 
-        leaf_name = parts[-1]
+        leaf_name = path.field_name
         section_path = ".".join(section_parts)
         groupbox_widget = None
         target_widget = None
@@ -390,14 +394,9 @@ class ScrollableFormMixin:
 
     def _resolve_nearest_ancestor_scroll_target(self, field_name: str) -> Optional[ScrollTarget]:
         """Resolve the nearest visible ancestor for a missing deep field path."""
-        parts = tuple(part for part in field_name.split(".") if part)
-        if len(parts) <= 1:
-            return None
-
-        for prefix_length in range(len(parts) - 1, 0, -1):
-            ancestor_path = ".".join(parts[:prefix_length])
+        for ancestor_path in DottedFieldPath(field_name).parent.lineage:
             target = self._resolve_scroll_target(
-                ancestor_path,
+                ancestor_path.value,
                 warn_missing=False,
             )
             if target is not None:

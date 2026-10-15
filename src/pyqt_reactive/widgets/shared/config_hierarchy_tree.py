@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, Q
 
 from metaclass_registry import AutoRegisterMeta
 from objectstate.lazy_factory import get_base_type_for_lazy, is_lazy_dataclass
-from objectstate import is_ui_hidden_config_type
+from objectstate import DottedFieldPath, is_ui_hidden_config_type
 from pyqt_reactive.widgets.shared.config_tree_contracts import (
     ConfigTreeFlashManager,
     ScopeColorSchemeHost,
@@ -526,9 +526,9 @@ class ConfigHierarchyTreeHelper:
         """Compute field paths and all their ancestor prefixes."""
         prefixes = set()
         for field_path in fields:
-            parts = field_path.split('.')
-            for i in range(1, len(parts) + 1):
-                prefixes.add('.'.join(parts[:i]))
+            path = DottedFieldPath(field_path)
+            prefixes.add(path.value)
+            prefixes.update(ancestor.value for ancestor in path.parent.lineage)
         return prefixes
 
     def _matches_prefix(self, path: str, field_name: str, alt_name: str, prefixes: set) -> bool:
