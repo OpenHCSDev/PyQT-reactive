@@ -106,7 +106,9 @@ class InlineDataclassFormContext:
     def reset_child(self, field_name: str) -> None:
         identity = self.child_identity(field_name)
         container_value = self.state.parameters[self.owner_path.value]
-        default_value = self.state.signature_default(identity.object_state_path.value)
+        default_value = self.state.parameter_structure.declarations[
+            identity.object_state_path.value
+        ].default_value
         if self.raw_child_value(field_name) == default_value:
             return
         updated_value = replace_raw(container_value, **{field_name: default_value})
@@ -124,7 +126,9 @@ class InlineDataclassFormContext:
         for dataclass_field in dataclass_fields(self.owner_type):
             field_name = dataclass_field.name
             identity = self.child_identity(field_name)
-            default_value = self.state.signature_default(identity.object_state_path.value)
+            default_value = self.state.parameter_structure.declarations[
+                identity.object_state_path.value
+            ].default_value
             if self.raw_child_value(field_name) != default_value:
                 updates[field_name] = default_value
 

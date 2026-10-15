@@ -25,15 +25,15 @@ keywords = ["pyqt6", "forms", "reactive", "gui", "widgets", "dataclass"]
 
 dependencies = [
     "annotated-types>=0.7.0",
-    "formbridge>=0.1.4,<0.2",
+    "formbridge>=0.1.5,<0.2",
     "magicgui>=0.7.0",
     "metaclass-registry>=0.4.0",
     "PyQt6>=6.4.0",
-    "objectstate>=4.0.0,<5",
+    "objectstate>=4.0.1,<5",
     "psutil>=5.9",
     "Pygments>=2.15",
-    "python-introspect>=0.2.6,<0.3",
-    "zmqruntime>=0.6.4,<0.7",
+    "python-introspect>=0.3.0,<0.4",
+    "zmqruntime>=0.6.5,<0.7",
 ]
 
 [project.optional-dependencies]

@@ -777,7 +777,7 @@ class ParameterFormManager(
 
         # Then apply service layer conversion (enums, basic types, Union handling, etc.)
         converted_value = self.service.convert_value_to_type(
-            converted_value, param_type, param_name, type(self.object_instance)
+            converted_value, param_type, param_name
         )
 
         return converted_value
@@ -834,7 +834,6 @@ class ParameterFormManager(
             value,
             self.parameter_types.get(param_name, type(value)),
             param_name,
-            type(self.object_instance),
         )
 
         # Update corresponding widget if it exists
