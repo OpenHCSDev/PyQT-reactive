@@ -7,28 +7,23 @@ Merges:
 
 Key features:
 1. Type-safe dispatch using ParameterInfo discriminated unions
-2. Auto-discovery of handlers via ParameterServiceABC
+2. Inheritance-aware dispatch through Python's singledispatchmethod
 3. Auto-unpacking of dataclass fields
 """
 
 from __future__ import annotations
-from typing import Any, Optional, Dict, TYPE_CHECKING
+from typing import Any, Optional, Dict
+from functools import singledispatchmethod
 from dataclasses import fields as dataclass_fields
 import logging
 
-from formbridge.services.parameter_service_abc import ParameterServiceABC
+from formbridge.forms.parameter_info_types import DirectDataclassInfo, OptionalDataclassInfo, ParameterInfo
 from .widget_service import WidgetService
-
-if TYPE_CHECKING:
-    from .parameter_info_types import (
-        OptionalDataclassInfo,
-        DirectDataclassInfo,
-    )
 
 logger = logging.getLogger(__name__)
 
 
-class ValueCollectionService(ParameterServiceABC):
+class ValueCollectionService:
     """
     Consolidated service for value collection and unpacking.
 
@@ -41,10 +36,6 @@ class ValueCollectionService(ParameterServiceABC):
         # Unpack dataclass fields to instance attributes:
         service.unpack_to_self(target, source, prefix="config_")
     """
-
-    def _get_handler_prefix(self) -> str:
-        """Return handler method prefix for auto-discovery."""
-        return '_collect_'
 
     # ========== NESTED VALUE COLLECTION (from NestedValueCollectionService) ==========
 
@@ -61,16 +52,21 @@ class ValueCollectionService(ParameterServiceABC):
         the appropriate handler based on its type.
         """
         info = manager.form_structure.get_parameter_info(param_name)
-        return self.dispatch(info, manager, nested_manager)
+        return self._collect(info, manager, nested_manager)
 
-    def _collect_OptionalDataclassInfo(
+    @singledispatchmethod
+    def _collect(self, info: ParameterInfo, manager, nested_manager) -> Dict[str, Any]:
+        return nested_manager.state.get_current_values()
+
+    @_collect.register(OptionalDataclassInfo)
+    def _collect_optional(
         self,
         info: 'OptionalDataclassInfo',
         manager,
         nested_manager
     ) -> Optional[Any]:
         """Collect value for Optional[Dataclass] parameter."""
-        from .parameter_type_utils import ParameterTypeUtils
+        from formbridge.forms.parameter_type_utils import ParameterTypeUtils
 
         param_name = info.name
         param_type = info.type
@@ -93,7 +89,8 @@ class ValueCollectionService(ParameterServiceABC):
         inner_type = ParameterTypeUtils.get_optional_inner_type(param_type)
         return inner_type(**nested_values)
     
-    def _collect_DirectDataclassInfo(
+    @_collect.register(DirectDataclassInfo)
+    def _collect_dataclass(
         self,
         info: 'DirectDataclassInfo',
         manager,
@@ -113,12 +110,6 @@ class ValueCollectionService(ParameterServiceABC):
 
         return param_type(**nested_values)
     
-    def _collect_GenericInfo(self, info, manager, nested_manager) -> Dict[str, Any]:
-        """Collect value as raw dict (fallback for non-dataclass types)."""
-        # Uses all 3 params - info/manager kept for interface consistency with other _collect_* methods
-        _ = info, manager  # Silence unused warnings - interface requires these params
-        return nested_manager.state.get_current_values()
-
     # ========== DATACLASS RECONSTRUCTION (from DataclassReconstructionUtils) ==========
 
     @staticmethod

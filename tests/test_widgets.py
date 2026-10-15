@@ -3215,7 +3215,7 @@ def test_parameter_reset_overwrites_invalid_typed_literal_editor(qapp):
 
     import pytest
 
-    from formbridge.forms.parameter_info_types import GenericInfo
+    from formbridge.forms.parameter_info_types import ParameterInfo
     from pyqt_reactive.forms.widget_strategies import TypedLiteralContainerEdit
     from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
     from pyqt_reactive.services.widget_service import WidgetService
@@ -3237,7 +3237,7 @@ def test_parameter_reset_overwrites_invalid_typed_literal_editor(qapp):
             assert dotted_path == "percentiles"
             self.parameters[dotted_path] = reset_value
 
-    info = GenericInfo(
+    info = ParameterInfo(
         name="percentiles",
         type=tuple[int, ...],
         current_value=(1, 2, 3),

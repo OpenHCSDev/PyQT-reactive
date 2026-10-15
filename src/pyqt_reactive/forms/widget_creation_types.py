@@ -17,7 +17,7 @@ from typing import TypedDict, Callable, Optional, Any, Dict, Type
 from dataclasses import dataclass, replace as dataclass_replace
 
 # Import ParameterInfo ABC from shared UI module
-from formbridge.forms.parameter_info_types import ParameterInfoBase as ParameterInfo
+from formbridge.forms.parameter_info_types import ParameterInfo
 
 
 class DisplayInfo(TypedDict, total=False):
@@ -170,32 +170,3 @@ class ParameterFormManager(ABC, metaclass=_CombinedMeta):
         Equivalent to: traverseComponentTree(callback)
         """
         pass
-
-
-# Type aliases for handler signatures
-WidgetOperationHandler = Callable[[WidgetBuildContext], Any]
-
-OptionalTitleHandler = Callable[[WidgetBuildContext], OptionalTitleComponents]
-
-CheckboxLogicHandler = Callable[
-    ['ParameterFormManager', 'ParameterInfo', Any, Any, Any, Any, Any, Type],
-    None
-]
-
-
-@dataclass
-class WidgetCreationConfig:
-    """Type-safe configuration for a widget creation type."""
-    layout_type: LayoutKind
-    is_nested: bool
-    create_container: WidgetOperationHandler
-    setup_layout: Optional[WidgetOperationHandler]
-    create_main_widget: WidgetOperationHandler
-    needs_label: bool
-    needs_reset_button: bool
-    needs_unwrap_type: bool
-    is_optional: bool = False
-    needs_checkbox: bool = False
-    is_enableable: bool = False
-    create_title_widget: Optional[OptionalTitleHandler] = None
-    connect_checkbox_logic: Optional[CheckboxLogicHandler] = None

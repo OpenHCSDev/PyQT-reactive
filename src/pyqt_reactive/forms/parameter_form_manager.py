@@ -704,11 +704,11 @@ class ParameterFormManager(
         from pyqt_reactive.forms.widget_creation_config import WidgetCreationPipeline
 
         logger.debug(
-            "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s widget_creation_type=%s",
+            "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s declaration=%s",
             self._pfm_seq,
             self.field_id,
             param_info.name,
-            param_info.widget_creation_type,
+            type(param_info).__qualname__,
         )
         return WidgetCreationPipeline(self, param_info).run()
 

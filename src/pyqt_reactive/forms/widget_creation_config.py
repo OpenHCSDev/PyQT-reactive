@@ -1,24 +1,9 @@
-"""
-Widget creation configuration - parametric pattern.
-
-Single source of truth for widget creation behavior (REGULAR, NESTED, and OPTIONAL_NESTED).
-Mirrors the framework_config pattern.
-
-Architecture:
-- Widget handlers: Custom logic for complex operations
-- Unified config: Single _WIDGET_CREATION_CONFIG dict with all metadata
-- Parametric dispatch: Handlers are typed callables (no eval strings)
-
-All three widget types (REGULAR, NESTED, OPTIONAL_NESTED) are now parametrized.
-OPTIONAL_NESTED reuses the same nested form creation logic as NESTED, with additional
-handlers for checkbox title widget and None/instance toggle logic.
-"""
+"""Qt field creation and lifecycle behavior follows ParameterInfo inheritance."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 import logging
 import itertools
 from typing import Any, Callable, ClassVar, Optional, TYPE_CHECKING, Type, Tuple
@@ -27,12 +12,13 @@ from python_introspect import resolve_optional
 
 from .widget_creation_types import (
     ParameterFormManager, ParameterInfo, DisplayInfo, FieldIds,
-    LayoutKind, OptionalTitleComponents, WidgetBuildContext, WidgetCreationConfig
+    LayoutKind, OptionalTitleComponents, WidgetBuildContext
 )
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 from pyqt_reactive.services.widget_service import WidgetService
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveParameterRow
 from formbridge.forms.layout_constants import CURRENT_LAYOUT
+from formbridge.forms.parameter_info_types import DirectDataclassInfo, InlineDataclassWidgetInfo, OptionalDataclassInfo
 
 logger = logging.getLogger(__name__)
 
@@ -46,18 +32,6 @@ if TYPE_CHECKING:
     )
 
 _WIDGET_CREATE_SEQ = itertools.count(1)
-
-
-class WidgetCreationType(Enum):
-    """
-    Enum for widget creation strategies - mirrors MemoryType pattern.
-
-    PyQt6 uses 3 parametric types: REGULAR, NESTED, and OPTIONAL_NESTED.
-    """
-    REGULAR = "regular"
-    INLINE_DATACLASS = "inline_dataclass"
-    NESTED = "nested"
-    OPTIONAL_NESTED = "optional_nested"
 
 
 # ============================================================================
@@ -463,7 +437,46 @@ class EnabledTitleWidgetMoveAuthority:
             row_parent.setParent(None)
 
 
-class WidgetCreationHandlers:
+class WidgetCreationConfig(ABC, metaclass=AutoRegisterMeta):
+    """Qt behavior selected from the admitted declaration's MRO."""
+
+    __registry_key__ = "parameter_type"
+    __skip_if_no_key__ = True
+    parameter_type: ClassVar[type[ParameterInfo] | None] = None
+    layout_type = LayoutKind.HORIZONTAL_ROW
+    is_nested = False
+    is_optional = False
+    setup_layout = None
+
+    @classmethod
+    def for_parameter(cls, info: ParameterInfo) -> WidgetCreationConfig:
+        for declaration in type(info).__mro__:
+            implementation = cls.__registry__.get(declaration)
+            if implementation is not None:
+                return implementation()
+        raise LookupError(f"No Qt form for {type(info).__qualname__}")
+
+    @abstractmethod
+    def create_container(self, ctx: WidgetBuildContext) -> QWidget:
+        """Create this frontend's container."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_main_widget(self, ctx: WidgetBuildContext) -> QWidget:
+        """Create this frontend's editor."""
+        raise NotImplementedError
+
+    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
+        return lambda: runtime.manager.reset_parameter(runtime.param_info.name)
+
+    def store_widget(self, runtime: WidgetCreationRuntime, on_change: Callable) -> None:
+        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+        widget = runtime.main_widget
+        runtime.manager.widgets[runtime.param_info.name] = widget
+        PyQt6WidgetEnhancer.connect_change_signal(widget, runtime.param_info.name, on_change)
+        if runtime.manager.read_only:
+            WidgetService.make_readonly(widget, runtime.manager.config.color_scheme)
+
     """Nominal owner for widget creation operation handlers."""
 
     def _create_nested_form(ctx: WidgetBuildContext) -> QWidget:
@@ -500,7 +513,10 @@ class WidgetCreationHandlers:
                 log = logging.getLogger(__name__)
                 log.debug(f"[BUILD_COMPLETE] FIRED for {nested_manager.field_id}, widget_count={len(nested_manager.widgets)}, widgets={list(nested_manager.widgets.keys())}")
 
-                WidgetCreationHandlers._move_enabled_widget_to_title(nested_manager, manager, param_info.name, enabled_field)
+                EnabledTitleWidgetMoveAuthority().move(EnabledTitleWidgetMoveRequest(
+                    nested_manager=nested_manager, parent_manager=manager,
+                    nested_param_name=param_info.name, enabled_field=enabled_field,
+                ))
 
                 log.debug(f"[BUILD_COMPLETE] After move_enabled_widget: enabled_widget exists={'enabled' in nested_manager.widgets}, widget_count={len(nested_manager.widgets)}")
 
@@ -519,29 +535,6 @@ class WidgetCreationHandlers:
         result = nested_manager.build_form()
         logger.debug(f"🔍 _create_nested_form: build_form() returned for {nested_manager.field_id}, widgets={len(nested_manager.widgets)}")
         return result
-
-    def _move_enabled_widget_to_title(nested_manager, parent_manager, nested_param_name: str, enabled_field: str) -> None:
-        """
-        Move the enabled widget from its normal form row to the GroupBoxWithHelp title.
-
-        This allows the enabled field to go through normal widget creation (gets proper widget_id,
-        widgets dict registration, reset button, placeholder syncing) but just changes
-        its visual placement to the title area.
-
-        The enabled checkbox is placed after the title label and help button in the title layout.
-        """
-        logger.debug(f"🔍 _move_enabled_widget_to_title: enabled_field={enabled_field}, nested_param_name={nested_param_name}")
-        logger.debug(f"🔍 _move_enabled_widget_to_title: nested_manager.widgets keys={list(nested_manager.widgets.keys())}")
-        if isinstance(parent_manager, ParameterFormManager):
-            logger.debug(f"🔍 _move_enabled_widget_to_title: parent_manager.widgets keys={list(parent_manager.widgets.keys())}")
-        EnabledTitleWidgetMoveAuthority().move(
-            EnabledTitleWidgetMoveRequest(
-                nested_manager=nested_manager,
-                parent_manager=parent_manager,
-                nested_param_name=nested_param_name,
-                enabled_field=enabled_field,
-            )
-        )
 
     def _create_optional_title_widget(ctx: WidgetBuildContext):
         """
@@ -841,83 +834,57 @@ class WidgetCreationHandlers:
 # UNIFIED WIDGET CREATION CONFIGURATION (typed, no eval strings)
 # ============================================================================
 
-_WIDGET_CREATION_CONFIG: dict[WidgetCreationType, WidgetCreationConfig] = {
-    WidgetCreationType.REGULAR: WidgetCreationConfig(
-        layout_type=LayoutKind.HORIZONTAL_ROW,
-        is_nested=False,
-        create_container=WidgetCreationHandlers._create_regular_container,
-        setup_layout=WidgetCreationHandlers._setup_regular_layout,
-        create_main_widget=lambda ctx: ctx.manager._widget_creator(
-            ctx.param_info.name,
-            ctx.param_info.type,
-            ctx.current_value,
-            ctx.field_ids['widget_id'],
-            None,
-        ),
-        needs_label=True,
-        needs_reset_button=True,
-        needs_unwrap_type=False,
-    ),
+class RegularWidgetCreation(WidgetCreationConfig):
+    parameter_type = ParameterInfo
+    create_container = staticmethod(WidgetCreationConfig._create_regular_container)
+    setup_layout = staticmethod(WidgetCreationConfig._setup_regular_layout)
 
-    WidgetCreationType.INLINE_DATACLASS: WidgetCreationConfig(
-        layout_type=LayoutKind.GROUPBOX_WITH_HELP,
-        is_nested=True,
-        create_container=WidgetCreationHandlers._create_inline_dataclass_container,
-        setup_layout=None,
-        create_main_widget=WidgetCreationHandlers._create_inline_dataclass_widget,
-        needs_label=False,
-        needs_reset_button=True,
-        needs_unwrap_type=True,
-        is_optional=False,
-    ),
-
-    WidgetCreationType.NESTED: WidgetCreationConfig(
-        layout_type=LayoutKind.GROUPBOX_WITH_HELP,
-        is_nested=True,
-        create_container=WidgetCreationHandlers._create_nested_container,
-        setup_layout=None,
-        create_main_widget=WidgetCreationHandlers._create_nested_form,
-        needs_label=False,
-        needs_reset_button=True,
-        needs_unwrap_type=True,
-        is_optional=False,
-    ),
-
-    WidgetCreationType.OPTIONAL_NESTED: WidgetCreationConfig(
-        layout_type=LayoutKind.PRECONFIGURED_GROUPBOX,
-        is_nested=True,
-        create_container=WidgetCreationHandlers._create_optional_nested_container,
-        setup_layout=WidgetCreationHandlers._setup_optional_nested_layout,
-        create_main_widget=WidgetCreationHandlers._create_nested_form,
-        needs_label=False,
-        needs_reset_button=True,
-        needs_unwrap_type=True,
-        is_optional=True,
-        needs_checkbox=True,
-        create_title_widget=WidgetCreationHandlers._create_optional_title_widget,
-        connect_checkbox_logic=WidgetCreationHandlers._connect_optional_checkbox_logic,
-    ),
-}
+    @staticmethod
+    def create_main_widget(ctx: WidgetBuildContext) -> QWidget:
+        return ctx.manager._widget_creator(ctx.param_info.name, ctx.param_info.type,
+                                          ctx.current_value, ctx.field_ids['widget_id'], None)
 
 
-# ============================================================================
-# WIDGET OPERATIONS - Direct access to typed config (no eval)
-# ============================================================================
+class NestedWidgetCreation(WidgetCreationConfig):
+    parameter_type = DirectDataclassInfo
+    layout_type = LayoutKind.GROUPBOX_WITH_HELP
+    is_nested = True
+    create_container = staticmethod(WidgetCreationConfig._create_nested_container)
+    create_main_widget = staticmethod(WidgetCreationConfig._create_nested_form)
 
-def _get_widget_operations(creation_type: WidgetCreationType) -> dict[str, Callable]:
-    """Get typed widget operations for a creation type."""
-    config = _WIDGET_CREATION_CONFIG[creation_type]
-    ops = {
-        'create_container': config.create_container,
-        'create_main_widget': config.create_main_widget,
-    }
-    if config.setup_layout:
-        ops['setup_layout'] = config.setup_layout
-    if config.create_title_widget:
-        ops['create_title_widget'] = config.create_title_widget
-    if config.connect_checkbox_logic:
-        ops['connect_checkbox_logic'] = config.connect_checkbox_logic
-    return ops
+    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
+        nested_manager = runtime.manager.nested_managers.get(runtime.param_info.name)
+        if nested_manager is None:
+            raise RuntimeError(f"Nested dataclass {runtime.param_info.name!r} has no nested manager.")
+        return nested_manager.reset_all_parameters
+
+    def store_widget(self, runtime: WidgetCreationRuntime, on_change: Callable) -> None:
+        runtime.manager.widgets[runtime.param_info.name] = runtime.container
+
+
+class InlineWidgetCreation(NestedWidgetCreation):
+    parameter_type = InlineDataclassWidgetInfo
+    create_container = staticmethod(WidgetCreationConfig._create_inline_dataclass_container)
+    create_main_widget = staticmethod(WidgetCreationConfig._create_inline_dataclass_widget)
+
+    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
+        return runtime.container.reset_inline_dataclass_fields
+
+    def store_widget(self, runtime: WidgetCreationRuntime, on_change: Callable) -> None:
+        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+        runtime.container.set_value_widget(runtime.main_widget)
+        super().store_widget(runtime, on_change)
+        PyQt6WidgetEnhancer.connect_change_signal(runtime.container, runtime.param_info.name, on_change)
+
+
+class OptionalNestedWidgetCreation(NestedWidgetCreation):
+    parameter_type = OptionalDataclassInfo
+    layout_type = LayoutKind.PRECONFIGURED_GROUPBOX
+    is_optional = True
+    create_container = staticmethod(WidgetCreationConfig._create_optional_nested_container)
+    setup_layout = staticmethod(WidgetCreationConfig._setup_optional_nested_layout)
+    create_title_widget = staticmethod(WidgetCreationConfig._create_optional_title_widget)
+    connect_checkbox_logic = staticmethod(WidgetCreationConfig._connect_optional_checkbox_logic)
 
 
 class LayoutStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -978,58 +945,13 @@ class WidgetCreationRuntime:
 
     manager: ParameterFormManager
     param_info: ParameterInfo
-    creation_type: WidgetCreationType
     config: WidgetCreationConfig
-    ops: dict[str, Callable]
     ctx: WidgetBuildContext
     create_seq: int
     container: QWidget | None = None
     layout: QLayout | None = None
     title_components: OptionalTitleComponents | None = None
     main_widget: QWidget | None = None
-
-
-class DataclassResetAllBinding(ABC, metaclass=AutoRegisterMeta):
-    """Nominal reset-all target for dataclass-shaped parameter containers."""
-
-    __registry_key__ = "creation_type"
-    __skip_if_no_key__ = True
-    creation_type: ClassVar[WidgetCreationType | None] = None
-
-    @classmethod
-    def for_creation_type(
-        cls,
-        creation_type: WidgetCreationType,
-    ) -> "DataclassResetAllBinding":
-        return cls.__registry__[creation_type]()
-
-    @abstractmethod
-    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
-        """Return the reset-all action for one dataclass container."""
-        pass
-
-
-class NestedDataclassResetAllBinding(DataclassResetAllBinding):
-    """Reset-all for regular nested dataclasses delegates to their child manager."""
-
-    creation_type = WidgetCreationType.NESTED
-
-    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
-        nested_manager = runtime.manager.nested_managers.get(runtime.param_info.name)
-        if nested_manager is None:
-            raise RuntimeError(
-                f"Nested dataclass {runtime.param_info.name!r} has no nested manager."
-            )
-        return nested_manager.reset_all_parameters
-
-
-class InlineDataclassResetAllBinding(DataclassResetAllBinding):
-    """Reset-all for inline dataclasses delegates to the inline value widget."""
-
-    creation_type = WidgetCreationType.INLINE_DATACLASS
-
-    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
-        return runtime.container.reset_inline_dataclass_fields
 
 
 class WidgetCreationPipeline:
@@ -1040,8 +962,7 @@ class WidgetCreationPipeline:
         from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
         from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 
-        creation_type = WidgetCreationType[param_info.widget_creation_type]
-        config = _WIDGET_CREATION_CONFIG[creation_type]
+        config = WidgetCreationConfig.for_parameter(param_info)
         display_info = WidgetService.get_parameter_display_info(
             param_info.name,
             param_info.type,
@@ -1051,7 +972,7 @@ class WidgetCreationPipeline:
         field_ids = manager.service.generate_field_ids_direct(manager.config.field_id, param_info.name)
         current_value = manager.parameters.get(param_info.name)
         unwrapped_type = None
-        if config.needs_unwrap_type:
+        if config.is_nested:
             unwrapped_type = resolve_optional(param_info.type)
         ctx = WidgetBuildContext(
             manager=manager,
@@ -1068,9 +989,7 @@ class WidgetCreationPipeline:
         self.runtime = WidgetCreationRuntime(
             manager=manager,
             param_info=param_info,
-            creation_type=creation_type,
             config=config,
-            ops=_get_widget_operations(creation_type),
             ctx=ctx,
             create_seq=next(_WIDGET_CREATE_SEQ),
         )
@@ -1108,7 +1027,7 @@ class WidgetCreationPipeline:
 
     def create_container(self) -> None:
         rt = self.runtime
-        rt.container = rt.ops['create_container'](rt.ctx)
+        rt.container = rt.config.create_container(rt.ctx)
         rt.ctx = rt.ctx.with_container(rt.container)
         self._log_widget("container", rt.container)
 
@@ -1131,8 +1050,8 @@ class WidgetCreationPipeline:
         rt = self.runtime
         rt.layout = LayoutStrategy.for_layout_kind(rt.config.layout_type).create_layout(rt.container)
         rt.ctx = rt.ctx.with_layout(rt.layout)
-        if rt.ops.get('setup_layout'):
-            rt.ops['setup_layout'](rt.ctx)
+        if rt.config.setup_layout is not None:
+            rt.config.setup_layout(rt.ctx)
             if rt.config.layout_type is LayoutKind.PRECONFIGURED_GROUPBOX:
                 rt.layout = rt.container.layout()
                 rt.ctx = rt.ctx.with_layout(rt.layout)
@@ -1141,7 +1060,7 @@ class WidgetCreationPipeline:
         rt = self.runtime
         if not rt.config.is_optional:
             return
-        rt.title_components = rt.ops['create_title_widget'](rt.ctx)
+        rt.title_components = rt.config.create_title_widget(rt.ctx)
         rt.layout.addWidget(rt.title_components.title_widget)
         reset_button_class = None
         reset_button_id = None
@@ -1151,7 +1070,7 @@ class WidgetCreationPipeline:
         logger.debug(
             "[WIDGET_CREATE] seq=%s stage=title_widget type=%s param=%s manager_seq=%s title_cls=%s title_id=%s checkbox_cls=%s checkbox_id=%s reset_cls=%s reset_id=%s",
             rt.create_seq,
-            rt.creation_type.value,
+            type(rt.config).__name__,
             rt.param_info.name,
             rt.manager._pfm_seq,
             type(rt.title_components.title_widget).__name__,
@@ -1167,7 +1086,7 @@ class WidgetCreationPipeline:
         from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 
         rt = self.runtime
-        if not rt.config.needs_label:
+        if rt.config.is_nested:
             return
 
         dotted_path = rt.manager._object_state_path_for_field(rt.param_info.name).value
@@ -1194,7 +1113,7 @@ class WidgetCreationPipeline:
 
     def create_main_widget(self) -> None:
         rt = self.runtime
-        rt.main_widget = rt.ops['create_main_widget'](rt.ctx)
+        rt.main_widget = rt.config.create_main_widget(rt.ctx)
         self._log_widget("main_widget", rt.main_widget)
 
     def place_main_widget(self) -> None:
@@ -1210,7 +1129,7 @@ class WidgetCreationPipeline:
 
     def add_reset_controls(self) -> None:
         rt = self.runtime
-        if not (rt.config.needs_reset_button and not rt.manager.read_only):
+        if rt.manager.read_only:
             return
         if rt.config.is_optional:
             self._connect_optional_reset_button()
@@ -1237,9 +1156,7 @@ class WidgetCreationPipeline:
         reset_all_button.setToolTip(f"Reset all parameters in {rt.ctx.display_info['field_label']} to defaults")
         ResetButtonStyler.apply(reset_all_button, rt.manager.color_scheme)
         self._log_widget("reset_all", reset_all_button)
-        reset_all = DataclassResetAllBinding.for_creation_type(
-            rt.creation_type
-        ).reset_callback(rt)
+        reset_all = rt.config.reset_callback(rt)
         reset_all_button.clicked.connect(lambda: reset_all())
         rt.container.addResetAllTitleWidget(reset_all_button)
 
@@ -1248,7 +1165,7 @@ class WidgetCreationPipeline:
         reset_button = _create_optimized_reset_button(
             rt.manager.config.field_id,
             rt.param_info.name,
-            lambda: rt.manager.reset_parameter(rt.param_info.name),
+            rt.config.reset_callback(rt),
         )
         self._log_widget("reset_button", reset_button)
         if isinstance(rt.container, ResponsiveParameterRow):
@@ -1260,11 +1177,11 @@ class WidgetCreationPipeline:
 
     def connect_optional_checkbox(self) -> None:
         rt = self.runtime
-        if not (rt.config.needs_checkbox and rt.title_components):
+        if not (rt.config.is_optional and rt.title_components):
             return
         nested_manager = rt.manager.nested_managers.get(rt.param_info.name)
         if nested_manager:
-            rt.ops['connect_checkbox_logic'](
+            rt.config.connect_checkbox_logic(
                 rt.manager,
                 rt.param_info,
                 rt.title_components.checkbox,
@@ -1276,31 +1193,7 @@ class WidgetCreationPipeline:
             )
 
     def store_and_connect_widget(self) -> None:
-        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
-
-        rt = self.runtime
-        if rt.config.is_nested:
-            if rt.creation_type is WidgetCreationType.INLINE_DATACLASS:
-                rt.container.set_value_widget(rt.main_widget)
-                rt.manager.widgets[rt.param_info.name] = rt.container
-                PyQt6WidgetEnhancer.connect_change_signal(
-                    rt.container,
-                    rt.param_info.name,
-                    self.on_widget_change,
-                )
-                logger.debug(
-                    "[CREATE_INLINE_DATACLASS] param_info.name=%s, stored inline container in manager.widgets",
-                    rt.param_info.name,
-                )
-            else:
-                rt.manager.widgets[rt.param_info.name] = rt.container
-                logger.debug("[CREATE_NESTED_DATACLASS] param_info.name=%s, stored container in manager.widgets", rt.param_info.name)
-            return
-
-        rt.manager.widgets[rt.param_info.name] = rt.main_widget
-        PyQt6WidgetEnhancer.connect_change_signal(rt.main_widget, rt.param_info.name, self.on_widget_change)
-        if rt.manager.read_only:
-            WidgetService.make_readonly(rt.main_widget, rt.manager.config.color_scheme)
+        self.runtime.config.store_widget(self.runtime, self.on_widget_change)
 
     def initialize_widget_semantics(self) -> None:
         """Apply ObjectState dirty/default chrome once the widget is registered."""
@@ -1342,7 +1235,7 @@ class WidgetCreationPipeline:
                 "[WIDGET_CREATE] seq=%s stage=%s type=%s param=%s field_id=%s manager_seq=%s widget_cls=%s obj_name=%s id=%s parent_cls=%s",
                 rt.create_seq,
                 stage,
-                rt.creation_type.value,
+                type(rt.config).__name__,
                 rt.param_info.name,
                 rt.manager.config.field_id,
                 rt.manager._pfm_seq,
@@ -1353,22 +1246,3 @@ class WidgetCreationPipeline:
             )
         except Exception:
             logger.debug("[WIDGET_CREATE] seq=%s stage=%s param=%s log_failed", rt.create_seq, stage, rt.param_info.name)
-
-
-# ============================================================================
-# VALIDATION
-# ============================================================================
-
-def _validate_widget_operations() -> None:
-    """Validate that all widget creation types have required operations."""
-    for creation_type, config in _WIDGET_CREATION_CONFIG.items():
-        if config.create_container is None:
-            raise RuntimeError(f"{creation_type.value}: create_container is required")
-        if config.create_main_widget is None:
-            raise RuntimeError(f"{creation_type.value}: create_main_widget is required")
-
-    logger.debug(f"✅ Validated {len(_WIDGET_CREATION_CONFIG)} widget creation types")
-
-
-# Run validation at module load time
-_validate_widget_operations()

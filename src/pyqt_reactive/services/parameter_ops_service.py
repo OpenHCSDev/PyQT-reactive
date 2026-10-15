@@ -7,7 +7,7 @@ Merges:
 
 Key features:
 1. Type-safe dispatch using ParameterInfo discriminated unions
-2. Auto-discovery of handlers via ParameterServiceABC
+2. Inheritance-aware dispatch through Python's singledispatchmethod
 3. Placeholder resolution with live context from other windows
 4. Consistent widget update + signal emission
 """
@@ -15,23 +15,17 @@ Key features:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from functools import singledispatchmethod
 
 from formbridge.core.performance_monitor import get_monitor, timer
-from formbridge.services.parameter_service_abc import ParameterServiceABC
-
-if TYPE_CHECKING:
-    from formbridge.forms.parameter_info_types import (
-        DirectDataclassInfo,
-        GenericInfo,
-        InlineDataclassWidgetInfo,
-        OptionalDataclassInfo,
-    )
+from formbridge.forms.parameter_info_types import (
+    DirectDataclassInfo, InlineDataclassWidgetInfo, OptionalDataclassInfo, ParameterInfo,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class ParameterOpsService(ParameterServiceABC):
+class ParameterOpsService:
     """
     Consolidated service for parameter reset and placeholder refresh.
 
@@ -50,7 +44,6 @@ class ParameterOpsService(ParameterServiceABC):
 
     def __init__(self):
         """Initialize with widget operations dependency."""
-        super().__init__()
         from pyqt_reactive.forms.widget_operations import WidgetOperations
         self.widget_ops = WidgetOperations
 
@@ -71,10 +64,6 @@ class ParameterOpsService(ParameterServiceABC):
             return parent.object_instance
 
         return None
-
-    def _get_handler_prefix(self) -> str:
-        """Return handler method prefix for auto-discovery."""
-        return '_reset_'
 
     # ========== PARAMETER RESET (from ParameterResetService) ==========
 
@@ -105,9 +94,15 @@ class ParameterOpsService(ParameterServiceABC):
             event = FieldChangeEvent(param_name, reset_value, manager, is_reset=True)
             FieldChangeDispatcher.instance().dispatch(event)
             return
-        self.dispatch(info, manager)
+        self._reset(info, manager)
 
-    def _reset_OptionalDataclassInfo(self, info: OptionalDataclassInfo, manager) -> None:
+    @singledispatchmethod
+    def _reset(self, info: ParameterInfo, manager) -> None:
+        """An ordinary value widget resets through its canonical field address."""
+        self._reset_value_widget_parameter(info.name, manager)
+
+    @_reset.register(OptionalDataclassInfo)
+    def _reset_optional(self, info: OptionalDataclassInfo, manager) -> None:
         """Reset Optional[Dataclass] field - sync checkbox and reset nested manager."""
         param_name = info.name
         dotted_path = manager._object_state_path_for_field(param_name).value
@@ -133,7 +128,8 @@ class ParameterOpsService(ParameterServiceABC):
         if nested_manager:
             nested_manager.reset_all_parameters()
 
-    def _reset_DirectDataclassInfo(self, info: DirectDataclassInfo, manager) -> None:
+    @_reset.register(DirectDataclassInfo)
+    def _reset_dataclass(self, info: DirectDataclassInfo, manager) -> None:
         """Reset direct Dataclass field - reset nested manager only.
 
         NOTE: We do NOT call update_widget_value on the container widget here.
@@ -146,14 +142,8 @@ class ParameterOpsService(ParameterServiceABC):
         if nested_manager:
             nested_manager.reset_all_parameters()
 
-    def _reset_GenericInfo(self, info: GenericInfo, manager) -> None:
-        """Reset generic field to signature default.
-
-        MODEL mutation through ObjectState, then VIEW-only widget updates.
-        """
-        self._reset_value_widget_parameter(info.name, manager)
-
-    def _reset_InlineDataclassWidgetInfo(
+    @_reset.register(InlineDataclassWidgetInfo)
+    def _reset_inline(
         self,
         info: InlineDataclassWidgetInfo,
         manager,
