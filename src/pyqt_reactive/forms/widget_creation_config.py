@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from dataclasses import dataclass
 import logging
 import itertools
-from typing import Any, Callable, ClassVar, Optional, TYPE_CHECKING, Type, Tuple
+from typing import Callable, ClassVar, TYPE_CHECKING
 from metaclass_registry import AutoRegisterMeta
 from python_introspect import resolve_optional
 
 from .widget_creation_types import (
-    ParameterFormManager, ParameterInfo, DisplayInfo, FieldIds,
-    LayoutKind, OptionalTitleComponents, WidgetBuildContext
+    ParameterFormManager, ParameterInfo,
+    OptionalTitleComponents, WidgetBuildContext
 )
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 from pyqt_reactive.services.widget_service import WidgetService
@@ -438,15 +439,11 @@ class EnabledTitleWidgetMoveAuthority:
 
 
 class WidgetCreationConfig(ABC, metaclass=AutoRegisterMeta):
-    """Qt behavior selected from the admitted declaration's MRO."""
+    """The admitted declaration's MRO selects all Qt creation behavior."""
 
     __registry_key__ = "parameter_type"
     __skip_if_no_key__ = True
     parameter_type: ClassVar[type[ParameterInfo] | None] = None
-    layout_type = LayoutKind.HORIZONTAL_ROW
-    is_nested = False
-    is_optional = False
-    setup_layout = None
 
     @classmethod
     def for_parameter(cls, info: ParameterInfo) -> WidgetCreationConfig:
@@ -467,19 +464,158 @@ class WidgetCreationConfig(ABC, metaclass=AutoRegisterMeta):
         raise NotImplementedError
 
     def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
-        return lambda: runtime.manager.reset_parameter(runtime.param_info.name)
+        return lambda: runtime.ctx.manager.reset_parameter(runtime.ctx.param_info.name)
 
     def store_widget(self, runtime: WidgetCreationRuntime, on_change: Callable) -> None:
         from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
         widget = runtime.main_widget
-        runtime.manager.widgets[runtime.param_info.name] = widget
-        PyQt6WidgetEnhancer.connect_change_signal(widget, runtime.param_info.name, on_change)
-        if runtime.manager.read_only:
-            WidgetService.make_readonly(widget, runtime.manager.config.color_scheme)
+        runtime.ctx.manager.widgets[runtime.ctx.param_info.name] = widget
+        PyQt6WidgetEnhancer.connect_change_signal(widget, runtime.ctx.param_info.name, on_change)
+        if runtime.ctx.manager.read_only:
+            WidgetService.make_readonly(widget, runtime.ctx.manager.config.color_scheme)
 
-    """Nominal owner for widget creation operation handlers."""
+    def unwrapped_type(self, info: ParameterInfo) -> type | None:
+        return None
 
-    def _create_nested_form(ctx: WidgetBuildContext) -> QWidget:
+    def content_update(self, rt: WidgetCreationRuntime):
+        return nullcontext()
+
+    def configure_container(self, rt: WidgetCreationRuntime) -> None:
+        pass
+
+    @abstractmethod
+    def create_layout(self, ctx: WidgetBuildContext) -> QLayout | None:
+        """Create the layout required by this owner's container."""
+        raise NotImplementedError
+
+    def add_title(self, rt: WidgetCreationRuntime) -> None:
+        """Containers with their own title need no additional title widget."""
+
+    def place_widget(self, rt: WidgetCreationRuntime) -> None:
+        rt.ctx.layout.addWidget(rt.main_widget)
+
+    def add_reset_controls(self, rt: WidgetCreationRuntime) -> None:
+        if not rt.ctx.manager.read_only:
+            self.add_reset_button(rt)
+
+    @abstractmethod
+    def add_reset_button(self, rt: WidgetCreationRuntime) -> None:
+        raise NotImplementedError
+
+    def connect_structure(self, rt: WidgetCreationRuntime) -> None:
+        """Ordinary and direct dataclass fields have no presence checkbox."""
+
+
+class RegularWidgetCreation(WidgetCreationConfig):
+    parameter_type = ParameterInfo
+
+    @staticmethod
+    def create_container(ctx: WidgetBuildContext) -> QWidget:
+        """Create container for REGULAR widget type."""
+        from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
+            ResponsiveParameterRow,
+        )
+
+        return ResponsiveParameterRow(
+            parent=ctx.manager.parent(),
+            layout_config=ctx.layout_config,
+        )
+
+    @staticmethod
+    def create_main_widget(ctx: WidgetBuildContext) -> QWidget:
+        return ctx.manager._widget_creator(ctx.param_info.name, ctx.param_info.type,
+                                          ctx.current_value, ctx.field_ids['widget_id'], None)
+
+    def content_update(self, rt: WidgetCreationRuntime):
+        return rt.ctx.container.layout_update()
+
+    def create_layout(self, ctx: WidgetBuildContext) -> None:
+        # ResponsiveParameterRow owns and batches its internal layout.
+        return None
+
+    def add_title(self, rt: WidgetCreationRuntime) -> None:
+        from pyqt_reactive.widgets.shared.clickable_help_components import HelpContext, LabelWithHelp
+        from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
+
+        dotted_path = rt.ctx.manager._object_state_path_for_field(rt.ctx.param_info.name).value
+        label = LabelWithHelp(
+            text=rt.ctx.display_info['field_label'],
+            help_context=HelpContext(
+                help_target=rt.ctx.manager.function_target,
+                param_name=rt.ctx.param_info.name,
+                param_description=rt.ctx.display_info['description'],
+                param_type=rt.ctx.param_info.type,
+                color_scheme=rt.ctx.manager.config.color_scheme or PyQt6ColorScheme(),
+                scope_accent_color=rt.ctx.manager._scope_accent_color,
+            ),
+            state=rt.ctx.manager.state,
+            dotted_path=dotted_path,
+        )
+        rt.log_widget("label", label)
+        rt.ctx.container.set_label(label)
+        rt.ctx.manager.labels[rt.ctx.param_info.name] = label
+        label.set_underline(dotted_path in rt.ctx.manager.state.signature_diff_fields)
+
+    def place_widget(self, rt: WidgetCreationRuntime) -> None:
+        rt.ctx.container.set_input(rt.main_widget)
+
+    def add_reset_button(self, rt: WidgetCreationRuntime) -> None:
+        reset_button = _create_optimized_reset_button(
+            rt.ctx.manager.config.field_id,
+            rt.ctx.param_info.name,
+            self.reset_callback(rt),
+        )
+        rt.log_widget("reset_button", reset_button)
+        rt.ctx.container.set_reset_button(reset_button)
+        rt.ctx.manager.reset_buttons[rt.ctx.param_info.name] = reset_button
+
+
+class NestedWidgetCreation(WidgetCreationConfig):
+    parameter_type = DirectDataclassInfo
+
+    @staticmethod
+    def create_container(ctx: WidgetBuildContext) -> GroupBoxWithHelp:
+        """Create container for NESTED widget type."""
+        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp as GBH
+        from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
+        from pyqt_reactive.forms.form_init_service import FormBuildOrchestrator
+
+        manager = ctx.manager
+        param_info = ctx.param_info
+        display_info = ctx.display_info
+        unwrapped_type = ctx.unwrapped_type
+        color_scheme = manager.config.color_scheme or PCS()
+        # Get root manager for flash - nested managers share root's _flash_colors dict
+        root_manager = manager.form_tree.root()
+        # Flash keys must identify the *section* via a canonical dotted path.
+        # Example: "processing_config.path_planning_config" (not just "path_planning_config").
+        flash_key = manager._object_state_path_for_field(param_info.name).value
+
+        # CRITICAL: Use scope_accent_color from manager config (passed from parent window)
+        # No need to walk parent chain - it's stored directly in the manager
+        scope_accent_color = manager._scope_accent_color
+
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"[CREATE_NESTED] field_id={manager.field_id}, manager._scope_accent_color={scope_accent_color}")
+        logger.debug(
+            "[CREATE_NESTED] param=%s title=%s widget=GroupBoxWithHelp",
+            param_info.name,
+            display_info.get('field_label')
+        )
+
+        container = GBH(
+            title=display_info['field_label'],
+            help_target=unwrapped_type,
+            color_scheme=color_scheme,
+            scope_accent_color=scope_accent_color,  # Pass scope accent color
+            flash_key=flash_key,
+            flash_manager=root_manager
+        )
+        return container
+
+    @staticmethod
+    def create_main_widget(ctx: WidgetBuildContext) -> QWidget:
         """
         Handler for creating nested form.
 
@@ -536,7 +672,145 @@ class WidgetCreationConfig(ABC, metaclass=AutoRegisterMeta):
         logger.debug(f"🔍 _create_nested_form: build_form() returned for {nested_manager.field_id}, widgets={len(nested_manager.widgets)}")
         return result
 
-    def _create_optional_title_widget(ctx: WidgetBuildContext):
+    def unwrapped_type(self, info: ParameterInfo) -> type:
+        return resolve_optional(info.type)
+
+    def configure_container(self, rt: WidgetCreationRuntime) -> None:
+        root_manager = rt.ctx.manager.form_tree.root()
+        root_manager.register_flash_groupbox(rt.ctx.container._flash_key, rt.ctx.container)
+        scope_color_scheme = rt.ctx.manager._scope_color_scheme
+        if scope_color_scheme is None:
+            scope_color_scheme = root_manager._scope_color_scheme
+        if scope_color_scheme:
+            rt.ctx.container.set_scope_color_scheme(scope_color_scheme)
+
+    def create_layout(self, ctx: WidgetBuildContext) -> QLayout:
+        return ctx.container.layout()
+
+    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
+        nested_manager = runtime.ctx.manager.nested_managers.get(runtime.ctx.param_info.name)
+        if nested_manager is None:
+            raise RuntimeError(f"Nested dataclass {runtime.ctx.param_info.name!r} has no nested manager.")
+        return nested_manager.reset_all_parameters
+
+    def add_reset_button(self, rt: WidgetCreationRuntime) -> None:
+        from PyQt6.QtWidgets import QPushButton
+
+        reset_all_button = QPushButton("Reset All")
+        reset_all_button.setMaximumWidth(80)
+        reset_all_button.setFixedHeight(CURRENT_LAYOUT.button_height)
+        reset_all_button.setToolTip(f"Reset all parameters in {rt.ctx.display_info['field_label']} to defaults")
+        ResetButtonStyler.apply(reset_all_button, rt.ctx.manager.color_scheme)
+        rt.log_widget("reset_all", reset_all_button)
+        reset_all = self.reset_callback(rt)
+        reset_all_button.clicked.connect(lambda: reset_all())
+        rt.ctx.container.addResetAllTitleWidget(reset_all_button)
+
+    def store_widget(self, runtime: WidgetCreationRuntime, on_change: Callable) -> None:
+        runtime.ctx.manager.widgets[runtime.ctx.param_info.name] = runtime.ctx.container
+
+
+class InlineWidgetCreation(NestedWidgetCreation):
+    parameter_type = InlineDataclassWidgetInfo
+
+    @staticmethod
+    def create_container(
+        ctx: WidgetBuildContext,
+    ) -> InlineDataclassGroupBox:
+        """Create dataclass chrome for a registered inline dataclass editor."""
+        from pyqt_reactive.widgets.shared.clickable_help_components import (
+            InlineDataclassGroupBox,
+        )
+        from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
+
+        manager = ctx.manager
+        param_info = ctx.param_info
+        display_info = ctx.display_info
+        unwrapped_type = ctx.unwrapped_type
+        color_scheme = manager.config.color_scheme or PCS()
+        root_manager = manager.form_tree.root()
+        flash_key = manager._object_state_path_for_field(param_info.name).value
+        scope_accent_color = manager._scope_accent_color
+
+        return InlineDataclassGroupBox(
+            title=display_info['field_label'],
+            help_target=unwrapped_type,
+            color_scheme=color_scheme,
+            scope_accent_color=scope_accent_color,
+            flash_key=flash_key,
+            flash_manager=root_manager,
+        )
+
+    @staticmethod
+    def create_main_widget(
+        ctx: WidgetBuildContext,
+    ) -> QWidget:
+        """Create the registered inline editor for a structural dataclass value."""
+        manager = ctx.manager
+        param_info = ctx.param_info
+        widget_factory = param_info.widget_factory()
+        return widget_factory(
+            manager=manager,
+            param_info=param_info,
+            display_info=ctx.display_info,
+            field_ids=ctx.field_ids,
+            current_value=ctx.current_value,
+            parent=manager,
+        )
+
+    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
+        return runtime.ctx.container.reset_inline_dataclass_fields
+
+    def store_widget(self, runtime: WidgetCreationRuntime, on_change: Callable) -> None:
+        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+        runtime.ctx.container.set_value_widget(runtime.main_widget)
+        super().store_widget(runtime, on_change)
+        PyQt6WidgetEnhancer.connect_change_signal(runtime.ctx.container, runtime.ctx.param_info.name, on_change)
+
+
+class OptionalNestedWidgetCreation(NestedWidgetCreation):
+    parameter_type = OptionalDataclassInfo
+
+    @staticmethod
+    def create_container(ctx: WidgetBuildContext) -> QGroupBox:
+        """Create container for OPTIONAL_NESTED widget type."""
+        from PyQt6.QtWidgets import QGroupBox
+        from PyQt6.QtGui import QPalette
+        from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
+        import logging
+
+        manager = ctx.manager
+        display_info = ctx.display_info
+        field_ids = ctx.field_ids
+        color_scheme = manager.config.color_scheme or PCS()
+        container = QGroupBox()
+        palette = container.palette()
+        palette.setColor(QPalette.ColorRole.Window, color_scheme.to_qcolor(color_scheme.panel_bg))
+        container.setPalette(palette)
+        container.setAutoFillBackground(True)
+        logger = logging.getLogger(__name__)
+        logger.debug(
+            "[OPTIONAL_NESTED] Created QGroupBox: name=%s title=%s autoFill=%s palette_window=%s",
+            field_ids.get('widget_id'),
+            display_info.get('field_label'),
+            container.autoFillBackground(),
+            palette.color(QPalette.ColorRole.Window).name()
+        )
+        return container
+
+    def configure_container(self, rt: WidgetCreationRuntime) -> None:
+        # QGroupBox presence titles do not use GroupBoxWithHelp flash chrome.
+        pass
+
+    def create_layout(self, ctx: WidgetBuildContext) -> QLayout:
+        from PyQt6.QtWidgets import QVBoxLayout
+        layout = QVBoxLayout(ctx.container)
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        return layout
+
+    @staticmethod
+    def create_title_widget(ctx: WidgetBuildContext):
         """
         Handler for creating optional dataclass title widget with checkbox.
 
@@ -619,7 +893,8 @@ class WidgetCreationConfig(ABC, metaclass=AutoRegisterMeta):
             reset_all_button=reset_all_button,
         )
 
-    def _connect_optional_checkbox_logic(manager, param_info, checkbox, nested_form, nested_manager, title_label, help_btn, unwrapped_type):
+    @staticmethod
+    def connect_checkbox_logic(manager, param_info, checkbox, nested_form, nested_manager, title_label, help_btn, unwrapped_type):
         """
         Handler for connecting optional dataclass checkbox toggle logic.
 
@@ -672,552 +947,39 @@ class WidgetCreationConfig(ABC, metaclass=AutoRegisterMeta):
 
         manager._on_build_complete_callbacks.append(apply_initial_styling)
 
-    def _create_regular_container(ctx: WidgetBuildContext) -> QWidget:
-        """Create container for REGULAR widget type."""
-        from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
-            ResponsiveParameterRow,
+    def add_title(self, rt: WidgetCreationRuntime) -> None:
+        self.title_components = self.create_title_widget(rt.ctx)
+        rt.ctx.layout.addWidget(self.title_components.title_widget)
+        rt.log_widget("title_widget", self.title_components.title_widget)
+        rt.log_widget("presence_checkbox", self.title_components.checkbox)
+
+    def place_widget(self, rt: WidgetCreationRuntime) -> None:
+        super().place_widget(rt)
+        rt.main_widget.setEnabled(rt.ctx.current_value is not None)
+
+    def add_reset_button(self, rt: WidgetCreationRuntime) -> None:
+        self.title_components.reset_all_button.clicked.connect(self.reset_callback(rt))
+
+    def connect_structure(self, rt: WidgetCreationRuntime) -> None:
+        title = self.title_components
+        self.connect_checkbox_logic(
+            rt.ctx.manager, rt.ctx.param_info, title.checkbox, rt.main_widget,
+            rt.ctx.manager.nested_managers[rt.ctx.param_info.name],
+            title.title_label, title.help_btn, rt.ctx.unwrapped_type,
         )
 
-        return ResponsiveParameterRow(
-            parent=ctx.manager.parent(),
-            layout_config=ctx.layout_config,
-        )
-
-    def _create_nested_container(ctx: WidgetBuildContext) -> GroupBoxWithHelp:
-        """Create container for NESTED widget type."""
-        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp as GBH
-        from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
-        from pyqt_reactive.forms.form_init_service import FormBuildOrchestrator
-
-        manager = ctx.manager
-        param_info = ctx.param_info
-        display_info = ctx.display_info
-        unwrapped_type = ctx.unwrapped_type
-        color_scheme = manager.config.color_scheme or PCS()
-        # Get root manager for flash - nested managers share root's _flash_colors dict
-        root_manager = manager.form_tree.root()
-        # Flash keys must identify the *section* via a canonical dotted path.
-        # Example: "processing_config.path_planning_config" (not just "path_planning_config").
-        flash_key = manager._object_state_path_for_field(param_info.name).value
-
-        # CRITICAL: Use scope_accent_color from manager config (passed from parent window)
-        # No need to walk parent chain - it's stored directly in the manager
-        scope_accent_color = manager._scope_accent_color
-
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"[CREATE_NESTED] field_id={manager.field_id}, manager._scope_accent_color={scope_accent_color}")
-        logger.debug(
-            "[CREATE_NESTED] param=%s title=%s widget=GroupBoxWithHelp",
-            param_info.name,
-            display_info.get('field_label')
-        )
-
-        container = GBH(
-            title=display_info['field_label'],
-            help_target=unwrapped_type,
-            color_scheme=color_scheme,
-            scope_accent_color=scope_accent_color,  # Pass scope accent color
-            flash_key=flash_key,
-            flash_manager=root_manager
-        )
-        return container
-
-    def _create_inline_dataclass_container(
-        ctx: WidgetBuildContext,
-    ) -> InlineDataclassGroupBox:
-        """Create dataclass chrome for a registered inline dataclass editor."""
-        from pyqt_reactive.widgets.shared.clickable_help_components import (
-            InlineDataclassGroupBox,
-        )
-        from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
-
-        manager = ctx.manager
-        param_info = ctx.param_info
-        display_info = ctx.display_info
-        unwrapped_type = ctx.unwrapped_type
-        color_scheme = manager.config.color_scheme or PCS()
-        root_manager = manager.form_tree.root()
-        flash_key = manager._object_state_path_for_field(param_info.name).value
-        scope_accent_color = manager._scope_accent_color
-
-        return InlineDataclassGroupBox(
-            title=display_info['field_label'],
-            help_target=unwrapped_type,
-            color_scheme=color_scheme,
-            scope_accent_color=scope_accent_color,
-            flash_key=flash_key,
-            flash_manager=root_manager,
-        )
-
-    def _create_inline_dataclass_widget(
-        ctx: WidgetBuildContext,
-    ) -> QWidget:
-        """Create the registered inline editor for a structural dataclass value."""
-        from formbridge.forms.parameter_info_types import InlineDataclassWidgetInfo
-
-        manager = ctx.manager
-        param_info = ctx.param_info
-        if not isinstance(param_info, InlineDataclassWidgetInfo):
-            raise TypeError(
-                "INLINE_DATACLASS creation requires InlineDataclassWidgetInfo; "
-                f"got {type(param_info).__name__}."
-            )
-        widget_factory = param_info.widget_factory()
-        return widget_factory(
-            manager=manager,
-            param_info=param_info,
-            display_info=ctx.display_info,
-            field_ids=ctx.field_ids,
-            current_value=ctx.current_value,
-            parent=manager,
-        )
-
-    def _create_optional_nested_container(ctx: WidgetBuildContext) -> QGroupBox:
-        """Create container for OPTIONAL_NESTED widget type."""
-        from PyQt6.QtWidgets import QGroupBox
-        from PyQt6.QtGui import QPalette
-        from pyqt_reactive.theming.color_scheme import ColorScheme as PCS
-        import logging
-
-        manager = ctx.manager
-        display_info = ctx.display_info
-        field_ids = ctx.field_ids
-        color_scheme = manager.config.color_scheme or PCS()
-        container = QGroupBox()
-        palette = container.palette()
-        palette.setColor(QPalette.ColorRole.Window, color_scheme.to_qcolor(color_scheme.panel_bg))
-        container.setPalette(palette)
-        container.setAutoFillBackground(True)
-        logger = logging.getLogger(__name__)
-        logger.debug(
-            "[OPTIONAL_NESTED] Created QGroupBox: name=%s title=%s autoFill=%s palette_window=%s",
-            field_ids.get('widget_id'),
-            display_info.get('field_label'),
-            container.autoFillBackground(),
-            palette.color(QPalette.ColorRole.Window).name()
-        )
-        return container
-
-    def _setup_regular_layout(ctx: WidgetBuildContext) -> None:
-        """Setup layout for REGULAR widget type.
-
-        For REGULAR widgets, container is a QWidget with a layout already set.
-        We need to configure the layout, not the container.
-    
-        If container is ResponsiveParameterRow, it manages its own layout so we skip setup.
-        """
-        # Skip layout setup for ResponsiveParameterRow - it manages its own layout
-        container = ctx.container
-        if isinstance(container, ResponsiveParameterRow):
-            return
-    
-        layout = container.layout()
-        # QLayout.__bool__ returns False even when the layout exists, so we do not
-        # use a truthiness check here. For REGULAR rows we *require* that a layout
-        # has already been set (create_widget_parametric installs a QHBoxLayout),
-        # so if this ever ends up being None it's a programmer error and should
-        # raise loudly.
-        layout.setSpacing(ctx.layout_config.parameter_row_spacing)
-        layout.setContentsMargins(*ctx.layout_config.parameter_row_margins)
-
-    def _setup_optional_nested_layout(ctx: WidgetBuildContext) -> None:
-        """Setup layout for OPTIONAL_NESTED widget type."""
-        from PyQt6.QtWidgets import QVBoxLayout as QVL
-        container = ctx.container
-        container.setLayout(QVL())
-        container.layout().setSpacing(0)
-        container.layout().setContentsMargins(0, 0, 0, 0)
-
-
-# ============================================================================
-# UNIFIED WIDGET CREATION CONFIGURATION (typed, no eval strings)
-# ============================================================================
-
-class RegularWidgetCreation(WidgetCreationConfig):
-    parameter_type = ParameterInfo
-    create_container = staticmethod(WidgetCreationConfig._create_regular_container)
-    setup_layout = staticmethod(WidgetCreationConfig._setup_regular_layout)
-
-    @staticmethod
-    def create_main_widget(ctx: WidgetBuildContext) -> QWidget:
-        return ctx.manager._widget_creator(ctx.param_info.name, ctx.param_info.type,
-                                          ctx.current_value, ctx.field_ids['widget_id'], None)
-
-
-class NestedWidgetCreation(WidgetCreationConfig):
-    parameter_type = DirectDataclassInfo
-    layout_type = LayoutKind.GROUPBOX_WITH_HELP
-    is_nested = True
-    create_container = staticmethod(WidgetCreationConfig._create_nested_container)
-    create_main_widget = staticmethod(WidgetCreationConfig._create_nested_form)
-
-    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
-        nested_manager = runtime.manager.nested_managers.get(runtime.param_info.name)
-        if nested_manager is None:
-            raise RuntimeError(f"Nested dataclass {runtime.param_info.name!r} has no nested manager.")
-        return nested_manager.reset_all_parameters
-
-    def store_widget(self, runtime: WidgetCreationRuntime, on_change: Callable) -> None:
-        runtime.manager.widgets[runtime.param_info.name] = runtime.container
-
-
-class InlineWidgetCreation(NestedWidgetCreation):
-    parameter_type = InlineDataclassWidgetInfo
-    create_container = staticmethod(WidgetCreationConfig._create_inline_dataclass_container)
-    create_main_widget = staticmethod(WidgetCreationConfig._create_inline_dataclass_widget)
-
-    def reset_callback(self, runtime: WidgetCreationRuntime) -> Callable[[], None]:
-        return runtime.container.reset_inline_dataclass_fields
-
-    def store_widget(self, runtime: WidgetCreationRuntime, on_change: Callable) -> None:
-        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
-        runtime.container.set_value_widget(runtime.main_widget)
-        super().store_widget(runtime, on_change)
-        PyQt6WidgetEnhancer.connect_change_signal(runtime.container, runtime.param_info.name, on_change)
-
-
-class OptionalNestedWidgetCreation(NestedWidgetCreation):
-    parameter_type = OptionalDataclassInfo
-    layout_type = LayoutKind.PRECONFIGURED_GROUPBOX
-    is_optional = True
-    create_container = staticmethod(WidgetCreationConfig._create_optional_nested_container)
-    setup_layout = staticmethod(WidgetCreationConfig._setup_optional_nested_layout)
-    create_title_widget = staticmethod(WidgetCreationConfig._create_optional_title_widget)
-    connect_checkbox_logic = staticmethod(WidgetCreationConfig._connect_optional_checkbox_logic)
-
-
-class LayoutStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Nominal layout creation strategy for widget containers."""
-
-    __registry_key__ = "layout_kind"
-    __skip_if_no_key__ = True
-    layout_kind: ClassVar[LayoutKind | None] = None
-
-    @classmethod
-    def for_layout_kind(cls, layout_kind: LayoutKind) -> "LayoutStrategy":
-        return cls.__registry__[layout_kind]()
-
-    @abstractmethod
-    def create_layout(self, container: QWidget) -> QLayout | None:
-        pass
-
-
-class HorizontalRowLayoutStrategy(LayoutStrategy):
-    layout_kind = LayoutKind.HORIZONTAL_ROW
-
-    def create_layout(self, container: QWidget) -> QLayout | None:
-        from PyQt6.QtWidgets import QHBoxLayout
-        if isinstance(container, ResponsiveParameterRow):
-            return None
-        return QHBoxLayout(container)
-
-
-class VerticalBoxLayoutStrategy(LayoutStrategy):
-    layout_kind = LayoutKind.VERTICAL_BOX
-
-    def create_layout(self, container: QWidget) -> QLayout:
-        from PyQt6.QtWidgets import QVBoxLayout
-        return QVBoxLayout(container)
-
-
-class PreconfiguredGroupBoxLayoutStrategy(LayoutStrategy):
-    layout_kind = LayoutKind.PRECONFIGURED_GROUPBOX
-
-    def create_layout(self, container: QWidget) -> None:
-        return None
-
-
-class GroupBoxWithHelpLayoutStrategy(LayoutStrategy):
-    layout_kind = LayoutKind.GROUPBOX_WITH_HELP
-
-    def create_layout(self, container: QWidget) -> QLayout | None:
-        return container.layout()
-
-
-# ============================================================================
-# UNIFIED WIDGET CREATION FUNCTION
-# ============================================================================
 
 @dataclass
 class WidgetCreationRuntime:
     """Mutable state for one widget-creation pipeline execution."""
 
-    manager: ParameterFormManager
-    param_info: ParameterInfo
     config: WidgetCreationConfig
     ctx: WidgetBuildContext
     create_seq: int
-    container: QWidget | None = None
-    layout: QLayout | None = None
-    title_components: OptionalTitleComponents | None = None
     main_widget: QWidget | None = None
 
-
-class WidgetCreationPipeline:
-    """Named stages for creating one parameter widget."""
-
-    def __init__(self, manager: ParameterFormManager, param_info: ParameterInfo) -> None:
-        from PyQt6.QtWidgets import QWidget
-        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-        from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
-
-        config = WidgetCreationConfig.for_parameter(param_info)
-        display_info = WidgetService.get_parameter_display_info(
-            param_info.name,
-            param_info.type,
-            manager=manager,
-            description=param_info.description,
-        )
-        field_ids = manager.service.generate_field_ids_direct(manager.config.field_id, param_info.name)
-        current_value = manager.parameters.get(param_info.name)
-        unwrapped_type = None
-        if config.is_nested:
-            unwrapped_type = resolve_optional(param_info.type)
-        ctx = WidgetBuildContext(
-            manager=manager,
-            param_info=param_info,
-            display_info=display_info,
-            field_ids=field_ids,
-            current_value=current_value,
-            unwrapped_type=unwrapped_type,
-            layout_config=CURRENT_LAYOUT,
-            qwidget_type=QWidget,
-            groupbox_with_help_type=GroupBoxWithHelp,
-            color_scheme_type=PyQt6ColorScheme,
-        )
-        self.runtime = WidgetCreationRuntime(
-            manager=manager,
-            param_info=param_info,
-            config=config,
-            ctx=ctx,
-            create_seq=next(_WIDGET_CREATE_SEQ),
-        )
-        logger.debug(
-            "create_widget_parametric: config type=%s is_nested=%s is_optional=%s",
-            type(config).__name__,
-            config.is_nested,
-            config.is_optional,
-        )
-
-    def run(self) -> QWidget:
-        """Run the widget creation stages."""
-        self.create_container()
-        rt = self.runtime
-        if isinstance(rt.container, ResponsiveParameterRow):
-            with rt.container.layout_update():
-                self._run_content_stages()
-        else:
-            self._run_content_stages()
-        return self.runtime.container
-
-    def _run_content_stages(self) -> None:
-        """Build one row's content within its owner's layout transaction."""
-
-        self.configure_nested_container()
-        self.setup_layout()
-        self.add_optional_title()
-        self.add_regular_label()
-        self.create_main_widget()
-        self.place_main_widget()
-        self.add_reset_controls()
-        self.connect_optional_checkbox()
-        self.store_and_connect_widget()
-        self.initialize_widget_semantics()
-
-    def create_container(self) -> None:
-        rt = self.runtime
-        rt.container = rt.config.create_container(rt.ctx)
-        rt.ctx = rt.ctx.with_container(rt.container)
-        self._log_widget("container", rt.container)
-
-    def configure_nested_container(self) -> None:
-        from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-
-        rt = self.runtime
-        if not (rt.config.is_nested and isinstance(rt.container, GroupBoxWithHelp)):
-            return
-
-        root_manager = rt.manager.form_tree.root()
-        root_manager.register_flash_groupbox(rt.container._flash_key, rt.container)
-        scope_color_scheme = rt.manager._scope_color_scheme
-        if scope_color_scheme is None:
-            scope_color_scheme = root_manager._scope_color_scheme
-        if scope_color_scheme:
-            rt.container.set_scope_color_scheme(scope_color_scheme)
-
-    def setup_layout(self) -> None:
-        rt = self.runtime
-        rt.layout = LayoutStrategy.for_layout_kind(rt.config.layout_type).create_layout(rt.container)
-        rt.ctx = rt.ctx.with_layout(rt.layout)
-        if rt.config.setup_layout is not None:
-            rt.config.setup_layout(rt.ctx)
-            if rt.config.layout_type is LayoutKind.PRECONFIGURED_GROUPBOX:
-                rt.layout = rt.container.layout()
-                rt.ctx = rt.ctx.with_layout(rt.layout)
-
-    def add_optional_title(self) -> None:
-        rt = self.runtime
-        if not rt.config.is_optional:
-            return
-        rt.title_components = rt.config.create_title_widget(rt.ctx)
-        rt.layout.addWidget(rt.title_components.title_widget)
-        reset_button_class = None
-        reset_button_id = None
-        if rt.title_components.reset_all_button is not None:
-            reset_button_class = type(rt.title_components.reset_all_button).__name__
-            reset_button_id = id(rt.title_components.reset_all_button)
-        logger.debug(
-            "[WIDGET_CREATE] seq=%s stage=title_widget type=%s param=%s manager_seq=%s title_cls=%s title_id=%s checkbox_cls=%s checkbox_id=%s reset_cls=%s reset_id=%s",
-            rt.create_seq,
-            type(rt.config).__name__,
-            rt.param_info.name,
-            rt.manager._pfm_seq,
-            type(rt.title_components.title_widget).__name__,
-            id(rt.title_components.title_widget),
-            type(rt.title_components.checkbox).__name__,
-            id(rt.title_components.checkbox),
-            reset_button_class,
-            reset_button_id,
-        )
-
-    def add_regular_label(self) -> None:
-        from pyqt_reactive.widgets.shared.clickable_help_components import HelpContext, LabelWithHelp
-        from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
-
-        rt = self.runtime
-        if rt.config.is_nested:
-            return
-
-        dotted_path = rt.manager._object_state_path_for_field(rt.param_info.name).value
-        label = LabelWithHelp(
-            text=rt.ctx.display_info['field_label'],
-            help_context=HelpContext(
-                help_target=rt.manager.function_target,
-                param_name=rt.param_info.name,
-                param_description=rt.ctx.display_info['description'],
-                param_type=rt.param_info.type,
-                color_scheme=rt.manager.config.color_scheme or PyQt6ColorScheme(),
-                scope_accent_color=rt.manager._scope_accent_color,
-            ),
-            state=rt.manager.state,
-            dotted_path=dotted_path,
-        )
-        self._log_widget("label", label)
-        if isinstance(rt.container, ResponsiveParameterRow):
-            rt.container.set_label(label)
-        else:
-            rt.layout.addWidget(label)
-        rt.manager.labels[rt.param_info.name] = label
-        label.set_underline(dotted_path in rt.manager.state.signature_diff_fields)
-
-    def create_main_widget(self) -> None:
-        rt = self.runtime
-        rt.main_widget = rt.config.create_main_widget(rt.ctx)
-        self._log_widget("main_widget", rt.main_widget)
-
-    def place_main_widget(self) -> None:
-        rt = self.runtime
-        if rt.config.is_nested:
-            if rt.config.is_optional:
-                rt.main_widget.setEnabled(rt.ctx.current_value is not None)
-            rt.layout.addWidget(rt.main_widget)
-        elif isinstance(rt.container, ResponsiveParameterRow):
-            rt.container.set_input(rt.main_widget)
-        else:
-            rt.layout.addWidget(rt.main_widget, 1)
-
-    def add_reset_controls(self) -> None:
-        rt = self.runtime
-        if rt.manager.read_only:
-            return
-        if rt.config.is_optional:
-            self._connect_optional_reset_button()
-        elif rt.config.is_nested:
-            self._add_dataclass_reset_all_button()
-        else:
-            self._add_regular_reset_button()
-
-    def _connect_optional_reset_button(self) -> None:
-        rt = self.runtime
-        if rt.title_components is None or rt.title_components.reset_all_button is None:
-            return
-        nested_manager = rt.manager.nested_managers.get(rt.param_info.name)
-        if nested_manager:
-            rt.title_components.reset_all_button.clicked.connect(lambda: nested_manager.reset_all_parameters())
-
-    def _add_dataclass_reset_all_button(self) -> None:
-        from PyQt6.QtWidgets import QPushButton
-
-        rt = self.runtime
-        reset_all_button = QPushButton("Reset All")
-        reset_all_button.setMaximumWidth(80)
-        reset_all_button.setFixedHeight(CURRENT_LAYOUT.button_height)
-        reset_all_button.setToolTip(f"Reset all parameters in {rt.ctx.display_info['field_label']} to defaults")
-        ResetButtonStyler.apply(reset_all_button, rt.manager.color_scheme)
-        self._log_widget("reset_all", reset_all_button)
-        reset_all = rt.config.reset_callback(rt)
-        reset_all_button.clicked.connect(lambda: reset_all())
-        rt.container.addResetAllTitleWidget(reset_all_button)
-
-    def _add_regular_reset_button(self) -> None:
-        rt = self.runtime
-        reset_button = _create_optimized_reset_button(
-            rt.manager.config.field_id,
-            rt.param_info.name,
-            rt.config.reset_callback(rt),
-        )
-        self._log_widget("reset_button", reset_button)
-        if isinstance(rt.container, ResponsiveParameterRow):
-            rt.container.set_reset_button(reset_button)
-        else:
-            rt.layout.addStretch()
-            rt.layout.addWidget(reset_button)
-        rt.manager.reset_buttons[rt.param_info.name] = reset_button
-
-    def connect_optional_checkbox(self) -> None:
-        rt = self.runtime
-        if not (rt.config.is_optional and rt.title_components):
-            return
-        nested_manager = rt.manager.nested_managers.get(rt.param_info.name)
-        if nested_manager:
-            rt.config.connect_checkbox_logic(
-                rt.manager,
-                rt.param_info,
-                rt.title_components.checkbox,
-                rt.main_widget,
-                nested_manager,
-                rt.title_components.title_label,
-                rt.title_components.help_btn,
-                rt.ctx.unwrapped_type,
-            )
-
-    def store_and_connect_widget(self) -> None:
-        self.runtime.config.store_widget(self.runtime, self.on_widget_change)
-
-    def initialize_widget_semantics(self) -> None:
-        """Apply ObjectState dirty/default chrome once the widget is registered."""
-
-        rt = self.runtime
-        rt.manager.chrome_sync.update_label_styling(rt.param_info.name)
-
-    def on_widget_change(self, pname, value) -> None:
-        from objectstate import ObjectStateRegistry
-
-        manager = self.runtime.manager
-        converted_value = manager._convert_widget_value(value, pname)
-        event = FieldChangeEvent(pname, converted_value, manager)
-        if manager.state and manager.state._parent_state is not None:
-            with ObjectStateRegistry.atomic(
-                "edit parameter",
-                scope_id=manager.scope_id,
-            ):
-                FieldChangeDispatcher.instance().dispatch(event)
-        else:
-            FieldChangeDispatcher.instance().dispatch(event)
-
-    def _log_widget(self, stage: str, widget: QWidget | None) -> None:
-        rt = self.runtime
+    def log_widget(self, stage: str, widget: QWidget | None) -> None:
+        rt = self
         try:
             parent_obj = None
             widget_class = None
@@ -1236,13 +998,84 @@ class WidgetCreationPipeline:
                 rt.create_seq,
                 stage,
                 type(rt.config).__name__,
-                rt.param_info.name,
-                rt.manager.config.field_id,
-                rt.manager._pfm_seq,
+                rt.ctx.param_info.name,
+                rt.ctx.manager.config.field_id,
+                rt.ctx.manager._pfm_seq,
                 widget_class,
                 widget_name,
                 widget_id,
                 parent_class,
             )
         except Exception:
-            logger.debug("[WIDGET_CREATE] seq=%s stage=%s param=%s log_failed", rt.create_seq, stage, rt.param_info.name)
+            logger.debug("[WIDGET_CREATE] seq=%s stage=%s param=%s log_failed", rt.create_seq, stage, rt.ctx.param_info.name)
+
+
+class WidgetCreationPipeline:
+    """One shared lifecycle; the selected creation owner supplies every stage."""
+
+    def __init__(self, manager: ParameterFormManager, param_info: ParameterInfo) -> None:
+        config = WidgetCreationConfig.for_parameter(param_info)
+        display_info = WidgetService.get_parameter_display_info(
+            param_info.name,
+            param_info.type,
+            manager=manager,
+            description=param_info.description,
+        )
+        field_ids = manager.service.generate_field_ids_direct(manager.config.field_id, param_info.name)
+        current_value = manager.parameters.get(param_info.name)
+        unwrapped_type = config.unwrapped_type(param_info)
+        ctx = WidgetBuildContext(
+            manager=manager,
+            param_info=param_info,
+            display_info=display_info,
+            field_ids=field_ids,
+            current_value=current_value,
+            unwrapped_type=unwrapped_type,
+            layout_config=CURRENT_LAYOUT,
+        )
+        self.runtime = WidgetCreationRuntime(
+            config=config,
+            ctx=ctx,
+            create_seq=next(_WIDGET_CREATE_SEQ),
+        )
+        logger.debug("create_widget_parametric: config type=%s", type(config).__name__)
+
+    def run(self) -> QWidget:
+        self.create_container()
+        rt = self.runtime
+        with rt.config.content_update(rt):
+            rt.config.configure_container(rt)
+            rt.ctx = rt.ctx.with_layout(rt.config.create_layout(rt.ctx))
+            rt.config.add_title(rt)
+            self.create_main_widget()
+            rt.config.place_widget(rt)
+            rt.config.add_reset_controls(rt)
+            rt.config.connect_structure(rt)
+            rt.config.store_widget(rt, self.on_widget_change)
+            rt.ctx.manager.chrome_sync.update_label_styling(rt.ctx.param_info.name)
+        return rt.ctx.container
+
+    def create_container(self) -> None:
+        rt = self.runtime
+        rt.ctx = rt.ctx.with_container(rt.config.create_container(rt.ctx))
+        rt.log_widget("container", rt.ctx.container)
+
+    def create_main_widget(self) -> None:
+        rt = self.runtime
+        rt.main_widget = rt.config.create_main_widget(rt.ctx)
+        rt.log_widget("main_widget", rt.main_widget)
+
+    def on_widget_change(self, pname, value) -> None:
+        from objectstate import ObjectStateRegistry
+
+        manager = self.runtime.ctx.manager
+        converted_value = manager._convert_widget_value(value, pname)
+        event = FieldChangeEvent(pname, converted_value, manager)
+        if manager.state and manager.state._parent_state is not None:
+            with ObjectStateRegistry.atomic(
+                "edit parameter",
+                scope_id=manager.scope_id,
+            ):
+                FieldChangeDispatcher.instance().dispatch(event)
+        else:
+            FieldChangeDispatcher.instance().dispatch(event)

@@ -12,7 +12,6 @@ This is the Python equivalent of React's component interface:
 """
 
 from abc import ABC, abstractmethod, ABCMeta
-from enum import Enum
 from typing import TypedDict, Callable, Optional, Any, Dict, Type
 from dataclasses import dataclass, replace as dataclass_replace
 
@@ -33,12 +32,6 @@ class FieldIds(TypedDict, total=False):
     optional_checkbox_id: str
 
 
-class LayoutKind(Enum):
-    """Nominal layout strategy for widget containers."""
-    HORIZONTAL_ROW = "horizontal_row"
-    VERTICAL_BOX = "vertical_box"
-    PRECONFIGURED_GROUPBOX = "preconfigured_groupbox"
-    GROUPBOX_WITH_HELP = "groupbox_with_help"
 
 
 @dataclass(frozen=True)
@@ -63,9 +56,6 @@ class WidgetBuildContext:
     container: Optional[Any] = None
     layout: Optional[Any] = None
     layout_config: Optional[Any] = None
-    qwidget_type: Optional[type] = None
-    groupbox_with_help_type: Optional[type] = None
-    color_scheme_type: Optional[type] = None
 
     def with_layout(self, layout: Any) -> 'WidgetBuildContext':
         return dataclass_replace(self, layout=layout)
