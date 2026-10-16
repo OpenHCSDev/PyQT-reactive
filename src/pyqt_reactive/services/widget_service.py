@@ -302,12 +302,7 @@ class WidgetService:
             logger.debug("Skipping context behavior without param_name or object_instance")
             return
 
-        if FieldValue.of(value).inherited:
-            self.show_resolved_value_as_placeholder(widget, param_name, manager)
-        else:
-            if self.widget_enhancer.has_placeholder_state(widget):
-                logger.debug("Clearing placeholder state for concrete value")
-                self.widget_enhancer._clear_placeholder_state(widget)
+        self.show_resolved_value_as_placeholder(widget, param_name, manager)
 
     def show_resolved_value_as_placeholder(self, widget: QWidget, param_name: str, manager) -> bool:
         """Preview an unset field: show the value it resolves to; return whether one was shown.
@@ -319,6 +314,11 @@ class WidgetService:
         from objectstate import LazyDefaultPlaceholderService
 
         full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
+        raw_value = manager.state.parameters[full_path]
+        if not FieldValue.of(raw_value).inherited:
+            if self.widget_enhancer.has_placeholder_state(widget):
+                self._dispatch_widget_update(widget, raw_value)
+            return False
         resolved_value = manager.state.get_resolved_value(full_path)
         placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
             resolved_value, manager.config.placeholder_prefix

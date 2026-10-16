@@ -267,8 +267,10 @@ if PYQT6_AVAILABLE:
         def _write_concrete_value(self, value: Any) -> None:
             """Implement ValueSettable ABC."""
             if value is None:
+                self.setSpecialValueText(" ")
                 self.setValue(self.minimum())
             else:
+                self.setSpecialValueText("")
                 self.setValue(int(value))
         
         def set_placeholder(self, text: str) -> None:
@@ -323,8 +325,10 @@ if PYQT6_AVAILABLE:
         def _write_concrete_value(self, value: Any) -> None:
             """Implement ValueSettable ABC."""
             if value is None:
+                self.setSpecialValueText(" ")
                 self.setValue(self.minimum())
             else:
+                self.setSpecialValueText("")
                 self.setValue(float(value))
         
         def set_placeholder(self, text: str) -> None:

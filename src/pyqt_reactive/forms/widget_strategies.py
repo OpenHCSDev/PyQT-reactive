@@ -13,7 +13,7 @@ from typing import ClassVar, get_args, get_origin
 
 from magicgui.widgets import Widget as MagicGuiWidget
 from magicgui.widgets import create_widget
-from objectstate.field_value import FieldValue
+from objectstate.field_value import FieldValue, Unset
 from objectstate import DataclassFieldAccess
 from PyQt6.QtGui import QIntValidator, QValidator
 from PyQt6.QtWidgets import (
@@ -243,8 +243,8 @@ class TypedLiteralContainerEdit(
         return self._parse_current_text()
 
     def validate_current_value(self) -> None:
-        """Validate the editor through the same parser used for value extraction."""
-        self._parse_current_text()
+        """Validate local input, without parsing an inherited or absent draft."""
+        self.get_value()
 
     def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
         """Emit only complete literals of the declared container kind."""
@@ -430,7 +430,7 @@ class TypedLiteralUnionEdit(
         return self._parse_text(self.text())
 
     def validate_current_value(self) -> None:
-        self._parse_text(self.text())
+        self.get_value()
 
     def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
         self.connect_debounced_text_signal(
@@ -521,26 +521,21 @@ class UnsupportedWidgetTypeError(TypeError):
 class DirectWidgetFactory:
     """Typed factory for simple widgets that bypass magicgui."""
 
-    def create_int(self, current_value: ParameterValue | None = None) -> InheritedIntEdit:
+    def create_int(self, current_value: ParameterValue = Unset()) -> InheritedIntEdit:
         widget = InheritedIntEdit()
-        if current_value is not None:
-            widget.set_value(current_value)
+        widget.set_value(current_value)
         return widget
 
-    def create_float(self, current_value: ParameterValue | None = None) -> NoScrollDoubleSpinBox:
+    def create_float(self, current_value: ParameterValue = Unset()) -> NoScrollDoubleSpinBox:
         widget = NoScrollDoubleSpinBox()
         widget.setRange(WidgetConfig.NUMERIC_RANGE_MIN, WidgetConfig.NUMERIC_RANGE_MAX)
         widget.setDecimals(WidgetConfig.FLOAT_PRECISION)
-        if current_value is not None:
-            widget.setValue(float(current_value))
-        else:
-            widget.clear()
+        widget.set_value(current_value)
         return widget
 
-    def create_bool(self, current_value: ParameterValue | None = None) -> InheritedCheckBox:
+    def create_bool(self, current_value: ParameterValue = Unset()) -> InheritedCheckBox:
         widget = InheritedCheckBox()
-        if current_value is not None:
-            widget.setChecked(bool(current_value))
+        widget.set_value(current_value)
         return widget
 
     def create_string(self, current_value: ParameterValue | None = None) -> QLineEdit:

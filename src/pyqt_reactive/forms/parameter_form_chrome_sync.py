@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Set
 
-from objectstate import DottedFieldPath
+from objectstate import DottedFieldPath, FieldValue
 from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 
 
@@ -384,7 +384,7 @@ class ParameterFormChromeSync:
                     if isinstance(widget, ValueSettable):
                         value = manager.state.parameters.get(path, missing)
                         if value is not missing:
-                            skip_context_behavior = value is None
+                            skip_context_behavior = FieldValue.of(value).inherited
                             manager._widget_service.update_widget_value(
                                 widget,
                                 value,
@@ -392,7 +392,7 @@ class ParameterFormChromeSync:
                                 skip_context_behavior,
                                 manager,
                             )
-                            if value is None:
+                            if FieldValue.of(value).inherited:
                                 manager._parameter_ops_service.refresh_single_placeholder(
                                     manager,
                                     leaf_field,

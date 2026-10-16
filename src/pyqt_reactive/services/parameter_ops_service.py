@@ -13,7 +13,6 @@ Key features:
 """
 
 from __future__ import annotations
-from objectstate.field_value import FieldValue
 
 import logging
 from typing import TYPE_CHECKING
@@ -185,8 +184,6 @@ class ParameterOpsService(ParameterServiceABC):
                 skip_context_behavior=False,
                 manager=manager,
             )
-        if FieldValue.of(reset_value).inherited:
-            self.refresh_single_placeholder(manager, param_name)
 
     # DELETED: _get_reset_value - ObjectState owns defaults
     # DELETED: _update_reset_tracking - ObjectState.reset_parameter handles tracking
@@ -219,14 +216,6 @@ class ParameterOpsService(ParameterServiceABC):
 
         widget = manager.widgets[field_name]
         if not PyQt6WidgetEnhancer.supports_placeholder(widget):
-            return
-
-        # Only refresh if value is None (needs placeholder)
-        # Use manager.parameters (scoped) not state.parameters (full paths)
-        current_value = manager.parameters.get(field_name)
-        logger.debug(f"🔬 RESET_TRACE: current_value={repr(current_value)[:50]}")
-        if not FieldValue.of(current_value).inherited:
-            logger.debug(f"🔬 RESET_TRACE: value is not None, no placeholder needed")
             return
 
         if manager._widget_service.show_resolved_value_as_placeholder(widget, field_name, manager):
@@ -316,11 +305,7 @@ class ParameterOpsService(ParameterServiceABC):
                 if not PyQt6WidgetEnhancer.supports_placeholder(widget):
                     continue
 
-                full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-                if manager.state.parameters.get(full_path) is None:
-                    with monitor.measure():
-                        manager._widget_service.show_resolved_value_as_placeholder(
-                            widget, param_name, manager
-                        )
-                elif PyQt6WidgetEnhancer.has_placeholder_state(widget):
-                    PyQt6WidgetEnhancer._clear_placeholder_state(widget)
+                with monitor.measure():
+                    manager._widget_service.show_resolved_value_as_placeholder(
+                        widget, param_name, manager
+                    )
