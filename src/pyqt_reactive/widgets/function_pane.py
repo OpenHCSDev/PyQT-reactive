@@ -573,9 +573,9 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
         # Boolean parameters
         if param_type == bool:
-            from pyqt_reactive.widgets import NoneAwareCheckBox
+            from pyqt_reactive.widgets import InheritedCheckBox
 
-            widget = NoneAwareCheckBox()
+            widget = InheritedCheckBox()
             widget.set_value(current_value)  # Use set_value to handle None properly
             widget.toggled.connect(
                 lambda checked: self.handle_parameter_change(param_name, checked)

@@ -10,7 +10,7 @@ from enum import Enum
 from PyQt6.QtWidgets import QVBoxLayout
 from PyQt6.QtCore import pyqtSignal
 
-from pyqt_reactive.widgets import NoneAwareCheckBox
+from pyqt_reactive.widgets import InheritedCheckBox
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 
 
@@ -18,7 +18,7 @@ class CheckboxGroupWidget(CheckboxGroupAdapter):
     """
     Multi-selection checkbox group for List[Enum] parameters.
 
-    Uses NoneAwareCheckBox pattern consistently with bool parameters:
+    Uses InheritedCheckBox pattern consistently with bool parameters:
     - Initialize all checkboxes with set_value(None) for placeholder state
     - Use set_value() instead of setChecked() to properly track placeholder state
     - Use get_value() in get_selected_values() to distinguish placeholder vs concrete
@@ -48,7 +48,7 @@ class CheckboxGroupWidget(CheckboxGroupAdapter):
 
         # Create checkbox for each enum value
         for enum_val in enum_type:
-            checkbox = NoneAwareCheckBox()
+            checkbox = InheritedCheckBox()
             checkbox.setText(enum_val.name.replace('_', ' ').title())
 
             # Initialize with None (placeholder state) or concrete value

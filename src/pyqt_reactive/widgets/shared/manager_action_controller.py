@@ -51,7 +51,6 @@ class ManagerActionOperations:
     validate_code_action: Callable[[], bool]
     code_payload: Any
     pre_code_execution: Callable[[], None]
-    patch_lazy_constructors: Callable[[], AbstractContextManager[Any]]
     migrate_code_namespace: Callable[[str, Exception, dict], Optional[dict]]
     validate_code_namespace: Callable[[dict], bool]
     apply_code_namespace: Callable[[dict], bool]
@@ -171,8 +170,7 @@ class ManagerActionController:
 
         namespace = {}
         try:
-            with operations.patch_lazy_constructors():
-                exec(code, namespace)
+            exec(code, namespace)
         except TypeError as error:
             migrated_namespace = operations.migrate_code_namespace(code, error, namespace)
             if migrated_namespace is not None:

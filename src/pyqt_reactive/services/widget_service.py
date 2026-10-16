@@ -1,3 +1,4 @@
+from objectstate.field_value import FieldValue
 """
 Consolidated Widget Service.
 
@@ -301,9 +302,9 @@ class WidgetService:
             logger.debug("Skipping context behavior without param_name or object_instance")
             return
 
-        if value is None:
+        if FieldValue.of(value).inherited:
             self.show_resolved_value_as_placeholder(widget, param_name, manager)
-        elif value is not None:
+        else:
             if self.widget_enhancer.has_placeholder_state(widget):
                 logger.debug("Clearing placeholder state for concrete value")
                 self.widget_enhancer._clear_placeholder_state(widget)

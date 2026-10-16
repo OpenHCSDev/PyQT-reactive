@@ -18,14 +18,7 @@ from formbridge.services.window_code_document import (
     WindowCodeDocumentDriver,
     use_external_code_editor,
 )
-from objectstate import (
-    DottedFieldPath,
-    ObjectState,
-    ObjectStateEditSession,
-    ObjectStateRegistry,
-    ObjectStateTransactionCheckpoint,
-    patch_lazy_constructors,
-)
+from objectstate import DottedFieldPath, ObjectState, ObjectStateEditSession, ObjectStateRegistry, ObjectStateTransactionCheckpoint
 from objectstate.lazy_factory import LazyDataclass, retain_only_authored_paths
 from PyQt6.QtCore import QSize, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -183,11 +176,10 @@ class ConfigCodeDocumentDriver(WindowCodeDocumentDriver, Generic[ConfigT]):
         self._apply_config(self._config_from_source(source))
 
     def _config_from_source(self, source: str) -> ConfigT:
-        with patch_lazy_constructors():
-            return self._document_format.from_source(
-                source,
-                expected_config_type=self._config_type,
-            )
+        return self._document_format.from_source(
+            source,
+            expected_config_type=self._config_type,
+        )
 
 
 @dataclass(frozen=True, slots=True)

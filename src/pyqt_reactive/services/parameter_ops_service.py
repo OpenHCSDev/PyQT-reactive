@@ -13,6 +13,7 @@ Key features:
 """
 
 from __future__ import annotations
+from objectstate.field_value import FieldValue
 
 import logging
 from typing import TYPE_CHECKING
@@ -184,7 +185,7 @@ class ParameterOpsService(ParameterServiceABC):
                 skip_context_behavior=False,
                 manager=manager,
             )
-        if reset_value is None:
+        if FieldValue.of(reset_value).inherited:
             self.refresh_single_placeholder(manager, param_name)
 
     # DELETED: _get_reset_value - ObjectState owns defaults
@@ -224,7 +225,7 @@ class ParameterOpsService(ParameterServiceABC):
         # Use manager.parameters (scoped) not state.parameters (full paths)
         current_value = manager.parameters.get(field_name)
         logger.debug(f"🔬 RESET_TRACE: current_value={repr(current_value)[:50]}")
-        if current_value is not None:
+        if not FieldValue.of(current_value).inherited:
             logger.debug(f"🔬 RESET_TRACE: value is not None, no placeholder needed")
             return
 

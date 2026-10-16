@@ -18,6 +18,7 @@ from abc import ABCMeta
 from collections.abc import Callable
 from enum import Enum
 from typing import Any
+from objectstate.field_value import FieldValue, Inherit, Unset, Value
 
 try:
     from PyQt6.QtCore import QLocale, QObject
@@ -61,41 +62,124 @@ from .widget_protocols import (
 
 if PYQT6_AVAILABLE:
 
-    class PlaceholderStateMixin(PlaceholderStateTrackable):
-        """Nominal placeholder-state storage for Qt widget adapters."""
+    class WidgetValue(Value):
+        """A concrete draft read from its control, not a second stored model value."""
+        __slots__ = ('reader',)
 
+        def __init__(self, reader):
+            self.reader = reader
+
+        @property
+        def value(self):
+            return self.reader()
+
+
+    class PlaceholderStateMixin(PlaceholderStateTrackable):
+        """Own one input draft and its native signal subscriptions.
+
+        Inherit and Unset are retained as distinct input states. Concrete input lives
+        in the Qt control and is read lazily, so incomplete text is not parsed while
+        the user is typing. Model paints never publish input events.
+        """
         widget_capabilities = frozenset({WidgetCapability.PLACEHOLDER_STATE})
 
         def __init__(self, *args, **kwargs):
-            self._placeholder_state_active = False
-            self._cached_placeholder_text: str | None = None
-            self._cached_placeholder_resolved_value: Any = None
-            super().__init__(*args, **kwargs)
-
-        def has_placeholder_state(self) -> bool:
-            return self._placeholder_state_active or self._cached_placeholder_text is not None
-
-        def mark_placeholder_state(self) -> None:
-            self._placeholder_state_active = True
-
-        def clear_placeholder_state(self) -> None:
-            self._placeholder_state_active = False
-
-        def cached_placeholder_text(self) -> str | None:
-            return self._cached_placeholder_text
-
-        def set_cached_placeholder_text(self, placeholder_text: str) -> None:
-            self._cached_placeholder_text = placeholder_text
-
-        def cached_placeholder_resolved_value(self) -> Any:
-            return self._cached_placeholder_resolved_value
-
-        def set_cached_placeholder_resolved_value(self, value: Any) -> None:
-            self._cached_placeholder_resolved_value = value
-
-        def clear_placeholder_cache(self) -> None:
+            self._draft = Unset()
+            self._input_callbacks = []
+            self._native_connections = {}
             self._cached_placeholder_text = None
             self._cached_placeholder_resolved_value = None
+            super().__init__(*args, **kwargs)
+
+        def _signal_sources(self):
+            return ()
+
+        def _ensure_input_tracking(self):
+            for owner, signal in self._signal_sources():
+                if owner not in self._native_connections:
+                    signal.connect(self._native_input)
+                    self._native_connections[owner] = signal
+
+        def _native_input(self, *arguments):
+            self.clear_placeholder_state()
+            self._prepare_input()
+            self._draft = WidgetValue(self._read_concrete_value)
+            self.clear_placeholder_cache()
+            self._apply_draft_style()
+            for callback in tuple(self._input_callbacks):
+                callback(self.get_value())
+
+        def _prepare_input(self):
+            pass
+
+        def _apply_draft_style(self):
+            pass
+
+        def _read_concrete_value(self):
+            raise TypeError(f"{type(self).__name__} does not own a concrete input control")
+
+        def _write_blank_value(self, value):
+            self._write_concrete_value(None)
+
+        def get_value(self):
+            self._ensure_input_tracking()
+            return self._draft.resolve(lambda: Inherit())
+
+        def set_value(self, value):
+            self._ensure_input_tracking()
+            draft = FieldValue.of(value)
+            if self._draft.inherited and not draft.inherited:
+                self.clear_placeholder_state()
+            previous = self.blockSignals(True)
+            try:
+                self._draft = draft
+                if draft.has_value:
+                    self._write_concrete_value(value)
+                    if value is not None:
+                        self._draft = WidgetValue(self._read_concrete_value)
+                else:
+                    self._write_blank_value(value)
+                self._apply_draft_style()
+            finally:
+                self.blockSignals(previous)
+
+        def connect_change_signal(self, callback):
+            self._ensure_input_tracking()
+            if callback not in self._input_callbacks:
+                self._input_callbacks.append(callback)
+
+        def disconnect_change_signal(self, callback):
+            if callback in self._input_callbacks:
+                self._input_callbacks.remove(callback)
+
+        def has_placeholder_state(self):
+            return self._draft.inherited
+
+        def mark_placeholder_state(self):
+            self._draft = Inherit()
+
+        def clear_placeholder_state(self):
+            if self._draft.inherited:
+                self.setStyleSheet("")
+                self._draft = WidgetValue(self._read_concrete_value)
+            self.clear_placeholder_cache()
+
+        def cached_placeholder_text(self):
+            return self._cached_placeholder_text
+
+        def set_cached_placeholder_text(self, text):
+            self._cached_placeholder_text = text
+
+        def cached_placeholder_resolved_value(self):
+            return self._cached_placeholder_resolved_value
+
+        def set_cached_placeholder_resolved_value(self, value):
+            self._cached_placeholder_resolved_value = value
+
+        def clear_placeholder_cache(self):
+            self._cached_placeholder_text = None
+            self._cached_placeholder_resolved_value = None
+
 
 
     class LineEditAdapter(PlaceholderStateMixin, QLineEdit, ValueGettable, ValueSettable, PlaceholderCapable,
@@ -112,12 +196,12 @@ if PYQT6_AVAILABLE:
         
         _widget_id = "line_edit"
         
-        def get_value(self) -> Any:
+        def _read_concrete_value(self) -> Any:
             """Implement ValueGettable ABC."""
             text = self.text().strip()
-            return None if text == "" else text
+            return text
         
-        def set_value(self, value: Any) -> None:
+        def _write_concrete_value(self, value: Any) -> None:
             """Implement ValueSettable ABC."""
             self.setText("" if value is None else str(value))
         
@@ -125,17 +209,10 @@ if PYQT6_AVAILABLE:
             """Implement PlaceholderCapable ABC."""
             self.setPlaceholderText(text)
         
-        def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            self.textChanged.connect(lambda: callback(self.get_value()))
         
-        def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            try:
-                self.textChanged.disconnect(callback)
-            except TypeError:
-                # Signal not connected - ignore
-                pass
+
+        def _signal_sources(self):
+            return ((self, self.textChanged),)
     class KeySequenceEditAdapter(
         PlaceholderStateMixin,
         QKeySequenceEdit,
@@ -148,46 +225,23 @@ if PYQT6_AVAILABLE:
 
         _widget_id = "key_sequence_edit"
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, **kwargs)
-            self._change_signal_wrappers: dict[
-                Callable[[Any], None],
-                Callable[[], None],
-            ] = {}
 
-        def get_value(self) -> str:
+        def _read_concrete_value(self) -> str:
             """Return the complete key sequence in portable text form."""
 
             return self.keySequence().toString(
                 QKeySequence.SequenceFormat.PortableText
             )
 
-        def set_value(self, value: Any) -> None:
+        def _write_concrete_value(self, value: Any) -> None:
             """Assign a portable key sequence."""
 
             self.setKeySequence(QKeySequence("" if value is None else str(value)))
 
-        def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Commit only after Qt has finished capturing the sequence."""
 
-            if callback in self._change_signal_wrappers:
-                return
-            def wrapper() -> None:
-                callback(self.get_value())
 
-            self._change_signal_wrappers[callback] = wrapper
-            self.editingFinished.connect(wrapper)
-
-        def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Disconnect callbacks registered at this semantic boundary."""
-
-            wrapper = self._change_signal_wrappers.pop(callback, None)
-            if wrapper is None:
-                return
-            try:
-                self.editingFinished.disconnect(wrapper)
-            except TypeError:
-                pass
+        def _signal_sources(self):
+            return ((self, self.editingFinished),)
 
 
     class SpinBoxAdapter(PlaceholderStateMixin, QSpinBox, ValueGettable, ValueSettable, PlaceholderCapable,
@@ -207,13 +261,10 @@ if PYQT6_AVAILABLE:
             self.setSpecialValueText(" ")  # Empty special value = None
             self.setRange(-2147483648, 2147483647)  # Default int range
         
-        def get_value(self) -> Any:
-            """Implement ValueGettable ABC."""
-            if self.value() == self.minimum() and self.specialValueText():
-                return None
+        def _read_concrete_value(self):
             return self.value()
         
-        def set_value(self, value: Any) -> None:
+        def _write_concrete_value(self, value: Any) -> None:
             """Implement ValueSettable ABC."""
             if value is None:
                 self.setValue(self.minimum())
@@ -229,16 +280,10 @@ if PYQT6_AVAILABLE:
             """Implement RangeConfigurable ABC."""
             self.setRange(int(minimum), int(maximum))
         
-        def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            self.valueChanged.connect(lambda: callback(self.get_value()))
         
-        def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            try:
-                self.valueChanged.disconnect(callback)
-            except TypeError:
-                pass
+
+        def _signal_sources(self):
+            return ((self, self.valueChanged),)
     
     
     class DoubleSpinBoxAdapter(PlaceholderStateMixin, QDoubleSpinBox, ValueGettable, ValueSettable,
@@ -272,13 +317,10 @@ if PYQT6_AVAILABLE:
                 value, "f", QLocale.FloatingPointPrecisionOption.FloatingPointShortest
             )
         
-        def get_value(self) -> Any:
-            """Implement ValueGettable ABC."""
-            if self.value() == self.minimum() and self.specialValueText():
-                return None
+        def _read_concrete_value(self):
             return self.value()
         
-        def set_value(self, value: Any) -> None:
+        def _write_concrete_value(self, value: Any) -> None:
             """Implement ValueSettable ABC."""
             if value is None:
                 self.setValue(self.minimum())
@@ -293,16 +335,10 @@ if PYQT6_AVAILABLE:
             """Implement RangeConfigurable ABC."""
             self.setRange(minimum, maximum)
         
-        def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            self.valueChanged.connect(lambda: callback(self.get_value()))
         
-        def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            try:
-                self.valueChanged.disconnect(callback)
-            except TypeError:
-                pass
+
+        def _signal_sources(self):
+            return ((self, self.valueChanged),)
     
     
     class ComboBoxAdapter(PlaceholderStateMixin, QComboBox, ValueGettable, ValueSettable, PlaceholderCapable,
@@ -316,13 +352,13 @@ if PYQT6_AVAILABLE:
         
         _widget_id = "combo_box"
         
-        def get_value(self) -> Any:
+        def _read_concrete_value(self) -> Any:
             """Implement ValueGettable ABC."""
             if self.currentIndex() < 0:
-                return None
+                return Unset()
             return self.itemData(self.currentIndex())
         
-        def set_value(self, value: Any) -> None:
+        def _write_concrete_value(self, value: Any) -> None:
             """Implement ValueSettable ABC."""
             # Find index of item with matching data
             for i in range(self.count()):
@@ -351,16 +387,10 @@ if PYQT6_AVAILABLE:
             for enum_value in enum_type:
                 self.addItem(enum_value.name, enum_value)
         
-        def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            self.currentIndexChanged.connect(lambda: callback(self.get_value()))
         
-        def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            try:
-                self.currentIndexChanged.disconnect(callback)
-            except TypeError:
-                pass
+
+        def _signal_sources(self):
+            return ((self, self.currentIndexChanged),)
     
     
     class CheckBoxAdapter(PlaceholderStateMixin, ThemedCheckBox, ValueGettable, ValueSettable,
@@ -373,24 +403,18 @@ if PYQT6_AVAILABLE:
 
         _widget_id = "check_box"
 
-        def get_value(self) -> Any:
+        def _read_concrete_value(self) -> Any:
             """Implement ValueGettable ABC."""
             return self.isChecked()
 
-        def set_value(self, value: Any) -> None:
+        def _write_concrete_value(self, value: Any) -> None:
             """Implement ValueSettable ABC."""
             self.setChecked(bool(value) if value is not None else False)
 
-        def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            self.stateChanged.connect(lambda: callback(self.get_value()))
 
-        def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            try:
-                self.stateChanged.disconnect(callback)
-            except TypeError:
-                pass
+
+        def _signal_sources(self):
+            return ((self, self.stateChanged),)
 
 
     class CheckboxGroupAdapter(PlaceholderStateMixin, QGroupBox, ValueGettable, ValueSettable,
@@ -399,7 +423,7 @@ if PYQT6_AVAILABLE:
         """
         Adapter for checkbox group (List[Enum]) implementing OpenHCS ABCs.
 
-        Manages a group of NoneAwareCheckBox widgets for multi-selection.
+        Manages a group of InheritedCheckBox widgets for multi-selection.
         Returns List[Enum] or None (for placeholder state).
 
         This eliminates duck typing - instead of checking for _checkboxes attribute,
@@ -421,52 +445,12 @@ if PYQT6_AVAILABLE:
             """Return checkboxes managed by this group."""
             return tuple(self._checkboxes.values())
 
-        def get_value(self) -> Any:
-            """
-            Implement ValueGettable ABC.
+        def _read_concrete_value(self):
+            return [value for value, checkbox in self.checkbox_items() if checkbox.isChecked()]
 
-            Returns:
-                - None if all checkboxes are in placeholder state (inherit from parent)
-                - List[Enum] of checked items if any checkbox has been clicked
-            """
-            # Check if any checkbox has a concrete value (not placeholder)
-            has_concrete_value = any(
-                checkbox.get_value() is not None
-                for checkbox in self._checkboxes.values()
-            )
-
-            if not has_concrete_value:
-                # All checkboxes are in placeholder state - return None to inherit from parent
-                return None
-
-            # All checkboxes are concrete (signal handler converted them)
-            # Return list of enum values where checkbox is checked
-            return [
-                enum_val for enum_val, checkbox in self._checkboxes.items()
-                if checkbox.get_value() == True
-            ]
-
-        def set_value(self, value: Any) -> None:
-            """
-            Implement ValueSettable ABC.
-
-            Args:
-                value: None (placeholder state) or List[Enum] (concrete values)
-            """
-            if value is None:
-                # None means inherit from parent - initialize all checkboxes in placeholder state
-                for checkbox in self._checkboxes.values():
-                    checkbox.set_value(None)
-            elif isinstance(value, list):
-                # Explicit list - set concrete values
-                for enum_value, checkbox in self._checkboxes.items():
-                    # Set to True if in list, False if not (both are concrete values)
-                    checkbox.set_value(enum_value in value)
-            else:
-                raise TypeError(
-                    "CheckboxGroupAdapter values must be list or None, "
-                    f"got {type(value).__name__}."
-                )
+        def _write_concrete_value(self, value):
+            for member, checkbox in self.checkbox_items():
+                checkbox.set_value(member in value if value is not None else False)
 
         def set_resolved_value_preview(self, value: Any) -> None:
             """Preview a resolved enum list while preserving raw placeholder state."""
@@ -489,42 +473,20 @@ if PYQT6_AVAILABLE:
                 checkbox.set_resolved_value_preview(enum_value in inherited_values)
             self.mark_placeholder_state()
 
-        def connect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """
-            Implement ChangeSignalEmitter ABC.
 
-            Connects to all checkboxes in the group.
-            """
-            for checkbox in self._checkboxes.values():
-                checkbox.stateChanged.connect(
-                    self._make_checkbox_group_handler(callback)
-                )
 
-        def _make_checkbox_group_handler(self, callback: Callable[[Any], None]) -> Callable[[Any], None]:
-            """Return a handler that promotes the whole enum list to concrete."""
-            def handler(_state: Any) -> None:
-                for checkbox in self.checkbox_widgets():
-                    checkbox.convert_placeholder_to_concrete()
-                self.clear_placeholder_state()
-                callback(self.get_value())
 
-            return handler
 
-        def has_placeholder_state(self) -> bool:
-            return super().has_placeholder_state() or any(
-                widget_supports_capability(checkbox, WidgetCapability.PLACEHOLDER_STATE)
-                and isinstance(checkbox, PlaceholderStateTrackable)
-                and checkbox.has_placeholder_state()
-                for checkbox in self.checkbox_widgets()
-            )
+        def _signal_sources(self):
+            return tuple((checkbox, checkbox.stateChanged) for checkbox in self.checkbox_widgets())
 
-        def disconnect_change_signal(self, callback: Callable[[Any], None]) -> None:
-            """Implement ChangeSignalEmitter ABC."""
-            for checkbox in self._checkboxes.values():
-                try:
-                    checkbox.stateChanged.disconnect(callback)
-                except TypeError:
-                    pass
+        def _prepare_input(self):
+            for checkbox in self.checkbox_widgets():
+                checkbox.convert_placeholder_to_concrete()
+
+        def _write_blank_value(self, value):
+            for checkbox in self.checkbox_widgets():
+                checkbox.set_value(value)
 
 
 # Manual registration of adapters in WIDGET_IMPLEMENTATIONS

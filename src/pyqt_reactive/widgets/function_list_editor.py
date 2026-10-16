@@ -1179,11 +1179,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             new_entries=new_entries,
         )
 
-    def _patch_lazy_constructors(self):
-        """Context manager that patches lazy dataclass constructors to preserve None vs concrete distinction."""
-        from objectstate import patch_lazy_constructors
-
-        return patch_lazy_constructors()
 
     def _move_function(self, index, direction):
         """Move function up or down.

@@ -76,39 +76,13 @@ class NoScrollComboBox(IgnoreWheelEventMixin, ComboBoxAdapter):
         self._placeholder_active = (index == -1)
         self.update()
 
-    def get_value(self):
-        """Implement ValueGettable ABC."""
-        if self.currentIndex() < 0:
-            return None
-        return self.itemData(self.currentIndex())
 
-    def set_value(self, value):
-        """Implement ValueSettable ABC."""
-        # Find index of item with matching data
-        for i in range(self.count()):
-            if self.itemData(i) == value:
-                self.setCurrentIndex(i)
-                return
-        # Value not found - clear selection
-        self.setCurrentIndex(-1)
 
-    def get_value(self):
-        """Get current value (item data at current index)."""
-        if self.currentIndex() < 0:
-            return None
-        return self.itemData(self.currentIndex())
 
-    def set_value(self, value):
-        """Set current value by finding matching item data."""
-        if value is None:
-            self.setCurrentIndex(-1)
-        else:
-            for i in range(self.count()):
-                if self.itemData(i) == value:
-                    self.setCurrentIndex(i)
-                    return
-            # Value not found - clear selection
-            self.setCurrentIndex(-1)
+
+
+
+
 
     def paintEvent(self, event):
         """Override to draw placeholder text when currentIndex == -1."""
@@ -146,14 +120,10 @@ class NoScrollComboBox(IgnoreWheelEventMixin, ComboBoxAdapter):
             super().paintEvent(event)
 
 
-class CheckboxValueState(Enum):
-    """Value ownership state for None-aware checkboxes."""
-
-    PLACEHOLDER = "placeholder"
-    CONCRETE = "concrete"
 
 
-class NoneAwareCheckBox(
+
+class InheritedCheckBox(
     PlaceholderStateMixin,
     ThemedCheckBox,
     ValueGettable,
@@ -173,55 +143,39 @@ class NoneAwareCheckBox(
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._value_state = CheckboxValueState.CONCRETE
+
         # Prevent horizontal stretching - checkbox should only be as wide as its content
         from PyQt6.QtWidgets import QSizePolicy
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-    def get_value(self):
-        """Get value, returning None if in placeholder state."""
-        if self.is_placeholder():
-            return None
+    def _read_concrete_value(self):
         return self.isChecked()
 
-    def is_placeholder(self) -> bool:
-        """Return whether the checkbox is currently displaying inherited state."""
-        return self._value_state is CheckboxValueState.PLACEHOLDER
+    def is_placeholder(self):
+        return self.has_placeholder_state()
 
-    def set_value(self, value):
-        """Set value, handling None by leaving in placeholder state."""
-        if value is None:
-            # Don't change state - placeholder system will set the preview value
-            self._value_state = CheckboxValueState.PLACEHOLDER
-            # Set grey palette for placeholder checkmark
+    def _write_concrete_value(self, value):
+        self.setChecked(bool(value))
+
+    def _signal_sources(self):
+        return ((self, self.stateChanged),)
+
+    def _apply_draft_style(self):
+        if self.has_placeholder_state():
             self._apply_placeholder_palette()
         else:
-            self._value_state = CheckboxValueState.CONCRETE
-            self.setChecked(bool(value))
-            # Restore normal palette
             self._apply_concrete_palette()
 
-    def connect_change_signal(self, callback: Callable[[bool | None], None]) -> None:
-        """Implement ChangeSignalEmitter ABC."""
-        def emit_concrete_value() -> None:
-            self.convert_placeholder_to_concrete()
-            callback(self.get_value())
 
-        self.stateChanged.connect(emit_concrete_value)
 
-    def disconnect_change_signal(self, callback: Callable[[bool | None], None]) -> None:
-        """Implement ChangeSignalEmitter ABC."""
-        try:
-            self.stateChanged.disconnect(callback)
-        except TypeError:
-            pass
+
 
     def set_placeholder_preview(self, checked: bool) -> None:
         """Display an inherited checkbox value without making it concrete."""
         signals_blocked = self.blockSignals(True)
         try:
             self.setChecked(checked)
-            self._value_state = CheckboxValueState.PLACEHOLDER
+
             self.mark_placeholder_state()
             self._apply_placeholder_palette()
         finally:
@@ -234,18 +188,14 @@ class NoneAwareCheckBox(
             return
         if not isinstance(value, bool):
             raise TypeError(
-                "NoneAwareCheckBox resolved previews require bool or None values, "
+                "InheritedCheckBox resolved previews require bool or None values, "
                 f"got {type(value).__name__}."
             )
         self.set_placeholder_preview(value)
 
-    def convert_placeholder_to_concrete(self) -> None:
-        """Keep the displayed value but mark it as a user-controlled value."""
-        if not self.is_placeholder():
-            return
-        self._value_state = CheckboxValueState.CONCRETE
+    def convert_placeholder_to_concrete(self):
         self.clear_placeholder_state()
-        self._apply_concrete_palette()
+        self._apply_draft_style()
 
     def toggle(self) -> None:
         """Toggle as a user action, committing placeholder state first."""

@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QGroupBox, QLayout, QWidget
-    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import InheritedCheckBox
     from pyqt_reactive.widgets.shared.clickable_help_components import (
         GroupBoxWithHelp,
         InlineDataclassGroupBox,
@@ -133,7 +133,7 @@ class EnabledTitleWidgetMoveContext:
     source_row: ResponsiveParameterRow | None
     enabled_widget: QWidget
     title_widget: QWidget
-    checkbox_widget: NoneAwareCheckBox | None
+    checkbox_widget: InheritedCheckBox | None
     enabled_reset_button: QWidget | None
     provenance_button: QWidget | None = None
 
@@ -169,7 +169,7 @@ class EnabledTitleWidgetMoveAuthority:
         self,
         request: EnabledTitleWidgetMoveRequest,
     ) -> EnabledTitleWidgetMoveContext:
-        from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+        from pyqt_reactive.widgets.no_scroll_spinbox import InheritedCheckBox
 
         enabled_widget = self.enabled_widget(request)
         enabled_reset_button = request.nested_manager.reset_buttons.get(
@@ -179,7 +179,7 @@ class EnabledTitleWidgetMoveAuthority:
         source_layout = self.source_layout(enabled_widget)
         source_row = self.responsive_source_row(enabled_widget)
         checkbox_widget = None
-        if isinstance(enabled_widget, NoneAwareCheckBox):
+        if isinstance(enabled_widget, InheritedCheckBox):
             checkbox_widget = enabled_widget
 
         logger.debug(
@@ -282,7 +282,7 @@ class EnabledTitleWidgetMoveAuthority:
 
     @staticmethod
     def wrap_checkbox_widget_for_title(
-        checkbox_widget: NoneAwareCheckBox,
+        checkbox_widget: InheritedCheckBox,
         color_scheme,
     ) -> QWidget:
         """Return the standard compact title-row container for an enableable checkbox."""
@@ -319,7 +319,7 @@ class EnabledTitleWidgetMoveAuthority:
     @staticmethod
     def bind_title_label_to_checkbox(
         container: GroupBoxWithHelp,
-        checkbox_widget: NoneAwareCheckBox,
+        checkbox_widget: InheritedCheckBox,
     ) -> None:
         """Make an enableable group title click toggle the owning checkbox."""
 
@@ -563,7 +563,7 @@ class WidgetCreationHandlers:
         from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
         from PyQt6.QtCore import Qt
         from PyQt6.QtGui import QFont
-        from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+        from pyqt_reactive.widgets.no_scroll_spinbox import InheritedCheckBox
         from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
         from formbridge.forms.layout_constants import CURRENT_LAYOUT
 
@@ -580,7 +580,7 @@ class WidgetCreationHandlers:
         title_layout.setContentsMargins(*CURRENT_LAYOUT.parameter_row_margins)
 
         # Checkbox (compact, no text)
-        checkbox = NoneAwareCheckBox()
+        checkbox = InheritedCheckBox()
         checkbox.setObjectName(field_ids['optional_checkbox_id'])
         # Title checkbox ONLY controls None vs Instance, NOT the enabled field
         checkbox.setChecked(current_value is not None)

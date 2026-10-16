@@ -34,7 +34,7 @@ from pyqt_reactive.widgets.shared.list_item_delegate import (
     LAYOUT_ROLE,
     StyledText,
 )
-from objectstate import DottedFieldPath, ObjectStateRegistry, patch_lazy_constructors
+from objectstate import DottedFieldPath, ObjectStateRegistry
 from pyqt_reactive.widgets.mixins import (
     CrossWindowPreviewMixin,
 )
@@ -252,7 +252,6 @@ class ManagerActionWorkflowMixin:
             validate_code_action=lambda: True,
             code_payload=self.CODE_EDITOR_PAYLOAD,
             pre_code_execution=self._pre_code_execution,
-            patch_lazy_constructors=patch_lazy_constructors,
             migrate_code_namespace=self.handle_code_execution_error,
             validate_code_namespace=self.validate_executed_code,
             apply_code_namespace=self.apply_executed_code,
