@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0
+
+Requires `objectstate>=5.0.0,<6` and `formbridge>=0.2.0,<0.3` (#33).
+
+Field paths come from ObjectState's `DottedFieldPath` (`parent`, `lineage`,
+`field_name`) instead of splitting dotted strings, and each form manager's
+`_object_state_path_for_field` returns a `DottedFieldPath`. Parameter
+conversion takes three arguments, matching FormBridge 0.2.
+
 ## 0.8.0
 
 Requires ObjectState 4 (`objectstate>=4.0.0,<5`) and `formbridge>=0.1.4,<0.2`.

@@ -248,7 +248,9 @@ def test_checkbox_group_creation_preserves_single_enum_list_value(qapp):
 def test_placeholder_refresh_preserves_concrete_checkbox_group_default(qapp):
     """Concrete list defaults must not be repainted as inherited placeholders."""
     from enum import Enum
-    from types import SimpleNamespace
+    from types import MethodType, SimpleNamespace
+
+    from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
     from pyqt_reactive.forms.widget_strategies import create_pyqt6_widget
     from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
 
@@ -275,6 +277,9 @@ def test_placeholder_refresh_preserves_concrete_checkbox_group_default(qapp):
             },
             get_resolved_value=lambda path: [Component.SITE],
         ),
+    )
+    manager._object_state_path_for_field = MethodType(
+        ParameterFormManager._object_state_path_for_field, manager
     )
 
     service.refresh_all_placeholders(manager)
@@ -3211,7 +3216,9 @@ def test_widget_service_skips_equal_value_assignment(qapp):
 
 def test_parameter_reset_overwrites_invalid_typed_literal_editor(qapp):
     """Reset discards invalid transient text without weakening commit parsing."""
-    from types import SimpleNamespace
+    from types import MethodType, SimpleNamespace
+
+    from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 
     import pytest
 
@@ -3254,6 +3261,9 @@ def test_parameter_reset_overwrites_invalid_typed_literal_editor(qapp):
         widgets={"percentiles": widget},
         _widget_service=widget_service,
         object_instance=None,
+    )
+    manager._object_state_path_for_field = MethodType(
+        ParameterFormManager._object_state_path_for_field, manager
     )
 
     ParameterOpsService().reset_parameter(manager, "percentiles")
