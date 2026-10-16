@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from objectstate import DottedFieldPath
 from pyqt_reactive.protocols import CurrentValueValidatable
 
 
@@ -23,11 +24,7 @@ class FormValueValidationService:
                 widget.validate_current_value()
                 manager._convert_widget_value(widget.get_value(), field_name)
             except ValueError as exc:
-                field_path = (
-                    f"{manager.field_id}.{field_name}"
-                    if manager.field_id
-                    else field_name
-                )
+                field_path = DottedFieldPath(manager.field_id).child(field_name).value
                 raise FormValueValidationError(
                     f"Invalid value for {field_path!r}: {exc}"
                 ) from exc

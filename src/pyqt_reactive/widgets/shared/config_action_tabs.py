@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from objectstate import DottedFieldPath
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QPushButton, QWidget
 from python_introspect import Enableable
@@ -30,7 +31,7 @@ class ConfigAction:
     @property
     def enabled_path(self) -> str:
         """The nested config's ``Enableable`` field, which switches the action on."""
-        return f"{self.field_name}.{Enableable.require_parameter_name()}"
+        return DottedFieldPath(self.field_name).child(Enableable.require_parameter_name()).value
 
 
 class ConfigActionTabs(TabbedFormWidget):

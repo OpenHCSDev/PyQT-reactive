@@ -26,10 +26,10 @@ class InlineDataclassChildFieldIdentity:
 
     @property
     def field_name(self) -> str:
-        parts = self.object_state_path.parts
-        if not parts:
+        field_name = self.object_state_path.field_name
+        if not field_name:
             raise ValueError("Inline dataclass child field identity cannot be root.")
-        return parts[-1]
+        return field_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,11 +52,7 @@ class InlineDataclassFormContext:
         param_info: "InlineDataclassWidgetInfo",
         current_value,
     ) -> "InlineDataclassFormContext":
-        owner_path = (
-            DottedFieldPath(manager.field_id).child(param_info.name)
-            if manager.field_id
-            else DottedFieldPath(param_info.name)
-        )
+        owner_path = manager._object_state_path_for_field(param_info.name)
         base_type = get_base_type_for_lazy(type(current_value)) or param_info.type
         return cls(
             state=manager.state,
@@ -106,7 +102,9 @@ class InlineDataclassFormContext:
     def reset_child(self, field_name: str) -> None:
         identity = self.child_identity(field_name)
         container_value = self.state.parameters[self.owner_path.value]
-        default_value = self.state.signature_default(identity.object_state_path.value)
+        default_value = self.state.parameter_structure.declarations[
+            identity.object_state_path.value
+        ].default_value
         if self.raw_child_value(field_name) == default_value:
             return
         updated_value = replace_raw(container_value, **{field_name: default_value})
@@ -124,7 +122,9 @@ class InlineDataclassFormContext:
         for dataclass_field in dataclass_fields(self.owner_type):
             field_name = dataclass_field.name
             identity = self.child_identity(field_name)
-            default_value = self.state.signature_default(identity.object_state_path.value)
+            default_value = self.state.parameter_structure.declarations[
+                identity.object_state_path.value
+            ].default_value
             if self.raw_child_value(field_name) != default_value:
                 updates[field_name] = default_value
 

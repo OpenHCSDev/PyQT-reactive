@@ -118,28 +118,17 @@ def test_child_managers_for_paths_routes_only_direct_owners() -> None:
     }
 
 
-def test_direct_child_field_for_path_uses_structural_objectstate_paths() -> None:
-    """List element changes route to the owning dataclass field."""
-    assert (
-        ParameterFormTreeIndex.direct_child_field_for_path(
-            "processing_config",
-            "processing_config.variable_components[1]",
-        )
-        == "variable_components"
+def test_child_managers_route_structural_paths_at_root_and_nested_scope() -> None:
+    """List element changes route through the same path owner at either scope."""
+    tree, source_bindings, source_filters, _ = _manager_tree()
+    root = source_bindings._parent_manager
+    path = "source_bindings.source_filters[0].match_type"
+
+    assert tree.child_managers_for_paths(root, {path, "", "unrelated.value"}) == (
+        (source_bindings, {path}),
     )
-    assert (
-        ParameterFormTreeIndex.direct_child_field_for_path(
-            "",
-            "processing_config.variable_components[1]",
-        )
-        == "processing_config"
-    )
-    assert (
-        ParameterFormTreeIndex.direct_child_field_for_path(
-            "",
-            "source_bindings.source_filters[0].match_type",
-        )
-        == "source_bindings"
+    assert tree.child_managers_for_paths(source_bindings, {path}) == (
+        (source_filters, {path}),
     )
 
 

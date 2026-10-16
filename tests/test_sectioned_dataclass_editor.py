@@ -51,6 +51,21 @@ class Drawing:
     layers: tuple[str, ...] | None = None
 
 
+@dataclass
+class DrawingBase:
+    pass
+
+
+@dataclass(frozen=True)
+class DrawingHolder:
+    config: Drawing
+
+
+@dataclass(frozen=True)
+class DrawingRoot:
+    outer: DrawingHolder
+
+
 MARKS = TupleFieldSection(
     title="Marks",
     field_name="marks",
@@ -98,6 +113,100 @@ def editor(qapp):
     yield widget
     widget.deleteLater()
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.fixture
+def form_editor(qapp, owner):
+    from objectstate import DottedFieldPath, ObjectState, ObjectStateRegistry, set_base_config_type
+    from pyqt_reactive.forms.inline_dataclass_context import InlineDataclassFormContext
+    from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
+    from pyqt_reactive.theming import ColorScheme
+
+    value = Drawing(marks=(Mark(Circle, "a"),))
+    source = {
+        "": value,
+        "config": DrawingHolder(value),
+        "outer.config": DrawingRoot(DrawingHolder(value)),
+    }[owner]
+    set_base_config_type(DrawingBase)
+    state = ObjectState(source, scope_id="sectioned-structural-target")
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    path = DottedFieldPath(owner)
+    scheme = ColorScheme()
+    manager = ParameterFormManager(
+        state=state,
+        config=FormManagerConfig(
+            field_id=path.parent.value,
+            exclude_params=["config", "marks", "notes", "layers"],
+            color_scheme=scheme,
+        ),
+    )
+    context = InlineDataclassFormContext(
+        state=state, manager=manager, owner_path=path,
+        local_owner_path=DottedFieldPath(path.field_name), owner_type=Drawing,
+        color_scheme=scheme, scope_accent_color=None,
+    )
+    widget = DrawingEditor(
+        RawDisplayValue.shown_as_edited(Drawing, value), form_context=context,
+    )
+    try:
+        yield widget
+    finally:
+        widget.deleteLater()
+        manager.deleteLater()
+        qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        ObjectStateRegistry.clear()
+
+
+@pytest.mark.parametrize(
+    ("owner", "display_path", "child"),
+    [
+        ("config", "config.marks[0].label", "marks"),
+        ("outer.config", "outer.config.marks[0].label", "marks"),
+        ("", "marks[0].label", "marks"),
+        ("config", "other.marks[0].label", None),
+    ],
+)
+def test_structural_target_keeps_typed_owner_and_indexed_child(form_editor, owner, display_path, child):
+    from objectstate import DottedFieldPath
+    from pyqt_reactive.widgets.structural_table import (
+        StructuralMaskedContainerTarget,
+        StructuralTableCellTarget,
+        resolve_inline_dataclass_structural_target,
+    )
+
+    result = resolve_inline_dataclass_structural_target(
+        inline_widget=form_editor,
+        inline_field_path=DottedFieldPath(owner),
+        display_path=display_path,
+    )
+    if child is None:
+        assert result is None
+    else:
+        assert result.child_field_name == child
+        assert isinstance(result.target, StructuralMaskedContainerTarget)
+        cell = result.target.masked_target
+        assert isinstance(cell, StructuralTableCellTarget)
+        assert cell.table is form_editor.table("marks")
+        assert cell.row_index == 0
+        assert cell.column_index == 1
+
+
+def test_structural_target_exact_owner_and_root_are_distinct(editor):
+    from objectstate import DottedFieldPath
+    from pyqt_reactive.widgets.structural_table import (
+        StructuralDescendantMaskTarget,
+        resolve_inline_dataclass_structural_target,
+    )
+
+    result = resolve_inline_dataclass_structural_target(
+        inline_widget=editor, inline_field_path=DottedFieldPath("config"), display_path="config",
+    )
+    assert result.child_field_name == "config"
+    assert isinstance(result.target, StructuralDescendantMaskTarget)
+    assert resolve_inline_dataclass_structural_target(
+        inline_widget=editor, inline_field_path=DottedFieldPath(""), display_path="",
+    ) is None
 
 
 def test_sections_are_built_from_declarations(editor) -> None:

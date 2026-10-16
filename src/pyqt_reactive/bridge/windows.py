@@ -1794,7 +1794,7 @@ class _WidgetFieldSemanticContext:
         widget: QWidget,
         action_role: str,
     ) -> None:
-        field_path = cls._field_path(form_manager, field_name)
+        field_path = form_manager._object_state_path_for_field(field_name).value
         if field_path not in state.parameters:
             return
         records[_WidgetGeometryKey.from_qwidget(widget)] = _WidgetFieldSemanticRecord(
@@ -1804,12 +1804,6 @@ class _WidgetFieldSemanticContext:
                 field_path,
             ),
         )
-
-    @staticmethod
-    def _field_path(form_manager: ParameterFormManager, field_name: str) -> str:
-        if form_manager.field_id:
-            return f"{form_manager.field_id}.{field_name}"
-        return field_name
 
     def for_descriptor(
         self,

@@ -266,13 +266,11 @@ class InlineDataclassChildChrome(ChildFieldChrome):
         self,
         owner_field_paths: tuple[DottedFieldPath, ...],
     ) -> tuple[str, ...]:
-        owner_parts = self.context.owner_path.parts
         return tuple(
             dict.fromkeys(
-                path.parts[-1]
+                path.field_name
                 for path in owner_field_paths
-                if len(path.parts) == len(owner_parts) + 1
-                and path.parts[: len(owner_parts)] == owner_parts
+                if path.value and path.parent == self.context.owner_path
             )
         )
 

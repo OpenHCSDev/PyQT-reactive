@@ -381,7 +381,6 @@ def test_recursive_mapping_items_reach_object_state_as_declared_types(qapp):
             widget.get_value(),
             dict[str, Mode],
             "modes",
-            MappingConfig,
         )
         state.update_parameter("modes", converted)
 

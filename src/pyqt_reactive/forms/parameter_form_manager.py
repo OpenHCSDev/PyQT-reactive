@@ -112,7 +112,7 @@ class FormTargetPathAccess:
     @classmethod
     def raw_path(cls, root, field_path: str):
         current = root
-        for part in tuple(part for part in field_path.split(".") if part):
+        for part in DottedFieldPath(field_path).parts:
             current = cls.raw_value(current, part)
         return current
 
@@ -137,7 +137,7 @@ class ParameterFormTypeResolver:
 
     @staticmethod
     def field_type(manager: "ParameterFormManager", field_name: str, signature_type: Type) -> Type:
-        dotted_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
+        dotted_path = manager._object_state_path_for_field(field_name).value
         if not manager.state.has_parameter_descendants(dotted_path):
             return signature_type
 
@@ -704,11 +704,11 @@ class ParameterFormManager(
         from pyqt_reactive.forms.widget_creation_config import WidgetCreationPipeline
 
         logger.debug(
-            "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s widget_creation_type=%s",
+            "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s declaration=%s",
             self._pfm_seq,
             self.field_id,
             param_info.name,
-            param_info.widget_creation_type,
+            type(param_info).__qualname__,
         )
         return WidgetCreationPipeline(self, param_info).run()
 
@@ -729,7 +729,7 @@ class ParameterFormManager(
             current_value: Ignored (kept for ABC compatibility)
         """
         # Build nested field id (dotted path)
-        nested_id = f"{self.field_id}.{param_name}" if self.field_id else param_name
+        nested_id = self._object_state_path_for_field(param_name).value
 
         # Create nested PFM (VIEW) that shares the same ObjectState (MODEL)
         nested_config = FormManagerConfig(
@@ -777,7 +777,7 @@ class ParameterFormManager(
 
         # Then apply service layer conversion (enums, basic types, Union handling, etc.)
         converted_value = self.service.convert_value_to_type(
-            converted_value, param_type, param_name, type(self.object_instance)
+            converted_value, param_type, param_name
         )
 
         return converted_value
@@ -834,7 +834,6 @@ class ParameterFormManager(
             value,
             self.parameter_types.get(param_name, type(value)),
             param_name,
-            type(self.object_instance),
         )
 
         # Update corresponding widget if it exists
@@ -1151,13 +1150,8 @@ class ParameterFormManager(
         ):
             flash_paths: list[str] = []
             for path in ParameterFormManager._flash_paths_for_changed_paths(changed_paths):
-                if self.field_id:
-                    if "." in path:
-                        path_prefix = path.rsplit(".", 1)[0]
-                        if path_prefix != self.field_id:
-                            continue
-                    else:
-                        continue
+                if self.field_id and DottedFieldPath(path).parent.value != self.field_id:
+                    continue
                 queued_path = self._queue_leaf_flash_for_path(
                     path,
                     queue_flash=False,
@@ -1167,9 +1161,9 @@ class ParameterFormManager(
             self.queue_flash_local_batch(flash_paths)
 
         if changed_paths:
-            sample_path = next(iter(changed_paths))
-            sample_leaf = sample_path.split(".")[-1] if "." in sample_path else sample_path
-            sample_prefix = sample_path.rsplit(".", 1)[0] if "." in sample_path else None
+            sample_path = DottedFieldPath(next(iter(changed_paths)))
+            sample_leaf = sample_path.field_name
+            sample_prefix = sample_path.parent.value or None
             logger.debug(f"[FLASH TRAIL] prefix={sample_prefix}, leaf_field={sample_leaf}")
 
     @staticmethod
@@ -1242,7 +1236,7 @@ class ParameterFormManager(
 
         # Find the prefix (groupbox) and leaf field name
         prefix = self.form_tree.matching_prefix(path)
-        leaf_field = path.split(".")[-1] if "." in path else path
+        leaf_field = DottedFieldPath(path).field_name
 
         if prefix:
             # Nested dataclass case: find groupbox and nested manager
@@ -1407,17 +1401,12 @@ class ParameterFormManager(
         for manager in self._iter_form_managers():
             for field_name, widget in manager.widgets.items():
                 owner_path = manager._object_state_path_for_field(field_name)
-                if not DottedFieldPath(owner_path).contains_path(path):
+                if not owner_path.contains_path(path):
                     continue
-                child_field_name = self._relative_child_field_name(
-                    owner_path,
-                    path,
-                )
                 structural_result = resolve_inline_dataclass_structural_target(
                     inline_widget=widget,
-                    inline_field_path=tuple(owner_path.split(".")),
+                    inline_field_path=owner_path,
                     display_path=path,
-                    owner_child_field_name=child_field_name,
                 )
                 if structural_result is None:
                     continue
@@ -1425,7 +1414,7 @@ class ParameterFormManager(
                     "form.structural_flash.match",
                     manager=self.field_id,
                     path=path,
-                    owner=owner_path,
+                    owner=owner_path.value,
                     field=field_name,
                     child=structural_result.child_field_name,
                     target=type(structural_result.target).__qualname__,
@@ -1448,10 +1437,10 @@ class ParameterFormManager(
         for nested_manager in self.nested_managers.values():
             yield from nested_manager._iter_form_managers()
 
-    def _object_state_path_for_field(self, field_name: str) -> str:
-        """Return the ObjectState display path for a direct field."""
+    def _object_state_path_for_field(self, field_name: str) -> DottedFieldPath:
+        """Bind a direct field to this manager's absolute ObjectState scope."""
 
-        return f"{self.field_id}.{field_name}" if self.field_id else field_name
+        return DottedFieldPath(self.field_id).child(field_name)
 
     def owns_field_path(self, field_path: str) -> bool:
         """Whether the path is, or lies under, a field this form shows.
@@ -1462,17 +1451,11 @@ class ParameterFormManager(
         """
 
         return any(
-            DottedFieldPath(self._object_state_path_for_field(parameter.name)).contains_path(
+            self._object_state_path_for_field(parameter.name).contains_path(
                 field_path
             )
             for parameter in self.form_structure.parameters
         )
-
-    @staticmethod
-    def _relative_child_field_name(owner_path: str, path: str) -> str | None:
-        """Return the direct child field under an ObjectState owner path."""
-
-        return DottedFieldPath(owner_path).direct_child_name(path)
 
     # PAINT-TIME API: ObjectState-path flash lookup inherited from VisualUpdateMixin.
     # Groupboxes and item delegates use the registered ObjectState path to get current flash color.

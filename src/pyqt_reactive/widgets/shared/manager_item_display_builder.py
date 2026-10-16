@@ -203,7 +203,7 @@ class _ManagerItemDisplayBuilder:
             is_enabled = True
             if is_enableable(config_type):
                 enabled_field = Enableable.require_parameter_name()
-                enabled_path = f"{path}.{enabled_field}" if path else enabled_field
+                enabled_path = DottedFieldPath(path).child(enabled_field).value
                 resolved_enabled = state.get_resolved_value(enabled_path)
                 is_enabled = resolved_enabled is True
                 if is_enabled:
@@ -227,7 +227,7 @@ class _ManagerItemDisplayBuilder:
                 continue
 
             for field_name in registered_fields:
-                full_path = f"{path}.{field_name}" if path else field_name
+                full_path = DottedFieldPath(path).child(field_name).value
                 add_field_path(full_path)
                 logger.debug(
                     "PREVIEW: Added always_viewable field %s for %s",

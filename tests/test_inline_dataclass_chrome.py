@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+
+import pytest
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QWidget
@@ -91,7 +93,8 @@ def _inline_param_info():
 
 
 def test_inline_dataclass_context_uses_typed_child_paths_and_resets(qapp) -> None:
-    from objectstate import ObjectStateRegistry
+    from objectstate import DottedFieldPath, ObjectStateRegistry
+    from pyqt_reactive.forms.inline_dataclass_chrome import InlineDataclassChildChrome
     from pyqt_reactive.forms.inline_dataclass_context import (
         InlineDataclassFormContext,
     )
@@ -109,6 +112,18 @@ def test_inline_dataclass_context_uses_typed_child_paths_and_resets(qapp) -> Non
         assert identity.object_state_path.value == "config.source_filters"
         assert identity.manager_path.value == "config.source_filters"
         assert identity.owner_type is InlineChildConfig
+        assert identity.field_name == "source_filters"
+        chrome = InlineDataclassChildChrome(context)
+        assert chrome.field_names_under(tuple(map(DottedFieldPath, (
+            "config.enabled", "config.source_filters", "config.enabled",
+            "config", "", "config.source_filters.value", "other.enabled",
+        )))) == ("enabled", "source_filters")
+        root_chrome = InlineDataclassChildChrome(replace(context, owner_path=DottedFieldPath("")))
+        assert root_chrome.field_names_under(tuple(map(DottedFieldPath, (
+            "", "config", "config.enabled", "enabled", "config",
+        )))) == ("config", "enabled")
+        with pytest.raises(ValueError, match="cannot be root"):
+            _ = replace(identity, object_state_path=DottedFieldPath("")).field_name
 
         manager.state.update_parameter(
             "config",

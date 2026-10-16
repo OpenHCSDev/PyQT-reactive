@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-
+from objectstate import DottedFieldPath
 from formbridge.flash_trace import flash_trace
 
 
@@ -41,8 +41,17 @@ class FieldDispatchContext:
     event: FieldChangeEvent
     source: "ParameterFormManager"
     root: "ParameterFormManager"
-    source_path: str
-    root_path: str
+    field_path: DottedFieldPath
+
+    @classmethod
+    def from_event(cls, event: FieldChangeEvent) -> "FieldDispatchContext":
+        source = event.source_manager
+        return cls(
+            event=event,
+            source=source,
+            root=source.form_tree.root(),
+            field_path=source._object_state_path_for_field(event.field_name),
+        )
 
 
 class DispatchReentrancyGuard:
@@ -87,40 +96,6 @@ class DispatchReentrancyGuard:
         source._dispatching = False
 
 
-class FieldDispatchContextFactory:
-    """Builds the path context shared by dispatch stages."""
-
-    def build(self, event: FieldChangeEvent) -> FieldDispatchContext:
-        source = event.source_manager
-        return FieldDispatchContext(
-            event=event,
-            source=source,
-            root=self._get_root_manager(source),
-            source_path=self._field_path(source, event.field_name),
-            root_path=self._get_full_path(source, event.field_name),
-        )
-
-    def _get_root_manager(self, manager: "ParameterFormManager") -> "ParameterFormManager":
-        current = manager
-        while current._parent_manager is not None:
-            current = current._parent_manager
-        return current
-
-    def _field_path(self, manager: "ParameterFormManager", field_name: str) -> str:
-        if manager.field_id:
-            return f"{manager.field_id}.{field_name}"
-        return field_name
-
-    def _get_full_path(self, source: "ParameterFormManager", field_name: str) -> str:
-        parts = [field_name]
-        current = source
-        while current is not None:
-            if current.field_id:
-                parts.insert(0, current.field_id)
-            current = current._parent_manager
-        return ".".join(parts)
-
-
 class SourceStateUpdateStage:
     """Applies the edited value to ObjectState and syncs the source widget."""
 
@@ -133,13 +108,13 @@ class SourceStateUpdateStage:
             context.source.before_mutation()
         if context.event.is_reset:
             changed_paths = context.source.state.update_parameter(
-                context.source_path,
+                context.field_path.value,
                 context.event.value,
             )
         else:
             with ObjectStateRegistry.defer_live_invalidations():
                 changed_paths = context.source.state.update_parameter(
-                    context.source_path,
+                    context.field_path.value,
                     context.event.value,
                 )
         context.source.sync_after_model_field_change(
@@ -150,7 +125,7 @@ class SourceStateUpdateStage:
             reset_note = " (reset to None)" if context.event.is_reset else ""
             logger.info(
                 "  ✅ Updated state.parameters[%s]%s",
-                context.source_path,
+                context.field_path.value,
                 reset_note,
             )
         return changed_paths
@@ -318,20 +293,20 @@ class RootSignalStage:
         logger.debug("  source.field_id=%s", context.source.field_id)
         logger.debug("  root.field_id=%s", context.root.field_id)
         logger.debug("  event.field_name=%s", context.event.field_name)
-        logger.debug("  full_path=%s", context.root_path)
+        logger.debug("  field_path=%s", context.field_path.value)
         logger.debug("  value type=%s", type(context.event.value).__name__)
 
-        context.root.parameter_changed.emit(context.root_path, context.event.value)
+        context.root.parameter_changed.emit(context.field_path.value, context.event.value)
         logger.debug(
             "  ✅ Emitted parameter_changed(%s, ...) from root",
-            context.root_path,
+            context.field_path.value,
         )
 
         self._emit_cross_window(context)
 
     def _emit_cross_window(self, context: FieldDispatchContext) -> None:
         root_manager = context.root
-        full_path = context.root_path
+        full_path = context.field_path.value
         logger.debug(
             f"  🔍 _emit_cross_window: checking should_skip_updates() for {root_manager.field_id}"
         )
@@ -362,7 +337,6 @@ class FieldChangeDispatcher:
 
     def __init__(self) -> None:
         self._guard = DispatchReentrancyGuard()
-        self._context_factory = FieldDispatchContextFactory()
         self._source_state_update = SourceStateUpdateStage()
         self._sibling_placeholder_refresh = SiblingPlaceholderRefreshStage()
         self._live_context_notification = LiveContextNotificationStage()
@@ -394,13 +368,12 @@ class FieldChangeDispatcher:
                 repr(event.value)[:50],
             )
 
-            context = self._context_factory.build(event)
+            context = FieldDispatchContext.from_event(event)
             flash_trace(
                 "dispatch.context",
                 source=context.source.field_id,
                 root=context.root.field_id,
-                source_path=context.source_path,
-                root_path=context.root_path,
+                field_path=context.field_path.value,
                 reset=context.event.is_reset,
             )
             self._source_state_update.run(context)
