@@ -1,7 +1,7 @@
 """PyQt parameter form manager - VIEW layer for ObjectState MODEL."""
 
 import logging
-from dataclasses import dataclass, is_dataclass, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Type
 
 # FlashableGroupBox not extracted - OpenHCS specific
@@ -119,7 +119,7 @@ class FormTargetPathAccess:
 
     @classmethod
     def raw_value(cls, instance, field_name: str):
-        if is_dataclass(type(instance)):
+        if DataclassFieldAccess.is_container(instance):
             return DataclassFieldAccess.raw_value(instance, field_name)
 
         if type(instance).__dictoffset__ == 0:
@@ -140,7 +140,7 @@ class ParameterFormTypeResolver:
     def field_type(manager: "ParameterFormManager", field_name: str, signature_type: Type) -> Type:
         dotted_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
         value = DottedFieldPath(dotted_path).bind(manager.state).value
-        return type(value) if is_dataclass(value) else signature_type
+        return type(value) if DataclassFieldAccess.is_container(value) else signature_type
 
     @staticmethod
     def scoped_parameters(fields) -> ParameterDefaultsByName:
