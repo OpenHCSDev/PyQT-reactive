@@ -13,7 +13,8 @@ Key features:
 4. Cross-window registration with RAII cleanup
 """
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from PyQt6.QtCore import QSignalBlocker
 from functools import partial
 from typing import Any, Callable, Optional, TYPE_CHECKING
 from weakref import ReferenceType, ref
@@ -54,18 +55,11 @@ class SignalService:
     @contextmanager
     def block_signals(*widgets: QWidget):
         """Context manager for blocking widget signals."""
-        for widget in widgets:
-            if widget is not None:
-                widget.blockSignals(True)
-                logger.debug(f"Blocked signals on {type(widget).__name__}")
-        
-        try:
-            yield
-        finally:
+        with ExitStack() as blocked:
             for widget in widgets:
                 if widget is not None:
-                    widget.blockSignals(False)
-                    logger.debug(f"Unblocked signals on {type(widget).__name__}")
+                    blocked.callback(QSignalBlocker(widget).unblock)
+            yield
 
     @staticmethod
     def with_signals_blocked(widget: QWidget, operation: Callable) -> None:
@@ -131,22 +125,6 @@ class SignalService:
         if manager is not None:
             manager.dispose()
 
-    @staticmethod
-    def register_cross_window_signals(manager: Any) -> None:
-        """Register manager for cross-window updates (only root managers).
-
-        SIMPLIFIED: No N×N signal wiring. LiveContextService.increment_token()
-        notifies all listeners via simple callbacks.
-        """
-        if manager._parent_manager is not None:
-            return
-
-        # Snapshot initial values for change detection (non-None only)
-        manager._initial_values_on_open = {k: v for k, v in manager.state.parameters.items() if v is not None}
-
-        from objectstate import ObjectStateRegistry
-        logger.debug(f"🔍 REGISTER: {manager.field_id} (total: {len(ObjectStateRegistry.get_all())})")
-
     # ========== CROSS-WINDOW REGISTRATION (from CrossWindowRegistration) ==========
 
     @staticmethod
@@ -162,7 +140,6 @@ class SignalService:
             return
 
         try:
-            SignalService.register_cross_window_signals(manager)
             yield manager
         finally:
             manager.dispose()

@@ -74,7 +74,7 @@ from pyqt_reactive.widgets.editable_table import (
     EditableTableLayout,
     RowSuggestionMap,
 )
-from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+from pyqt_reactive.widgets.no_scroll_spinbox import InheritedCheckBox
 from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnDef
 from pyqt_reactive.widgets.shared.clickable_help_components import InlineDataclassGroupBox
 from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
@@ -448,7 +448,7 @@ class NoTitleCheckbox(TitleCheckbox):
         provenance_button: QWidget | None,
     ) -> AttachedTitleCheckbox:
         title_row = EnabledTitleWidgetMoveAuthority()
-        checkbox = NoneAwareCheckBox(groupbox)
+        checkbox = InheritedCheckBox(groupbox)
         checkbox.setToolTip(tooltip)
         checkbox.toggled.connect(lambda checked: on_toggled(bool(checked)))
         title_widget = title_row.wrap_checkbox_widget_for_title(checkbox, groupbox.color_scheme)
@@ -481,7 +481,7 @@ class AttachedTitleCheckbox(TitleCheckbox):
     """The checkbox, its reset button and its provenance button in one title row."""
 
     groupbox: InlineDataclassGroupBox
-    checkbox: NoneAwareCheckBox
+    checkbox: InheritedCheckBox
     title_widget: QWidget
     reset_button: QPushButton
     provenance_button: QWidget | None
@@ -841,7 +841,7 @@ class SectionedDataclassEditor(
             param_info=param_info,
             current_value=current_value,
         )
-        resolved = context.state.get_resolved_value(context.owner_path.value)
+        resolved = DottedFieldPath(context.owner_path.value).bind(context.state).value
         return cls(
             RawDisplayValue(
                 cls.value_type,

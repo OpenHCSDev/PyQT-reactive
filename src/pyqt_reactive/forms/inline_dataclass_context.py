@@ -6,7 +6,8 @@ from dataclasses import dataclass, fields as dataclass_fields
 from typing import TYPE_CHECKING
 
 from objectstate import DottedFieldPath
-from objectstate.lazy_factory import get_base_type_for_lazy, replace_raw
+from objectstate.lazy_factory import replace_raw
+from python_introspect import resolve_declared_type
 
 if TYPE_CHECKING:
     from objectstate import ObjectState
@@ -57,7 +58,7 @@ class InlineDataclassFormContext:
             if manager.field_id
             else DottedFieldPath(param_info.name)
         )
-        base_type = get_base_type_for_lazy(type(current_value)) or param_info.type
+        base_type = resolve_declared_type(param_info.type)
         return cls(
             state=manager.state,
             manager=manager,
@@ -92,10 +93,10 @@ class InlineDataclassFormContext:
         return None
 
     def raw_child_value(self, field_name: str):
-        return self.state.parameters.get(self.child_path(field_name).value)
+        return DottedFieldPath(self.child_path(field_name).value).bind(self.state).raw
 
     def resolved_child_value(self, field_name: str):
-        return self.state.get_resolved_value(self.child_path(field_name).value)
+        return DottedFieldPath(self.child_path(field_name).value).bind(self.state).value
 
     def child_has_inherited_preview(self, field_name: str) -> bool:
         return (
@@ -105,8 +106,8 @@ class InlineDataclassFormContext:
 
     def reset_child(self, field_name: str) -> None:
         identity = self.child_identity(field_name)
-        container_value = self.state.parameters[self.owner_path.value]
-        default_value = self.state.signature_default(identity.object_state_path.value)
+        container_value = DottedFieldPath(self.owner_path.value).bind(self.state).raw
+        default_value = DottedFieldPath(identity.object_state_path.value).bind(self.state).default
         if self.raw_child_value(field_name) == default_value:
             return
         updated_value = replace_raw(container_value, **{field_name: default_value})
@@ -119,12 +120,12 @@ class InlineDataclassFormContext:
     def reset_children(self) -> None:
         """Reset every declared inline dataclass child field in one update."""
 
-        container_value = self.state.parameters[self.owner_path.value]
+        container_value = DottedFieldPath(self.owner_path.value).bind(self.state).raw
         updates = {}
         for dataclass_field in dataclass_fields(self.owner_type):
             field_name = dataclass_field.name
             identity = self.child_identity(field_name)
-            default_value = self.state.signature_default(identity.object_state_path.value)
+            default_value = DottedFieldPath(identity.object_state_path.value).bind(self.state).default
             if self.raw_child_value(field_name) != default_value:
                 updates[field_name] = default_value
 
@@ -154,7 +155,7 @@ class InlineDataclassFormContext:
                 "is not registered."
             )
 
-        resolved_value = self.state.get_resolved_value(self.owner_path.value)
+        resolved_value = DottedFieldPath(self.owner_path.value).bind(self.state).value
         with SignalService.block_signals(owner_widget):
             if isinstance(owner_widget, RawResolvedValueSettable):
                 owner_widget.set_raw_value_with_resolved_preview(

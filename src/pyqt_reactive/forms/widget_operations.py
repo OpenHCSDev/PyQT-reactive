@@ -154,7 +154,7 @@ class WidgetOperations:
             collected.extend(container.findChildren(widget_types))
 
         # Fallback: also include any child that declares ValueGettable via ABC
-        # (e.g., NoneAwareLineEdit/CheckBox which are registered virtually, not in WIDGET_IMPLEMENTATIONS)
+        # (e.g., InheritedLineEdit/CheckBox which are registered virtually, not in WIDGET_IMPLEMENTATIONS)
         try:
             from PyQt6.QtCore import QObject
             for widget in container.findChildren(QObject):

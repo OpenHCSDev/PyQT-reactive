@@ -29,7 +29,6 @@ from .widget_creation_types import (
     ParameterFormManager, ParameterInfo, DisplayInfo, FieldIds,
     LayoutKind, OptionalTitleComponents, WidgetBuildContext, WidgetCreationConfig
 )
-from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 from pyqt_reactive.services.widget_service import WidgetService
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveParameterRow
 from formbridge.forms.layout_constants import CURRENT_LAYOUT
@@ -38,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QGroupBox, QLayout, QWidget
-    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import InheritedCheckBox
     from pyqt_reactive.widgets.shared.clickable_help_components import (
         GroupBoxWithHelp,
         InlineDataclassGroupBox,
@@ -133,7 +132,7 @@ class EnabledTitleWidgetMoveContext:
     source_row: ResponsiveParameterRow | None
     enabled_widget: QWidget
     title_widget: QWidget
-    checkbox_widget: NoneAwareCheckBox | None
+    checkbox_widget: InheritedCheckBox | None
     enabled_reset_button: QWidget | None
     provenance_button: QWidget | None = None
 
@@ -169,7 +168,7 @@ class EnabledTitleWidgetMoveAuthority:
         self,
         request: EnabledTitleWidgetMoveRequest,
     ) -> EnabledTitleWidgetMoveContext:
-        from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+        from pyqt_reactive.widgets.no_scroll_spinbox import InheritedCheckBox
 
         enabled_widget = self.enabled_widget(request)
         enabled_reset_button = request.nested_manager.reset_buttons.get(
@@ -179,7 +178,7 @@ class EnabledTitleWidgetMoveAuthority:
         source_layout = self.source_layout(enabled_widget)
         source_row = self.responsive_source_row(enabled_widget)
         checkbox_widget = None
-        if isinstance(enabled_widget, NoneAwareCheckBox):
+        if isinstance(enabled_widget, InheritedCheckBox):
             checkbox_widget = enabled_widget
 
         logger.debug(
@@ -282,7 +281,7 @@ class EnabledTitleWidgetMoveAuthority:
 
     @staticmethod
     def wrap_checkbox_widget_for_title(
-        checkbox_widget: NoneAwareCheckBox,
+        checkbox_widget: InheritedCheckBox,
         color_scheme,
     ) -> QWidget:
         """Return the standard compact title-row container for an enableable checkbox."""
@@ -319,7 +318,7 @@ class EnabledTitleWidgetMoveAuthority:
     @staticmethod
     def bind_title_label_to_checkbox(
         container: GroupBoxWithHelp,
-        checkbox_widget: NoneAwareCheckBox,
+        checkbox_widget: InheritedCheckBox,
     ) -> None:
         """Make an enableable group title click toggle the owning checkbox."""
 
@@ -563,7 +562,7 @@ class WidgetCreationHandlers:
         from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
         from PyQt6.QtCore import Qt
         from PyQt6.QtGui import QFont
-        from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
+        from pyqt_reactive.widgets.no_scroll_spinbox import InheritedCheckBox
         from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
         from formbridge.forms.layout_constants import CURRENT_LAYOUT
 
@@ -580,7 +579,7 @@ class WidgetCreationHandlers:
         title_layout.setContentsMargins(*CURRENT_LAYOUT.parameter_row_margins)
 
         # Checkbox (compact, no text)
-        checkbox = NoneAwareCheckBox()
+        checkbox = InheritedCheckBox()
         checkbox.setObjectName(field_ids['optional_checkbox_id'])
         # Title checkbox ONLY controls None vs Instance, NOT the enabled field
         checkbox.setChecked(current_value is not None)
@@ -1050,7 +1049,7 @@ class WidgetCreationPipeline:
         from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
         from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 
-        creation_type = WidgetCreationType[param_info.widget_creation_type]
+        creation_type = param_info.creation_type(WidgetCreationType)
         config = _WIDGET_CREATION_CONFIG[creation_type]
         display_info = WidgetService.get_parameter_display_info(
             param_info.name,
@@ -1295,7 +1294,7 @@ class WidgetCreationPipeline:
                 PyQt6WidgetEnhancer.connect_change_signal(
                     rt.container,
                     rt.param_info.name,
-                    self.on_widget_change,
+                    rt.manager.update_parameter,
                 )
                 logger.debug(
                     "[CREATE_INLINE_DATACLASS] param_info.name=%s, stored inline container in manager.widgets",
@@ -1307,7 +1306,7 @@ class WidgetCreationPipeline:
             return
 
         rt.manager.widgets[rt.param_info.name] = rt.main_widget
-        PyQt6WidgetEnhancer.connect_change_signal(rt.main_widget, rt.param_info.name, self.on_widget_change)
+        PyQt6WidgetEnhancer.connect_change_signal(rt.main_widget, rt.param_info.name, rt.manager.update_parameter)
         if rt.manager.read_only:
             WidgetService.make_readonly(rt.main_widget, rt.manager.config.color_scheme)
 
@@ -1316,21 +1315,6 @@ class WidgetCreationPipeline:
 
         rt = self.runtime
         rt.manager.chrome_sync.update_label_styling(rt.param_info.name)
-
-    def on_widget_change(self, pname, value) -> None:
-        from objectstate import ObjectStateRegistry
-
-        manager = self.runtime.manager
-        converted_value = manager._convert_widget_value(value, pname)
-        event = FieldChangeEvent(pname, converted_value, manager)
-        if manager.state and manager.state._parent_state is not None:
-            with ObjectStateRegistry.atomic(
-                "edit parameter",
-                scope_id=manager.scope_id,
-            ):
-                FieldChangeDispatcher.instance().dispatch(event)
-        else:
-            FieldChangeDispatcher.instance().dispatch(event)
 
     def _log_widget(self, stage: str, widget: QWidget | None) -> None:
         rt = self.runtime

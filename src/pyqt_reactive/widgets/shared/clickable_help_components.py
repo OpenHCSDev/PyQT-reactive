@@ -1,5 +1,7 @@
 """PyQt6 clickable help components - clean architecture without circular imports."""
 
+from objectstate import DottedFieldPath
+
 import inspect
 import logging
 from collections.abc import Callable
@@ -530,7 +532,7 @@ class ProvenanceNavigationMixin:
         """
         if not self._state or not self._dotted_path:
             return None
-        return self._state.get_provenance(self._dotted_path)
+        return DottedFieldPath(self._dotted_path).bind(self._state).provenance
 
     def _has_provenance(self) -> bool:
         """Whether this field's value is inherited from another field."""

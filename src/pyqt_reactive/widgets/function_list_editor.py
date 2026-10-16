@@ -1179,11 +1179,6 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             new_entries=new_entries,
         )
 
-    def _patch_lazy_constructors(self):
-        """Context manager that patches lazy dataclass constructors to preserve None vs concrete distinction."""
-        from objectstate import patch_lazy_constructors
-
-        return patch_lazy_constructors()
 
     def _move_function(self, index, direction):
         """Move function up or down.
@@ -1460,9 +1455,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             # ObjectState is authoritative.
             return
 
-        self.current_group_by = state.get_resolved_value("processing_config.group_by")
+        self.current_group_by = state.fields.processing_config.group_by.value
         self.current_variable_components = (
-            state.get_resolved_value("processing_config.variable_components") or []
+            state.fields.processing_config.variable_components.value or []
         )
         self._refresh_component_button()
 

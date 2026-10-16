@@ -9,7 +9,7 @@ from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
 
 from .no_scroll_spinbox import (
     IgnoreWheelEventMixin,
-    NoneAwareCheckBox,
+    InheritedCheckBox,
 )
 from .no_scroll_spinbox import (
     NoScrollComboBox as NoScrollComboBox,
@@ -27,7 +27,7 @@ from .status_indicator import (
 
 __all__ = [
     *(widget_type.__name__ for widget_type in IgnoreWheelEventMixin.__subclasses__()),
-    "NoneAwareCheckBox",
+    "InheritedCheckBox",
     "StatusIndicator",
     "StatusState",
     "ThemedCheckBox",

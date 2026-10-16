@@ -13,6 +13,7 @@ from typing import ClassVar, get_args, get_origin
 
 from magicgui.widgets import Widget as MagicGuiWidget
 from magicgui.widgets import create_widget
+from objectstate.field_value import FieldValue, Unset
 from objectstate import DataclassFieldAccess
 from PyQt6.QtGui import QIntValidator, QValidator
 from PyQt6.QtWidgets import (
@@ -56,7 +57,7 @@ from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.qt_types import QtKeySequenceText
 from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 from pyqt_reactive.widgets import (
-    NoneAwareCheckBox,
+    InheritedCheckBox,
     NoScrollComboBox,
     NoScrollDoubleSpinBox,
 )
@@ -107,10 +108,10 @@ class DebouncedTextSignalMixin:
             emitter.disconnect()
 
 
-class NoneAwareTextValueMixin(DebouncedTextSignalMixin):
+class FieldTextValueMixin(DebouncedTextSignalMixin, PlaceholderStateMixin):
     """Shared text assignment for widgets that encode None as empty text."""
 
-    def set_value(self, value: ParameterValue | None) -> None:
+    def _write_concrete_value(self, value: ParameterValue | None) -> None:
         if value is None:
             text_value = ""
         else:
@@ -125,9 +126,12 @@ class NoneAwareTextValueMixin(DebouncedTextSignalMixin):
         """Implement ChangeSignalEmitter ABC."""
         self.disconnect_debounced_text_signal(callback)
 
+    def _signal_sources(self):
+        return ((self, self.textChanged, self._native_input),)
 
-class NoneAwareLineEdit(
-    NoneAwareTextValueMixin,
+
+class InheritedLineEdit(
+    FieldTextValueMixin,
     PlaceholderStateMixin,
     QLineEdit,
     ValueGettable,
@@ -137,16 +141,12 @@ class NoneAwareLineEdit(
 ):
     """QLineEdit that properly handles None values for lazy dataclass contexts."""
 
-    def get_value(self):
-        """Get value, returning None for empty text instead of empty string."""
-        text = self.text().strip()
-        if text == "":
-            return None
-        return text
+    def _read_concrete_value(self):
+        return self.text().strip()
 
 
-class NoneAwareIntEdit(
-    NoneAwareTextValueMixin,
+class InheritedIntEdit(
+    FieldTextValueMixin,
     PlaceholderStateMixin,
     QLineEdit,
     ValueGettable,
@@ -166,7 +166,7 @@ class NoneAwareIntEdit(
         self._committed_value = value
         super().set_value(value)
 
-    def get_value(self):
+    def _read_concrete_value(self):
         """Return the edited integer, or the committed value for invalid text."""
         is_acceptable, value = self._interpreted_text_value()
         if is_acceptable:
@@ -188,7 +188,7 @@ class NoneAwareIntEdit(
     def _commit_current_text(self) -> int | None:
         is_acceptable, value = self._interpreted_text_value()
         if not is_acceptable:
-            raise RuntimeError("Cannot commit invalid NoneAwareIntEdit text")
+            raise RuntimeError("Cannot commit invalid InheritedIntEdit text")
         self._committed_value = value
         return value
 
@@ -198,7 +198,7 @@ class NoneAwareIntEdit(
             return True, None
         validator = self.validator()
         if validator is None:
-            raise TypeError("NoneAwareIntEdit requires a QIntValidator before value extraction")
+            raise TypeError("InheritedIntEdit requires a QIntValidator before value extraction")
         state, _, _ = validator.validate(text, 0)
         if state != QValidator.State.Acceptable:
             return False, None
@@ -206,7 +206,7 @@ class NoneAwareIntEdit(
 
 
 class TypedLiteralContainerEdit(
-    NoneAwareTextValueMixin,
+    FieldTextValueMixin,
     PlaceholderStateMixin,
     QLineEdit,
     ValueGettable,
@@ -231,17 +231,20 @@ class TypedLiteralContainerEdit(
         self._param_type = param_type
 
     def set_value(self, value: ParameterValue | None) -> None:
+        if not FieldValue.of(value).available():
+            super().set_value(value)
+            return
         value = self._project_container(value)
         self._validate_container(value)
         super().set_value(project_literal_edit_value(value))
 
-    def get_value(self) -> ParameterValue | None:
+    def _read_concrete_value(self) -> ParameterValue | None:
         """Parse the complete editor text or fail before it reaches ObjectState."""
         return self._parse_current_text()
 
     def validate_current_value(self) -> None:
-        """Validate the editor through the same parser used for value extraction."""
-        self._parse_current_text()
+        """Validate local input, without parsing an inherited or absent draft."""
+        self.get_value()
 
     def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
         """Emit only complete literals of the declared container kind."""
@@ -384,7 +387,7 @@ class TypedLiteralValidator(QValidator):
 
 
 class TypedLiteralUnionEdit(
-    NoneAwareTextValueMixin,
+    FieldTextValueMixin,
     PlaceholderStateMixin,
     QLineEdit,
     ValueGettable,
@@ -417,14 +420,17 @@ class TypedLiteralUnionEdit(
         )
 
     def set_value(self, value: ParameterValue | None) -> None:
+        if not FieldValue.of(value).available():
+            super().set_value(value)
+            return
         projected = project_literal_edit_value(value)
         super().set_value(projected)
 
-    def get_value(self) -> ParameterValue | None:
+    def _read_concrete_value(self) -> ParameterValue | None:
         return self._parse_text(self.text())
 
     def validate_current_value(self) -> None:
-        self._parse_text(self.text())
+        self.get_value()
 
     def connect_change_signal(self, callback: ParameterSignalCallback) -> None:
         self.connect_debounced_text_signal(
@@ -515,30 +521,25 @@ class UnsupportedWidgetTypeError(TypeError):
 class DirectWidgetFactory:
     """Typed factory for simple widgets that bypass magicgui."""
 
-    def create_int(self, current_value: ParameterValue | None = None) -> NoneAwareIntEdit:
-        widget = NoneAwareIntEdit()
-        if current_value is not None:
-            widget.set_value(current_value)
+    def create_int(self, current_value: ParameterValue = Unset()) -> InheritedIntEdit:
+        widget = InheritedIntEdit()
+        widget.set_value(current_value)
         return widget
 
-    def create_float(self, current_value: ParameterValue | None = None) -> NoScrollDoubleSpinBox:
+    def create_float(self, current_value: ParameterValue = Unset()) -> NoScrollDoubleSpinBox:
         widget = NoScrollDoubleSpinBox()
         widget.setRange(WidgetConfig.NUMERIC_RANGE_MIN, WidgetConfig.NUMERIC_RANGE_MAX)
         widget.setDecimals(WidgetConfig.FLOAT_PRECISION)
-        if current_value is not None:
-            widget.setValue(float(current_value))
-        else:
-            widget.clear()
+        widget.set_value(current_value)
         return widget
 
-    def create_bool(self, current_value: ParameterValue | None = None) -> NoneAwareCheckBox:
-        widget = NoneAwareCheckBox()
-        if current_value is not None:
-            widget.setChecked(bool(current_value))
+    def create_bool(self, current_value: ParameterValue = Unset()) -> InheritedCheckBox:
+        widget = InheritedCheckBox()
+        widget.set_value(current_value)
         return widget
 
     def create_string(self, current_value: ParameterValue | None = None) -> QLineEdit:
-        widget = NoneAwareLineEdit()
+        widget = InheritedLineEdit()
         widget.set_value(current_value)
         return widget
 
@@ -595,7 +596,7 @@ class CheckboxGroupWidgetFactory:
         layout.setSpacing(2)
 
         for value, label in items:
-            checkbox = NoneAwareCheckBox()
+            checkbox = InheritedCheckBox()
             checkbox.setText(label)
             checkbox.setObjectName(f"{param_name}_{label}")
             widget._checkboxes[value] = checkbox
@@ -954,13 +955,13 @@ def create_enhanced_path_widget(param_name: str = "", current_value: ParameterVa
 
 
 def _create_none_aware_int_widget():
-    """Factory function for NoneAwareIntEdit widgets."""
-    return NoneAwareIntEdit()
+    """Factory function for InheritedIntEdit widgets."""
+    return InheritedIntEdit()
 
 
 def _create_none_aware_checkbox():
-    """Factory function for NoneAwareCheckBox widgets."""
-    return NoneAwareCheckBox()
+    """Factory function for InheritedCheckBox widgets."""
+    return InheritedCheckBox()
 
 
 def convert_widget_value_to_type(
@@ -1221,7 +1222,7 @@ class PlaceholderRenderer:
             was_blocked = widget.blockSignals(True)
             try:
                 widget.setChecked(default_value)
-                if isinstance(widget, NoneAwareCheckBox):
+                if isinstance(widget, InheritedCheckBox):
                     widget.set_placeholder_preview(default_value)
             finally:
                 widget.blockSignals(was_blocked)

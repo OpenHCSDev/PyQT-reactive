@@ -282,7 +282,7 @@ class EnhancedPathWidget(
 
         self._apply_styling()
         self._setup_signals()
-        self.set_path(current_value)
+        self.set_value(current_value)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt virtual method name
         """Preserve a usable editor width beside the browse affordance."""
@@ -335,9 +335,9 @@ class EnhancedPathWidget(
         """Handle text change in path input."""
         self.path_changed.emit(text)
 
-    def set_path(self, value: Path | str | None) -> None:
+    def _write_concrete_value(self, value: Path | str | None) -> None:
         """Set path value without triggering signals."""
-        self.path_input.blockSignals(True)
+        previous = self.path_input.blockSignals(True)
         try:
             if value is not None:
                 # Set actual value
@@ -347,33 +347,18 @@ class EnhancedPathWidget(
                 # For None values, clear the text to show placeholder
                 self.path_input.clear()
         finally:
-            self.path_input.blockSignals(False)
+            self.path_input.blockSignals(previous)
 
-    def get_path(self) -> str | None:
+    def _read_concrete_value(self) -> str | None:
         """Get current path value, returning None for empty strings."""
         text = self.path_input.text().strip()
         if text == "":
             return None
         return text
 
-    def get_value(self) -> str | None:
-        """Implement ValueGettable ABC - alias for get_path()."""
-        return self.get_path()
 
-    def set_value(self, value: Path | str | None) -> None:
-        """Implement ValueSettable ABC - alias for set_path()."""
-        self.set_path(value)
 
-    def connect_change_signal(self, callback: Callable[[str], None]) -> None:
-        """Implement ChangeSignalEmitter ABC."""
-        self.path_changed.connect(callback)
 
-    def disconnect_change_signal(self, callback: Callable[[str], None]) -> None:
-        """Implement ChangeSignalEmitter ABC."""
-        try:
-            self.path_changed.disconnect(callback)
-        except TypeError:
-            pass
 
     def _open_dialog(self):
         """Open appropriate Qt dialog based on behavior."""
@@ -399,7 +384,7 @@ class EnhancedPathWidget(
 
             if selected_path:
                 path_obj = Path(selected_path)
-                self.set_path(path_obj)
+                self.set_value(path_obj)
                 self.path_changed.emit(str(path_obj))
 
                 # Cache the selection (directory for files, path itself for directories)
@@ -408,3 +393,6 @@ class EnhancedPathWidget(
 
         except Exception as e:
             logger.error(f"Failed to open dialog: {e}")
+
+    def _signal_sources(self):
+        return ((self, self.path_changed, self._native_input),)
