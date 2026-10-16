@@ -29,7 +29,6 @@ from .widget_creation_types import (
     ParameterFormManager, ParameterInfo, DisplayInfo, FieldIds,
     LayoutKind, OptionalTitleComponents, WidgetBuildContext, WidgetCreationConfig
 )
-from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 from pyqt_reactive.services.widget_service import WidgetService
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveParameterRow
 from formbridge.forms.layout_constants import CURRENT_LAYOUT
@@ -1295,7 +1294,7 @@ class WidgetCreationPipeline:
                 PyQt6WidgetEnhancer.connect_change_signal(
                     rt.container,
                     rt.param_info.name,
-                    self.on_widget_change,
+                    rt.manager.update_parameter,
                 )
                 logger.debug(
                     "[CREATE_INLINE_DATACLASS] param_info.name=%s, stored inline container in manager.widgets",
@@ -1307,7 +1306,7 @@ class WidgetCreationPipeline:
             return
 
         rt.manager.widgets[rt.param_info.name] = rt.main_widget
-        PyQt6WidgetEnhancer.connect_change_signal(rt.main_widget, rt.param_info.name, self.on_widget_change)
+        PyQt6WidgetEnhancer.connect_change_signal(rt.main_widget, rt.param_info.name, rt.manager.update_parameter)
         if rt.manager.read_only:
             WidgetService.make_readonly(rt.main_widget, rt.manager.config.color_scheme)
 
@@ -1316,21 +1315,6 @@ class WidgetCreationPipeline:
 
         rt = self.runtime
         rt.manager.chrome_sync.update_label_styling(rt.param_info.name)
-
-    def on_widget_change(self, pname, value) -> None:
-        from objectstate import ObjectStateRegistry
-
-        manager = self.runtime.manager
-        converted_value = manager._convert_widget_value(value, pname)
-        event = FieldChangeEvent(pname, converted_value, manager)
-        if manager.state and manager.state._parent_state is not None:
-            with ObjectStateRegistry.atomic(
-                "edit parameter",
-                scope_id=manager.scope_id,
-            ):
-                FieldChangeDispatcher.instance().dispatch(event)
-        else:
-            FieldChangeDispatcher.instance().dispatch(event)
 
     def _log_widget(self, stage: str, widget: QWidget | None) -> None:
         rt = self.runtime

@@ -9,6 +9,7 @@ from objectstate import (
     DataclassFieldAccess,
     DottedFieldPath,
     FieldAccessError,
+    FieldProxy,
     register_hierarchy_relationship,
     unregister_hierarchy_relationship,
 )
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
     from pyqt_reactive.widgets.structural_table import StructuralFlashTarget
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 
 from formbridge.forms.parameter_info_types import ParameterInfo
 from formbridge.forms.parameter_value_contracts import (
@@ -37,7 +38,7 @@ from formbridge.forms.parameter_value_contracts import (
     ParameterValue,
     WidgetValue,
 )
-from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
+from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldResetEvent, FieldWriteEvent
 
 # LiveContextService deleted - functionality moved to ObjectStateRegistry
 from formbridge.services.flag_context_manager import FlagContextManager
@@ -138,24 +139,13 @@ class ParameterFormTypeResolver:
     @staticmethod
     def field_type(manager: "ParameterFormManager", field_name: str, signature_type: Type) -> Type:
         dotted_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
-        if not manager.state.has_parameter_descendants(dotted_path):
-            return signature_type
-
-        state_type = manager.state.type_for_path(dotted_path)
-        if isinstance(state_type, type) and is_dataclass(state_type):
-            return state_type
-        return signature_type
+        value = DottedFieldPath(dotted_path).bind(manager.state).value
+        return type(value) if is_dataclass(value) else signature_type
 
     @staticmethod
-    def scoped_parameters(state, field_id: str) -> ParameterDefaultsByName:
-        """Project ObjectState's flat parameters into one form manager scope."""
-        return ParameterDefaultsByName(
-            (
-                parameter_path.field_name,
-                state.parameters[parameter_path.value],
-            )
-            for parameter_path in state.direct_parameter_paths(field_id)
-        )
+    def scoped_parameters(fields) -> ParameterDefaultsByName:
+        """Project admitted direct fields into this form's input-name boundary."""
+        return ParameterDefaultsByName((field.name, field.raw) for field in fields.children)
 
 
 class ParameterFormManager(
@@ -220,21 +210,8 @@ class ParameterFormManager(
 
     @property
     def parameters(self) -> ParameterDefaultsByName:
-        """Get parameters scoped to this PFM's field_id.
-
-        With flat storage, filters state.parameters to only include fields
-        under this PFM's prefix, and strips the prefix from keys.
-
-                Example:
-                    state.parameters = {
-                        'well_filter_config.well_filter': 2,
-                        'well_filter_config.enabled': True,
-                        'some_other_field': 'value'
-                    }
-                    PFM with field_id='well_filter_config' returns:
-                    {'well_filter': 2, 'enabled': True}
-        """
-        return ParameterFormTypeResolver.scoped_parameters(self.state, self.field_id)
+        """Project admitted raw drafts onto this form's local input names."""
+        return ParameterFormTypeResolver.scoped_parameters(self.fields)
 
     @property
     def form_build_complete(self) -> bool:
@@ -275,41 +252,18 @@ class ParameterFormManager(
 
     @property
     def parameter_types(self) -> ParameterTypesByName:
-        """Derive parameter types from object_instance using UnifiedParameterAnalyzer.
-
-        Single code path for all object types - that's the point of UnifiedParameterAnalyzer.
-        Uses self.object_instance (target object for this PFM's scope), NOT self.state.object_instance (root).
-        Filters by self.parameters keys (already scoped/stripped for nested PFMs).
-        """
-        from python_introspect import UnifiedParameterAnalyzer
-
-        param_info_dict = UnifiedParameterAnalyzer.analyze(self.object_instance)
-        return ParameterTypesByName(
-            (name, info.param_type)
-            for name, info in param_info_dict.items()
-            if name in self.parameters
-        )
+        """Read annotations from this scope's canonical declarations."""
+        return ParameterTypesByName((field.name, field.annotation) for field in self.fields.children)
 
     @property
     def param_defaults(self) -> ParameterDefaultsByName:
-        """Derive defaults from object_instance (the saved baseline).
-
-        Uses self.object_instance (target object for this PFM's scope), NOT self.state.object_instance (root).
-        Uses self.parameters keys (already scoped/stripped for nested PFMs).
-        """
-        if not is_dataclass(type(self.object_instance)):
-            return ParameterDefaultsByName()
-        return ParameterDefaultsByName(
-            DataclassFieldAccess.raw_items(
-                self.object_instance,
-                iter(self.parameters.keys()),
-            )
-        )
+        """Read declaration defaults, never confuse them with a saved baseline."""
+        return ParameterDefaultsByName((field.name, field.default) for field in self.fields.children)
 
     @property
     def _parameter_descriptions(self) -> Dict[str, str]:
-        """Delegate to ObjectState._parameter_descriptions."""
-        return self.state.parameter_descriptions
+        """Project declaration descriptions onto UI/document addresses."""
+        return {field.address.value: field.description for field in self.state.fields}
 
     def __init__(self, state: "ObjectState", config: Optional[FormManagerConfig] = None):
         """
@@ -359,7 +313,7 @@ class ParameterFormManager(
         # _extraction_target is editable config object (e.g., PipelineConfig)
         target_obj = state.saved_object
         if self.field_id:
-            resolved_target = state.get_resolved_value(self.field_id)
+            resolved_target = DottedFieldPath(self.field_id).bind(state).value
             if resolved_target is not None:
                 target_obj = resolved_target
             elif config.function_target is not None:
@@ -382,9 +336,11 @@ class ParameterFormManager(
         with timer(f"ParameterFormManager.__init__ ({target_type_name})", threshold_ms=5.0):
             QWidget.__init__(self, config.parent)
             self._disposed = False
+            self._state_observers = ExitStack()
 
-            # Store ObjectState reference - PFM delegates MODEL to state
+            # The namespace admits this form's declarations once, before controls.
             self.state = state
+            self.fields = DottedFieldPath(self.field_id).bind(state) if self.field_id else state.fields
             self._form_widget: Optional[QWidget] = None
             self._extra_repaint_callbacks: List[Callable[[], None]] = []
 
@@ -456,9 +412,7 @@ class ParameterFormManager(
                 param_info_dict = UnifiedParameterAnalyzer.analyze(
                     target_obj, exclude_params=config.exclude_params
                 )
-                scoped_parameters = ParameterFormTypeResolver.scoped_parameters(
-                    state, self.field_id
-                )
+                scoped_parameters = ParameterFormTypeResolver.scoped_parameters(self.fields)
                 derived_param_types = {
                     name: ParameterFormTypeResolver.field_type(self, name, info.param_type)
                     for name, info in param_info_dict.items()
@@ -476,7 +430,7 @@ class ParameterFormManager(
                     param_type=param_type,
                     # Provide descriptions as a dotted-path dict (optionally deferred)
                     # so downstream lookup is simple and collision-free.
-                    description=lambda: state.parameter_descriptions,
+                    description=lambda: self._parameter_descriptions,
                     object_instance=target_obj,  # Use nested object for nested PFMs
                 )
                 form_config = ConfigBuilderService.build(
@@ -571,17 +525,11 @@ class ParameterFormManager(
             with timer("  Connect signals", threshold_ms=1.0):
                 SignalService.connect_all_signals(self)
 
-                # NOTE: Cross-window registration now handled by CALLER using:
-                #   with SignalService.cross_window_registration(manager):
-                #       dialog.exec()
-                # For backward compatibility during migration, we still register here
-                # TODO: Remove this after all callers are updated to use context manager
-                SignalService.register_cross_window_signals(self)
 
             # Flash animation: Subscribe to resolved value changes (root only)
             # NOTE: _init_visual_update_mixin() is called earlier (before setup_ui)
             if self._parent_manager is None:
-                self.state.on_resolved_changed(self._on_resolved_values_changed)
+                self._state_observers.callback(self.fields.subscribe_value(self._on_resolved_values_changed))
                 logger.debug(
                     f"🔔 CALLBACK_LEAK_DEBUG: Registered callback for {self.field_id} (PFM id={id(self)}), "
                     f"total callbacks on ObjectState: {len(self.state._on_resolved_changed_callbacks)}, "
@@ -590,7 +538,7 @@ class ParameterFormManager(
 
             # Materialized state changes: Subscribe once (root only)
             if self._parent_manager is None:
-                self.state.on_state_changed(self._on_materialized_state_changed)
+                self._state_observers.callback(self.fields.subscribe(self._on_materialized_state_changed))
 
             # STEP 8: _user_set_fields starts empty and is populated only when user edits widgets
             # (via _emit_parameter_change). Do NOT populate during initialization, as that would
@@ -826,15 +774,9 @@ class ParameterFormManager(
 
         With flat storage, prepends field_id to create full dotted path.
         """
-        if param_name not in self.parameters:
-            return
-
-        # Convert value using service layer
+        field = DottedFieldPath(self._object_state_path_for_field(param_name)).bind(self.state)
         converted_value = self.service.convert_value_to_type(
-            value,
-            self.parameter_types.get(param_name, type(value)),
-            param_name,
-            type(self.object_instance),
+            value, field.annotation, field.name, field.declaring_type,
         )
 
         # Update corresponding widget if it exists
@@ -868,12 +810,12 @@ class ParameterFormManager(
             with ObjectStateRegistry.atomic("edit parameter", scope_id=self.scope_id):
                 # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
                 # This is INSIDE the atomic block so parent step updates are also coalesced
-                event = FieldChangeEvent(param_name, converted_value, self)
+                event = FieldWriteEvent(field, self, converted_value)
                 FieldChangeDispatcher.instance().dispatch(event)
             logger.debug(f"[ATOMIC_CHECK] Exited atomic block for {param_name}")
         else:
             # Route through dispatcher for consistent behavior (sibling refresh, cross-window, etc.)
-            event = FieldChangeEvent(param_name, converted_value, self)
+            event = FieldWriteEvent(field, self, converted_value)
             FieldChangeDispatcher.instance().dispatch(event)
 
     def reset_parameter(self, param_name: str) -> None:
@@ -881,13 +823,9 @@ class ParameterFormManager(
 
         With flat storage, prepends field_id to create full dotted path.
         """
-        if param_name not in self.parameters:
-            return
-
+        field = DottedFieldPath(self._object_state_path_for_field(param_name)).bind(self.state)
         with FlagContextManager.reset_context(self, block_cross_window=False):
-            self._parameter_ops_service.reset_parameter(self, param_name)
-
-        self.chrome_sync.dispatch_reset(param_name)
+            FieldChangeDispatcher.instance().dispatch(FieldResetEvent(field, self))
 
         # Update label styling after reset
         self.chrome_sync.update_label_styling(param_name)
@@ -940,9 +878,6 @@ class ParameterFormManager(
             refreshed_compound_owner_paths,
         )
 
-    def sync_enabled_field_visuals(self, value: ParameterValue) -> None:
-        """Synchronize enabled-field dependent styling after an enabled change."""
-        self.chrome_sync.enabled_field_visuals(value)
 
     def register_field_flash_target(
         self,
@@ -1037,9 +972,8 @@ class ParameterFormManager(
         from objectstate import ObjectStateRegistry
 
         ObjectStateRegistry.disconnect_listener(self._on_live_context_changed)
-        if self._parent_manager is None:
-            self.state.off_resolved_changed(self._on_resolved_values_changed)
-            self.state.off_state_changed(self._on_materialized_state_changed)
+        self._state_observers.close()
+        self._enabled_field_styling_service.invalidate_widget_cache(self)
         if self.context_obj is not None and self._parent_manager is None:
             unregister_hierarchy_relationship(type(self.object_instance))
             ObjectStateRegistry.increment_token(notify=False)
@@ -1051,8 +985,9 @@ class ParameterFormManager(
         """
         self.chrome_sync.refresh_widgets_from_state()
 
-    def _on_materialized_state_changed(self, changed_paths: Set[str]) -> None:
-        """Refresh dirty/signature chrome after materialized ObjectState changes."""
+    def _on_materialized_state_changed(self, changed_fields: Set[FieldProxy]) -> None:
+        """Project admitted changes onto the UI's navigation/paint addresses."""
+        changed_paths = {field.address.value for field in changed_fields}
         if self._parent_manager is not None:
             return
         if changed_paths:
@@ -1067,7 +1002,7 @@ class ParameterFormManager(
 
     # ==================== GROUPBOX FLASH ANIMATION (FlashMixin) ====================
 
-    def _on_resolved_values_changed(self, changed_paths: Set[str]):
+    def _on_resolved_values_changed(self, changed_fields: Set[FieldProxy]):
         """Handle resolved value changes - queue flashes AND refresh placeholders.
 
         SCOPE-AWARE: This callback is fired by THIS window's ObjectState, so we only
@@ -1083,7 +1018,7 @@ class ParameterFormManager(
         if self._parent_manager is not None:
             return  # Only root manager handles this
 
-        self._pending_resolved_changed_paths.update(changed_paths)
+        self._pending_resolved_changed_paths.update(field.address.value for field in changed_fields)
         if self._resolved_changed_flush_scheduled:
             return
         self._resolved_changed_flush_scheduled = True
@@ -1101,7 +1036,6 @@ class ParameterFormManager(
         deferred_state_refresh_paths = self._pending_path_scoped_state_refresh or set()
         state_refresh_paths = changed_paths | deferred_state_refresh_paths
 
-        from objectstate import ObjectStateRegistry
         from objectstate.time_travel_profile import TimeTravelProfiler
 
         logger.debug(
@@ -1129,19 +1063,11 @@ class ParameterFormManager(
                 )
             self._pending_path_scoped_state_refresh = None
 
-        if ObjectStateRegistry.is_restoring_snapshot():
-            # CRITICAL: Refresh enabled styling for all managers after time-travel
-            # Widget updates bypass the FieldChangeDispatcher (signals blocked), so styling
-            # isn't triggered automatically. We must manually sync styling to match restored state.
-            with TimeTravelProfiler.phase(
-                "pyqt.form.refresh_enabled_styling",
-                scope=self.state.scope_id,
-            ):
-                self._apply_to_nested_managers(
-                    lambda _, manager: (
-                        manager._enabled_field_styling_service.refresh_enabled_styling(manager)
-                    )
-                )
+        # Backend edits and history restores use the same canonical paint path.
+        with TimeTravelProfiler.phase(
+            "pyqt.form.refresh_enabled_styling", scope=self.state.scope_id,
+        ):
+            self._enabled_field_styling_service.refresh_enabled_styling(self)
 
         # For each changed path, register and queue a LEAF flash
         with TimeTravelProfiler.phase(

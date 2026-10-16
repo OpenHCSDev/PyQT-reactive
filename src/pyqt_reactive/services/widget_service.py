@@ -1,3 +1,5 @@
+
+from objectstate import DottedFieldPath
 from objectstate.field_value import FieldValue
 """
 Consolidated Widget Service.
@@ -135,7 +137,7 @@ class WidgetService:
 
         if resolved_description is None:
             dotted = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-            raw = manager.state.parameter_descriptions.get(dotted)
+            raw = DottedFieldPath(dotted).bind(manager.state).description
             if raw is not None:
                 resolved_description = raw if isinstance(raw, str) else raw.description
 
@@ -305,21 +307,21 @@ class WidgetService:
         self.show_resolved_value_as_placeholder(widget, param_name, manager)
 
     def show_resolved_value_as_placeholder(self, widget: QWidget, param_name: str, manager) -> bool:
-        """Preview an unset field: show the value it resolves to; return whether one was shown.
+        """Preview an inherited field; return whether a value was shown.
 
-        The preview is the state's resolved read of the field. The field's own
-        value stays unset, and the source of the shown value is the same state's
-        ``get_provenance`` answer for the same path.
+        The admitted field owns the resolved read and provenance. Its draft
+        remains Inherit; literal None and Unset are not inherited previews.
         """
         from objectstate import LazyDefaultPlaceholderService
 
         full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-        raw_value = manager.state.parameters[full_path]
+        field = DottedFieldPath(full_path).bind(manager.state)
+        raw_value = field.raw
         if not FieldValue.of(raw_value).inherited:
             if self.widget_enhancer.has_placeholder_state(widget):
                 self._dispatch_widget_update(widget, raw_value)
             return False
-        resolved_value = manager.state.get_resolved_value(full_path)
+        resolved_value = field.value
         placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
             resolved_value, manager.config.placeholder_prefix
         )
@@ -358,20 +360,7 @@ class WidgetService:
 
     def get_widget_value(self, widget: QWidget) -> Any:
         """Get widget value using ABC-based polymorphism."""
-        from pyqt_reactive.protocols.widget_protocols import (
-            PlaceholderStateTrackable,
-            ValueGettable,
-            WidgetCapability,
-            widget_supports_capability,
-        )
-        if (
-            widget_supports_capability(widget, WidgetCapability.PLACEHOLDER_STATE)
-            and isinstance(widget, PlaceholderStateTrackable)
-            and widget.has_placeholder_state()
-        ):
-            return None
-
+        from pyqt_reactive.protocols.widget_protocols import ValueGettable
         if isinstance(widget, ValueGettable):
             return widget.get_value()
-
-        return None
+        raise TypeError(f"{type(widget).__name__} does not own a field value")

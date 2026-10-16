@@ -841,7 +841,7 @@ class SectionedDataclassEditor(
             param_info=param_info,
             current_value=current_value,
         )
-        resolved = context.state.get_resolved_value(context.owner_path.value)
+        resolved = DottedFieldPath(context.owner_path.value).bind(context.state).value
         return cls(
             RawDisplayValue(
                 cls.value_type,

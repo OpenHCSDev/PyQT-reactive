@@ -1455,9 +1455,9 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
             # ObjectState is authoritative.
             return
 
-        self.current_group_by = state.get_resolved_value("processing_config.group_by")
+        self.current_group_by = state.fields.processing_config.group_by.value
         self.current_variable_components = (
-            state.get_resolved_value("processing_config.variable_components") or []
+            state.fields.processing_config.variable_components.value or []
         )
         self._refresh_component_button()
 

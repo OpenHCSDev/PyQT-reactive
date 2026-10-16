@@ -1,5 +1,8 @@
 """Enabled Field Styling Service - Visual styling for enabled/disabled states."""
 
+from objectstate import FieldProxy, FieldValue
+from python_introspect import Enableable
+
 import logging
 from collections.abc import Iterable
 from typing import Any
@@ -7,7 +10,7 @@ from weakref import WeakKeyDictionary
 
 from objectstate.time_travel_profile import TimeTravelProfiler
 from PyQt6 import sip
-from PyQt6.QtWidgets import QCheckBox, QGraphicsOpacityEffect, QLabel, QWidget
+from PyQt6.QtWidgets import QGraphicsOpacityEffect, QLabel, QWidget
 
 from pyqt_reactive.protocols import PlaceholderStateTrackable, ValueGettable
 
@@ -18,11 +21,12 @@ class EnabledFieldStylingService:
     """
     Service for applying visual styling based on enabled field state.
 
-    Stateless service that encapsulates all enabled field styling operations.
+    Backend fields own enablement. This owner keeps widget discovery and the
+    last painted effective state, never an alternative data value.
     """
 
     def __init__(self):
-        """Initialize enabled field styling service (stateless - imports dependencies)."""
+        """Keep presentation resources bounded by their manager lifetimes."""
         from pyqt_reactive.forms.widget_operations import WidgetOperations
         self.widget_ops = WidgetOperations
         self._last_enabled_values: WeakKeyDictionary[Any, bool] = WeakKeyDictionary()
@@ -64,145 +68,50 @@ class EnabledFieldStylingService:
         self._last_enabled_values.pop(manager, None)
         self.apply_initial_enabled_styling(manager)
     
+    @staticmethod
+    def _enabled_field(manager):
+        return next((field for field in manager.fields.children if Enableable.is_parameter_key(field.name)), None)
+
     def apply_initial_enabled_styling(self, manager) -> None:
-        """
-        Apply initial enabled field styling based on resolved value from widget.
-
-        This is called once after all widgets are created to ensure initial styling matches the enabled state.
-
-        CRITICAL: This should NOT be called for optional dataclass nested managers when instance is None.
-        The None state dimming is handled by the optional dataclass checkbox handler.
-
-        Args:
-            manager: ParameterFormManager instance
-        """
-        # Check if this is a nested manager inside an optional dataclass with None instance
+        """Paint this materialized scope from its canonical effective value."""
         if self._should_skip_optional_dataclass_styling(manager, "INITIAL ENABLED STYLING"):
             return
-
         self._last_enabled_values.pop(manager, None)
-        logger.debug(
-            "[INITIAL_STYLING] field_id=%s, cleared cache to force initial styling",
-            manager.field_id,
-        )
+        field = self._enabled_field(manager)
+        if field is not None:
+            self._paint_enabled_scope(manager, field)
 
-        # Get the enabled widget
-        enabled_widget = manager.widgets.get('enabled')
-        if not enabled_widget:
-            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, no enabled widget found")
-            return
-        if sip.isdeleted(enabled_widget):
-            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, enabled widget was deleted")
-            return
-
-        # Get resolved value from checkbox
-        if isinstance(enabled_widget, QCheckBox):
-            resolved_value = enabled_widget.isChecked()
-            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, resolved_value={resolved_value} (from checkbox)")
-        else:
-            # Fallback to parameter value
-            resolved_value = manager.parameters.get('enabled')
-            if resolved_value is None:
-                resolved_value = True  # Default to enabled if we can't resolve
-            logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, resolved_value={resolved_value} (from parameter)")
-
-        # Call the enabled handler with the resolved value
-        self.on_enabled_field_changed(manager, 'enabled', resolved_value)
-    
     def refresh_enabled_styling(self, manager) -> None:
-        """
-        Refresh enabled styling for a form and all nested forms.
-        
-        This should be called when context changes that might affect inherited enabled values.
-        Similar to placeholder refresh, but for enabled field styling.
-        
-        CRITICAL: Skip optional dataclass nested managers when instance is None.
-        
-        Args:
-            manager: ParameterFormManager instance
-        """
-        # Check if this is a nested manager inside an optional dataclass with None instance
+        """Own the single enabled-paint traversal for this form subtree."""
         if self._should_skip_optional_dataclass_styling(manager, "REFRESH ENABLED STYLING"):
             return
-        
-        # Refresh this form's enabled styling if it has an enabled field
-        if 'enabled' in manager.parameters:
-            # Get the enabled widget to read the CURRENT resolved value
-            enabled_widget = manager.widgets.get('enabled')
-            if enabled_widget and sip.isdeleted(enabled_widget):
-                logger.debug(f"[REFRESH ENABLED STYLING] field_id={manager.field_id}, enabled widget was deleted")
-                return
-            if enabled_widget and isinstance(enabled_widget, QCheckBox):
-                # Use the checkbox's current state (which reflects resolved placeholder)
-                resolved_value = enabled_widget.isChecked()
-            else:
-                # Fallback to parameter value
-                resolved_value = manager.parameters.get('enabled')
-                if resolved_value is None:
-                    resolved_value = True
-            
-            # Apply styling with the resolved value
-            self.on_enabled_field_changed(manager, 'enabled', resolved_value)
-        
-        # Recursively refresh all nested forms' enabled styling
+        field = self._enabled_field(manager)
+        if field is not None:
+            self._paint_enabled_scope(manager, field)
         for nested_manager in manager.nested_managers.values():
             self.refresh_enabled_styling(nested_manager)
-    
-    def on_enabled_field_changed(self, manager, param_name: str, value: Any) -> None:
-        """
-        Apply visual styling when 'enabled' parameter changes.
 
-        This handler is connected for ANY form that has an 'enabled' parameter.
-        When enabled resolves to False, apply visual dimming WITHOUT blocking input.
+    def on_enabled_field_changed(self, manager, field: FieldProxy) -> None:
+        """A changed enable declaration invalidates its scope and descendants."""
+        if Enableable.is_parameter_key(field.name):
+            self.refresh_enabled_styling(manager)
 
-        PERFORMANCE: Early exit if value unchanged to avoid redundant styling.
+    @staticmethod
+    def _is_enabled(field: FieldProxy) -> bool:
+        value = field.value
+        return FieldValue.of(value).has_value and bool(value)
 
-        Args:
-            manager: ParameterFormManager instance
-            param_name: Parameter name (should be 'enabled')
-            value: New value (True/False/None)
-        """
-        if param_name != 'enabled':
+    def _paint_enabled_scope(self, manager, field: FieldProxy) -> None:
+        effective = self._is_enabled(field) and not self._is_any_ancestor_disabled(manager)
+        if manager in self._last_enabled_values and self._last_enabled_values[manager] == effective:
             return
-
-        logger.debug(f"[ENABLED_HANDLER] >>> CALLED for field_id={manager.field_id}, value={value}")
-
-        # Resolve lazy value
-        if value is None:
-            # Lazy field - get the resolved value from ObjectState
-            # This ensures we get the actual resolved value, not the raw parameter
-            full_path = f"{manager.field_id}.enabled" if manager.field_id else "enabled"
-            resolved_value = manager.state.get_resolved_value(full_path)
-            if resolved_value is None:
-                # True is the default for enabled fields
-                resolved_value = True
-        else:
-            resolved_value = value
-
-        # PERFORMANCE: Skip if value hasn't changed
-        if (
-            manager in self._last_enabled_values
-            and self._last_enabled_values[manager] == resolved_value
-        ):
-            logger.debug(f"[ENABLED_HANDLER] field_id={manager.field_id}, SKIP (value unchanged: {resolved_value})")
-            return
-        self._last_enabled_values[manager] = resolved_value
-
-        logger.debug(f"[ENABLED_HANDLER] field_id={manager.field_id}, resolved_value={resolved_value}")
-
-        # Get direct widgets (excluding nested managers) - CACHED
+        self._last_enabled_values[manager] = effective
         direct_widgets = self._get_direct_widgets(manager)
-        logger.debug(f"[ENABLED_HANDLER] field_id={manager.field_id}, direct_widgets count={len(direct_widgets)}")
-
-        # Check if this is a nested config
-        is_nested_config = manager._parent_manager is not None and any(
-            nested_manager == manager for nested_manager in manager._parent_manager.nested_managers.values()
-        )
-
-        if is_nested_config:
-            self._apply_nested_config_styling(manager, resolved_value)
+        if manager.form_tree.owning_groupbox(manager) is not None:
+            self._apply_nested_config_styling(manager, effective)
         else:
-            self._apply_top_level_styling(manager, resolved_value, direct_widgets)
+            self._apply_top_level_styling(manager, effective, direct_widgets)
+
     
     def _should_skip_optional_dataclass_styling(self, manager, log_prefix: str) -> bool:
         """
@@ -268,29 +177,14 @@ class EnabledFieldStylingService:
         return direct_widgets
     
     def _is_any_ancestor_disabled(self, manager) -> bool:
-        """
-        Check if any ancestor form has enabled=False.
-
-        This is used to determine if a nested config should remain dimmed
-        even if its own enabled field is True.
-
-        Args:
-            manager: ParameterFormManager instance
-
-        Returns:
-            True if any ancestor has enabled=False, False otherwise
-        """
         current = manager._parent_manager
         while current is not None:
-            if 'enabled' in current.parameters:
-                enabled_widget = current.widgets.get('enabled')
-                if enabled_widget and sip.isdeleted(enabled_widget):
-                    return False
-                if enabled_widget and isinstance(enabled_widget, QCheckBox):
-                    if not enabled_widget.isChecked():
-                        return True
+            field = self._enabled_field(current)
+            if field is not None and not self._is_enabled(field):
+                return True
             current = current._parent_manager
         return False
+
 
     def _apply_nested_config_styling(self, manager, resolved_value: bool) -> None:
         """
@@ -308,11 +202,7 @@ class EnabledFieldStylingService:
 
         logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, applying to GroupBox container")
 
-        # Check if ANY ancestor has enabled=False
-        ancestor_is_disabled = self._is_any_ancestor_disabled(manager)
-        logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, ancestor_is_disabled={ancestor_is_disabled}")
-
-        should_dim = ancestor_is_disabled or not resolved_value
+        should_dim = not resolved_value
         widgets = self._get_value_widgets(group_box)
         with TimeTravelProfiler.phase(
             "pyqt.enabled.apply_nested",
@@ -330,58 +220,9 @@ class EnabledFieldStylingService:
             group_box.update()
 
     def _apply_top_level_styling(self, manager, resolved_value: bool, direct_widgets: list) -> None:
-        """
-        Apply styling to a top-level form (step, function).
+        """Paint only this scope; refresh_enabled_styling owns descendant work."""
+        self._set_widgets_dimmed(direct_widgets, not resolved_value, skip_labels=not resolved_value)
 
-        Args:
-            manager: ParameterFormManager instance
-            resolved_value: Resolved enabled value (True/False)
-            direct_widgets: List of direct widgets (excluding nested managers)
-        """
-        if resolved_value:
-            # Enabled=True: Remove dimming from direct widgets
-            logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, removing dimming (enabled=True)")
-            self._set_widgets_dimmed(direct_widgets, False)
-
-            # Trigger refresh of all nested configs' enabled styling
-            logger.debug(f"[ENABLED HANDLER] Refreshing nested configs' enabled styling")
-            for nested_manager in manager.nested_managers.values():
-                self.refresh_enabled_styling(nested_manager)
-        else:
-            # Enabled=False: Apply dimming to direct widgets + ALL nested configs
-            logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, applying dimming (enabled=False)")
-            self._set_widgets_dimmed(
-                direct_widgets,
-                True,
-                skip_labels=True,
-            )
-
-            # Also dim all nested configs
-            logger.debug(f"[ENABLED HANDLER] Dimming nested configs, found {len(manager.nested_managers)} nested managers")
-            logger.debug(f"[ENABLED HANDLER] Available widget keys: {list(manager.widgets.keys())}")
-            for param_name, nested_manager in manager.nested_managers.items():
-                group_box = manager.widgets.get(param_name)
-                logger.debug(f"[ENABLED HANDLER] Checking nested config {param_name}, group_box={group_box.__class__.__name__ if group_box else 'None'}")
-                if not group_box:
-                    logger.debug(f"[ENABLED HANDLER] ⚠️ No group_box found for nested config {param_name}, trying nested_manager.field_id={nested_manager.field_id}")
-                    # Try using the nested manager's field_id instead
-                    group_box = manager.widgets.get(nested_manager.field_id)
-                    if not group_box:
-                        logger.debug(f"[ENABLED HANDLER] ⚠️ Still no group_box found, skipping")
-                        continue
-                if sip.isdeleted(group_box):
-                    continue
-
-                widgets_to_dim = self._get_value_widgets(group_box)
-                logger.debug(f"[ENABLED HANDLER] Applying dimming to nested config {param_name}, found {len(widgets_to_dim)} widgets")
-                changed = self._set_widgets_dimmed(
-                    widgets_to_dim,
-                    True,
-                    preserve_placeholder_paint=False,
-                )
-
-                if changed:
-                    group_box.update()
 
     def _get_value_widgets(self, container) -> list:
         """Return cached nominal value widgets for a stable form container."""

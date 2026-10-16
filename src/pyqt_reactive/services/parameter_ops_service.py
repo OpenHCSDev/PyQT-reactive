@@ -1,205 +1,24 @@
-"""
-Consolidated Parameter Operations Service.
-
-Merges:
-- ParameterResetService: Type-safe parameter reset with discriminated union dispatch
-- PlaceholderRefreshService: Placeholder resolution and live context management
-
-Key features:
-1. Type-safe dispatch using ParameterInfo discriminated unions
-2. Auto-discovery of handlers via ParameterServiceABC
-3. Placeholder resolution with live context from other windows
-4. Consistent widget update + signal emission
-"""
+"""Refresh inherited previews; admitted mutation events own writes and resets."""
 
 from __future__ import annotations
 
+
 import logging
-from typing import TYPE_CHECKING
 
 from formbridge.core.performance_monitor import get_monitor, timer
-from formbridge.services.parameter_service_abc import ParameterServiceABC
 
-if TYPE_CHECKING:
-    from formbridge.forms.parameter_info_types import (
-        DirectDataclassInfo,
-        GenericInfo,
-        InlineDataclassWidgetInfo,
-        OptionalDataclassInfo,
-    )
 
 logger = logging.getLogger(__name__)
 
 
-class ParameterOpsService(ParameterServiceABC):
-    """
-    Consolidated service for parameter reset and placeholder refresh.
-
-    Examples:
-        service = ParameterOpsService()
-
-        # Reset parameter:
-        service.reset_parameter(manager, param_name)
-        
-        # Refresh placeholders with live context:
-        service.refresh_with_live_context(manager)
-        
-        # Refresh all placeholders in a form:
-        service.refresh_all_placeholders(manager)
-    """
-
-    def __init__(self):
-        """Initialize with widget operations dependency."""
-        super().__init__()
-        from pyqt_reactive.forms.widget_operations import WidgetOperations
-        self.widget_ops = WidgetOperations
-
-    @staticmethod
-    def _get_effective_context_obj(manager):
-        """
-        Get the context object to use when building the context stack.
-
-        Falls back to the parent manager's object_instance when this manager
-        has no explicit context_obj so nested configs still see their parent
-        layer for sibling inheritance.
-        """
-        if manager.context_obj is not None:
-            return manager.context_obj
-
-        parent = manager._parent_manager
-        if parent is not None:
-            return parent.object_instance
-
-        return None
-
-    def _get_handler_prefix(self) -> str:
-        """Return handler method prefix for auto-discovery."""
-        return '_reset_'
-
-    # ========== PARAMETER RESET (from ParameterResetService) ==========
-
-    def reset_parameter(self, manager, param_name: str) -> None:
-        """Reset parameter using type-safe dispatch."""
-        info = manager.form_structure.get_parameter_info(param_name)
-        if info is None:
-            # Parameter not in form structure (e.g., enabled rendered in header)
-            # Fall back to direct state reset
-            dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
-            manager.state.reset_parameter(dotted_path)
-            reset_value = manager.state.parameters.get(dotted_path)
-
-            # Invalidate cache token
-            from objectstate import ObjectStateRegistry
-            ObjectStateRegistry.increment_token()
-
-            # Update widget directly if exists
-            if param_name in manager.widgets:
-                widget = manager.widgets[param_name]
-                from .signal_service import SignalService
-                with SignalService.block_signals(widget):
-                    manager._widget_service.overwrite_widget_value(
-                        widget, reset_value, param_name, skip_context_behavior=False, manager=manager
-                    )
-            # Emit event for consistency
-            from .field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
-            event = FieldChangeEvent(param_name, reset_value, manager, is_reset=True)
-            FieldChangeDispatcher.instance().dispatch(event)
-            return
-        self.dispatch(info, manager)
-
-    def _reset_OptionalDataclassInfo(self, info: OptionalDataclassInfo, manager) -> None:
-        """Reset Optional[Dataclass] field - sync checkbox and reset nested manager."""
-        param_name = info.name
-        # CRITICAL: Compute full dotted path for nested PFMs
-        dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
-        # MODEL mutation through ObjectState (handles tracking)
-        manager.state.reset_parameter(dotted_path)
-        reset_value = manager.state.parameters.get(dotted_path)
-
-        if param_name in manager.widgets:
-            container = manager.widgets[param_name]
-            from .widget_service import WidgetService
-            from .signal_service import SignalService
-
-            checkbox = WidgetService.find_optional_checkbox(manager, param_name)
-            if checkbox:
-                with SignalService.block_signals(checkbox):
-                    checkbox.setChecked(reset_value is not None and reset_value.enabled)
-
-            group = WidgetService.find_group_box(container)
-            if group:
-                group.setEnabled(reset_value is not None)
-
-        nested_manager = manager.nested_managers.get(param_name)
-        if nested_manager:
-            nested_manager.reset_all_parameters()
-
-    def _reset_DirectDataclassInfo(self, info: DirectDataclassInfo, manager) -> None:
-        """Reset direct Dataclass field - reset nested manager only.
-
-        NOTE: We do NOT call update_widget_value on the container widget here.
-        DirectDataclass fields use GroupBoxWithHelp containers which don't implement
-        ValueSettable (they're just containers, not value widgets). The nested manager's
-        reset_all_parameters() call handles resetting all the actual value widgets inside.
-        """
-        param_name = info.name
-        nested_manager = manager.nested_managers.get(param_name)
-        if nested_manager:
-            nested_manager.reset_all_parameters()
-
-    def _reset_GenericInfo(self, info: GenericInfo, manager) -> None:
-        """Reset generic field to signature default.
-
-        MODEL mutation through ObjectState, then VIEW-only widget updates.
-        """
-        self._reset_value_widget_parameter(info.name, manager)
-
-    def _reset_InlineDataclassWidgetInfo(
-        self,
-        info: InlineDataclassWidgetInfo,
-        manager,
-    ) -> None:
-        """Reset inline dataclass value widget to its signature default."""
-        self._reset_value_widget_parameter(info.name, manager)
-
-    def _reset_value_widget_parameter(self, param_name: str, manager) -> None:
-        """Reset a parameter whose form widget owns its value directly."""
-        dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
-        manager.state.reset_parameter(dotted_path)
-        reset_value = manager.state.parameters.get(dotted_path)
-
-        from objectstate import ObjectStateRegistry
-        ObjectStateRegistry.increment_token()
-
-        if param_name not in manager.widgets:
-            return
-
-        widget = manager.widgets[param_name]
-        from .signal_service import SignalService
-        with SignalService.block_signals(widget):
-            manager._widget_service.overwrite_widget_value(
-                widget,
-                reset_value,
-                param_name,
-                skip_context_behavior=False,
-                manager=manager,
-            )
-
-    # DELETED: _get_reset_value - ObjectState owns defaults
-    # DELETED: _update_reset_tracking - ObjectState.reset_parameter handles tracking
-
-    # ========== PLACEHOLDER REFRESH (from PlaceholderRefreshService) ==========
-
-    # DELETED: refresh_affected_siblings - moved to FieldChangeDispatcher
+class ParameterOpsService:
+    """Refresh inherited previews for already materialized form trees."""
 
     def refresh_single_placeholder(self, manager, field_name: str) -> None:
         """Refresh placeholder for a single field in a manager.
 
-        Only updates if:
-        1. The field exists as a widget in the manager
-        2. The current value is None (needs placeholder)
-
-        Uses ObjectState.get_resolved_value() for resolution, then formats for display.
+        WidgetService admits inherited fields and paints their canonical read;
+        literal None and absence do not become inheritance.
 
         Args:
             manager: The manager containing the field
@@ -218,18 +37,7 @@ class ParameterOpsService(ParameterServiceABC):
         if not PyQt6WidgetEnhancer.supports_placeholder(widget):
             return
 
-        if manager._widget_service.show_resolved_value_as_placeholder(widget, field_name, manager):
-            # Keep enabled-field styling in sync when placeholder changes the visual state
-            if field_name == 'enabled':
-                try:
-                    resolved_value = manager._widget_ops.get_value(widget)
-                    manager._enabled_field_styling_service.on_enabled_field_changed(
-                        manager, 'enabled', resolved_value
-                    )
-                except Exception:
-                    logger.exception("Failed to apply enabled styling after placeholder refresh")
-        else:
-            logger.warning(f"        ⚠️  No placeholder text computed")
+        manager._widget_service.show_resolved_value_as_placeholder(widget, field_name, manager)
 
     def refresh_with_live_context(self, manager, defer: bool = False) -> None:
         """Refresh placeholders using live values from tree registry.
@@ -256,13 +64,7 @@ class ParameterOpsService(ParameterServiceABC):
     def _refresh_form_tree(self, manager) -> None:
         """Refresh one manager subtree without overlapping recursive traversals."""
         self._refresh_placeholder_tree(manager)
-        manager._apply_to_nested_managers(
-            lambda _name, nested_manager: (
-                nested_manager._enabled_field_styling_service.refresh_enabled_styling(
-                    nested_manager
-                )
-            )
-        )
+        manager._enabled_field_styling_service.refresh_enabled_styling(manager)
         self._refresh_root_flash_registrations(manager)
 
     def _refresh_placeholder_tree(self, manager) -> None:
@@ -279,10 +81,7 @@ class ParameterOpsService(ParameterServiceABC):
         manager.reregister_flash_elements()
 
     def refresh_all_placeholders(self, manager) -> None:
-        """Refresh placeholder text for all widgets in a form.
-
-        Uses ObjectState.get_resolved_value() for resolution, then formats for display.
-        """
+        """Refresh previews through WidgetService's inheritance admission."""
         with timer(f"_refresh_all_placeholders ({manager.field_id})", threshold_ms=5.0):
             if not manager.object_instance:
                 logger.debug(f"[PLACEHOLDER] {manager.field_id}: No obj_type, skipping")

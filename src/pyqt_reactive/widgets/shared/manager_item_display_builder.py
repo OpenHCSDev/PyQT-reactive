@@ -137,7 +137,7 @@ class _ManagerItemDisplayBuilder:
             and item_format.detail_line_field is not None
             and state is not None
         ):
-            resolved_detail = state.get_resolved_value(item_format.detail_line_field)
+            resolved_detail = DottedFieldPath(item_format.detail_line_field).bind(state).value
             if resolved_detail is not None:
                 detail_line = str(resolved_detail)
 
@@ -204,7 +204,7 @@ class _ManagerItemDisplayBuilder:
             if is_enableable(config_type):
                 enabled_field = Enableable.require_parameter_name()
                 enabled_path = f"{path}.{enabled_field}" if path else enabled_field
-                resolved_enabled = state.get_resolved_value(enabled_path)
+                resolved_enabled = DottedFieldPath(enabled_path).bind(state).value
                 is_enabled = resolved_enabled is True
                 if is_enabled:
                     add_field_path(enabled_path)

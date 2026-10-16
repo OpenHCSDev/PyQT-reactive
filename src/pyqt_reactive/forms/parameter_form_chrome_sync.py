@@ -6,7 +6,6 @@ from collections.abc import Iterable
 from typing import Any, Set
 
 from objectstate import DottedFieldPath, FieldValue
-from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
 
 
 class ParameterFormChromeSync:
@@ -34,12 +33,6 @@ class ParameterFormChromeSync:
         for field_name in self.manager.reset_buttons:
             self.manager._update_reset_button_styling(field_name)
 
-    def enabled_field_visuals(self, value: Any) -> None:
-        from python_introspect import Enableable
-
-        self.manager._enabled_field_styling_service.on_enabled_field_changed(
-            self.manager, Enableable.require_parameter_name(), value
-        )
 
     def fields_materialized(self, field_names: Iterable[str]) -> None:
         """Apply existing chrome authorities to newly visible form fields."""
@@ -281,9 +274,8 @@ class ParameterFormChromeSync:
         for param_name, widget in manager.widgets.items():
             if isinstance(widget, ValueSettable):
                 dotted_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-                if dotted_path in manager.state.parameters:
-                    value = manager.state.parameters.get(dotted_path)
-                    manager._widget_service.update_widget_value(widget, value, param_name, False, manager)
+                value = DottedFieldPath(dotted_path).bind(manager.state).raw
+                manager._widget_service.update_widget_value(widget, value, param_name, False, manager)
 
         for nested_manager in manager.nested_managers.values():
             nested_manager.chrome_sync.refresh_widgets_from_state()
@@ -298,7 +290,6 @@ class ParameterFormChromeSync:
         from objectstate.time_travel_profile import TimeTravelProfiler
 
         manager = self.manager
-        missing = object()
         refreshed_container_paths: set[str] = set()
         refreshed_compound_owner_paths: set[str] = set()
 
@@ -324,18 +315,15 @@ class ParameterFormChromeSync:
                     )
                     if owner_path != path and owner_path not in refreshed_container_paths:
                         owner_widget = manager.widgets.get(owner_field)
-                        raw_value = manager.state.parameters.get(owner_path, missing)
+                        field = DottedFieldPath(owner_path).bind(manager.state)
+                        raw_value = field.raw
                         with TimeTravelProfiler.phase(
                             "pyqt.chrome.resolve_owner_value",
                             manager_field_id=manager.field_id,
                             owner_field=owner_field,
                         ):
-                            resolved_value = manager.state.get_resolved_value(owner_path)
-                        combined_update = (
-                            raw_value is not missing
-                            and raw_value != resolved_value
-                            and isinstance(owner_widget, RawResolvedValueSettable)
-                        )
+                            resolved_value = field.value
+                        combined_update = isinstance(owner_widget, RawResolvedValueSettable)
                         if combined_update:
                             with TimeTravelProfiler.phase(
                                 "pyqt.chrome.update_owner_raw_resolved_value",
@@ -347,30 +335,24 @@ class ParameterFormChromeSync:
                                     resolved_value,
                                 )
                         elif isinstance(owner_widget, ValueSettable):
-                            if raw_value is not missing:
-                                with TimeTravelProfiler.phase(
-                                    "pyqt.chrome.update_owner_widget_value",
-                                    manager_field_id=manager.field_id,
-                                    owner_field=owner_field,
-                                ):
-                                    manager._widget_service.update_widget_value(
-                                        owner_widget,
-                                        raw_value,
-                                        owner_field,
-                                        True,
-                                        manager,
-                                    )
+                            with TimeTravelProfiler.phase(
+                                "pyqt.chrome.update_owner_widget_value",
+                                manager_field_id=manager.field_id,
+                                owner_field=owner_field,
+                            ):
+                                manager._widget_service.update_widget_value(
+                                    owner_widget, raw_value, owner_field, True, manager,
+                                )
                         if (
                             not combined_update
                             and isinstance(owner_widget, ResolvedValuePreviewSettable)
                         ):
-                            if raw_value is missing or raw_value != resolved_value:
-                                with TimeTravelProfiler.phase(
-                                    "pyqt.chrome.update_owner_resolved_preview",
-                                    manager_field_id=manager.field_id,
-                                    owner_field=owner_field,
-                                ):
-                                    owner_widget.set_resolved_value_preview(resolved_value)
+                            with TimeTravelProfiler.phase(
+                                "pyqt.chrome.update_owner_resolved_preview",
+                                manager_field_id=manager.field_id,
+                                owner_field=owner_field,
+                            ):
+                                owner_widget.set_resolved_value_preview(resolved_value)
                         if owner_widget is not None:
                             self._refresh_compound_widget_semantics(
                                 owner_widget,
@@ -382,21 +364,13 @@ class ParameterFormChromeSync:
                 if path_prefix == manager.field_id:
                     widget = manager.widgets.get(leaf_field)
                     if isinstance(widget, ValueSettable):
-                        value = manager.state.parameters.get(path, missing)
-                        if value is not missing:
-                            skip_context_behavior = FieldValue.of(value).inherited
-                            manager._widget_service.update_widget_value(
-                                widget,
-                                value,
-                                leaf_field,
-                                skip_context_behavior,
-                                manager,
-                            )
-                            if FieldValue.of(value).inherited:
-                                manager._parameter_ops_service.refresh_single_placeholder(
-                                    manager,
-                                    leaf_field,
-                                )
+                        value = DottedFieldPath(path).bind(manager.state).raw
+                        skip_context_behavior = FieldValue.of(value).inherited
+                        manager._widget_service.update_widget_value(
+                            widget, value, leaf_field, skip_context_behavior, manager,
+                        )
+                        if FieldValue.of(value).inherited:
+                            manager._parameter_ops_service.refresh_single_placeholder(manager, leaf_field)
 
         with TimeTravelProfiler.phase(
             "pyqt.chrome.refresh_widgets_children",
@@ -416,9 +390,3 @@ class ParameterFormChromeSync:
             self.manager.field_id,
             path,
         )
-
-    def dispatch_reset(self, param_name: str) -> None:
-        dotted_path = f"{self.manager.field_id}.{param_name}" if self.manager.field_id else param_name
-        reset_value = self.manager.state.parameters.get(dotted_path)
-        event = FieldChangeEvent(param_name, reset_value, self.manager, is_reset=True)
-        FieldChangeDispatcher.instance().dispatch(event)

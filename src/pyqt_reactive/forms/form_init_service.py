@@ -100,7 +100,6 @@ class DerivationContext:
     """Context for computing derived config values via properties."""
     context_obj: ParameterFormConfig | FormContext | None
     extracted: ExtractedParameters
-    color_scheme: PyQt6ColorScheme | None
 
     @property
     def global_config_type(self) -> Type:
@@ -557,7 +556,7 @@ def _auto_generate_builders():
             use_scroll_area=use_scroll_area
         )
 
-        ctx = DerivationContext(context_obj, extracted, color_scheme)
+        ctx = DerivationContext(context_obj, extracted)
         vars(config).update(vars(ctx))
 
         from formbridge.forms.parameter_form_service import ParameterAnalysisInput

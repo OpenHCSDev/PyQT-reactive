@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from objectstate import DottedFieldPath
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -84,7 +86,7 @@ class ConfigActionTabs(TabbedFormWidget):
         return tuple(
             action
             for action in self.actions
-            if self.state.get_resolved_value(action.enabled_path) is True
+            if DottedFieldPath(action.enabled_path).bind(self.state).value is True
         )
 
     def set_target_available(self, available: bool) -> None:
