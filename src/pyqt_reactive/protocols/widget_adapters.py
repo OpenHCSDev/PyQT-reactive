@@ -126,7 +126,7 @@ if PYQT6_AVAILABLE:
 
         def get_value(self):
             self._ensure_input_tracking()
-            return self._draft.resolve(lambda: Inherit())
+            return self._draft.resolve(lambda: Inherit()).stored
 
         def set_value(self, value):
             self._ensure_input_tracking()

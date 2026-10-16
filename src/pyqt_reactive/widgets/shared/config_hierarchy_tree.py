@@ -9,6 +9,8 @@ widgets only need to provide their dataclass inputs and navigation callbacks.
 
 from __future__ import annotations
 
+from objectstate.ui_visibility import UIParameterVisibilityPolicy
+
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
@@ -21,7 +23,7 @@ from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QBrush
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 
 from metaclass_registry import AutoRegisterMeta
-from objectstate.lazy_factory import get_base_type_for_lazy, is_lazy_dataclass
+from python_introspect import resolve_declared_type
 from objectstate import is_ui_hidden_config_type
 from pyqt_reactive.widgets.shared.config_tree_contracts import (
     ConfigTreeFlashManager,
@@ -581,7 +583,7 @@ class ConfigHierarchyTreeHelper:
         """Populate the tree given a dict of field_name -> dataclass type."""
         self._current_tree = tree
         for field_name, obj_type in dataclass_mapping.items():
-            base_type = self.get_base_type(obj_type)
+            base_type = resolve_declared_type(obj_type)
             label = self._format_label(base_type.__name__)
             path = field_name
             alt_path = self._to_snake_case(base_type.__name__)
@@ -624,7 +626,7 @@ class ConfigHierarchyTreeHelper:
             if not is_dataclass(field_type):
                 continue
 
-            base_type = self.get_base_type(field_type)
+            base_type = resolve_declared_type(field_type)
             display_name = self._format_label(base_type.__name__)
             ui_hidden = self.is_field_ui_hidden(obj_type, field.name, field_type)
 
@@ -706,32 +708,12 @@ class ConfigHierarchyTreeHelper:
         field_type: Type,
     ) -> bool:
         """Return True if a field should be hidden in the tree."""
-        try:
-            field_obj = next(f for f in fields(obj_type) if f.name == field_name)
-            if "ui_hidden" in field_obj.metadata and bool(
-                field_obj.metadata["ui_hidden"]
-            ):
-                return True
-        except (StopIteration, TypeError):
-            pass
-
-        base_type = self.get_base_type(field_type)
-        if is_ui_hidden_config_type(base_type):
+        field_obj = {item.name: item for item in fields(obj_type)}[field_name]
+        if UIParameterVisibilityPolicy.field_hidden(field_obj):
             return True
 
-        return False
-
-    def get_base_type(self, obj_type: Type) -> Type:
-        """Return the non-lazy base type for a dataclass.
-
-        Lazy dataclass identity is provided by ObjectState's LazyDataclass base
-        and registry, not by class-name shape.
-        """
-        if is_lazy_dataclass(obj_type):
-            base_type = get_base_type_for_lazy(obj_type)
-            if base_type is not None:
-                return base_type
-        return obj_type
+        base_type = resolve_declared_type(field_type)
+        return is_ui_hidden_config_type(base_type)
 
     def activate_item(
         self,
@@ -798,7 +780,7 @@ class ConfigHierarchyTreeHelper:
         for candidate_type in self._annotation_candidate_types(annotation):
             if candidate_type is target_class:
                 return True
-            if self.get_base_type(candidate_type) is target_class:
+            if resolve_declared_type(candidate_type) is target_class:
                 return True
         return False
 
@@ -826,7 +808,7 @@ class ConfigHierarchyTreeHelper:
             if not is_dataclass(cls):
                 continue
 
-            base_type = self.get_base_type(cls)
+            base_type = resolve_declared_type(cls)
             direct_bases.append(base_type)
 
         for base_class in direct_bases:

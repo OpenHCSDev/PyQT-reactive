@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Type
 
 # FlashableGroupBox not extracted - OpenHCS specific
 from objectstate import (
-    DataclassFieldAccess,
     DottedFieldPath,
     FieldAccessError,
     FieldProxy,
@@ -107,47 +106,6 @@ class FormManagerConfig:
     before_mutation: Optional[Callable[[], None]] = None
 
 
-class FormTargetPathAccess:
-    """Path resolver for form targets that may be dataclasses or object-backed."""
-
-    @classmethod
-    def raw_path(cls, root, field_path: str):
-        current = root
-        for part in tuple(part for part in field_path.split(".") if part):
-            current = cls.raw_value(current, part)
-        return current
-
-    @classmethod
-    def raw_value(cls, instance, field_name: str):
-        if DataclassFieldAccess.is_container(instance):
-            return DataclassFieldAccess.raw_value(instance, field_name)
-
-        if type(instance).__dictoffset__ == 0:
-            raise FieldAccessError(f"{type(instance).__name__} has no addressable instance fields.")
-
-        storage = vars(instance)
-        if field_name not in storage:
-            raise FieldAccessError(
-                f"{type(instance).__name__}.{field_name} is not stored on the instance."
-            )
-        return storage[field_name]
-
-
-class ParameterFormTypeResolver:
-    """Resolve visible form field types from ObjectState and signature authorities."""
-
-    @staticmethod
-    def field_type(manager: "ParameterFormManager", field_name: str, signature_type: Type) -> Type:
-        dotted_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
-        value = DottedFieldPath(dotted_path).bind(manager.state).value
-        return type(value) if DataclassFieldAccess.is_container(value) else signature_type
-
-    @staticmethod
-    def scoped_parameters(fields) -> ParameterDefaultsByName:
-        """Project admitted direct fields into this form's input-name boundary."""
-        return ParameterDefaultsByName((field.name, field.raw) for field in fields.children)
-
-
 class ParameterFormManager(
     QWidget,
     ParameterFormManagerABC,
@@ -211,7 +169,7 @@ class ParameterFormManager(
     @property
     def parameters(self) -> ParameterDefaultsByName:
         """Project admitted raw drafts onto this form's local input names."""
-        return ParameterFormTypeResolver.scoped_parameters(self.fields)
+        return ParameterDefaultsByName((field.name, field.raw) for field in self.fields.children)
 
     @property
     def form_build_complete(self) -> bool:
@@ -313,13 +271,8 @@ class ParameterFormManager(
         # _extraction_target is editable config object (e.g., PipelineConfig)
         target_obj = state.saved_object
         if self.field_id:
-            resolved_target = DottedFieldPath(self.field_id).bind(state).value
-            if resolved_target is not None:
-                target_obj = resolved_target
-            elif config.function_target is not None:
-                target_obj = config.function_target
-            else:
-                target_obj = FormTargetPathAccess.raw_path(target_obj, self.field_id)
+            target_obj = (config.function_target if config.function_target is not None
+                          else DottedFieldPath(self.field_id).bind(state).value)
 
         from python_introspect import is_enableable
 
@@ -412,12 +365,8 @@ class ParameterFormManager(
                 param_info_dict = UnifiedParameterAnalyzer.analyze(
                     target_obj, exclude_params=config.exclude_params
                 )
-                scoped_parameters = ParameterFormTypeResolver.scoped_parameters(self.fields)
-                derived_param_types = {
-                    name: ParameterFormTypeResolver.field_type(self, name, info.param_type)
-                    for name, info in param_info_dict.items()
-                    if name in scoped_parameters
-                }
+                scoped_parameters = self.parameters
+                derived_param_types = {field.name: field.annotation for field in self.fields.children}
 
                 # Include enabled field in normal processing (will be moved to title later)
                 default_value = scoped_parameters
@@ -652,11 +601,11 @@ class ParameterFormManager(
         from pyqt_reactive.forms.widget_creation_config import WidgetCreationPipeline
 
         logger.debug(
-            "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s widget_creation_type=%s",
+            "[PFM_CREATE_PARAM] seq=%s field_id=%s param=%s info_class=%s",
             self._pfm_seq,
             self.field_id,
             param_info.name,
-            param_info.widget_creation_type,
+            type(param_info).__name__,
         )
         return WidgetCreationPipeline(self, param_info).run()
 

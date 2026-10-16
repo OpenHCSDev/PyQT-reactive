@@ -6,7 +6,8 @@ from dataclasses import dataclass, fields as dataclass_fields
 from typing import TYPE_CHECKING
 
 from objectstate import DottedFieldPath
-from objectstate.lazy_factory import get_base_type_for_lazy, replace_raw
+from objectstate.lazy_factory import replace_raw
+from python_introspect import resolve_declared_type
 
 if TYPE_CHECKING:
     from objectstate import ObjectState
@@ -57,7 +58,7 @@ class InlineDataclassFormContext:
             if manager.field_id
             else DottedFieldPath(param_info.name)
         )
-        base_type = get_base_type_for_lazy(type(current_value)) or param_info.type
+        base_type = resolve_declared_type(param_info.type)
         return cls(
             state=manager.state,
             manager=manager,

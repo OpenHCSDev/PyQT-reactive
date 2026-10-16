@@ -1049,7 +1049,7 @@ class WidgetCreationPipeline:
         from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
         from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
 
-        creation_type = WidgetCreationType[param_info.widget_creation_type]
+        creation_type = param_info.creation_type(WidgetCreationType)
         config = _WIDGET_CREATION_CONFIG[creation_type]
         display_info = WidgetService.get_parameter_display_info(
             param_info.name,

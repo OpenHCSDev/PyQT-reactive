@@ -74,7 +74,7 @@ class EnabledFieldStylingService:
 
     def apply_initial_enabled_styling(self, manager) -> None:
         """Paint this materialized scope from its canonical effective value."""
-        if self._should_skip_optional_dataclass_styling(manager, "INITIAL ENABLED STYLING"):
+        if not manager.fields.scope_available:
             return
         self._last_enabled_values.pop(manager, None)
         field = self._enabled_field(manager)
@@ -83,7 +83,7 @@ class EnabledFieldStylingService:
 
     def refresh_enabled_styling(self, manager) -> None:
         """Own the single enabled-paint traversal for this form subtree."""
-        if self._should_skip_optional_dataclass_styling(manager, "REFRESH ENABLED STYLING"):
+        if not manager.fields.scope_available:
             return
         field = self._enabled_field(manager)
         if field is not None:
@@ -112,32 +112,6 @@ class EnabledFieldStylingService:
         else:
             self._apply_top_level_styling(manager, effective, direct_widgets)
 
-    
-    def _should_skip_optional_dataclass_styling(self, manager, log_prefix: str) -> bool:
-        """
-        Check if this is a nested manager inside an optional dataclass with None instance.
-        
-        Args:
-            manager: ParameterFormManager instance
-            log_prefix: Prefix for log messages
-        
-        Returns:
-            True if styling should be skipped, False otherwise
-        """
-        if manager._parent_manager is not None:
-            for param_name, nested_manager in manager._parent_manager.nested_managers.items():
-                if nested_manager is manager:
-                    param_type = manager._parent_manager.parameter_types.get(param_name)
-                    if param_type:
-                        from formbridge.forms.parameter_type_utils import ParameterTypeUtils
-                        if ParameterTypeUtils.is_optional_dataclass(param_type):
-                            instance = manager._parent_manager.parameters.get(param_name)
-                            logger.debug(f"[{log_prefix}] field_id={manager.field_id}, optional dataclass check: param_name={param_name}, instance={instance}, is_none={instance is None}")
-                            if instance is None:
-                                logger.debug(f"[{log_prefix}] field_id={manager.field_id}, skipping (optional dataclass instance is None)")
-                                return True
-                    break
-        return False
     
     def _get_direct_widgets(self, manager):
         """

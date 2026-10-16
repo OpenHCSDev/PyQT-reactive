@@ -316,18 +316,16 @@ class WidgetService:
 
         full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
         field = DottedFieldPath(full_path).bind(manager.state)
-        raw_value = field.raw
-        if not FieldValue.is_inherited(raw_value):
+        raw = field.raw_member
+        resolved = field.resolved_member
+        if not raw.inherited_from(resolved):
             if self.widget_enhancer.has_placeholder_state(widget):
-                self._dispatch_widget_update(widget, raw_value)
+                self._dispatch_widget_update(widget, raw.stored)
             return False
-        resolved_value = field.value
-        placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
-            resolved_value, manager.config.placeholder_prefix
+        placeholder_text = LazyDefaultPlaceholderService.format_placeholder(
+            resolved, manager.config.placeholder_prefix
         )
-        if not placeholder_text:
-            return False
-        self.widget_enhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
+        self.widget_enhancer.apply_placeholder_with_value(widget, resolved.stored, placeholder_text)
         return True
 
     def clear_widget_to_default_state(self, widget: QWidget) -> None:
