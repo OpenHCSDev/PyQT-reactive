@@ -127,7 +127,7 @@ class FieldTextValueMixin(DebouncedTextSignalMixin, PlaceholderStateMixin):
         self.disconnect_debounced_text_signal(callback)
 
     def _signal_sources(self):
-        return ((self, self.textChanged),)
+        return ((self, self.textChanged, self._native_input),)
 
 
 class InheritedLineEdit(
@@ -231,7 +231,7 @@ class TypedLiteralContainerEdit(
         self._param_type = param_type
 
     def set_value(self, value: ParameterValue | None) -> None:
-        if not FieldValue.of(value).has_value:
+        if not FieldValue.of(value).available():
             super().set_value(value)
             return
         value = self._project_container(value)
@@ -420,7 +420,7 @@ class TypedLiteralUnionEdit(
         )
 
     def set_value(self, value: ParameterValue | None) -> None:
-        if not FieldValue.of(value).has_value:
+        if not FieldValue.of(value).available():
             super().set_value(value)
             return
         projected = project_literal_edit_value(value)

@@ -317,7 +317,7 @@ class WidgetService:
         full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
         field = DottedFieldPath(full_path).bind(manager.state)
         raw_value = field.raw
-        if not FieldValue.of(raw_value).inherited:
+        if not FieldValue.is_inherited(raw_value):
             if self.widget_enhancer.has_placeholder_state(widget):
                 self._dispatch_widget_update(widget, raw_value)
             return False

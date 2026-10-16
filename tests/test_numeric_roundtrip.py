@@ -4,6 +4,7 @@ import pytest
 from PyQt6.QtCore import QLocale, Qt
 from PyQt6.QtTest import QTest
 
+from objectstate import Inherit
 from pyqt_reactive.protocols import DoubleSpinBoxAdapter
 from pyqt_reactive.widgets import NoScrollDoubleSpinBox
 
@@ -60,9 +61,12 @@ def test_placeholder_and_configured_decimal_precision_are_preserved(qapp):
     widget = NoScrollDoubleSpinBox()
     widget.setLocale(QLocale.c())
     widget.set_placeholder("Inherited")
+    widget.set_value(Inherit())
+    assert isinstance(widget.get_value(), Inherit)
+    assert widget.text() == "Inherited"
     widget.set_value(None)
     assert widget.get_value() is None
-    assert widget.text() == "Inherited"
+    assert widget.text() == "None"
     widget.setDecimals(2)
     widget.set_value(1.234)
     assert widget.get_value() == 1.23

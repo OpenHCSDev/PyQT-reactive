@@ -99,7 +99,7 @@ class EnabledFieldStylingService:
     @staticmethod
     def _is_enabled(field: FieldProxy) -> bool:
         value = field.value
-        return FieldValue.of(value).has_value and bool(value)
+        return FieldValue.of(value).available() and bool(value)
 
     def _paint_enabled_scope(self, manager, field: FieldProxy) -> None:
         effective = self._is_enabled(field) and not self._is_any_ancestor_disabled(manager)

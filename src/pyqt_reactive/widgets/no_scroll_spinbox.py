@@ -158,7 +158,7 @@ class InheritedCheckBox(
         self.setChecked(bool(value))
 
     def _signal_sources(self):
-        return ((self, self.stateChanged),)
+        return ((self, self.stateChanged, self._native_input),)
 
     def _apply_draft_style(self):
         if self.has_placeholder_state():

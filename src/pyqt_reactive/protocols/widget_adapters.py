@@ -21,8 +21,8 @@ from typing import Any
 from objectstate.field_value import FieldValue, Inherit, Unset, Value
 
 try:
-    from PyQt6.QtCore import QLocale, QObject
-    from PyQt6.QtGui import QKeySequence
+    from PyQt6.QtCore import QLocale, QObject, QSignalBlocker
+    from PyQt6.QtGui import QKeySequence, QValidator
     from PyQt6.QtWidgets import (
         QComboBox,
         QDoubleSpinBox,
@@ -95,9 +95,9 @@ if PYQT6_AVAILABLE:
             return ()
 
         def _ensure_input_tracking(self):
-            for owner, signal in self._signal_sources():
+            for owner, signal, receiver in self._signal_sources():
                 if owner not in self._native_connections:
-                    signal.connect(self._native_input)
+                    signal.connect(receiver)
                     self._native_connections[owner] = signal
 
         def _native_input(self, *arguments):
@@ -118,8 +118,11 @@ if PYQT6_AVAILABLE:
         def _read_concrete_value(self):
             raise TypeError(f"{type(self).__name__} does not own a concrete input control")
 
-        def _write_blank_value(self, value):
+        def _write_null_value(self):
             self._write_concrete_value(None)
+
+        def _write_blank_value(self, value):
+            self._write_null_value()
 
         def get_value(self):
             self._ensure_input_tracking()
@@ -128,20 +131,25 @@ if PYQT6_AVAILABLE:
         def set_value(self, value):
             self._ensure_input_tracking()
             draft = FieldValue.of(value)
-            if self._draft.inherited and not draft.inherited:
-                self.clear_placeholder_state()
             previous = self.blockSignals(True)
             try:
+                self.clear_placeholder_state()
                 self._draft = draft
-                if draft.has_value:
-                    self._write_concrete_value(value)
-                    if value is not None:
-                        self._draft = WidgetValue(self._read_concrete_value)
-                else:
-                    self._write_blank_value(value)
+                draft.present_to(self)
                 self._apply_draft_style()
             finally:
                 self.blockSignals(previous)
+
+        def present_value(self, value):
+            """Paint concrete data; numeric controls provide their null view."""
+            if value is None:
+                self._write_null_value()
+            else:
+                self._write_concrete_value(value)
+                self._draft = WidgetValue(self._read_concrete_value)
+
+        def present_directive(self, value):
+            self._write_blank_value(value)
 
         def connect_change_signal(self, callback):
             self._ensure_input_tracking()
@@ -153,13 +161,13 @@ if PYQT6_AVAILABLE:
                 self._input_callbacks.remove(callback)
 
         def has_placeholder_state(self):
-            return self._draft.inherited
+            return FieldValue.is_inherited(self._draft)
 
         def mark_placeholder_state(self):
             self._draft = Inherit()
 
         def clear_placeholder_state(self):
-            if self._draft.inherited:
+            if FieldValue.is_inherited(self._draft):
                 self.setStyleSheet("")
                 self._draft = WidgetValue(self._read_concrete_value)
             self.clear_placeholder_cache()
@@ -212,7 +220,7 @@ if PYQT6_AVAILABLE:
         
 
         def _signal_sources(self):
-            return ((self, self.textChanged),)
+            return ((self, self.textChanged, self._native_input),)
     class KeySequenceEditAdapter(
         PlaceholderStateMixin,
         QKeySequenceEdit,
@@ -241,70 +249,113 @@ if PYQT6_AVAILABLE:
 
 
         def _signal_sources(self):
-            return ((self, self.editingFinished),)
+            return ((self, self.editingFinished, self._native_input),)
 
 
-    class SpinBoxAdapter(PlaceholderStateMixin, QSpinBox, ValueGettable, ValueSettable, PlaceholderCapable,
+    class SpinBoxValueAdapter(PlaceholderStateMixin):
+        """Own numeric draft painting and native admission for both Qt spinboxes.
+
+        Qt special-value text is only a view at its numeric minimum. The draft
+        owns meaning: literal null displays None; directives display their
+        placeholder. A real minimum remains ordinary numeric data.
+        """
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.setRange(*self._default_range)
+            self._write_blank_value(self._draft)
+            self._ensure_input_tracking()
+
+        def _read_concrete_value(self):
+            return self.value()
+
+        def _write_concrete_value(self, value):
+            self.setSpecialValueText("")
+            self.setValue(self._numeric_type(value))
+
+        def _paint_special_text(self, text):
+            with QSignalBlocker(self):
+                self.setSpecialValueText(text)
+                self.setValue(self.minimum())
+
+        def _write_null_value(self):
+            self._paint_special_text("None")
+
+        def _write_blank_value(self, value):
+            self._paint_special_text(self.lineEdit().placeholderText() or repr(value))
+
+        def set_placeholder(self, text):
+            self.lineEdit().setPlaceholderText(text)
+            with QSignalBlocker(self):
+                self._draft.present_to(self)
+
+        def configure_range(self, minimum, maximum):
+            with QSignalBlocker(self):
+                self.setRange(self._numeric_type(minimum), self._numeric_type(maximum))
+                self.set_value(self._draft)
+
+        def _signal_sources(self):
+            return (
+                (self, self.valueChanged, self._native_input),
+                (self.lineEdit(), self.lineEdit().textEdited, self._native_text_input),
+            )
+
+        def _native_text_input(self, text):
+            # Qt emits textEdited before updating its number. Changed numbers
+            # are admitted by valueChanged; only an unchanged number needs
+            # this path to turn a model directive/null into native input.
+            if isinstance(self._draft, WidgetValue):
+                return
+            state, _text, _position = self.validate(text, len(text))
+            if state == QValidator.State.Acceptable and self.valueFromText(text) == self.value():
+                self._native_input()
+
+        def _prepare_input(self):
+            # Qt rewrites its editor even when assigning the same empty text.
+            # Retire the special paint once; do not repaint partial native input.
+            if self.specialValueText():
+                self.setSpecialValueText("")
+
+
+    class SpinBoxAdapter(SpinBoxValueAdapter, QSpinBox, ValueGettable, ValueSettable, PlaceholderCapable,
                          RangeConfigurable, ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
         Adapter for QSpinBox implementing OpenHCS ABCs.
         
-        Handles None values using special value text mechanism.
-        When value is None, displays placeholder text at minimum value.
+        Shared draft behavior comes from SpinBoxValueAdapter.
         """
         
         _widget_id = "spin_box"
+        _numeric_type = int
+        _default_range = (-2147483648, 2147483647)
         
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            # Configure for None-aware behavior
-            self.setSpecialValueText(" ")  # Empty special value = None
-            self.setRange(-2147483648, 2147483647)  # Default int range
         
-        def _read_concrete_value(self):
-            return self.value()
         
-        def _write_concrete_value(self, value: Any) -> None:
-            """Implement ValueSettable ABC."""
-            if value is None:
-                self.setSpecialValueText(" ")
-                self.setValue(self.minimum())
-            else:
-                self.setSpecialValueText("")
-                self.setValue(int(value))
         
-        def set_placeholder(self, text: str) -> None:
-            """Implement PlaceholderCapable ABC."""
-            # For spinbox, placeholder is shown when at minimum with special value text
-            self.setSpecialValueText(text)
         
-        def configure_range(self, minimum: float, maximum: float) -> None:
-            """Implement RangeConfigurable ABC."""
-            self.setRange(int(minimum), int(maximum))
         
         
 
-        def _signal_sources(self):
-            return ((self, self.valueChanged),)
     
     
-    class DoubleSpinBoxAdapter(PlaceholderStateMixin, QDoubleSpinBox, ValueGettable, ValueSettable,
+    class DoubleSpinBoxAdapter(SpinBoxValueAdapter, QDoubleSpinBox, ValueGettable, ValueSettable,
                                PlaceholderCapable, RangeConfigurable,
                                ChangeSignalEmitter, metaclass=PyQtWidgetMeta):
         """
         Adapter for QDoubleSpinBox implementing OpenHCS ABCs.
         
-        Handles None values and floating-point ranges.
+        Shared draft behavior with localized floating-point presentation.
         """
         
         _widget_id = "double_spin_box"
+        _numeric_type = float
+        _default_range = (-1e308, 1e308)
         
         def __init__(self, parent=None):
             from pyqt_reactive.forms.widget_strategies import WidgetConfig
             super().__init__(parent)
-            self.setSpecialValueText(" ")
-            self.setRange(-1e308, 1e308)  # Default float range
-            self.setDecimals(WidgetConfig.FLOAT_PRECISION)  # Use configured precision
+            with QSignalBlocker(self):
+                self.setDecimals(WidgetConfig.FLOAT_PRECISION)
 
         def textFromValue(self, value: float) -> str:  # noqa: N802 - Qt virtual method
             """Display the shortest localized decimal that preserves the value."""
@@ -319,30 +370,12 @@ if PYQT6_AVAILABLE:
                 value, "f", QLocale.FloatingPointPrecisionOption.FloatingPointShortest
             )
         
-        def _read_concrete_value(self):
-            return self.value()
         
-        def _write_concrete_value(self, value: Any) -> None:
-            """Implement ValueSettable ABC."""
-            if value is None:
-                self.setSpecialValueText(" ")
-                self.setValue(self.minimum())
-            else:
-                self.setSpecialValueText("")
-                self.setValue(float(value))
         
-        def set_placeholder(self, text: str) -> None:
-            """Implement PlaceholderCapable ABC."""
-            self.setSpecialValueText(text)
         
-        def configure_range(self, minimum: float, maximum: float) -> None:
-            """Implement RangeConfigurable ABC."""
-            self.setRange(minimum, maximum)
         
         
 
-        def _signal_sources(self):
-            return ((self, self.valueChanged),)
     
     
     class ComboBoxAdapter(PlaceholderStateMixin, QComboBox, ValueGettable, ValueSettable, PlaceholderCapable,
@@ -394,7 +427,7 @@ if PYQT6_AVAILABLE:
         
 
         def _signal_sources(self):
-            return ((self, self.currentIndexChanged),)
+            return ((self, self.currentIndexChanged, self._native_input),)
     
     
     class CheckBoxAdapter(PlaceholderStateMixin, ThemedCheckBox, ValueGettable, ValueSettable,
@@ -418,7 +451,7 @@ if PYQT6_AVAILABLE:
 
 
         def _signal_sources(self):
-            return ((self, self.stateChanged),)
+            return ((self, self.stateChanged, self._native_input),)
 
 
     class CheckboxGroupAdapter(PlaceholderStateMixin, QGroupBox, ValueGettable, ValueSettable,
@@ -482,7 +515,7 @@ if PYQT6_AVAILABLE:
 
 
         def _signal_sources(self):
-            return tuple((checkbox, checkbox.stateChanged) for checkbox in self.checkbox_widgets())
+            return tuple((checkbox, checkbox.stateChanged, self._native_input) for checkbox in self.checkbox_widgets())
 
         def _prepare_input(self):
             for checkbox in self.checkbox_widgets():

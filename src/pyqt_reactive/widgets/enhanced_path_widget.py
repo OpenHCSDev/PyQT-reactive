@@ -395,4 +395,4 @@ class EnhancedPathWidget(
             logger.error(f"Failed to open dialog: {e}")
 
     def _signal_sources(self):
-        return ((self, self.path_changed),)
+        return ((self, self.path_changed, self._native_input),)
