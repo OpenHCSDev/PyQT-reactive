@@ -161,13 +161,13 @@ if PYQT6_AVAILABLE:
                 self._input_callbacks.remove(callback)
 
         def has_placeholder_state(self):
-            return FieldValue.is_inherited(self._draft)
+            return self._draft.inherits()
 
         def mark_placeholder_state(self):
             self._draft = Inherit()
 
         def clear_placeholder_state(self):
-            if FieldValue.is_inherited(self._draft):
+            if self._draft.inherits():
                 self.setStyleSheet("")
                 self._draft = WidgetValue(self._read_concrete_value)
             self.clear_placeholder_cache()

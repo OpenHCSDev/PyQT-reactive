@@ -364,12 +364,13 @@ class ParameterFormChromeSync:
                 if path_prefix == manager.field_id:
                     widget = manager.widgets.get(leaf_field)
                     if isinstance(widget, ValueSettable):
-                        value = DottedFieldPath(path).bind(manager.state).raw
-                        skip_context_behavior = FieldValue.is_inherited(value)
+                        member = DottedFieldPath(path).bind(manager.state).raw_member
+                        value = member.stored
+                        skip_context_behavior = member.inherits()
                         manager._widget_service.update_widget_value(
                             widget, value, leaf_field, skip_context_behavior, manager,
                         )
-                        if FieldValue.is_inherited(value):
+                        if member.inherits():
                             manager._parameter_ops_service.refresh_single_placeholder(manager, leaf_field)
 
         with TimeTravelProfiler.phase(
