@@ -68,7 +68,7 @@ from PySide6.QtWidgets import QWidget
 
 
 class _CombinedMeta(ABCMeta, type(QWidget)):
-    """Combined metaclass for ABC + PyQt6 QWidget."""
+    """Combined metaclass for ABC + PySide6 QWidget."""
 
 
 class ParameterFormManager(ABC, metaclass=_CombinedMeta):

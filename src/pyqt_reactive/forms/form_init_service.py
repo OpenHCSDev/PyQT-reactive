@@ -29,9 +29,9 @@ import logging
 from contextlib import contextmanager
 
 from python_introspect import UnifiedParameterAnalyzer
-from formbridge.forms.parameter_form_base import ParameterFormConfig
-from formbridge.forms.parameter_form_constants import CONSTANTS
-from formbridge.forms.parameter_value_contracts import (
+from pyqt_reactive.forms.parameter_form_base import ParameterFormConfig
+from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
+from pyqt_reactive.forms.parameter_value_contracts import (
     FormContext,
     FormObject,
     GeneratedServiceNamespace,
@@ -40,14 +40,14 @@ from formbridge.forms.parameter_value_contracts import (
     ParameterDescriptionProvider,
     ParameterInfoSequence,
 )
-from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
-from objectstate import DottedFieldPath, get_base_config_type, has_lazy_resolution
+from pyqt_reactive.theming.color_scheme import ColorScheme as PySide6ColorScheme
+from objectstate import get_base_config_type, has_lazy_resolution
 
 if TYPE_CHECKING:
-    from formbridge.forms.parameter_form_service import FormStructure
+    from pyqt_reactive.forms.parameter_form_service import FormStructure
 
 try:
-    from formbridge.core.performance_monitor import timer
+    from pyqt_reactive.core.performance_monitor import timer
 except Exception:  # pragma: no cover - optional performance monitoring
     @contextmanager
     def timer(*args, **kwargs):
@@ -77,8 +77,8 @@ class ExtractedParameters:
     description: ParameterDescriptionByPath | ParameterDescriptionProvider = field(
         default_factory=ParameterDescriptionByPath,
         metadata={
-            'project': lambda name, info, scope_path: (
-                scope_path.child(name).value,
+            'project': lambda name, info, field_id: (
+                f"{field_id}.{name}" if field_id else name,
                 info.description,
             )
         }
@@ -100,7 +100,7 @@ class DerivationContext:
     """Context for computing derived config values via properties."""
     context_obj: ParameterFormConfig | FormContext | None
     extracted: ExtractedParameters
-    color_scheme: PyQt6ColorScheme | None
+    color_scheme: PySide6ColorScheme | None
 
     @property
     def global_config_type(self) -> Type:
@@ -400,11 +400,6 @@ class InitializationServiceCatalog:
     def builder_for(self, output_type: Type, service_name: str):
         """Decorator to register builder function and auto-generate service class."""
         def decorator(func: Callable) -> Callable:
-            if output_type in self._builders_by_output:
-                raise ValueError(
-                    f"{output_type.__qualname__} already has a builder "
-                    f"({self._builders_by_output[output_type].service_name})."
-                )
             self._builders_by_output[output_type] = BuilderSpec(output_type, service_name, func)
             return func
         return decorator
@@ -471,6 +466,7 @@ import pyqt_reactive.services.value_collection_service as value_collection_servi
 import pyqt_reactive.services.signal_service as signal_service
 import pyqt_reactive.services.parameter_ops_service as parameter_ops_service
 import pyqt_reactive.services.enabled_field_styling_service as enabled_field_styling_service
+import pyqt_reactive.services.enum_dispatch_service as enum_dispatch_service
 
 
 class ServiceRegistryMeta(type):
@@ -509,7 +505,6 @@ def _auto_generate_builders():
     """Auto-generate all builder functions via introspection of their output types."""
 
     def _extract_parameters(object_instance, exclude_params, initial_values, field_id=None):
-        scope_path = DottedFieldPath(field_id or "")
         param_info_dict = UnifiedParameterAnalyzer.analyze(object_instance, exclude_params=exclude_params or [])
         extracted = {}
         computed = {}
@@ -522,7 +517,7 @@ def _auto_generate_builders():
             if projection is None:
                 raise ValueError(f"Unsupported extracted parameter field: {fld.name}")
             extracted[fld.name] = dict(
-                projection(name, info, scope_path)
+                projection(name, info, field_id)
                 for name, info in param_info_dict.items()
             )
             if initial_values and fld.metadata.get('initial_values'):
@@ -553,7 +548,7 @@ def _auto_generate_builders():
         config = ParameterFormConfig(
             field_id=field_id,
             framework=CONSTANTS.PYQT6_FRAMEWORK,
-            color_scheme=color_scheme or PyQt6ColorScheme(),
+            color_scheme=color_scheme or PySide6ColorScheme(),
             function_target=function_target,
             use_scroll_area=use_scroll_area
         )
@@ -561,7 +556,7 @@ def _auto_generate_builders():
         ctx = DerivationContext(context_obj, extracted, color_scheme)
         vars(config).update(vars(ctx))
 
-        from formbridge.forms.parameter_form_service import ParameterAnalysisInput
+        from pyqt_reactive.forms.parameter_form_service import ParameterAnalysisInput
         description = extracted.description
         analysis_input = ParameterAnalysisInput(
             field_id=field_id,

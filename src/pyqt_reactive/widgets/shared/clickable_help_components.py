@@ -1,4 +1,4 @@
-"""PyQt6 clickable help components - clean architecture without circular imports."""
+"""PySide6 clickable help components - clean architecture without circular imports."""
 
 import inspect
 import logging
@@ -163,7 +163,7 @@ class FlashableGroupBox(QGroupBox, FlashMixin):
 
 
 class ClickableHelpLabel(QLabel):
-    """PyQt6 clickable label that shows help information - reuses Textual TUI help logic."""
+    """PySide6 clickable label that shows help information - reuses Textual TUI help logic."""
     
     help_requested = Signal()
     
@@ -211,7 +211,7 @@ class ClickableHelpLabel(QLabel):
 
 
 class ClickableFunctionTitle(ClickableHelpLabel):
-    """PyQt6 clickable function title that shows function documentation - mirrors Textual TUI."""
+    """PySide6 clickable function title that shows function documentation - mirrors Textual TUI."""
 
     def __init__(self, func: Callable, index: int = None, color_scheme: Optional[ColorScheme] = None, parent=None):
         super().__init__(
@@ -230,7 +230,7 @@ class ClickableFunctionTitle(ClickableHelpLabel):
 
 
 class ClickableParameterLabel(ClickableHelpLabel):
-    """PyQt6 clickable parameter label that shows parameter documentation - mirrors Textual TUI."""
+    """PySide6 clickable parameter label that shows parameter documentation - mirrors Textual TUI."""
 
     def __init__(self, param_name: str, param_description: str = None,
                  param_type: type = None, color_scheme: Optional[ColorScheme] = None, parent=None):
@@ -250,7 +250,7 @@ class ClickableParameterLabel(ClickableHelpLabel):
 
 
 class HelpIndicator(QLabel, FlashMaskRectProvider, metaclass=PyQtWidgetMeta):
-    """PyQt6 simple help indicator that can be added next to any widget - mirrors Textual TUI."""
+    """PySide6 simple help indicator that can be added next to any widget - mirrors Textual TUI."""
     
     help_requested = Signal()
 
@@ -350,7 +350,7 @@ class HelpIndicator(QLabel, FlashMaskRectProvider, metaclass=PyQtWidgetMeta):
 
 
 class HelpButton(QPushButton):
-    """PyQt6 help button for adding help functionality to any widget - mirrors Textual TUI."""
+    """PySide6 help button for adding help functionality to any widget - mirrors Textual TUI."""
 
     def __init__(self, help_context: HelpContext, text: str = "Help"):
         super().__init__(text, help_context.parent)
@@ -750,7 +750,7 @@ class ProvenanceButton(QPushButton, ProvenanceNavigationMixin):
 
 
 class LabelWithHelp(QWidget):
-    """PyQt6 widget that combines a label with a help indicator - mirrors Textual TUI pattern.
+    """PySide6 widget that combines a label with a help indicator - mirrors Textual TUI pattern.
 
     Uses ProvenanceLabel for the text portion to support click-to-source navigation.
     """
@@ -832,7 +832,7 @@ class LabelWithHelp(QWidget):
 
 
 class FunctionTitleWithHelp(QWidget):
-    """PyQt6 function title with integrated help - mirrors Textual TUI ClickableFunctionTitle."""
+    """PySide6 function title with integrated help - mirrors Textual TUI ClickableFunctionTitle."""
 
     def __init__(self, func: Callable, index: int = None,
                  color_scheme: Optional[ColorScheme] = None, parent=None,
@@ -864,7 +864,7 @@ class GroupBoxWithHelp(
     DirtyMarkerSettable,
     metaclass=PyQtWidgetMeta,
 ):
-    """PyQt6 group box with integrated help for dataclass titles - mirrors Textual TUI pattern.
+    """PySide6 group box with integrated help for dataclass titles - mirrors Textual TUI pattern.
 
     Inherits from FlashableGroupBox to support smooth flash animations.
     Uses paint-time ObjectState-path flash color computation.

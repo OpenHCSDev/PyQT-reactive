@@ -377,10 +377,10 @@ class QtWindowSnapshotService:
     def qt_core():
         """Owning integration's Qt binding; all Qt devices share this authority.
 
-        Reactive forms use PyQt6. A receiving library integration supplies its
+        Reactive forms use PySide6. A receiving library integration supplies its
         existing binding module through this hook, never a widget-type switch.
         """
-        from PyQt6 import QtCore
+        from PySide6 import QtCore
 
         return QtCore
 

@@ -1,5 +1,5 @@
 """
-Shared helpers for rendering configuration hierarchy trees in the PyQt6 GUI.
+Shared helpers for rendering configuration hierarchy trees in the PySide6 GUI.
 
 Both the pipeline ConfigWindow and the StepParameterEditor need to display the
 same inheritance-aware tree that highlights which dataclass sections are

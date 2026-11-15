@@ -166,7 +166,7 @@ class ParameterFormManager(
     metaclass=_CombinedMeta,
 ):
     """
-    React-quality reactive form manager for PyQt6.
+    React-quality reactive form manager for PySide6.
 
     Inherits from both QWidget and ParameterFormManagerABC with combined metaclass.
     All abstract methods MUST be implemented by this class.

@@ -1,5 +1,5 @@
 """
-Selection Preservation Utilities for PyQt6 List Widgets
+Selection Preservation Utilities for PySide6 List Widgets
 
 Simple utility functions for preserving selection when updating QListWidget contents,
 similar to the ButtonListWidget pattern used in the Textual TUI.

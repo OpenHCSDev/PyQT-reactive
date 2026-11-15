@@ -64,7 +64,7 @@ def test_phase_leaves_own_duration_and_opacity(config, phase):
 
 @pytest.fixture
 def actual_surfaces(qapp):
-    from PyQt6 import sip
+    import shiboken6
     from PySide6.QtWidgets import QDialog, QPushButton, QVBoxLayout
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay, _GlobalFlashCoordinator, create_widget_rect_element
 
@@ -96,7 +96,7 @@ def actual_surfaces(qapp):
     coordinator._pending_flash_keys.clear()
     coordinator._active_windows.clear()
     for window in windows:
-        if not sip.isdeleted(window):
+        if not not shiboken6.isValid(window):
             WindowFlashOverlay.cleanup_window(window)
             window.close()
             window.deleteLater()

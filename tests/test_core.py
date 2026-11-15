@@ -84,7 +84,7 @@ def test_delayed_close_cannot_evict_new_window_for_reused_scope(qapp):
 
 def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatch):
     """Qt window discovery never exposes wrappers after C++ object deletion."""
-    from PyQt6 import sip
+    import shiboken6
     from PySide6.QtWidgets import QApplication, QWidget
 
     from pyqt_reactive.services.window_manager import WindowManager
@@ -94,7 +94,7 @@ def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatc
     live_window.show()
     deleted_window.show()
     qapp.processEvents()
-    sip.delete(deleted_window)
+    shiboken6.delete(deleted_window)
     monkeypatch.setattr(
         QApplication,
         "topLevelWidgets",
@@ -110,7 +110,7 @@ def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatc
 
 def test_live_window_projection_contains_deletion_during_projection(qapp):
     """A window deleted after discovery cannot escape through its projection."""
-    from PyQt6 import sip
+    import shiboken6
     from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.services.window_manager import WindowManager
@@ -119,7 +119,7 @@ def test_live_window_projection_contains_deletion_during_projection(qapp):
     window.setWindowTitle("Transient")
 
     def delete_before_read(projected_window):
-        sip.delete(projected_window)
+        shiboken6.delete(projected_window)
         return projected_window.windowTitle()
 
     assert WindowManager.project_live_window(window, delete_before_read) is None
@@ -241,7 +241,7 @@ def test_live_context_refresh_replays_root_flash_registrations():
 
 def test_deferred_live_context_refresh_obeys_manager_qobject_lifetime(qapp):
     """Deferred form work is cancelled when Qt destroys its manager owner."""
-    from PyQt6 import sip
+    import shiboken6
     from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QWidget
 
@@ -269,7 +269,7 @@ def test_deferred_live_context_refresh_obeys_manager_qobject_lifetime(qapp):
     service.refresh_with_live_context(deleted_manager, defer=True)
     deleted_manager.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert sip.isdeleted(deleted_manager)
+    assert not shiboken6.isValid(deleted_manager)
 
     qapp.processEvents()
     assert refreshed == []

@@ -55,12 +55,12 @@ def test_none_aware_checkbox_toggle_commits_placeholder(qapp):
 def test_none_aware_checkbox_resolved_preview_dims_lazy_bool(qapp):
     """Generic placeholder previews dim direct lazy-bool checkmarks."""
     from PySide6.QtGui import QColor, QPalette
-    from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+    from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.widgets import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         widget,
         True,
         "Pipeline default: True",
@@ -102,12 +102,12 @@ def test_none_aware_checkbox_concrete_value_restores_palette(qapp):
 
 def test_none_aware_checkbox_resolved_none_previews_unchecked_placeholder(qapp):
     """Resolved None is owned by the checkbox preview contract, not string parsing."""
-    from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+    from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.widgets import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         widget,
         None,
         "Pipeline default: None",
@@ -122,13 +122,13 @@ def test_none_aware_checkbox_resolved_none_previews_unchecked_placeholder(qapp):
 def test_none_aware_checkbox_rejects_text_only_placeholder_route(qapp):
     """Typed preview widgets cannot bypass the resolved-value rendering ABI."""
     import pytest
-    from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+    from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.widgets import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
     with pytest.raises(TypeError, match="apply_placeholder_with_value"):
-        PyQt6WidgetEnhancer.apply_placeholder_text(
+        PySide6WidgetEnhancer.apply_placeholder_text(
             widget,
             "Pipeline default: True",
         )
@@ -138,7 +138,7 @@ def test_checkbox_group_resolved_preview_uses_child_preview_contract(qapp):
     """Enum checkbox groups preview inherited membership through the same widget ABI."""
     from enum import Enum
     from PySide6.QtGui import QColor, QPalette
-    from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+    from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.protocols import ResolvedValuePreviewSettable
     from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
     from pyqt_reactive.widgets import NoneAwareCheckBox
@@ -155,7 +155,7 @@ def test_checkbox_group_resolved_preview_uses_child_preview_contract(qapp):
 
     assert isinstance(group, ResolvedValuePreviewSettable)
 
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         group,
         [Component.SITE],
         "Pipeline default: [site]",
@@ -1711,24 +1711,24 @@ def test_flash_delegate_update_targets_only_item_rect() -> None:
 
 def test_global_flash_coordinator_recreates_after_qt_owner_deletion(qapp) -> None:
     """The shared coordinator follows the active Qt application's lifetime."""
-    from PyQt6 import sip
+    import shiboken6
     from pyqt_reactive.animation.flash_mixin import _GlobalFlashCoordinator
 
     original = _GlobalFlashCoordinator.get()
     assert original.parent() is qapp
 
-    sip.delete(original)
-    assert sip.isdeleted(original)
+    shiboken6.delete(original)
+    assert not shiboken6.isValid(original)
 
     replacement = _GlobalFlashCoordinator.get()
     assert replacement is not original
     assert replacement.parent() is qapp
-    assert not sip.isdeleted(replacement)
+    assert not not shiboken6.isValid(replacement)
 
 
 def test_window_flash_overlay_registry_discards_deleted_qt_wrapper(qapp) -> None:
     """Overlay lookup never returns a wrapper whose Qt object was destroyed."""
-    from PyQt6 import sip
+    import shiboken6
     from PySide6.QtWidgets import QDialog
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
 
@@ -1736,14 +1736,14 @@ def test_window_flash_overlay_registry_discards_deleted_qt_wrapper(qapp) -> None
     original = WindowFlashOverlay.get_for_window(dialog)
     assert original is not None
 
-    sip.delete(original)
-    assert sip.isdeleted(original)
+    shiboken6.delete(original)
+    assert not shiboken6.isValid(original)
     assert WindowFlashOverlay.live_for_window_id(id(dialog)) is None
 
     replacement = WindowFlashOverlay.get_for_window(dialog)
     assert replacement is not None
     assert replacement is not original
-    assert not sip.isdeleted(replacement)
+    assert not not shiboken6.isValid(replacement)
 
     WindowFlashOverlay.cleanup_window(dialog)
     dialog.close()
@@ -2773,7 +2773,7 @@ def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
     """Destroyed targets clean captured flash state without dereferencing the owner."""
     import sys
 
-    from PyQt6 import sip
+    import shiboken6
     from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
@@ -2827,7 +2827,7 @@ def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
     manager._simulate_deleted_wrapper = True
     manager.deleteLater()
     QCoreApplication.sendPostedEvents(manager, QEvent.Type.DeferredDelete)
-    assert sip.isdeleted(manager)
+    assert not shiboken6.isValid(manager)
     target.deleteLater()
     QCoreApplication.sendPostedEvents(target, QEvent.Type.DeferredDelete)
     qapp.processEvents()
@@ -3276,7 +3276,7 @@ def test_resolved_preview_placeholder_uses_cached_placeholder_text(qapp):
     """Inherited preview widgets are not repainted when placeholder text is unchanged."""
     from pyqt_reactive.forms.widget_strategies import (
         NoneAwareLineEdit,
-        PyQt6WidgetEnhancer,
+        PySide6WidgetEnhancer,
     )
     from pyqt_reactive.protocols import ResolvedValuePreviewSettable
 
@@ -3290,12 +3290,12 @@ def test_resolved_preview_placeholder_uses_cached_placeholder_text(qapp):
 
     widget = PreviewWidget()
 
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         widget,
         "resolved",
         "Pipeline default: resolved",
     )
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         widget,
         "resolved",
         "Pipeline default: resolved",

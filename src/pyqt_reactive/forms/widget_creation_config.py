@@ -60,7 +60,7 @@ class WidgetCreationType(Enum):
     """
     Enum for widget creation strategies - mirrors MemoryType pattern.
 
-    PyQt6 uses 3 parametric types: REGULAR, NESTED, and OPTIONAL_NESTED.
+    PySide6 uses 3 parametric types: REGULAR, NESTED, and OPTIONAL_NESTED.
     """
     REGULAR = "regular"
     INLINE_DATACLASS = "inline_dataclass"
@@ -1048,7 +1048,7 @@ class WidgetCreationPipeline:
     def __init__(self, manager: ParameterFormManager, param_info: ParameterInfo) -> None:
         from PySide6.QtWidgets import QWidget
         from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
-        from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
+        from pyqt_reactive.theming.color_scheme import ColorScheme as PySide6ColorScheme
 
         creation_type = WidgetCreationType[param_info.widget_creation_type]
         config = _WIDGET_CREATION_CONFIG[creation_type]
@@ -1073,7 +1073,7 @@ class WidgetCreationPipeline:
             layout_config=CURRENT_LAYOUT,
             qwidget_type=QWidget,
             groupbox_with_help_type=GroupBoxWithHelp,
-            color_scheme_type=PyQt6ColorScheme,
+            color_scheme_type=PySide6ColorScheme,
         )
         self.runtime = WidgetCreationRuntime(
             manager=manager,
@@ -1173,7 +1173,7 @@ class WidgetCreationPipeline:
 
     def add_regular_label(self) -> None:
         from pyqt_reactive.widgets.shared.clickable_help_components import HelpContext, LabelWithHelp
-        from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
+        from pyqt_reactive.theming.color_scheme import ColorScheme as PySide6ColorScheme
 
         rt = self.runtime
         if not rt.config.needs_label:
@@ -1187,7 +1187,7 @@ class WidgetCreationPipeline:
                 param_name=rt.param_info.name,
                 param_description=rt.ctx.display_info['description'],
                 param_type=rt.param_info.type,
-                color_scheme=rt.manager.config.color_scheme or PyQt6ColorScheme(),
+                color_scheme=rt.manager.config.color_scheme or PySide6ColorScheme(),
                 scope_accent_color=rt.manager._scope_accent_color,
             ),
             state=rt.manager.state,
@@ -1285,14 +1285,14 @@ class WidgetCreationPipeline:
             )
 
     def store_and_connect_widget(self) -> None:
-        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+        from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
 
         rt = self.runtime
         if rt.config.is_nested:
             if rt.creation_type is WidgetCreationType.INLINE_DATACLASS:
                 rt.container.set_value_widget(rt.main_widget)
                 rt.manager.widgets[rt.param_info.name] = rt.container
-                PyQt6WidgetEnhancer.connect_change_signal(
+                PySide6WidgetEnhancer.connect_change_signal(
                     rt.container,
                     rt.param_info.name,
                     self.on_widget_change,
@@ -1307,7 +1307,7 @@ class WidgetCreationPipeline:
             return
 
         rt.manager.widgets[rt.param_info.name] = rt.main_widget
-        PyQt6WidgetEnhancer.connect_change_signal(rt.main_widget, rt.param_info.name, self.on_widget_change)
+        PySide6WidgetEnhancer.connect_change_signal(rt.main_widget, rt.param_info.name, self.on_widget_change)
         if rt.manager.read_only:
             WidgetService.make_readonly(rt.main_widget, rt.manager.config.color_scheme)
 

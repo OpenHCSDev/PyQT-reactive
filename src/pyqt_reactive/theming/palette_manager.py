@@ -1,5 +1,5 @@
 """
-QPalette Manager for OpenHCS PyQt6 GUI
+QPalette Manager for OpenHCS PySide6 GUI
 
 Manages QPalette integration with ColorScheme for system-wide theming.
 Provides utilities for applying color schemes to Qt's palette system and

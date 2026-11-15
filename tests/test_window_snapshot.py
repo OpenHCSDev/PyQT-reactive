@@ -76,9 +76,9 @@ def observed_form(qapp, qtbot):
     coordinator._playbacks.clear()
     coordinator._pending_flash_keys.clear()
     coordinator._active_windows.clear()
-    from PyQt6 import sip
+    import shiboken6
 
-    if not sip.isdeleted(window):
+    if not not shiboken6.isValid(window):
         WindowFlashOverlay.cleanup_window(window)
         window.close()
         window.deleteLater()
@@ -157,9 +157,9 @@ def rendered_canvas(qapp, qtbot):
     with qtbot.waitExposed(canvas):
         canvas.show()
     yield canvas
-    from PyQt6 import sip
+    import shiboken6
 
-    if not sip.isdeleted(canvas):
+    if not not shiboken6.isValid(canvas):
         canvas.close()
         canvas.deleteLater()
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -877,14 +877,14 @@ import sys
 original_import = builtins.__import__
 
 def reject_pyqt(name, globals=None, locals=None, fromlist=(), level=0):
-    if name == 'PyQt6' or name.startswith('PyQt6.'):
+    if name == 'PySide6' or name.startswith('PySide6.'):
         raise AssertionError(f'window snapshot declarations imported {name}')
     return original_import(name, globals, locals, fromlist, level)
 
 builtins.__import__ = reject_pyqt
 from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 assert tuple(scope.value for scope in WindowSnapshotCaptureScope) == ('widget', 'window')
-assert not any(name == 'PyQt6' or name.startswith('PyQt6.') for name in sys.modules)
+assert not any(name == 'PySide6' or name.startswith('PySide6.') for name in sys.modules)
 """
 
     completed = subprocess.run(

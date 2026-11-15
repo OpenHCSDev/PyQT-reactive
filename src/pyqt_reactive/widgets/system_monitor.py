@@ -1,5 +1,5 @@
 """
-System Monitor Widget for PyQt6
+System Monitor Widget for PySide6
 Real-time system monitoring with CPU, RAM, GPU, and VRAM usage graphs.
 Migrated from Textual TUI with full feature parity.
 """
@@ -155,7 +155,7 @@ class SystemMonitorRuntime:
 
 class SystemMonitorWidget(QWidget):
     """
-    PyQt6 System Monitor Widget.
+    PySide6 System Monitor Widget.
     
     Displays real-time system metrics with graphs for CPU, RAM, GPU, and VRAM usage.
     Provides the same functionality as the Textual SystemMonitorTextual widget.

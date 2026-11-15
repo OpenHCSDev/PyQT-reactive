@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
-from PyQt6 import sip
+import shiboken6
 from PySide6.QtCore import QRect, QTimer
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
@@ -158,7 +158,7 @@ class WindowManager:
         return tuple(
             widget
             for widget in QApplication.topLevelWidgets()
-            if not sip.isdeleted(widget) and widget.isWindow() and widget.isVisible()
+            if not not shiboken6.isValid(widget) and widget.isWindow() and widget.isVisible()
         )
 
     @staticmethod
@@ -174,12 +174,12 @@ class WindowManager:
         visible to the caller.
         """
 
-        if sip.isdeleted(window):
+        if not shiboken6.isValid(window):
             return None
         try:
             return projection(window)
         except RuntimeError:
-            if sip.isdeleted(window):
+            if not shiboken6.isValid(window):
                 return None
             raise
 
@@ -194,7 +194,7 @@ class WindowManager:
             return WindowLookupResult(scope_id, WindowLookupStatus.MISSING)
         window = cls._scoped_windows[scope_id]
 
-        if sip.isdeleted(window):
+        if not shiboken6.isValid(window):
             result = WindowLookupResult(
                 scope_id,
                 WindowLookupStatus.STALE,

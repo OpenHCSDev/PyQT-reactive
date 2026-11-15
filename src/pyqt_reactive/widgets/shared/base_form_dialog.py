@@ -1,5 +1,5 @@
 """
-Base Form Dialog for PyQt6.
+Base Form Dialog for PySide6.
 
 Generic base class for managed ObjectState-backed dialogs.
 """

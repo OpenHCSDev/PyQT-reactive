@@ -1,5 +1,5 @@
 """
-Function List Editor Widget for PyQt6 GUI.
+Function List Editor Widget for PySide6 GUI.
 
 Mirrors the Textual TUI FunctionListEditorWidget with sophisticated parameter forms.
 Displays a scrollable list of function panes with Add/Load/Save/Code controls.
@@ -250,10 +250,10 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 if _is_relevant_time_travel(dirty_states):
                     self._refresh_pattern_from_context_state()
 
-                from PyQt6 import sip
+                import shiboken6
 
                 for pane in list(self.function_panes):
-                    if sip.isdeleted(pane):
+                    if not shiboken6.isValid(pane):
                         continue
                     fm = pane.form_manager
                     if fm is not None:
@@ -494,15 +494,15 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 break
             expected_func_by_token[token] = func
 
-        from PyQt6 import sip
+        import shiboken6
 
         can_reorder = (
             self.function_panes
-            and all(not sip.isdeleted(p) for p in self.function_panes)
+            and all(not not shiboken6.isValid(p) for p in self.function_panes)
             and len(new_tokens) == len(self.function_panes)
             and len(set(new_tokens)) == len(new_tokens)
             and len(pane_by_token) == len(self.function_panes)
-            and all(not sip.isdeleted(p) for p in pane_by_token.values())
+            and all(not not shiboken6.isValid(p) for p in pane_by_token.values())
             and set(new_tokens) == set(pane_by_token.keys())
         )
         if can_reorder:
@@ -890,13 +890,13 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         # Clear existing widgets.
         # IMPORTANT: Only delete via the layout traversal to avoid double-deleting
         # the same FunctionPaneWidget (which crashes with "wrapped C/C++ object ... deleted").
-        from PyQt6 import sip
+        import shiboken6
 
         self.function_panes.clear()
         while self.function_layout.count():
             child = self.function_layout.takeAt(0)
             widget = child.widget()
-            if widget is None or sip.isdeleted(widget):
+            if widget is None or not shiboken6.isValid(widget):
                 continue
 
             # Dispose form manager if it exists.
@@ -1236,11 +1236,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
         for i, pane in enumerate(self.function_panes):
             pane.index = i
 
-        from PyQt6 import sip
+        import shiboken6
 
         # Reorder widgets in layout without recreating them.
         # insertWidget() moves an existing widget if it's already in the layout.
-        if any(sip.isdeleted(p) for p in self.function_panes):
+        if any(not shiboken6.isValid(p) for p in self.function_panes):
             self._populate_function_list()
             return
 

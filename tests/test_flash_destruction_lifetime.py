@@ -3,7 +3,7 @@
 import gc
 from weakref import ref
 
-from PyQt6 import sip
+import shiboken6
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QDialog, QTreeWidget, QTreeWidgetItem, QWidget
 
@@ -37,4 +37,4 @@ def test_tree_cleanup_survives_cycle_collection_before_deferred_destruction(qapp
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         qapp.processEvents()
         window = window_ref()
-        assert window is None or sip.isdeleted(window)
+        assert window is None or not shiboken6.isValid(window)

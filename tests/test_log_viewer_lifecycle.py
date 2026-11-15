@@ -31,7 +31,7 @@ from pyqt_reactive.widgets.log_viewer import (
 
 
 def test_log_delegate_uses_pyqt6_item_data_role(qtbot) -> None:
-    """Search and sizing must use PyQt6's scoped item-data enum."""
+    """Search and sizing must use PySide6's scoped item-data enum."""
 
     model = LogListModel()
     model.append_lines(["alpha", "matching line"])

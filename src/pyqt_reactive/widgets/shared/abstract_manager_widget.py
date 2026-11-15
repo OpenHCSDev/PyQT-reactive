@@ -6,7 +6,7 @@ and PipelineEditorWidget.
 
 Following OpenHCS ABC patterns:
 - BaseFormDialog: Lightweight base, subclass controls initialization
-- ParameterFormManager: Combined metaclass for PyQt6 compatibility
+- ParameterFormManager: Combined metaclass for PySide6 compatibility
 - Template Method Pattern: Base defines flow, subclasses implement hooks
 """
 
@@ -92,7 +92,7 @@ ListUpdateContextT = TypeVar("ListUpdateContextT")
 
 
 class _CombinedMeta(ABCMeta, type(QWidget)):
-    """Combined metaclass for ABC + PyQt6 QWidget."""
+    """Combined metaclass for ABC + PySide6 QWidget."""
 
 
 class AbstractManagerWidgetCodeDocumentDriver(WindowCodeDocumentDriver):

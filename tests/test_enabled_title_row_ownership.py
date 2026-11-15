@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PyQt6 import sip
+import shiboken6
 from PySide6.QtTest import QTest
 from python_introspect import Enableable
 
@@ -99,9 +99,9 @@ def test_enableable_title_relocation_releases_responsive_source_row(qapp) -> Non
         assert enabled_label.isHidden()
         assert nested.labels["enabled"] is enabled_label
         assert enabled_label.parentWidget() is None
-        assert not sip.isdeleted(enabled_label)
-        assert not sip.isdeleted(enabled_widget)
-        assert not sip.isdeleted(enabled_reset)
+        assert not not shiboken6.isValid(enabled_label)
+        assert not not shiboken6.isValid(enabled_widget)
+        assert not not shiboken6.isValid(enabled_reset)
         assert not retained_source_rows
         assert not visible_empty_rows
 

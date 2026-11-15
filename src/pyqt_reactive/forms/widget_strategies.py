@@ -1,4 +1,4 @@
-"""Magicgui-based PyQt6 Widget Creation with OpenHCS Extensions"""
+"""Magicgui-based PySide6 Widget Creation with OpenHCS Extensions"""
 
 import ast
 import dataclasses
@@ -54,7 +54,7 @@ from pyqt_reactive.protocols import (
 )
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.qt_types import QtKeySequenceText
-from pyqt_reactive.theming.color_scheme import ColorScheme as PyQt6ColorScheme
+from pyqt_reactive.theming.color_scheme import ColorScheme as PySide6ColorScheme
 from pyqt_reactive.widgets import (
     NoneAwareCheckBox,
     NoScrollComboBox,
@@ -839,7 +839,7 @@ class MagicGuiWidgetFactory:
 MAGICGUI_WIDGET_FACTORY = MagicGuiWidgetFactory()
 
 
-class PyQt6WidgetCreationAuthority:
+class PySide6WidgetCreationAuthority:
     """Nominal authority for choosing the widget creation path."""
 
     direct_factories: ClassVar[dict[type, Callable[[ParameterValue | None], QWidget]]] = {
@@ -945,12 +945,12 @@ class PyQt6WidgetCreationAuthority:
         return value
 
 
-PYQT6_WIDGET_CREATION = PyQt6WidgetCreationAuthority()
+PYQT6_WIDGET_CREATION = PySide6WidgetCreationAuthority()
 
 
 def create_enhanced_path_widget(param_name: str = "", current_value: ParameterValue | None = None, parameter_info: ParameterInfo | None = None) -> EnhancedPathWidget:
     """Factory function for OpenHCS enhanced path widgets."""
-    return EnhancedPathWidget(param_name, current_value, parameter_info, PyQt6ColorScheme())
+    return EnhancedPathWidget(param_name, current_value, parameter_info, PySide6ColorScheme())
 
 
 def _create_none_aware_int_widget():
@@ -1060,7 +1060,7 @@ def create_pyqt6_widget(
     widget_id: str,
     parameter_info: ParameterInfo | None = None,
 ) -> QWidget:
-    """Create a PyQt6 widget using the functional widget strategy."""
+    """Create a PySide6 widget using the functional widget strategy."""
     return PYQT6_WIDGET_CREATION.create(
         WidgetCreationRequest(
             param_name=param_name,
@@ -1520,7 +1520,7 @@ class WidgetSignalConnectionAuthority:
         value: WidgetValue | None,
     ) -> None:
         if isinstance(widget, QWidget):
-            PyQt6WidgetEnhancer._clear_placeholder_state(widget)
+            PySide6WidgetEnhancer._clear_placeholder_state(widget)
         callback(param_name, value)
 
 
@@ -1594,7 +1594,7 @@ WIDGET_VALUE_ASSIGNMENT = WidgetValueAssignmentAuthority()
 
 
 @dataclasses.dataclass(frozen=True)
-class PyQt6WidgetEnhancer:
+class PySide6WidgetEnhancer:
     """Widget enhancement using functional dispatch patterns."""
 
     @staticmethod
@@ -1670,7 +1670,7 @@ class PyQt6WidgetEnhancer:
             return  # No change needed
 
         # For other widgets, fall back to text-based placeholder
-        PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+        PySide6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
 
     @staticmethod
     def apply_global_config_placeholder(widget: QWidget, field_name: str, global_config: FormObject) -> None:
@@ -1700,13 +1700,13 @@ class PyQt6WidgetEnhancer:
                     placeholder_text = f"Pipeline default: {field_value}"
 
                 if isinstance(widget, ResolvedValuePreviewSettable):
-                    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+                    PySide6WidgetEnhancer.apply_placeholder_with_value(
                         widget,
                         field_value,
                         placeholder_text,
                     )
                 else:
-                    PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+                    PySide6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
         except Exception:
             # Silently fail if placeholder can't be applied
             pass

@@ -1,5 +1,5 @@
 """
-Enhanced Path Widget for PyQt6 GUI
+Enhanced Path Widget for PySide6 GUI
 
 Provides intelligent path selection with browse button functionality.
 Uses standard Qt dialogs for consistency with the host application.

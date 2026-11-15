@@ -76,7 +76,7 @@ from PySide6.QtGui import (
     QPainterPath,
     QRegion,
 )
-from PyQt6 import sip
+import shiboken6
 
 from objectstate.time_travel_profile import TimeTravelProfiler
 from pyqt_reactive.animation.flash_config import FlashConfig, FlashPlayback, FlashPhase, get_flash_config
@@ -401,7 +401,7 @@ def _scroll_clip_rects_for_element(
             viewport = widget.viewport()
             if (
                 viewport is not None
-                and not sip.isdeleted(viewport)
+                and not not shiboken6.isValid(viewport)
                 and viewport.isVisible()
             ):
                 viewport_rect = viewport.rect()
@@ -527,14 +527,14 @@ def resolve_mask_widgets(widget: Optional[QWidget], preferred_types: tuple) -> L
     """
     if widget is None:
         return []
-    if sip.isdeleted(widget):
+    if not shiboken6.isValid(widget):
         return []
     if isinstance(widget, preferred_types):
         return [widget]
     matches = [
         child
         for child in widget.findChildren(QWidget)
-        if not sip.isdeleted(child)
+        if not not shiboken6.isValid(child)
         and child.isVisible()
         and isinstance(child, preferred_types)
     ]
@@ -548,7 +548,7 @@ def _unique_live_widgets(widgets: Iterable[Optional[QWidget]]) -> Tuple[QWidget,
     unique_widgets: list[QWidget] = []
     seen_widget_ids: set[int] = set()
     for widget in widgets:
-        if widget is None or sip.isdeleted(widget):
+        if widget is None or not shiboken6.isValid(widget):
             continue
         widget_id = id(widget)
         if widget_id in seen_widget_ids:
@@ -598,7 +598,7 @@ def container_descendant_mask_paths(
     """Return standard child/control masks for a container flash."""
     child_paths: list[QPainterPath] = []
     for child in container_descendant_mask_watch_widgets(container):
-        if sip.isdeleted(child) or not child.isVisibleTo(container):
+        if not shiboken6.isValid(child) or not child.isVisibleTo(container):
             continue
         child_paths.append(get_child_mask_path(child, window, corner_radius))
     child_paths.extend(_get_groupbox_title_mask_paths(container, window, corner_radius))
@@ -934,7 +934,7 @@ def create_groupbox_element(
 
         # Compute fresh window-relative rects using standard groupbox child geometry
         for child in _cached_child_widgets:
-            if sip.isdeleted(child) or not child.isVisibleTo(groupbox):
+            if not shiboken6.isValid(child) or not child.isVisibleTo(groupbox):
                 continue
             child_paths.append(get_child_mask_path(child, window, radius))
 
@@ -1265,8 +1265,8 @@ class WindowFlashOverlay(QWidget):
         """Return whether both the overlay and its owning window still exist."""
 
         return (
-            not sip.isdeleted(overlay)
-            and not sip.isdeleted(overlay._window)
+            not not shiboken6.isValid(overlay)
+            and not not shiboken6.isValid(overlay._window)
         )
 
     @classmethod
@@ -1407,8 +1407,8 @@ class WindowFlashOverlay(QWidget):
         """Return whether a cached overlay is still attached to this Qt window."""
         try:
             return (
-                not sip.isdeleted(overlay)
-                and not sip.isdeleted(overlay._window)
+                not not shiboken6.isValid(overlay)
+                and not not shiboken6.isValid(overlay._window)
                 and overlay._window is window
             )
         except RuntimeError:
@@ -1418,10 +1418,10 @@ class WindowFlashOverlay(QWidget):
     def _discard_overlay(overlay: 'WindowFlashOverlay') -> None:
         """Clear and delete a stale overlay without consulting global registries."""
         try:
-            if sip.isdeleted(overlay):
+            if not shiboken6.isValid(overlay):
                 return
             for source in overlay._event_filter_sources.values():
-                if not sip.isdeleted(source):
+                if not not shiboken6.isValid(source):
                     source.removeEventFilter(overlay)
             overlay._event_filter_sources.clear()
             overlay._elements.clear()
@@ -1621,7 +1621,7 @@ class WindowFlashOverlay(QWidget):
         scroll_areas = [
             scroll_area
             for scroll_area in self._window.findChildren(QAbstractScrollArea)
-            if not sip.isdeleted(scroll_area)
+            if not not shiboken6.isValid(scroll_area)
         ]
         self._scroll_areas = scroll_areas
         self._scroll_areas_dirty = False
@@ -1629,7 +1629,7 @@ class WindowFlashOverlay(QWidget):
 
         for scroll_area in scroll_areas:
             viewport = scroll_area.viewport()
-            if viewport is None or sip.isdeleted(viewport):
+            if viewport is None or not shiboken6.isValid(viewport):
                 continue
             self._install_event_filter_on(viewport)
 
@@ -1641,7 +1641,7 @@ class WindowFlashOverlay(QWidget):
         bounds, even when the surrounding widget keeps the same rectangle.
         """
         for widget in element.layout_watch_widgets:
-            if widget is None or sip.isdeleted(widget):
+            if widget is None or not shiboken6.isValid(widget):
                 continue
             widget_id = id(widget)
             self._element_widget_keys.setdefault(widget_id, set()).add(element.key)
@@ -2153,11 +2153,11 @@ class WindowFlashOverlay(QWidget):
 
         clip_rects = []
         for scroll_area in self._scroll_areas:
-            if sip.isdeleted(scroll_area):
+            if not shiboken6.isValid(scroll_area):
                 self._scroll_areas_dirty = True
                 continue
             viewport = scroll_area.viewport()
-            if viewport is None or sip.isdeleted(viewport) or not viewport.isVisible():
+            if viewport is None or not shiboken6.isValid(viewport) or not viewport.isVisible():
                 continue
             # Get viewport rect in window coordinates
             viewport_rect = viewport.rect()
@@ -2387,7 +2387,7 @@ class _GlobalFlashCoordinator(QObject):
         instance = cls._instance
         if instance is None:
             return None
-        if sip.isdeleted(instance):
+        if not shiboken6.isValid(instance):
             cls._instance = None
             return None
 
@@ -2415,7 +2415,7 @@ class _GlobalFlashCoordinator(QObject):
         """Forget the singleton only when Qt destroyed the current instance."""
 
         instance = cls._instance
-        if instance is not None and (sip.isdeleted(instance) or instance is destroyed):
+        if instance is not None and (not shiboken6.isValid(instance) or instance is destroyed):
             cls._instance = None
 
     def __init__(self, application: Optional[QCoreApplication] = None):
@@ -3459,7 +3459,7 @@ class VisualUpdateMixin:
         widgets: list[QWidget] = []
         seen_widget_ids: set[int] = set()
         for candidate in (owner_widget, *lifecycle_widgets):
-            if candidate is None or sip.isdeleted(candidate):
+            if candidate is None or not shiboken6.isValid(candidate):
                 continue
             candidate_id = id(candidate)
             if candidate_id in seen_widget_ids:

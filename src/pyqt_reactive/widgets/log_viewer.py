@@ -1,5 +1,5 @@
 """
-PyQt6 Log Viewer Window
+PySide6 Log Viewer Window
 
 Provides comprehensive log viewing capabilities with real-time tailing, search functionality,
 and integration with OpenHCS subprocess execution. Reimplements log viewing using Qt widgets

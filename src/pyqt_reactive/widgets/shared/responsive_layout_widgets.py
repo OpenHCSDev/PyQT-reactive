@@ -1,4 +1,4 @@
-"""Capacity-based responsive layout widgets for PyQt6."""
+"""Capacity-based responsive layout widgets for PySide6."""
 
 from contextlib import contextmanager
 from enum import Enum

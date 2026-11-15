@@ -1,5 +1,5 @@
 """
-TearOffTabWidget - Chrome-style detachable tabs for PyQt6.
+TearOffTabWidget - Chrome-style detachable tabs for PySide6.
 
 Allows users to drag tabs out to create floating windows,
 and drag them into other windows to dock them.

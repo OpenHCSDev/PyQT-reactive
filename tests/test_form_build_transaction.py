@@ -245,7 +245,7 @@ def test_visible_progressive_rows_receive_chrome_before_finalization(qapp):
 def test_deleting_progressive_root_cancels_unfinished_generation(qapp):
     """Manager-owned timers cannot finalize a deleted progressive form."""
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-    from PyQt6 import sip
+    import shiboken6
 
     from pyqt_reactive.forms.parameter_form_manager import (
         FormManagerConfig,
@@ -264,7 +264,7 @@ def test_deleting_progressive_root_cancels_unfinished_generation(qapp):
     )
     transaction = manager._form_build_transaction
 
-    sip.delete(manager)
+    shiboken6.delete(manager)
     for _ in range(10):
         qapp.processEvents()
 

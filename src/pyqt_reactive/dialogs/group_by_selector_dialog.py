@@ -1,5 +1,5 @@
 """
-Group By Selector Dialog for PyQt6 GUI.
+Group By Selector Dialog for PySide6 GUI.
 
 Mirrors the Textual TUI GroupBySelectorWindow functionality with dual list selection.
 """

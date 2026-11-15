@@ -1,8 +1,8 @@
 """
-Status Bar Widget for PyQt6
+Status Bar Widget for PySide6
 
 Status display with system information and current operation status.
-Uses hybrid approach: extracted business logic + clean PyQt6 UI.
+Uses hybrid approach: extracted business logic + clean PySide6 UI.
 """
 
 import logging
@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 class StatusBarWidget(QWidget):
     """
-    PyQt6 Status Bar Widget.
+    PySide6 Status Bar Widget.
     
     Displays current status, progress, and system information.
-    Preserves all business logic from Textual version with clean PyQt6 UI.
+    Preserves all business logic from Textual version with clean PySide6 UI.
     """
     
     # Signals

@@ -131,7 +131,7 @@ class ScopeColorService(QObject):
             step_index: optional explicit step index
 
         Returns:
-            PyQt6.QtGui.QColor or None
+            PySide6.QtGui.QColor or None
         """
         # Always return a QColor. If no scheme exists, fall back to neutral scheme.
         scheme = self.get_color_scheme(scope_id, step_index=step_index)

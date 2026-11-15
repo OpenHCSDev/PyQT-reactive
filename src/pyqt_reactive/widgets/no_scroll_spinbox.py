@@ -1,5 +1,5 @@
 """
-No-scroll spinbox widgets for PyQt6.
+No-scroll spinbox widgets for PySide6.
 
 Prevents accidental value changes from mouse wheel events.
 """

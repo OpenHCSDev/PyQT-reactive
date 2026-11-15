@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 class _CombinedMeta(ABCMeta, type(QWidget)):
-    """Combined metaclass for ABC + PyQt6 QWidget."""
+    """Combined metaclass for ABC + PySide6 QWidget."""
 
 
 class BrowserLifecycleState:

@@ -1,5 +1,5 @@
 """
-Function Pane Widget for PyQt6
+Function Pane Widget for PySide6
 
 Individual function display with parameter editing capabilities.
 Uses GroupBoxWithHelp as the main container for consistent formatting
@@ -23,20 +23,21 @@ from PySide6.QtGui import QFont
 
 from python_introspect import Enableable, SignatureAnalyzer, is_enableable
 
-# Import PyQt6 help components (using same pattern as Textual TUI)
+# Import PySide6 help components (using same pattern as Textual TUI)
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.clickable_help_components import GroupBoxWithHelp
 from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
     ReflowingVerticalScrollArea,
 )
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
-from formbridge.forms.layout_constants import CURRENT_LAYOUT
-from formbridge.forms.parameter_value_contracts import ParameterValue
-from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
-from formbridge.services.function_pattern_code_document import FunctionPatternCodeDocumentService
-from formbridge.services.function_navigation import FunctionPatternField
+from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
+from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
+from pyqt_reactive.services.function_pattern_code_document import (
+    FunctionPatternCodeDocumentService,
+)
+from pyqt_reactive.services.function_navigation import FunctionPatternField
 from metaclass_registry import AutoRegisterMeta
-from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class ResetParametersButtonCommand(FunctionPaneButtonCommand):
 
 class FunctionPaneWidget(GroupBoxWithHelp):
     """
-    PyQt6 Function Pane Widget.
+    PySide6 Function Pane Widget.
 
     Displays individual function with editable parameters and control buttons.
     Uses GroupBoxWithHelp as the main container for consistent formatting
@@ -369,7 +370,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
     def _move_enabled_widget_to_title(self):
         """Move enabled widget using shared groupbox machinery."""
-        from pyqt_reactive.forms.widget_creation_config import EnabledTitleWidgetMoveAuthority, EnabledTitleWidgetMoveRequest
+        from pyqt_reactive.forms.widget_creation_config import WidgetCreationHandlers
 
         if self._enabled_widget_moved or not self.form_manager:
             return
@@ -381,12 +382,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             return
 
         self._enabled_widget_moved = True
-        EnabledTitleWidgetMoveAuthority().move(EnabledTitleWidgetMoveRequest(
-            nested_manager=self.form_manager,
-            parent_manager=self,
-            nested_param_name=self.form_manager.field_id,
-            enabled_field=enabled_field,
-        ))
+        WidgetCreationHandlers._move_enabled_widget_to_title(
+            self.form_manager,
+            self,
+            self.form_manager.field_id,
+            enabled_field,
+        )
         logger.debug(f"Moved enabled widget to title for function {self.func.__name__}")
 
     def set_scope_color_scheme(self, scheme) -> None:
@@ -425,7 +426,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         layout.setSpacing(4)
 
         # Create the ParameterFormManager with help and reset functionality
-        # Import the enhanced PyQt6 ParameterFormManager
+        # Import the enhanced PySide6 ParameterFormManager
         from pyqt_reactive.forms.parameter_form_manager import (
             ParameterFormManager as PyQtParameterFormManager,
             FormManagerConfig,
@@ -452,7 +453,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             raise RuntimeError(
                 "FunctionPaneWidget requires func_scope_token for deterministic ObjectState scope."
             )
-        func_scope_id = ScopeKey(func_parent_scope).child(token)
+        func_scope_id = f"{func_parent_scope}::{token}"
         if self._flash_key == "":
             self._flash_key = func_scope_id
             self.register_flash_groupbox_full(self._flash_key, self)
@@ -651,7 +652,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         logger.debug(f"Parameter changed: {param_name} = {value}")
 
     def reset_all_parameters(self):
-        """Reset all parameters to default values using PyQt6 form manager."""
+        """Reset all parameters to default values using PySide6 form manager."""
         if not self.form_manager:
             return
 
@@ -678,7 +679,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             widget: Widget to update
             value: New value
         """
-        PyQt6WidgetEnhancer.set_widget_value(widget, value)
+        PySide6WidgetEnhancer.set_widget_value(widget, value)
 
     def get_current_kwargs(self) -> Dict[str, Any]:
         """
@@ -702,7 +703,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         Returns:
             Dict of kwargs suitable for passing to function at runtime
         """
-        from formbridge.services.function_pattern_code_document import (
+        from pyqt_reactive.services.function_pattern_code_document import (
             FunctionPatternCodeDocumentService,
         )
 
@@ -753,7 +754,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
 class FunctionListWidget(QWidget):
     """
-    PyQt6 Function List Widget.
+    PySide6 Function List Widget.
 
     Container for multiple FunctionPaneWidgets with list management.
     """

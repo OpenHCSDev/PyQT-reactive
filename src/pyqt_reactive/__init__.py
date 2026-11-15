@@ -1,11 +1,11 @@
 """
-pyqt-reactive: React-quality reactive form generation framework for PyQt6.
+pyqt-reactive: React-quality reactive form generation framework for PySide6.
 
-A comprehensive UI framework for building type-safe, reactive forms with PyQt6.
+A comprehensive UI framework for building type-safe, reactive forms with PySide6.
 Extracted from OpenHCS for general-purpose use.
 
 Architecture:
-- Tier 1 (Core): Pure PyQt6 utilities with zero external deps beyond PyQt6
+- Tier 1 (Core): Pure PySide6 utilities with zero external deps beyond PySide6
 - Tier 2 (Contracts): Widget ABCs and adapters
 - Tier 3 (Services): Reusable service layer
 - Tier 4 (Forms): ParameterFormManager with ObjectState integration
