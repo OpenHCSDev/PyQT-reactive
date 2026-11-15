@@ -12,7 +12,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Self, Tuple
 
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor
 
 if TYPE_CHECKING:
     from .style_generator import StyleSheetGenerator

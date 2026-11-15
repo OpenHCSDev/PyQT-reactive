@@ -32,9 +32,9 @@ from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
 from PyQt6 import sip
-from PyQt6.QtCore import QRect, QTimer
-from PyQt6.QtGui import QCursor, QGuiApplication
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget
+from PySide6.QtCore import QRect, QTimer
+from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
 
 from pyqt_reactive.services.window_navigation import (
     NullWindowNavigationDriver,

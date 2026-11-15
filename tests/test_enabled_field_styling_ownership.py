@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from pyqt_reactive.forms.parameter_form_tree_index import ParameterFormTreeIndex
 from pyqt_reactive.forms.widget_strategies import NoneAwareLineEdit

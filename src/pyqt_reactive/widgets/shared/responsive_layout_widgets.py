@@ -3,8 +3,8 @@
 from contextlib import contextmanager
 from enum import Enum
 
-from PyQt6.QtCore import QSize, Qt, QTimer
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,

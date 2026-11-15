@@ -4,8 +4,8 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Generic, Optional, TypeVar
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
 from pyqt_reactive.widgets.mixins import preserve_selection_during_update
 from pyqt_reactive.widgets.shared.list_item_delegate import OBJECT_STATE_PATH_ROLE

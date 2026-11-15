@@ -67,7 +67,7 @@ class ScopeColorScheme:
 
     def to_qcolor_orchestrator_bg(self):
         """QColor for orchestrator item background with alpha."""
-        from PyQt6.QtGui import QColor
+        from PySide6.QtGui import QColor
 
         config = get_scope_visual_config()
         r, g, b = self.orchestrator_item_bg_rgb
@@ -75,13 +75,13 @@ class ScopeColorScheme:
 
     def to_qcolor_orchestrator_border(self):
         """QColor for orchestrator item border."""
-        from PyQt6.QtGui import QColor
+        from PySide6.QtGui import QColor
 
         return QColor(*self.orchestrator_item_border_rgb)
 
     def to_qcolor_step_window_border(self):
         """QColor for step window border."""
-        from PyQt6.QtGui import QColor
+        from PySide6.QtGui import QColor
 
         return QColor(*self.step_window_border_rgb)
 
@@ -89,7 +89,7 @@ class ScopeColorScheme:
         """QColor for step list background (alpha) or None."""
         if self.step_item_bg_rgb is None:
             return None
-        from PyQt6.QtGui import QColor
+        from PySide6.QtGui import QColor
 
         config = get_scope_visual_config()
         r, g, b = self.step_item_bg_rgb
@@ -97,7 +97,7 @@ class ScopeColorScheme:
 
     def border_layer_qcolor(self, layer):
         """Return the rendered border/accent color for one border layer."""
-        from PyQt6.QtGui import QColor
+        from PySide6.QtGui import QColor
 
         if self.fixed_accent_rgb is not None:
             return QColor(*self.fixed_accent_rgb)
@@ -109,7 +109,7 @@ class ScopeColorScheme:
 
     def accent_qcolor(self):
         """Return the canonical accent/flash color for this scope."""
-        from PyQt6.QtGui import QColor
+        from PySide6.QtGui import QColor
 
         if self.fixed_accent_rgb is not None:
             return QColor(*self.fixed_accent_rgb)
@@ -121,7 +121,7 @@ class ScopeColorScheme:
 
     def background_tint_qcolor(self, layers, opacity: float):
         """Return the canonical subtle background tint for this scope."""
-        from PyQt6.QtGui import QColor
+        from PySide6.QtGui import QColor
 
         if self.fixed_accent_rgb is not None:
             r, g, b = self.fixed_accent_rgb

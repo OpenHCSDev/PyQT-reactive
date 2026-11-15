@@ -2,8 +2,8 @@
 
 import logging
 
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QWidget
 
 from pyqt_reactive.services.scope_color_service import ScopeColorService
 from pyqt_reactive.theming import AccentChromeColorPolicy

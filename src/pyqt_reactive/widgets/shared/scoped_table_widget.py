@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QTableWidget, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QTableWidget, QWidget
 
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
 from formbridge.theming.scope_color_receiver import ScopeColorSchemeReceiver

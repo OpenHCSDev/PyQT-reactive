@@ -5,8 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from PyQt6.QtCore import QUrl
-from PyQt6.QtGui import QTextCursor
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QTextCursor
 
 from formbridge.services.help_document import HelpDocument, HelpDocumentFormat
 from pyqt_reactive.widgets.help_document_browser import HelpDocumentBrowser

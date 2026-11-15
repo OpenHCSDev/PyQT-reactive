@@ -3,8 +3,8 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QPainter, QPen, QColor
+from PySide6.QtCore import QPointF
+from PySide6.QtGui import QPainter, QPen, QColor
 
 
 def join_segments(segments: List["Segment"], default_sep: str) -> str:

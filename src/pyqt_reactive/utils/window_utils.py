@@ -1,6 +1,6 @@
-from PyQt6.QtCore import QObject, QEvent, QTimer
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import QObject, QEvent, QTimer
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QWidget
 
 
 def ensure_window_on_screen(w: QWidget) -> None:

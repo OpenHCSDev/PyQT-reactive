@@ -6,9 +6,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSizePolicy,

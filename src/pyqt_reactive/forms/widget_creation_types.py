@@ -64,7 +64,7 @@ class WidgetBuildContext:
         return dataclass_replace(self, container=container)
 
 
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget
 
 
 class _CombinedMeta(ABCMeta, type(QWidget)):

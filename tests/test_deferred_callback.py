@@ -5,9 +5,9 @@ import weakref
 
 import pytest
 from PyQt6 import sip
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject
-from PyQt6.QtGui import QStandardItem, QStandardItemModel
-from PyQt6.QtWidgets import QComboBox, QGroupBox, QListView, QPushButton
+from PySide6.QtCore import QCoreApplication, QEvent, QObject
+from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtWidgets import QComboBox, QGroupBox, QListView, QPushButton
 
 from pyqt_reactive.core.deferred_callback import DeferredCallback
 from pyqt_reactive.services.widget_tree_projection import (

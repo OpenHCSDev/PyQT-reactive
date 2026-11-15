@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Self
 from formbridge.services.executable_action import LabeledExecutableActionMixin
 
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QPushButton
+    from PySide6.QtWidgets import QPushButton
 
     from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
 
@@ -64,7 +64,7 @@ class FunctionListEditorAction(LabeledExecutableActionMixin, StrEnum):
     def create_button(self, widget: FunctionListEditorWidget) -> QPushButton:
         """Create one button directly from this action declaration."""
 
-        from PyQt6.QtWidgets import QPushButton
+        from PySide6.QtWidgets import QPushButton
 
         from formbridge.forms.layout_constants import CURRENT_LAYOUT
 

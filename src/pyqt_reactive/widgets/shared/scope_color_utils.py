@@ -5,7 +5,7 @@ import hashlib
 import logging
 from typing import Optional, Tuple
 
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor
 
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 from objectstate import ScopeKey

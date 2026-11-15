@@ -5,8 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
 
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QTreeWidget, QWidget
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QTreeWidget, QWidget
 
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 

@@ -26,8 +26,8 @@ from formbridge.managers.workflows import (
 )
 
 
-from PyQt6.QtWidgets import QWidget, QPushButton, QListWidgetItem
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal
+from PySide6.QtWidgets import QWidget, QPushButton, QListWidgetItem
+from PySide6.QtCore import QTimer, Qt, Signal
 
 from pyqt_reactive.core import ReorderableListWidget
 from pyqt_reactive.widgets.shared.list_item_delegate import (
@@ -621,7 +621,7 @@ class AbstractManagerWidget(
     ENABLE_STATUS_SCROLLING: bool = False
 
     # Common signals
-    status_message = pyqtSignal(str)
+    status_message = Signal(str)
 
     def code_document_title(self) -> str:
         """Return the current code-mode document title."""

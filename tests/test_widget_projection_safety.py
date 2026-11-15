@@ -396,7 +396,7 @@ def test_recursive_mapping_items_reach_object_state_as_declared_types(qapp):
 
 def test_enum_and_path_keep_their_authoritative_typed_projections(qapp):
     """The safety boundary does not divert enum or path annotations to text."""
-    from PyQt6.QtWidgets import QComboBox
+    from PySide6.QtWidgets import QComboBox
 
     from pyqt_reactive.forms.widget_strategies import (
         convert_widget_value_to_type,
@@ -427,7 +427,7 @@ def test_enum_and_path_keep_their_authoritative_typed_projections(qapp):
 def test_qt_key_sequence_uses_complete_sequence_capture_widget(qapp):
     """Shortcut edits commit complete portable sequences, never partial text."""
 
-    from PyQt6.QtGui import QKeySequence
+    from PySide6.QtGui import QKeySequence
 
     from pyqt_reactive.forms.widget_strategies import create_pyqt6_widget
     from pyqt_reactive.protocols import KeySequenceEditAdapter

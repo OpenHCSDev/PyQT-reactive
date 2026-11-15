@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable
 from enum import Enum
 
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor
 
 from formbridge.forms import layout_constants
 

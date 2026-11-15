@@ -19,7 +19,7 @@ Example:
 """
 
 from typing import List, Tuple, Callable, Optional
-from PyQt6.QtWidgets import QWidget, QGridLayout, QPushButton
+from PySide6.QtWidgets import QWidget, QGridLayout, QPushButton
 
 from pyqt_reactive.theming import ColorScheme
 

@@ -7,7 +7,7 @@ from weakref import WeakKeyDictionary
 
 from objectstate.time_travel_profile import TimeTravelProfiler
 from PyQt6 import sip
-from PyQt6.QtWidgets import QCheckBox, QGraphicsOpacityEffect, QLabel, QWidget
+from PySide6.QtWidgets import QCheckBox, QGraphicsOpacityEffect, QLabel, QWidget
 
 from pyqt_reactive.protocols import PlaceholderStateTrackable, ValueGettable
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_single_placeholder_refresh_skips_structural_groupbox(qapp):
-    from PyQt6.QtWidgets import QGroupBox
+    from PySide6.QtWidgets import QGroupBox
 
     from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
 

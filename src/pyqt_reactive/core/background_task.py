@@ -1,8 +1,8 @@
 """Unified background task with cancellation, debounce, and cleanup."""
 
 from typing import Callable, Any, Optional, Tuple
-from PyQt6.QtCore import QThread, pyqtSignal
-from PyQt6.QtWidgets import QPushButton
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import QPushButton
 import time
 
 # --- Module-level constants ---
@@ -30,8 +30,8 @@ class BackgroundTask(QThread):
             if isinstance(e, TimeoutError): ...  # Type checking
     """
 
-    result_ready = pyqtSignal(object)
-    error_occurred = pyqtSignal(Exception)  # Full exception, caller decides
+    result_ready = Signal(object)
+    error_occurred = Signal(Exception)  # Full exception, caller decides
 
     def __init__(
         self,

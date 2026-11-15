@@ -9,9 +9,9 @@ managing theme switching across the entire application.
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPalette
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QApplication
 
 from .color_scheme import ColorScheme
 

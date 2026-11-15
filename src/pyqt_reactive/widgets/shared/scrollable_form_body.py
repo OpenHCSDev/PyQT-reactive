@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QScrollArea, QSplitter, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QScrollArea, QSplitter, QWidget
 
 from pyqt_reactive.core.collapsible_splitter_helper import CollapsibleSplitterHelper
 from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (

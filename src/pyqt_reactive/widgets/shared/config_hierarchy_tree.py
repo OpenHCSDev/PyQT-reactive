@@ -16,9 +16,9 @@ from enum import Enum
 from types import UnionType
 from typing import Callable, ClassVar, Dict, Type, Optional, Iterable, Mapping, Union, get_args, get_origin
 
-from PyQt6.QtCore import Qt, QRect
-from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QBrush
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle
+from PySide6.QtCore import Qt, QRect
+from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics, QBrush
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 
 from metaclass_registry import AutoRegisterMeta
 from objectstate.lazy_factory import get_base_type_for_lazy, is_lazy_dataclass

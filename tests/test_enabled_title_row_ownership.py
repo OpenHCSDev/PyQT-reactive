@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from PyQt6 import sip
-from PyQt6.QtTest import QTest
+from PySide6.QtTest import QTest
 from python_introspect import Enableable
 
 

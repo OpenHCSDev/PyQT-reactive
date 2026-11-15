@@ -7,8 +7,8 @@ for cross-window drag-and-drop support.
 
 import logging
 from typing import Optional, List, TYPE_CHECKING
-from PyQt6.QtCore import QObject, QPoint
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, QPoint
+from PySide6.QtWidgets import QApplication
 
 if TYPE_CHECKING:
     from .tear_off_tab_widget import TearOffTabWidget, FloatingTabWindow, TabDragData

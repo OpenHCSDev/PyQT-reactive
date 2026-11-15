@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QDialog, QLabel, QMessageBox, QPushButton
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import QDialog, QLabel, QMessageBox, QPushButton
 
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.services.window_navigation import (
@@ -63,7 +63,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
     of relying on structural attribute discovery.
     """
 
-    changes_detected = pyqtSignal(bool)
+    changes_detected = Signal(bool)
 
     scope_id: str | None = None
     state: "ObjectState | None" = None
@@ -85,7 +85,7 @@ class BaseManagedWindow(QDialog, ScopedBorderMixin):
         """Connect a save button with Shift+Click save-without-close behavior."""
 
         def on_save_clicked() -> None:
-            from PyQt6.QtWidgets import QApplication
+            from PySide6.QtWidgets import QApplication
 
             modifiers = QApplication.keyboardModifiers()
             is_shift = modifiers & Qt.KeyboardModifier.ShiftModifier

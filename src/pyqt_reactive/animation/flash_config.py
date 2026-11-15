@@ -79,7 +79,7 @@ def detect_screen_refresh_rate() -> int:
         Detected refresh rate (Hz), or 60 if detection fails.
     """
     try:
-        from PyQt6.QtGui import QGuiApplication
+        from PySide6.QtGui import QGuiApplication
 
         # Get primary screen (QGuiApplication has primaryScreen() method)
         app = QGuiApplication.instance()

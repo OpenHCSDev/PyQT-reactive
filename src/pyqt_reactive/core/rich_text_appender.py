@@ -2,8 +2,8 @@
 
 import html
 from typing import Optional
-from PyQt6.QtWidgets import QTextEdit
-from PyQt6.QtGui import QTextCursor
+from PySide6.QtWidgets import QTextEdit
+from PySide6.QtGui import QTextCursor
 
 from pyqt_reactive.theming import ColorScheme
 

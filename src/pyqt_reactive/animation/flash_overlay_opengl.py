@@ -18,11 +18,11 @@ from typing import Dict, List, Optional, Set
 import numpy as np
 
 try:
-    from PyQt6.QtWidgets import QWidget, QMainWindow, QDialog, QApplication
-    from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-    from PyQt6.QtOpenGL import QOpenGLShaderProgram, QOpenGLShader, QOpenGLBuffer, QOpenGLVertexArrayObject
-    from PyQt6.QtGui import QSurfaceFormat, QOpenGLContext, QMatrix4x4, QOffscreenSurface
-    from PyQt6.QtCore import Qt, QRect
+    from PySide6.QtWidgets import QWidget, QMainWindow, QDialog, QApplication
+    from PySide6.QtOpenGLWidgets import QOpenGLWidget
+    from PySide6.QtOpenGL import QOpenGLShaderProgram, QOpenGLShader, QOpenGLBuffer, QOpenGLVertexArrayObject
+    from PySide6.QtGui import QSurfaceFormat, QOpenGLContext, QMatrix4x4, QOffscreenSurface
+    from PySide6.QtCore import Qt, QRect
     from OpenGL import GL as gl
     OPENGL_AVAILABLE = True
 except ImportError:
@@ -478,7 +478,7 @@ class WindowFlashOverlayGL(QOpenGLWidget if OPENGL_AVAILABLE else object):
 
     def _install_scroll_event_filters(self):
         """Install event filters on scroll areas."""
-        from PyQt6.QtWidgets import QAbstractScrollArea
+        from PySide6.QtWidgets import QAbstractScrollArea
         self._window.installEventFilter(self)
         scroll_areas = self._window.findChildren(QAbstractScrollArea)
         for scroll_area in scroll_areas:
@@ -487,7 +487,7 @@ class WindowFlashOverlayGL(QOpenGLWidget if OPENGL_AVAILABLE else object):
 
     def eventFilter(self, obj, event):
         """Catch scroll/resize events to invalidate cache."""
-        from PyQt6.QtCore import QEvent
+        from PySide6.QtCore import QEvent
         if event.type() in (QEvent.Type.Resize, QEvent.Type.Wheel, QEvent.Type.Move, QEvent.Type.LayoutRequest):
             self._invalidate_geometry_cache()
             if obj is self._window and event.type() == QEvent.Type.Resize:
@@ -536,7 +536,7 @@ class WindowFlashOverlayGL(QOpenGLWidget if OPENGL_AVAILABLE else object):
         if self._cache.valid and self._cache.scroll_clip_rects:
             return self._cache.scroll_clip_rects
 
-        from PyQt6.QtWidgets import QScrollArea
+        from PySide6.QtWidgets import QScrollArea
         clip_rects = []
         scroll_areas = self._window.findChildren(QScrollArea)
         for scroll_area in scroll_areas:

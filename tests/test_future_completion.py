@@ -6,7 +6,7 @@ import weakref
 from concurrent.futures import Future
 
 from PyQt6 import sip
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QThread, pyqtSlot
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QThread, Slot
 
 from pyqt_reactive.core.future_completion import FutureCompletion
 
@@ -16,7 +16,7 @@ class Receiver(QObject):
         super().__init__()
         self.deliveries = []
 
-    @pyqtSlot(object)
+    @Slot(object)
     def receive(self, future):
         self.deliveries.append((future, QThread.currentThread()))
 

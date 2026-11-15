@@ -14,11 +14,11 @@ Key features:
 """
 
 from typing import Any, Optional, List, Type, Callable, Dict
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QCheckBox, QLineEdit, QSpinBox, QDoubleSpinBox, 
     QComboBox, QTextEdit, QAbstractSpinBox
 )
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 from pyqt_reactive.protocols import ValueGettable
 import logging
 

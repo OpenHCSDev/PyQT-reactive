@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QTreeWidgetItem
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QTreeWidgetItem
 
 from formbridge.services.tree_item_key import TreeItemKeyProviderABC
 

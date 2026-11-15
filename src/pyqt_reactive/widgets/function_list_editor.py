@@ -13,8 +13,8 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import List, Union, Dict, Optional, Any, Callable
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QScrollArea
-from PyQt6.QtCore import Qt, pyqtSignal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QScrollArea
+from PySide6.QtCore import Qt, Signal
 
 from formbridge.protocols.component_selection import (
     get_component_selection_provider,
@@ -94,7 +94,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
     """
 
     # Signals
-    function_pattern_changed = pyqtSignal()
+    function_pattern_changed = Signal()
 
     # No ObjectState - this widget manages data through function panes, not ParameterFormManager
     state = None
@@ -956,7 +956,7 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
                 # show as correct dimmed styling immediately, not just after toggling
                 if pane.form_manager is not None:
                     # Use QTimer to ensure this runs after the widget is fully constructed
-                    from PyQt6.QtCore import QTimer
+                    from PySide6.QtCore import QTimer
 
                     QTimer.singleShot(
                         0, lambda p=pane: self._apply_initial_enabled_styling_to_pane(p)

@@ -1,9 +1,9 @@
 """Tests for theming system."""
 
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPalette
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,

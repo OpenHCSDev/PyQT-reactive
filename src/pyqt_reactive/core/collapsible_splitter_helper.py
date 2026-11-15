@@ -6,8 +6,8 @@ tree panel collapse/expand behavior.
 """
 
 import logging
-from PyQt6.QtCore import QEvent, QObject
-from PyQt6.QtWidgets import QSplitter
+from PySide6.QtCore import QEvent, QObject
+from PySide6.QtWidgets import QSplitter
 
 logger = logging.getLogger(__name__)
 

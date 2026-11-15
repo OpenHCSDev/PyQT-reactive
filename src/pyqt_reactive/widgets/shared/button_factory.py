@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QPushButton
 
 from pyqt_reactive.services.scope_color_service import ScopeColorService
 from pyqt_reactive.theming import AccentChromeColorPolicy

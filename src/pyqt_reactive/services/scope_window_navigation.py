@@ -3,8 +3,8 @@
 from __future__ import annotations
 from collections.abc import Callable
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QWidget
 
 from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowNavigationTarget,

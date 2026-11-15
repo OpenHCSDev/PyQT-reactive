@@ -6,8 +6,8 @@ from dataclasses import dataclass, field, replace
 
 import pytest
 
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QWidget
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,7 +267,7 @@ def test_inline_dataclass_groupbox_suppresses_programmatic_inner_changes(qapp) -
         ChangeSignalEmitter,
         metaclass=PyQtWidgetMeta,
     ):
-        changed = pyqtSignal(object)
+        changed = Signal(object)
 
         def __init__(self) -> None:
             super().__init__()
@@ -328,7 +328,7 @@ def test_inline_dataclass_groupbox_skips_equal_resolved_preview(qapp) -> None:
         ChangeSignalEmitter,
         metaclass=PyQtWidgetMeta,
     ):
-        changed = pyqtSignal(object)
+        changed = Signal(object)
 
         def __init__(self) -> None:
             super().__init__()

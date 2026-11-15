@@ -36,7 +36,7 @@ from typing import Dict, Iterable, List, Optional, Set, Callable, Any, Tuple, TY
 import re
 from objectstate import DottedFieldPath
 from pyqt_reactive.protocols.widget_protocols import FlashMaskRectProvider
-from PyQt6.QtCore import (
+from PySide6.QtCore import (
     QCoreApplication,
     QObject,
     QPoint,
@@ -46,10 +46,10 @@ from PyQt6.QtCore import (
     Qt,
     QRect,
     QRectF,
-    pyqtSignal,
-    pyqtSlot,
+    Signal,
+    Slot,
 )
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
@@ -70,7 +70,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QWidget,
 )
-from PyQt6.QtGui import (
+from PySide6.QtGui import (
     QColor,
     QPainter,
     QPainterPath,
@@ -146,7 +146,7 @@ def active_visual_frame_work_count() -> int:
     return coordinator.active_visual_frame_work_count()
 
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QGroupBox, QTreeWidget, QListWidget
+    from PySide6.QtWidgets import QGroupBox, QTreeWidget, QListWidget
     from pyqt_reactive.widgets.structural_table import StructuralTableCellTarget
 
 logger = logging.getLogger(__name__)
@@ -392,7 +392,7 @@ def _scroll_clip_rects_for_element(
     window: QWidget,
 ) -> List[QRect]:
     """Return only the viewport bounds that own an element's visual target."""
-    from PyQt6.QtWidgets import QAbstractScrollArea
+    from PySide6.QtWidgets import QAbstractScrollArea
 
     clip_rects: List[QRect] = []
     widget = element.scroll_clip_widget
@@ -676,7 +676,7 @@ def _container_rect_in_window(
         if not container.isVisible() or not container.isVisibleTo(window):
             return None
 
-        from PyQt6.QtCore import QPoint
+        from PySide6.QtCore import QPoint
 
         if use_full_rect:
             global_pos = container.mapToGlobal(QPoint(0, 0))
@@ -740,8 +740,8 @@ def _get_groupbox_title_mask_paths(
     groupbox: QWidget, window: QWidget, corner_radius: float = 0
 ) -> list[QPainterPath]:
     """Return mask rects for visible QGroupBox title text painted by Qt styles."""
-    from PyQt6.QtWidgets import QGroupBox
-    from PyQt6.QtCore import QPoint
+    from PySide6.QtWidgets import QGroupBox
+    from PySide6.QtCore import QPoint
 
     paths: list[QPainterPath] = []
     for titled_group in groupbox.findChildren(QGroupBox):
@@ -837,7 +837,7 @@ def create_groupbox_element(
         if not groupbox.isVisible() or not groupbox.isVisibleTo(window):
             return []
 
-        from PyQt6.QtCore import QPoint
+        from PySide6.QtCore import QPoint
 
         # INVERSE MODE: Mask title row + leaf_widget + label_widget only
         # All other widgets get flashed
@@ -849,7 +849,7 @@ def create_groupbox_element(
                     return []
 
                 # Get groupbox top for title row detection
-                from PyQt6.QtCore import QPoint
+                from PySide6.QtCore import QPoint
                 groupbox_global = groupbox.mapToGlobal(QPoint(0, 0))
                 title_height = groupbox.fontMetrics().height() + 20  # Title row height
                 title_y_max = groupbox_global.y() + title_height
@@ -877,7 +877,7 @@ def create_groupbox_element(
                     exclusions.extend(extra_mask_paths(window, radius))
 
                 # Mask title row widgets only for real groupboxes (avoid masking first row in plain containers)
-                from PyQt6.QtWidgets import QGroupBox
+                from PySide6.QtWidgets import QGroupBox
                 if isinstance(groupbox, QGroupBox) and groupbox.title():
                     for child in groupbox.findChildren(QWidget):
                         try:
@@ -1037,7 +1037,7 @@ def create_widget_rect_element(
             if not widget.isVisible() or not widget.isVisibleTo(window):
                 return None
 
-            from PyQt6.QtCore import QPoint
+            from PySide6.QtCore import QPoint
 
             global_pos = widget.mapToGlobal(QPoint(0, 0))
             window_pos = window.mapFromGlobal(global_pos)
@@ -1228,8 +1228,8 @@ class WindowFlashOverlay(QWidget):
     VIEWPORT CULLING: Elements outside visible scroll areas return None from
     their geometry callback and are skipped.
     """
-    frame_painted = pyqtSignal(object)
-    native_render_requested = pyqtSignal()
+    frame_painted = Signal(object)
+    native_render_requested = Signal()
 
     def flash_start_signal(self):
         """Expose the single coordinator's authoritative window-start stream."""
@@ -1616,7 +1616,7 @@ class WindowFlashOverlay(QWidget):
 
     def _refresh_scroll_area_event_filters(self) -> None:
         """Refresh cached scroll areas and install viewport event filters."""
-        from PyQt6.QtWidgets import QAbstractScrollArea
+        from PySide6.QtWidgets import QAbstractScrollArea
 
         scroll_areas = [
             scroll_area
@@ -1678,7 +1678,7 @@ class WindowFlashOverlay(QWidget):
 
     def eventFilter(self, obj, event):
         """Catch scroll/resize/layout events to invalidate geometry cache."""
-        from PyQt6.QtCore import QEvent
+        from PySide6.QtCore import QEvent
         event_type = event.type()
 
         if event_type in (QEvent.Type.Resize, QEvent.Type.Move):
@@ -2373,10 +2373,10 @@ class _GlobalFlashCoordinator(QObject):
     - Triggers ONE repaint per window (WindowFlashOverlay)
     - Total: O(k) per tick where k = flashing elements, O(1) per window for repaint
     """
-    flash_started = pyqtSignal(object, object)
-    start_timer_requested = pyqtSignal()
-    flush_pending_flashes_requested = pyqtSignal()
-    flush_visual_frame_callbacks_requested = pyqtSignal()
+    flash_started = Signal(object, object)
+    start_timer_requested = Signal()
+    flush_pending_flashes_requested = Signal()
+    flush_visual_frame_callbacks_requested = Signal()
 
     _instance: Optional['_GlobalFlashCoordinator'] = None
 
@@ -2523,7 +2523,7 @@ class _GlobalFlashCoordinator(QObject):
 
         self._start_timer_in_owner_thread()
 
-    @pyqtSlot()
+    @Slot()
     def _start_timer_in_owner_thread(self) -> None:
         """Start the timer from the coordinator's Qt owner thread."""
         timer = self._ensure_timer()
@@ -2731,7 +2731,7 @@ class _GlobalFlashCoordinator(QObject):
             return
         QTimer.singleShot(0, self._flush_visual_frame_callbacks)
 
-    @pyqtSlot()
+    @Slot()
     def _flush_visual_frame_callbacks(self) -> None:
         callbacks = tuple(self._pending_visual_frame_callbacks.values())
         self._pending_visual_frame_callbacks.clear()
@@ -2799,7 +2799,7 @@ class _GlobalFlashCoordinator(QObject):
             len(self._active_windows),
         )
 
-    @pyqtSlot()
+    @Slot()
     def _flush_pending_flash_keys(self) -> None:
         keys = tuple(self._pending_flash_keys)
         self._pending_flash_keys.clear()
@@ -3275,7 +3275,7 @@ class _DestructionCallback(QObject):
         self._callback = callback
         owner.destroyed.connect(self._invoke)
 
-    @pyqtSlot()
+    @Slot()
     def _invoke(self) -> None:
         self._callback()
 

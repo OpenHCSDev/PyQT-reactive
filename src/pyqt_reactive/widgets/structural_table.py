@@ -5,9 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 
-from PyQt6.QtCore import QPoint, QRect
-from PyQt6.QtGui import QPainterPath
-from PyQt6.QtWidgets import QWidget, QTableWidget
+from PySide6.QtCore import QPoint, QRect
+from PySide6.QtGui import QPainterPath
+from PySide6.QtWidgets import QWidget, QTableWidget
 from objectstate import (
     DottedFieldPath,
     ObjectStateSubfieldSemantic,

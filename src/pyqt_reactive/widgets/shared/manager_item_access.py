@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QListWidgetItem
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QListWidgetItem
 
 from formbridge.managers.item_hooks import ManagerItemHooks
 from formbridge.managers.state_binding import ManagerStateBinding

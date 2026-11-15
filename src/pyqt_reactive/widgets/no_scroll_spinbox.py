@@ -7,9 +7,9 @@ Prevents accidental value changes from mouse wheel events.
 from enum import Enum
 from typing import Callable
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QPainter, QWheelEvent
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QPainter, QWheelEvent
+from PySide6.QtWidgets import (
     QApplication,
     QStyle,
     QStyleOptionButton,
@@ -175,7 +175,7 @@ class NoneAwareCheckBox(
         super().__init__(parent)
         self._value_state = CheckboxValueState.CONCRETE
         # Prevent horizontal stretching - checkbox should only be as wide as its content
-        from PyQt6.QtWidgets import QSizePolicy
+        from PySide6.QtWidgets import QSizePolicy
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
     def get_value(self):
@@ -254,7 +254,7 @@ class NoneAwareCheckBox(
 
     def _apply_placeholder_palette(self):
         """Apply grey palette to make checkmark dim like placeholder text."""
-        from PyQt6.QtGui import QPalette
+        from PySide6.QtGui import QPalette
         palette = self.palette()
         placeholder_color = QColor(136, 136, 136)
         for role in (
@@ -267,7 +267,7 @@ class NoneAwareCheckBox(
 
     def _apply_concrete_palette(self):
         """Restore normal palette for concrete values."""
-        from PyQt6.QtGui import QPalette
+        from PySide6.QtGui import QPalette
         # Use application palette to get the proper text color for the theme
         app_palette = QApplication.palette()
         palette = self.palette()

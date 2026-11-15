@@ -118,7 +118,7 @@ class CrossWindowPreviewMixin:
     # --- Debounced refresh ---
     def _schedule_preview_update(self) -> None:
         """Schedule a debounced full preview refresh."""
-        from PyQt6.QtCore import QTimer
+        from PySide6.QtCore import QTimer
 
         logger.info(f"⏰ {type(self).__name__}._schedule_preview_update: starting {self.PREVIEW_UPDATE_DEBOUNCE_MS}ms timer")
 

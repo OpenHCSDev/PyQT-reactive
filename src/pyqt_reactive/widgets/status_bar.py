@@ -9,11 +9,11 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QProgressBar, QFrame
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QFont
 
 from pyqt_reactive.theming import ColorScheme
 
@@ -29,7 +29,7 @@ class StatusBarWidget(QWidget):
     """
     
     # Signals
-    status_updated = pyqtSignal(str)  # status message
+    status_updated = Signal(str)  # status message
     
     def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
         """

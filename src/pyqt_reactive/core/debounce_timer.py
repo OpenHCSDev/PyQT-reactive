@@ -1,7 +1,7 @@
 """Reusable trailing debounce timer."""
 
 from typing import Callable, Optional
-from PyQt6.QtCore import QTimer
+from PySide6.QtCore import QTimer
 
 
 class DebounceTimer:

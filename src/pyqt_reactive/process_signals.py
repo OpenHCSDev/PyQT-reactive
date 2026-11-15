@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from types import FrameType
 from typing import Any
 
-from PyQt6.QtCore import QCoreApplication, QObject, QTimer
+from PySide6.QtCore import QCoreApplication, QObject, QTimer
 
 
 class QtProcessSignalRelay(QObject):

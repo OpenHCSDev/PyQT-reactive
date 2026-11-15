@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QListWidgetItem
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QListWidgetItem
 
 from objectstate import ObjectStateRegistry
 from pyqt_reactive.animation import WindowFlashOverlay, create_list_item_element

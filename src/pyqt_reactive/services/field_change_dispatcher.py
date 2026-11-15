@@ -248,7 +248,7 @@ class LiveContextNotificationStage:
 
     def _schedule_debounced_flush(self) -> bool:
         try:
-            from PyQt6.QtCore import QCoreApplication, QTimer
+            from PySide6.QtCore import QCoreApplication, QTimer
         except Exception:
             return False
 

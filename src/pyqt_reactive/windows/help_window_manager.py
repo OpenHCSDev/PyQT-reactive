@@ -4,8 +4,8 @@ import inspect
 import logging
 from collections.abc import Callable
 
-from PyQt6.QtGui import QCursor, QGuiApplication
-from PyQt6.QtWidgets import (
+from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QMessageBox,

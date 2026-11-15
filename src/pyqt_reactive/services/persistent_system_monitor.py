@@ -8,7 +8,7 @@ and provides smooth, responsive performance monitoring.
 
 import logging
 
-from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker, Qt
+from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker, Qt
 
 from formbridge.services.system_metrics_sampler import SystemMetrics, SystemMetricsSampler
 from formbridge.services.system_monitor_core import SystemMetricsHistory, SystemMonitorCore
@@ -26,8 +26,8 @@ class PersistentSystemMonitorThread(QThread):
     """
     
     # Signals
-    metrics_updated = pyqtSignal(object)  # Emits SystemMetrics.
-    error_occurred = pyqtSignal(str)    # Emitted when an error occurs
+    metrics_updated = Signal(object)  # Emits SystemMetrics.
+    error_occurred = Signal(str)    # Emitted when an error occurs
     
     def __init__(
         self,

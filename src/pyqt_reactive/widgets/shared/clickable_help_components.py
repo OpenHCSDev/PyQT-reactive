@@ -6,10 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from objectstate import DottedFieldPath, ObjectState, ObjectStateRegistry
-from PyQt6.QtCore import QRect, QRectF, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QFont, QPainter
-from PyQt6.QtWidgets import (
+from objectstate import ObjectState
+from PySide6.QtCore import QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QFont, QPainter
+from PySide6.QtWidgets import (
     QAbstractButton,
     QGroupBox,
     QHBoxLayout,
@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.animation.flash_mixin import LEAF_WIDGET_TYPES, resolve_mask_widgets
-from formbridge.forms import layout_constants
+from pyqt_reactive.forms import layout_constants
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
     ChildFieldChromeRefreshable,
@@ -43,7 +43,7 @@ from pyqt_reactive.protocols import (
 from pyqt_reactive.theming import AccentChromeColorPolicy, ColorScheme
 from pyqt_reactive.protocols.widget_protocols import FlashMaskRectProvider
 from pyqt_reactive.widgets.shared.scope_border_renderer import ScopeBorderRenderer
-from formbridge.theming.scope_color_receiver import ScopeColorSchemeReceiver
+from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
 from pyqt_reactive.widgets.shared.scope_visual_config import ScopeColorScheme
 
 logger = logging.getLogger(__name__)
@@ -165,7 +165,7 @@ class FlashableGroupBox(QGroupBox, FlashMixin):
 class ClickableHelpLabel(QLabel):
     """PyQt6 clickable label that shows help information - reuses Textual TUI help logic."""
     
-    help_requested = pyqtSignal()
+    help_requested = Signal()
     
     def __init__(self, text: str, help_context: HelpContext):
         """Initialize clickable help label.
@@ -252,7 +252,7 @@ class ClickableParameterLabel(ClickableHelpLabel):
 class HelpIndicator(QLabel, FlashMaskRectProvider, metaclass=PyQtWidgetMeta):
     """PyQt6 simple help indicator that can be added next to any widget - mirrors Textual TUI."""
     
-    help_requested = pyqtSignal()
+    help_requested = Signal()
 
     def flash_mask_rect(self) -> QRect:
         """Preserve the complete styled icon, not just its question-mark glyph."""
@@ -521,30 +521,31 @@ class ProvenanceNavigationMixin:
         self._state = state
         self._dotted_path = dotted_path
 
-    def _provenance_source(self) -> tuple[str | None, type] | None:
-        """The scope and type that supply this field's inherited value.
+    def _has_provenance(self) -> bool:
+        """Check if this field has a provenance source (inherited from ancestor).
 
-        ``None`` when the field is set on this field itself. The scope is ``''``
-        for the global config and this state's own scope id (``None`` for a state
-        without one) when another config of the same object supplies the value.
+        Returns True if the field inherits from an ancestor, even if that ancestor
+        is the root scope (GlobalPipelineConfig, scope_id='').
         """
         if not self._state or not self._dotted_path:
-            return None
-        return self._state.get_provenance(self._dotted_path)
-
-    def _has_provenance(self) -> bool:
-        """Whether this field's value is inherited from another field."""
-        return self._provenance_source() is not None
-
-    def _navigate_to_provenance_source(self) -> bool:
-        """Go to the field that supplies this field's value; False when it is set here."""
-        source = self._provenance_source()
-        if source is None:
+            logger.debug(f"ProvenanceMixin._has_provenance: NO - state={self._state}, dotted_path={self._dotted_path}")
             return False
-        self._navigate_to_source(*source)
-        return True
+        try:
+            result = self._state.get_provenance(self._dotted_path)
+            logger.debug(f"ProvenanceMixin._has_provenance: result={result}, dotted_path={self._dotted_path}")
+            # Check if result is a valid tuple with a type class
+            # Empty scope_id ('') means GlobalPipelineConfig (root scope)
+            if not result or not isinstance(result, tuple) or len(result) != 2:
+                return False
+            scope_id, source_type = result
+            # Empty scope_id is valid (represents root/GlobalPipelineConfig)
+            # Just need a valid type class
+            return source_type is not None
+        except Exception as e:
+            logger.debug(f"ProvenanceMixin._has_provenance: EXCEPTION - {e}")
+            return False
 
-    def _navigate_to_source(self, source_scope_id: str | None, source_type: type) -> None:
+    def _navigate_to_source(self, source_scope_id: str, source_type: type) -> None:
         """Open the source window (creating if needed) and scroll to the field.
 
         Args:
@@ -552,27 +553,28 @@ class ProvenanceNavigationMixin:
             source_type: The TYPE that has the concrete value (may differ from local
                          container type due to MRO inheritance)
         """
-        field_name = DottedFieldPath(self._dotted_path).field_name
+        # Extract field_name from our local dotted path
+        field_name = self._dotted_path.split('.')[-1] if '.' in self._dotted_path else self._dotted_path
 
-        # Another config of this same object supplies the value: the source state is
-        # this state, whether or not it is registered under a scope id.
-        same_window = (
-            isinstance(self._state, ObjectState) and self._state.scope_id == source_scope_id
-        )
-        source_state = (
-            self._state if same_window else ObjectStateRegistry.get_by_scope(source_scope_id)
-        )
+        logger.debug(f"_navigate_to_source: local_path={self._dotted_path}, field_name={field_name}, "
+                    f"source_scope_id={source_scope_id}, source_type={source_type.__name__}")
+
+        # Compute the target path in the source window:
+        # We need to find what path source_type is at in the target window's ObjectState
         try:
-            target_path = self._compute_target_path(
-                source_state, source_scope_id, source_type, field_name
-            )
+            target_path = self._compute_target_path(source_scope_id, source_type, field_name)
         except ProvenanceNavigationUnavailable as exc:
             logger.warning("Provenance navigation unavailable: %s", exc)
             return
 
-        logger.info("Navigate: %s -> %s field %s", self._dotted_path, source_scope_id, target_path)
+        logger.info(f"🔗 Navigate: {self._dotted_path} → {source_scope_id}::{target_path}")
 
-        if same_window:
+        # Check if source is in the SAME window (sibling MRO inheritance within same scope)
+        if (
+            isinstance(self._state, ObjectState)
+            and self._state.scope_id == source_scope_id
+        ):
+            logger.info(f"🔄 Same-window navigation: scrolling to {target_path}")
             self._scroll_within_current_window(target_path)
             return
 
@@ -616,33 +618,42 @@ class ProvenanceNavigationMixin:
 
         logger.warning(f"Could not find scrollable parent to navigate to {target_path}")
 
-    @staticmethod
-    def _compute_target_path(
-        source_state: ObjectState | None,
-        source_scope_id: str | None,
-        source_type: type,
-        field_name: str,
-    ) -> str:
-        """The dotted path of ``source_type.field_name`` in the source state's window.
+    def _compute_target_path(self, source_scope_id: str, source_type: type, field_name: str) -> str:
+        """Compute the dotted path for source_type.field_name in the target window.
 
-        The source type can sit at another path there than in this window (local
-        ``well_filter_config``, source ``path_planning_config``). A source type that
-        is hidden in the UI answers with its closest visible subclass holding the
-        field, which ``project_ui_visible_field_path`` decides.
+        The source_type might be at a different path in the target window than in our window.
+        For example:
+        - Local: WellFilterConfig at 'well_filter_config'
+        - Source: PathPlanningConfig at 'path_planning_config'
+
+        We need to find what path source_type is at in the target window's ObjectState.
+
+        IMPORTANT: If source_type is ui_hidden (not shown in the UI), we find the closest
+        visible subclass in the MRO that also has this field. For example:
+        - NapariDisplayConfig is ui_hidden=True
+        - NapariStreamingConfig inherits from NapariDisplayConfig and IS visible
+        - So we navigate to napari_streaming_config.field instead of napari_display_config.field
         """
-        if source_state is None:
+        from objectstate import ObjectStateRegistry
+
+        logger.debug(f"_compute_target_path: scope={source_scope_id}, source_type={source_type.__name__}, field={field_name}")
+
+        # Get the target window's ObjectState
+        target_state = ObjectStateRegistry.get_by_scope(source_scope_id)
+        if target_state is None:
             raise ProvenanceNavigationUnavailable(
                 f"no ObjectState registered for scope {source_scope_id!r}"
             )
 
-        target_path = source_state.project_ui_visible_field_path(source_type, field_name)
+        target_path = target_state.project_ui_visible_field_path(source_type, field_name)
         if target_path is None:
             raise ProvenanceNavigationUnavailable(
                 f"no visible UI path for type {source_type.__name__}.{field_name} "
                 f"in scope {source_scope_id!r}"
             )
-        return target_path
 
+        logger.info(f"Computed target path: {target_path} (source_type={source_type.__name__}, field={field_name})")
+        return target_path
 
 class ProvenanceLabel(QLabel, ProvenanceNavigationMixin):
     """QLabel that supports provenance navigation on hover/click.
@@ -692,11 +703,12 @@ class ProvenanceLabel(QLabel, ProvenanceNavigationMixin):
 
     def mousePressEvent(self, event) -> None:
         """On click: navigate to provenance source window and field."""
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and self._navigate_to_provenance_source()
-        ):
-            return
+        if event.button() == Qt.MouseButton.LeftButton and self._has_provenance():
+            result = self._state.get_provenance(self._dotted_path)
+            if result is not None:
+                source_scope_id, source_type = result
+                self._navigate_to_source(source_scope_id, source_type)
+                return
         super().mousePressEvent(event)
 
 
@@ -719,7 +731,11 @@ class ProvenanceButton(QPushButton, ProvenanceNavigationMixin):
 
     def _on_click(self):
         """Handle button click - navigate to provenance source."""
-        self._navigate_to_provenance_source()
+        if self._has_provenance():
+            result = self._state.get_provenance(self._dotted_path)
+            if result:
+                source_scope_id, source_type = result
+                self._navigate_to_source(source_scope_id, source_type)
 
     def enterEvent(self, event):
         """Show pointer cursor if field has provenance."""
@@ -759,7 +775,7 @@ class LabelWithHelp(QWidget):
 
         # Fixed size policy prevents horizontal stretching
         # This fixes flash area blocking for widgets to the right (e.g., checkbox groups)
-        from PyQt6.QtWidgets import QSizePolicy
+        from PySide6.QtWidgets import QSizePolicy
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         layout = QHBoxLayout(self)
@@ -905,7 +921,7 @@ class GroupBoxWithHelp(
 
         # Create main layout and add title widget at top
         # Use CURRENT_LAYOUT as single source of truth for margins/spacing
-        from formbridge.forms.layout_constants import CURRENT_LAYOUT
+        from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(*CURRENT_LAYOUT.groupbox_margins)
         main_layout.setSpacing(CURRENT_LAYOUT.groupbox_spacing)
@@ -1027,7 +1043,7 @@ class GroupBoxWithHelp(
             )
             self._paint_debug_logged = True
 
-        from PyQt6.QtGui import QPainter
+        from PySide6.QtGui import QPainter
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         painter.setPen(Qt.PenStyle.NoPen)
@@ -1052,7 +1068,7 @@ class GroupBoxWithHelp(
     def _paint_scope_background(self, layers) -> None:
         """Paint subtle scope-colored background (matching list item style)."""
         from pyqt_reactive.animation import get_widget_corner_radius
-        from formbridge.forms.layout_constants import default_container_corner_radius_px
+        from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
         from pyqt_reactive.widgets.shared.scope_visual_config import ScopeVisualConfig
 
         # Get border rect (accounts for margin-top offset)
@@ -1123,7 +1139,7 @@ class GroupBoxWithHelp(
         """
         rect = self._get_border_rect()
         from pyqt_reactive.animation import get_widget_corner_radius
-        from formbridge.forms.layout_constants import default_container_corner_radius_px
+        from pyqt_reactive.forms.layout_constants import default_container_corner_radius_px
         radius = get_widget_corner_radius(self)
         if radius == 0:
             radius = default_container_corner_radius_px()

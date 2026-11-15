@@ -1,7 +1,7 @@
 """pytest configuration and fixtures for pyqt-reactor tests."""
 
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 from pyqt_reactive.theming import ColorScheme, ThemeManager
 

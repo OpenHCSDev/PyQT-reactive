@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from functools import partial
 from typing import Any, Callable, Optional, TYPE_CHECKING
 from weakref import ReferenceType, ref
-from PyQt6.QtWidgets import QWidget, QCheckBox, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox
+from PySide6.QtWidgets import QWidget, QCheckBox, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox
 import logging
 
 if TYPE_CHECKING:

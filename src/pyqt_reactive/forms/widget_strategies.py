@@ -14,8 +14,8 @@ from typing import ClassVar, get_args, get_origin
 from magicgui.widgets import Widget as MagicGuiWidget
 from magicgui.widgets import create_widget
 from objectstate import DataclassFieldAccess
-from PyQt6.QtGui import QIntValidator, QValidator
-from PyQt6.QtWidgets import (
+from PySide6.QtGui import QIntValidator, QValidator
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -1390,7 +1390,7 @@ class DebouncedTextChangeEmitter:
         delay_ms: int = TEXT_CHANGE_COMMIT_DEBOUNCE_MS,
         is_committable: Callable[[], bool] | None = None,
     ) -> None:
-        from PyQt6.QtCore import QTimer
+        from PySide6.QtCore import QTimer
 
         self._widget = widget
         self._callback = callback

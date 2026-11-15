@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
 
 from pyqt_reactive.widgets.shared.abstract_table_browser import (
     AbstractTableBrowser,

@@ -7,7 +7,7 @@ Generic base class for managed dialogs with WindowManager integration.
 import logging
 from typing import Optional
 
-from PyQt6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.animation import WindowFlashOverlay
 from pyqt_reactive.services.window_navigation import (

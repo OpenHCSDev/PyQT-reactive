@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QLabel
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QLabel
 
 from formbridge.strategies.status_presentation import (
     DefaultStatusPresentationStrategy,

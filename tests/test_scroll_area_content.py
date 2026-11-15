@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QRect
-from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QRect
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,

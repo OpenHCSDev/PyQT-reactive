@@ -20,8 +20,8 @@ from dataclasses import dataclass, field, make_dataclass, fields as dataclass_fi
 from enum import Enum, auto
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Callable, List, TypeVar
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 import inspect
 import sys
 from abc import ABC

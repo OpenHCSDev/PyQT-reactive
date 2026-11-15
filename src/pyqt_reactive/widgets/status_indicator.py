@@ -5,8 +5,8 @@ from collections.abc import Callable
 from enum import Enum
 from functools import partialmethod
 
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 from zmqruntime.startup import EndpointStartupPresentationTarget
 
 from pyqt_reactive.core import BackgroundTaskManager

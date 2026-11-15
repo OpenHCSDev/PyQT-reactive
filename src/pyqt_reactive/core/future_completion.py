@@ -6,7 +6,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Generic, TypeVar
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 ResultT = TypeVar("ResultT")
 
@@ -19,7 +19,7 @@ class FutureCompletion(QObject, Generic[ResultT]):
     when that receiver is destroyed, without cancelling a shared operation.
     """
 
-    completed = pyqtSignal(object)
+    completed = Signal(object)
 
     def __init__(
         self,

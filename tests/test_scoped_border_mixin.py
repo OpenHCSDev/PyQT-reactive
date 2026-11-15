@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget
 
 from pyqt_reactive.widgets.shared.scoped_border_mixin import ScopedBorderMixin
 

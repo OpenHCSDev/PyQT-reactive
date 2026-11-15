@@ -379,7 +379,7 @@ def test_async_widget_failure_is_published_without_finalizing(qapp, monkeypatch)
 
 def test_synchronous_widget_failure_balances_and_fails_root_transaction(qapp):
     """Initial-row failures use the same root transaction boundary as later rows."""
-    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
 
     from pyqt_reactive.forms.form_init_service import (
         BuildConfig,
@@ -512,7 +512,7 @@ def test_post_build_failure_is_published_without_finalizing(qapp, monkeypatch):
 def test_optional_nested_plain_groupbox_completes_dirty_chrome_finalization(qapp):
     """Optional structural containers do not claim rich dirty-marker chrome."""
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-    from PyQt6.QtWidgets import QGroupBox
+    from PySide6.QtWidgets import QGroupBox
 
     from pyqt_reactive.forms.parameter_form_manager import (
         FormManagerConfig,

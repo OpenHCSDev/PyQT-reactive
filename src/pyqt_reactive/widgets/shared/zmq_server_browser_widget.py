@@ -9,8 +9,8 @@ from functools import partialmethod
 from pathlib import Path
 
 from objectstate import spawn_thread_with_context
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QMessageBox,
     QTreeWidget,
@@ -87,11 +87,11 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
     _TREE_INDENTATION_PX = 12
 
-    endpoint_terminated = pyqtSignal(object)
-    endpoint_snapshot_changed = pyqtSignal(object)
-    log_file_opened = pyqtSignal(str)
-    _scan_complete = pyqtSignal(object)
-    _kill_complete = pyqtSignal(bool, str)
+    endpoint_terminated = Signal(object)
+    endpoint_snapshot_changed = Signal(object)
+    log_file_opened = Signal(str)
+    _scan_complete = Signal(object)
+    _kill_complete = Signal(bool, str)
 
     BUTTON_CONFIGS = [
         ("Refresh", "refresh", "Refresh server list"),
@@ -295,7 +295,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
 
         spawn_thread_with_context(_scan_and_emit, name="scan_servers")
 
-    @pyqtSlot(object)
+    @Slot(object)
     def _update_server_list(self, result: EndpointScanResult) -> None:
         """Commit one scan authority, then update every derived UI projection."""
 
@@ -367,7 +367,7 @@ class ZMQServerBrowserWidgetABC(QWidget, ABC, metaclass=_CombinedMeta):
         item.setData(0, Qt.ItemDataRole.UserRole, observation)
         return item
 
-    @pyqtSlot(bool, str)
+    @Slot(bool, str)
     def _on_kill_complete(self, success: bool, message: str) -> None:
         if not success:
             QMessageBox.warning(self, "Kill Failed", message)

@@ -10,8 +10,8 @@ Usage:
     install_shift_wheel_scrolling(app)
 """
 
-from PyQt6.QtWidgets import QAbstractScrollArea
-from PyQt6.QtCore import QObject, QEvent, Qt
+from PySide6.QtWidgets import QAbstractScrollArea
+from PySide6.QtCore import QObject, QEvent, Qt
 from weakref import WeakKeyDictionary
 import math
 
@@ -121,7 +121,7 @@ def install_shift_wheel_scrolling(app, scroll_speed_multiplier: float = 0.01) ->
         
     Example:
         import sys
-        from PyQt6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
         from pyqt_reactive.utils.scroll_filter import install_shift_wheel_scrolling
         
         app = QApplication(sys.argv)

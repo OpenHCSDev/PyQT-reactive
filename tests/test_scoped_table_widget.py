@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QColor, QImage, QPalette
-from PyQt6.QtWidgets import QTableWidgetItem, QWidget
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QImage, QPalette
+from PySide6.QtWidgets import QTableWidgetItem, QWidget
 
 from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
 from pyqt_reactive.protocols import (

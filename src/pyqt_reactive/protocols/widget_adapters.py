@@ -20,9 +20,9 @@ from enum import Enum
 from typing import Any
 
 try:
-    from PyQt6.QtCore import QLocale, QObject
-    from PyQt6.QtGui import QKeySequence
-    from PyQt6.QtWidgets import (
+    from PySide6.QtCore import QLocale, QObject
+    from PySide6.QtGui import QKeySequence
+    from PySide6.QtWidgets import (
         QComboBox,
         QDoubleSpinBox,
         QGroupBox,

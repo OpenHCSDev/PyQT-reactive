@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 import logging
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Callable, Optional, Tuple, List
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QPushButton,
@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QLayout,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QFont
 
 from python_introspect import Enableable, SignatureAnalyzer, is_enableable
 
@@ -107,12 +107,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
     """
 
     # Signals
-    parameter_changed = pyqtSignal(int, str, object)  # index, param_name, value
-    function_changed = pyqtSignal(int)  # index
-    add_function = pyqtSignal(int)  # index
-    remove_function = pyqtSignal(int)  # index
-    move_function = pyqtSignal(int, int)  # index, direction
-    reset_parameters = pyqtSignal(int)  # index
+    parameter_changed = Signal(int, str, object)  # index, param_name, value
+    function_changed = Signal(int)  # index
+    add_function = Signal(int)  # index
+    remove_function = Signal(int)  # index
+    move_function = Signal(int, int)  # index, direction
+    reset_parameters = Signal(int)  # index
 
     def __init__(
         self,
@@ -568,7 +568,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         Returns:
             Widget for parameter editing or None
         """
-        from PyQt6.QtWidgets import QLineEdit
+        from PySide6.QtWidgets import QLineEdit
         from pyqt_reactive.widgets import NoScrollSpinBox, NoScrollDoubleSpinBox
 
         # Boolean parameters
@@ -759,7 +759,7 @@ class FunctionListWidget(QWidget):
     """
 
     # Signals
-    functions_changed = pyqtSignal(list)  # List of function items
+    functions_changed = Signal(list)  # List of function items
 
     def __init__(self, service_adapter, color_scheme: Optional[ColorScheme] = None, parent=None):
         """

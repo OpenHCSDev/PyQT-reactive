@@ -9,8 +9,8 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
@@ -261,7 +261,7 @@ class ColumnFilterWidget(QFrame):
         filter_changed: Emitted when filter selection changes
     """
 
-    filter_changed = pyqtSignal()
+    filter_changed = Signal()
 
     def __init__(
         self,
@@ -473,8 +473,8 @@ class MultiColumnFilterPanel(QWidget):
         filters_changed: Emitted when any filter changes
     """
 
-    filters_changed = pyqtSignal()
-    filter_selection_changed = pyqtSignal(str, object)
+    filters_changed = Signal()
+    filter_selection_changed = Signal(str, object)
 
     def __init__(
         self,
@@ -702,7 +702,7 @@ class MultiColumnFilterPanel(QWidget):
             self.splitter.setFixedHeight(total_height)
 
             # Schedule a deferred update to fix layout after widgets are fully rendered
-            from PyQt6.QtCore import QTimer
+            from PySide6.QtCore import QTimer
             QTimer.singleShot(0, self._deferred_size_update)
         else:
             self.splitter.setMinimumHeight(0)
@@ -718,7 +718,7 @@ class MultiColumnFilterPanel(QWidget):
         num_filters = len(visible_filters)
         if num_filters > 0:
             # Force synchronous event processing to ensure layout is complete
-            from PyQt6.QtWidgets import QApplication
+            from PySide6.QtWidgets import QApplication
             QApplication.processEvents()
 
             # Force a full layout pass first
