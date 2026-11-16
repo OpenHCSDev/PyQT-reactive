@@ -10,7 +10,7 @@ from enum import Enum
 from PySide6.QtWidgets import QVBoxLayout
 from PySide6.QtCore import Signal
 
-from pyqt_reactive.widgets import NoneAwareCheckBox
+from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 
 

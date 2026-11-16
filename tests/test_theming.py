@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
-from pyqt_reactive.widgets import ThemedCheckBox
+from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
 
 
 class _DerivedTabBar(QTabBar):

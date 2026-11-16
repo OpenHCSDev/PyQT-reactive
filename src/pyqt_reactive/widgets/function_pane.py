@@ -569,11 +569,11 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             Widget for parameter editing or None
         """
         from PySide6.QtWidgets import QLineEdit
-        from pyqt_reactive.widgets import NoScrollSpinBox, NoScrollDoubleSpinBox
+        from pyqt_reactive.widgets.no_scroll_spinbox import NoScrollSpinBox, NoScrollDoubleSpinBox
 
         # Boolean parameters
         if param_type == bool:
-            from pyqt_reactive.widgets import NoneAwareCheckBox
+            from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
             widget = NoneAwareCheckBox()
             widget.set_value(current_value)  # Use set_value to handle None properly

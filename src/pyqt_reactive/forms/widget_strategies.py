@@ -55,7 +55,7 @@ from pyqt_reactive.protocols import (
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.qt_types import QtKeySequenceText
 from pyqt_reactive.theming.color_scheme import ColorScheme as PySide6ColorScheme
-from pyqt_reactive.widgets import (
+from pyqt_reactive.widgets.no_scroll_spinbox import (
     NoneAwareCheckBox,
     NoScrollComboBox,
     NoScrollDoubleSpinBox,
