@@ -22,7 +22,7 @@ from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout, QWidget
 from pyqt_reactive.forms.declared_editors import QtValueEditor
 from pyqt_reactive.protocols.widget_adapters import PyQtWidgetMeta
 from pyqt_reactive.theming import ColorScheme, StatusColorRole
-from pyqt_reactive.widgets.status_line import StatusLine
+from pyqt_reactive.widgets.status_line import NoticeLine
 
 
 class DeclaredPart(FollowedFieldView, DeclaredViews):
@@ -35,7 +35,8 @@ class DeclaredPart(FollowedFieldView, DeclaredViews):
 
 
 class DeclaredRow(DeclaredPart, FollowedValueView, QWidget, metaclass=PyQtWidgetMeta, shows=(ParameterInfo,)):
-    """A field with one value: its label over its editor, and the editor's refusal under it."""
+    """A field with one value: its label over its editor, and the editor's refusal under it,
+    kept for as long as the editor holds the refused text."""
 
     changed_mark = " ●"
 
@@ -46,7 +47,7 @@ class DeclaredRow(DeclaredPart, FollowedValueView, QWidget, metaclass=PyQtWidget
         self.label = QLabel(field.label)
         self.label.setWordWrap(True)
         self.label.setToolTip(field.help)
-        self.feedback = StatusLine(color_scheme)
+        self.feedback = NoticeLine(color_scheme)
         self.editor.feedback_changed.connect(self.show_feedback)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

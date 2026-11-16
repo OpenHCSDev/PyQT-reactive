@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Annotated
 
 from formbridge.forms.declared_fields import DeclaredField, Multiline
+from PySide6.QtTest import QTest
 from objectstate import DottedFieldPath, ObjectState, set_base_config_type
 from python_introspect import FieldLabel
 from python_introspect.choices import LabelledChoices
@@ -82,6 +83,8 @@ def test_form_edits_its_state_and_shows_a_refusal_under_the_field(qapp) -> None:
     form.finish()
     assert state.get_resolved_value("count") == 7
     assert form.refused
+    QTest.qWait(300)
+    assert form.refused and form.values["count"].feedback.isVisible()
 
     colour = form.editor(DottedFieldPath("colour"))
     assert [colour.itemText(index) for index in range(colour.count())] == ["Red", "Blue"]
