@@ -52,6 +52,16 @@ class PlainRow(RowFormatting):
         document.setPlainText(self.text)
 
 
+@dataclass(frozen=True)
+class HtmlRow(RowFormatting):
+    """A row drawn from rich text prepared for it."""
+
+    html: str
+
+    def fill(self, document: QTextDocument) -> None:
+        document.setHtml(self.html)
+
+
 class PreparedRowSignals(QObject):
     """A finished preparation: the key it was prepared under and its formatting."""
 

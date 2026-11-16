@@ -73,7 +73,7 @@ from formbridge.services.process_tracker import (
     get_log_tooltip,
 )
 from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
-from pyqt_reactive.widgets.virtual_rows import PlainRow, RowDocumentDelegate, RowFormatting, VirtualRowView
+from pyqt_reactive.widgets.virtual_rows import HtmlRow, PlainRow, RowDocumentDelegate, RowFormatting, VirtualRowView
 from formbridge.utils.log_highlight_client import LogHighlightClient
 from formbridge.utils.log_highlighter import build_log_line_html
 
@@ -583,16 +583,6 @@ class HighlightedSegments(RowFormatting):
             if segment.italic:
                 fmt.setFontItalic(True)
             cursor.setCharFormat(fmt)
-
-
-@dataclass(frozen=True)
-class HtmlRow(RowFormatting):
-    """A line whose html was built when it was read."""
-
-    html: str
-
-    def fill(self, document: QTextDocument) -> None:
-        document.setHtml(self.html)
 
 
 class LogItemDelegate(RowDocumentDelegate):
