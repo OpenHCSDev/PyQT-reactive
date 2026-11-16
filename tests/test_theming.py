@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
 from pyqt_reactive.widgets import ThemedCheckBox
 
 
@@ -541,3 +541,13 @@ def test_native_control_theme_preserves_nested_widget_geometry(qapp):
         )
     finally:
         root.close()
+
+
+def test_text_input_style_covers_multiline_fields_and_their_focus():
+    """A composer typed into over several lines is styled and focused like a line edit."""
+    scheme = ColorScheme()
+    style = StyleSheetGenerator(scheme).generate_text_input_style()
+    for field in ("QLineEdit", "QPlainTextEdit", "QTextEdit"):
+        assert field in style and f"{field}:focus" in style
+    assert scheme.to_hex(scheme.input_focus_border) in style
+    assert style in StyleSheetGenerator(scheme).generate_dialog_style()
