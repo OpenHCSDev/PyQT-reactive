@@ -29,9 +29,9 @@ import logging
 from contextlib import contextmanager
 
 from python_introspect import UnifiedParameterAnalyzer
-from pyqt_reactive.forms.parameter_form_base import ParameterFormConfig
-from pyqt_reactive.forms.parameter_form_constants import CONSTANTS
-from pyqt_reactive.forms.parameter_value_contracts import (
+from formbridge.forms.parameter_form_base import ParameterFormConfig
+from formbridge.forms.parameter_form_constants import CONSTANTS
+from formbridge.forms.parameter_value_contracts import (
     FormContext,
     FormObject,
     GeneratedServiceNamespace,
@@ -41,13 +41,13 @@ from pyqt_reactive.forms.parameter_value_contracts import (
     ParameterInfoSequence,
 )
 from pyqt_reactive.theming.color_scheme import ColorScheme as PySide6ColorScheme
-from objectstate import get_base_config_type, has_lazy_resolution
+from objectstate import DottedFieldPath, get_base_config_type, has_lazy_resolution
 
 if TYPE_CHECKING:
-    from pyqt_reactive.forms.parameter_form_service import FormStructure
+    from formbridge.forms.parameter_form_service import FormStructure
 
 try:
-    from pyqt_reactive.core.performance_monitor import timer
+    from formbridge.core.performance_monitor import timer
 except Exception:  # pragma: no cover - optional performance monitoring
     @contextmanager
     def timer(*args, **kwargs):
@@ -77,8 +77,8 @@ class ExtractedParameters:
     description: ParameterDescriptionByPath | ParameterDescriptionProvider = field(
         default_factory=ParameterDescriptionByPath,
         metadata={
-            'project': lambda name, info, field_id: (
-                f"{field_id}.{name}" if field_id else name,
+            'project': lambda name, info, scope_path: (
+                scope_path.child(name).value,
                 info.description,
             )
         }
@@ -400,6 +400,11 @@ class InitializationServiceCatalog:
     def builder_for(self, output_type: Type, service_name: str):
         """Decorator to register builder function and auto-generate service class."""
         def decorator(func: Callable) -> Callable:
+            if output_type in self._builders_by_output:
+                raise ValueError(
+                    f"{output_type.__qualname__} already has a builder "
+                    f"({self._builders_by_output[output_type].service_name})."
+                )
             self._builders_by_output[output_type] = BuilderSpec(output_type, service_name, func)
             return func
         return decorator
@@ -466,7 +471,6 @@ import pyqt_reactive.services.value_collection_service as value_collection_servi
 import pyqt_reactive.services.signal_service as signal_service
 import pyqt_reactive.services.parameter_ops_service as parameter_ops_service
 import pyqt_reactive.services.enabled_field_styling_service as enabled_field_styling_service
-import pyqt_reactive.services.enum_dispatch_service as enum_dispatch_service
 
 
 class ServiceRegistryMeta(type):
@@ -505,6 +509,7 @@ def _auto_generate_builders():
     """Auto-generate all builder functions via introspection of their output types."""
 
     def _extract_parameters(object_instance, exclude_params, initial_values, field_id=None):
+        scope_path = DottedFieldPath(field_id or "")
         param_info_dict = UnifiedParameterAnalyzer.analyze(object_instance, exclude_params=exclude_params or [])
         extracted = {}
         computed = {}
@@ -517,7 +522,7 @@ def _auto_generate_builders():
             if projection is None:
                 raise ValueError(f"Unsupported extracted parameter field: {fld.name}")
             extracted[fld.name] = dict(
-                projection(name, info, field_id)
+                projection(name, info, scope_path)
                 for name, info in param_info_dict.items()
             )
             if initial_values and fld.metadata.get('initial_values'):
@@ -556,7 +561,7 @@ def _auto_generate_builders():
         ctx = DerivationContext(context_obj, extracted, color_scheme)
         vars(config).update(vars(ctx))
 
-        from pyqt_reactive.forms.parameter_form_service import ParameterAnalysisInput
+        from formbridge.forms.parameter_form_service import ParameterAnalysisInput
         description = extracted.description
         analysis_input = ParameterAnalysisInput(
             field_id=field_id,

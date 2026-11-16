@@ -498,11 +498,11 @@ class FunctionListEditorWidget(DetachableActionBarHost, QWidget):
 
         can_reorder = (
             self.function_panes
-            and all(not not shiboken6.isValid(p) for p in self.function_panes)
+            and all(shiboken6.isValid(p) for p in self.function_panes)
             and len(new_tokens) == len(self.function_panes)
             and len(set(new_tokens)) == len(new_tokens)
             and len(pane_by_token) == len(self.function_panes)
-            and all(not not shiboken6.isValid(p) for p in pane_by_token.values())
+            and all(shiboken6.isValid(p) for p in pane_by_token.values())
             and set(new_tokens) == set(pane_by_token.keys())
         )
         if can_reorder:

@@ -99,9 +99,9 @@ def test_enableable_title_relocation_releases_responsive_source_row(qapp) -> Non
         assert enabled_label.isHidden()
         assert nested.labels["enabled"] is enabled_label
         assert enabled_label.parentWidget() is None
-        assert not not shiboken6.isValid(enabled_label)
-        assert not not shiboken6.isValid(enabled_widget)
-        assert not not shiboken6.isValid(enabled_reset)
+        assert shiboken6.isValid(enabled_label)
+        assert shiboken6.isValid(enabled_widget)
+        assert shiboken6.isValid(enabled_reset)
         assert not retained_source_rows
         assert not visible_empty_rows
 

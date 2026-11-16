@@ -45,7 +45,7 @@ try:
     logger.info("QScintilla successfully imported")
 except ImportError as e:
     logger.warning(f"QScintilla not available: {e}")
-    logger.info("Install with: pip install QScintilla")
+    logger.info("Install with: pip install PySide6-QScintilla")
     QSCINTILLA_AVAILABLE = False
 
 

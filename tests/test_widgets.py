@@ -1723,7 +1723,7 @@ def test_global_flash_coordinator_recreates_after_qt_owner_deletion(qapp) -> Non
     replacement = _GlobalFlashCoordinator.get()
     assert replacement is not original
     assert replacement.parent() is qapp
-    assert not not shiboken6.isValid(replacement)
+    assert shiboken6.isValid(replacement)
 
 
 def test_window_flash_overlay_registry_discards_deleted_qt_wrapper(qapp) -> None:
@@ -1743,7 +1743,7 @@ def test_window_flash_overlay_registry_discards_deleted_qt_wrapper(qapp) -> None
     replacement = WindowFlashOverlay.get_for_window(dialog)
     assert replacement is not None
     assert replacement is not original
-    assert not not shiboken6.isValid(replacement)
+    assert shiboken6.isValid(replacement)
 
     WindowFlashOverlay.cleanup_window(dialog)
     dialog.close()
