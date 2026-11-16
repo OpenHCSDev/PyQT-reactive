@@ -64,3 +64,26 @@ def test_application_command_accepts_any_configured_qt_key(qapp) -> None:
         assert calls == ["back"]
     finally:
         lifecycle.close()
+
+
+def test_an_open_popup_keeps_its_keys_from_application_commands(qapp) -> None:
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QMenu
+
+    calls: list[str] = []
+    lifecycle = ShortcutLifecycle[Keys](qapp)
+    lifecycle.bind_command(lambda config: config.step_back, "Back", lambda: calls.append("back"))
+    menu = QMenu()
+    menu.addAction("Item")
+    try:
+        lifecycle.apply(replace(Keys(), step_back="Esc"))
+        menu.popup(QPoint(0, 0))
+        qapp.processEvents()
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+        assert lifecycle._event_filter.eventFilter(None, event) is False
+        menu.close()
+        qapp.processEvents()
+        assert lifecycle._event_filter.eventFilter(None, event) is True
+        assert calls == ["back"]
+    finally:
+        lifecycle.close()

@@ -275,6 +275,7 @@ class StyleSheetGenerator:
             QTreeWidget, QListWidget {{
                 background-color: {cs.to_hex(cs.panel_bg)};
                 color: {cs.to_hex(cs.text_primary)};
+                alternate-background-color: {cs.to_hex(cs.alternate_row_bg)};
                 border: none;
                 border-radius: {layout.widget_corner_radius}px;
                 selection-background-color: {cs.to_hex(cs.selection_bg)};

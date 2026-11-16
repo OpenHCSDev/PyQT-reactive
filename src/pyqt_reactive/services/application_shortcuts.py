@@ -62,6 +62,9 @@ class ApplicationShortcutFilter(QObject):
             return False
         if sequence not in self._actions:
             return False
+        # An open popup or menu owns the keyboard: Escape closes it, not the application.
+        if QApplication.activePopupWidget() is not None:
+            return False
         if not CodeEditorFocus.allows_application_shortcuts():
             return False
         self._actions[sequence]()

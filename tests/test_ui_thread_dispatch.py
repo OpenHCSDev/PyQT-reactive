@@ -29,7 +29,7 @@ def test_close_cancels_a_posted_callback_before_qt_executes_it(qapp) -> None:
     calls: list[str] = []
 
     dispatcher.post(lambda: calls.append("late"))
-    dispatcher.close()
+    dispatcher.close_dispatch()
     qapp.processEvents()
 
     assert calls == []
@@ -96,7 +96,7 @@ def test_callback_timeout_after_side_effect_keeps_its_own_outcome(qapp, qtbot, q
         assert errors[0] is original
         assert not isinstance(errors[0], CancelledBeforeStartError)
     finally:
-        dispatcher.close()
+        dispatcher.close_dispatch()
 
 
 def test_close_unblocks_worker_waiting_for_queued_call(qapp) -> None:
@@ -114,7 +114,7 @@ def test_close_unblocks_worker_waiting_for_queued_call(qapp) -> None:
     worker = threading.Thread(target=call_from_worker)
     worker.start()
     assert call_started.wait(timeout=1.0)
-    dispatcher.close()
+    dispatcher.close_dispatch()
     worker.join(timeout=1.0)
     qapp.processEvents()
 
@@ -157,3 +157,27 @@ def test_call_waits_for_atomic_callback_that_started_before_timeout(qapp, qtbot)
 
     assert not worker.is_alive()
     assert outcomes == ["committed"]
+
+
+def test_a_widget_inheriting_the_dispatcher_keeps_its_own_close(qapp) -> None:
+    from PySide6.QtWidgets import QWidget
+
+    from pyqt_reactive.protocols.widget_adapters import PyQtWidgetMeta
+
+    class DispatchingWindow(UiThreadDispatcher, QWidget, metaclass=PyQtWidgetMeta):
+        """An application window whose posts are its own method."""
+
+    window = DispatchingWindow()
+    calls: list[str] = []
+    window.show()
+    window.post(lambda: calls.append("posted"))
+    qapp.processEvents()
+    assert calls == ["posted"]
+    window.close()
+    assert not window.isVisible()
+    window.post(lambda: calls.append("still open"))
+    qapp.processEvents()
+    assert calls == ["posted", "still open"]
+    window.close_dispatch()
+    with pytest.raises(MainThreadDispatcherClosedError):
+        window.post(lambda: None)
