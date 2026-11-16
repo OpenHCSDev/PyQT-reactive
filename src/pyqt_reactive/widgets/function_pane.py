@@ -30,14 +30,13 @@ from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
     ReflowingVerticalScrollArea,
 )
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
-from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from pyqt_reactive.forms.parameter_value_contracts import ParameterValue
+from formbridge.forms.layout_constants import CURRENT_LAYOUT
+from formbridge.forms.parameter_value_contracts import ParameterValue
 from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
-from pyqt_reactive.services.function_pattern_code_document import (
-    FunctionPatternCodeDocumentService,
-)
-from pyqt_reactive.services.function_navigation import FunctionPatternField
+from formbridge.services.function_pattern_code_document import FunctionPatternCodeDocumentService
+from formbridge.services.function_navigation import FunctionPatternField
 from metaclass_registry import AutoRegisterMeta
+from objectstate import ScopeKey
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +369,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
 
     def _move_enabled_widget_to_title(self):
         """Move enabled widget using shared groupbox machinery."""
-        from pyqt_reactive.forms.widget_creation_config import WidgetCreationHandlers
+        from pyqt_reactive.forms.widget_creation_config import EnabledTitleWidgetMoveAuthority, EnabledTitleWidgetMoveRequest
 
         if self._enabled_widget_moved or not self.form_manager:
             return
@@ -382,12 +381,12 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             return
 
         self._enabled_widget_moved = True
-        WidgetCreationHandlers._move_enabled_widget_to_title(
-            self.form_manager,
-            self,
-            self.form_manager.field_id,
-            enabled_field,
-        )
+        EnabledTitleWidgetMoveAuthority().move(EnabledTitleWidgetMoveRequest(
+            nested_manager=self.form_manager,
+            parent_manager=self,
+            nested_param_name=self.form_manager.field_id,
+            enabled_field=enabled_field,
+        ))
         logger.debug(f"Moved enabled widget to title for function {self.func.__name__}")
 
     def set_scope_color_scheme(self, scheme) -> None:
@@ -453,7 +452,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
             raise RuntimeError(
                 "FunctionPaneWidget requires func_scope_token for deterministic ObjectState scope."
             )
-        func_scope_id = f"{func_parent_scope}::{token}"
+        func_scope_id = ScopeKey(func_parent_scope).child(token)
         if self._flash_key == "":
             self._flash_key = func_scope_id
             self.register_flash_groupbox_full(self._flash_key, self)
@@ -703,7 +702,7 @@ class FunctionPaneWidget(GroupBoxWithHelp):
         Returns:
             Dict of kwargs suitable for passing to function at runtime
         """
-        from pyqt_reactive.services.function_pattern_code_document import (
+        from formbridge.services.function_pattern_code_document import (
             FunctionPatternCodeDocumentService,
         )
 

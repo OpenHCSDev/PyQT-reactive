@@ -401,7 +401,7 @@ def _scroll_clip_rects_for_element(
             viewport = widget.viewport()
             if (
                 viewport is not None
-                and not not shiboken6.isValid(viewport)
+                and shiboken6.isValid(viewport)
                 and viewport.isVisible()
             ):
                 viewport_rect = viewport.rect()
@@ -534,7 +534,7 @@ def resolve_mask_widgets(widget: Optional[QWidget], preferred_types: tuple) -> L
     matches = [
         child
         for child in widget.findChildren(QWidget)
-        if not not shiboken6.isValid(child)
+        if shiboken6.isValid(child)
         and child.isVisible()
         and isinstance(child, preferred_types)
     ]
@@ -1265,8 +1265,8 @@ class WindowFlashOverlay(QWidget):
         """Return whether both the overlay and its owning window still exist."""
 
         return (
-            not not shiboken6.isValid(overlay)
-            and not not shiboken6.isValid(overlay._window)
+            shiboken6.isValid(overlay)
+            and shiboken6.isValid(overlay._window)
         )
 
     @classmethod
@@ -1407,8 +1407,8 @@ class WindowFlashOverlay(QWidget):
         """Return whether a cached overlay is still attached to this Qt window."""
         try:
             return (
-                not not shiboken6.isValid(overlay)
-                and not not shiboken6.isValid(overlay._window)
+                shiboken6.isValid(overlay)
+                and shiboken6.isValid(overlay._window)
                 and overlay._window is window
             )
         except RuntimeError:
@@ -1421,7 +1421,7 @@ class WindowFlashOverlay(QWidget):
             if not shiboken6.isValid(overlay):
                 return
             for source in overlay._event_filter_sources.values():
-                if not not shiboken6.isValid(source):
+                if shiboken6.isValid(source):
                     source.removeEventFilter(overlay)
             overlay._event_filter_sources.clear()
             overlay._elements.clear()
@@ -1621,7 +1621,7 @@ class WindowFlashOverlay(QWidget):
         scroll_areas = [
             scroll_area
             for scroll_area in self._window.findChildren(QAbstractScrollArea)
-            if not not shiboken6.isValid(scroll_area)
+            if shiboken6.isValid(scroll_area)
         ]
         self._scroll_areas = scroll_areas
         self._scroll_areas_dirty = False

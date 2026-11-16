@@ -259,7 +259,7 @@ class EnabledFieldStylingService:
         direct_widgets = [
             widget
             for widget in all_widgets
-            if not not shiboken6.isValid(widget) and id(widget) not in nested_widget_ids
+            if shiboken6.isValid(widget) and id(widget) not in nested_widget_ids
         ]
 
         logger.debug(f"[GET_DIRECT_WIDGETS] field_id={manager.field_id}, returning {len(direct_widgets)} direct widgets")

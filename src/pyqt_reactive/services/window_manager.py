@@ -158,7 +158,7 @@ class WindowManager:
         return tuple(
             widget
             for widget in QApplication.topLevelWidgets()
-            if not not shiboken6.isValid(widget) and widget.isWindow() and widget.isVisible()
+            if shiboken6.isValid(widget) and widget.isWindow() and widget.isVisible()
         )
 
     @staticmethod

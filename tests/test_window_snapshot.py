@@ -78,7 +78,7 @@ def observed_form(qapp, qtbot):
     coordinator._active_windows.clear()
     import shiboken6
 
-    if not not shiboken6.isValid(window):
+    if shiboken6.isValid(window):
         WindowFlashOverlay.cleanup_window(window)
         window.close()
         window.deleteLater()
@@ -159,7 +159,7 @@ def rendered_canvas(qapp, qtbot):
     yield canvas
     import shiboken6
 
-    if not not shiboken6.isValid(canvas):
+    if shiboken6.isValid(canvas):
         canvas.close()
         canvas.deleteLater()
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)

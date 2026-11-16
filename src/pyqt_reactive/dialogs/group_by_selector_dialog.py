@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
-from pyqt_reactive.forms.ui_utils import format_enum_display
 
 logger = logging.getLogger(__name__)
 

@@ -7,47 +7,25 @@ Merges:
 
 Key features:
 1. Type-safe dispatch using ParameterInfo discriminated unions
-2. Auto-discovery of handlers via ParameterServiceABC
+2. Inheritance-aware dispatch through Python's singledispatchmethod
 3. Placeholder resolution with live context from other windows
 4. Consistent widget update + signal emission
 """
 
 from __future__ import annotations
-from typing import Any, TYPE_CHECKING
+
 import logging
-from functools import wraps
+from functools import singledispatchmethod
 
-from .parameter_service_abc import ParameterServiceABC
-
-# Optional performance monitoring - stub if not available
-try:
-    from pyqt_reactive.core.performance_monitor import timer, get_monitor
-except ImportError:
-    def timer(name):
-        """No-op timer decorator when performance_monitor not available."""
-        def decorator(func):
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                return func(*args, **kwargs)
-            return wrapper
-        return decorator
-
-    def get_monitor():
-        """No-op monitor when performance_monitor not available."""
-        return None
-
-if TYPE_CHECKING:
-    from pyqt_reactive.forms.parameter_info_types import (
-        OptionalDataclassInfo,
-        DirectDataclassInfo,
-        GenericInfo,
-        InlineDataclassWidgetInfo,
-    )
+from formbridge.core.performance_monitor import get_monitor, timer
+from formbridge.forms.parameter_info_types import (
+    DirectDataclassInfo, InlineDataclassWidgetInfo, OptionalDataclassInfo, ParameterInfo,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class ParameterOpsService(ParameterServiceABC):
+class ParameterOpsService:
     """
     Consolidated service for parameter reset and placeholder refresh.
 
@@ -66,7 +44,6 @@ class ParameterOpsService(ParameterServiceABC):
 
     def __init__(self):
         """Initialize with widget operations dependency."""
-        super().__init__()
         from pyqt_reactive.forms.widget_operations import WidgetOperations
         self.widget_ops = WidgetOperations
 
@@ -88,10 +65,6 @@ class ParameterOpsService(ParameterServiceABC):
 
         return None
 
-    def _get_handler_prefix(self) -> str:
-        """Return handler method prefix for auto-discovery."""
-        return '_reset_'
-
     # ========== PARAMETER RESET (from ParameterResetService) ==========
 
     def reset_parameter(self, manager, param_name: str) -> None:
@@ -100,7 +73,7 @@ class ParameterOpsService(ParameterServiceABC):
         if info is None:
             # Parameter not in form structure (e.g., enabled rendered in header)
             # Fall back to direct state reset
-            dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
+            dotted_path = manager._object_state_path_for_field(param_name).value
             manager.state.reset_parameter(dotted_path)
             reset_value = manager.state.parameters.get(dotted_path)
 
@@ -121,13 +94,18 @@ class ParameterOpsService(ParameterServiceABC):
             event = FieldChangeEvent(param_name, reset_value, manager, is_reset=True)
             FieldChangeDispatcher.instance().dispatch(event)
             return
-        self.dispatch(info, manager)
+        self._reset(info, manager)
 
-    def _reset_OptionalDataclassInfo(self, info: OptionalDataclassInfo, manager) -> None:
+    @singledispatchmethod
+    def _reset(self, info: ParameterInfo, manager) -> None:
+        """An ordinary value widget resets through its canonical field address."""
+        self._reset_value_widget_parameter(info.name, manager)
+
+    @_reset.register(OptionalDataclassInfo)
+    def _reset_optional(self, info: OptionalDataclassInfo, manager) -> None:
         """Reset Optional[Dataclass] field - sync checkbox and reset nested manager."""
         param_name = info.name
-        # CRITICAL: Compute full dotted path for nested PFMs
-        dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
+        dotted_path = manager._object_state_path_for_field(param_name).value
         # MODEL mutation through ObjectState (handles tracking)
         manager.state.reset_parameter(dotted_path)
         reset_value = manager.state.parameters.get(dotted_path)
@@ -150,7 +128,8 @@ class ParameterOpsService(ParameterServiceABC):
         if nested_manager:
             nested_manager.reset_all_parameters()
 
-    def _reset_DirectDataclassInfo(self, info: DirectDataclassInfo, manager) -> None:
+    @_reset.register(DirectDataclassInfo)
+    def _reset_dataclass(self, info: DirectDataclassInfo, manager) -> None:
         """Reset direct Dataclass field - reset nested manager only.
 
         NOTE: We do NOT call update_widget_value on the container widget here.
@@ -163,14 +142,8 @@ class ParameterOpsService(ParameterServiceABC):
         if nested_manager:
             nested_manager.reset_all_parameters()
 
-    def _reset_GenericInfo(self, info: GenericInfo, manager) -> None:
-        """Reset generic field to signature default.
-
-        MODEL mutation through ObjectState, then VIEW-only widget updates.
-        """
-        self._reset_value_widget_parameter(info.name, manager)
-
-    def _reset_InlineDataclassWidgetInfo(
+    @_reset.register(InlineDataclassWidgetInfo)
+    def _reset_inline(
         self,
         info: InlineDataclassWidgetInfo,
         manager,
@@ -180,7 +153,7 @@ class ParameterOpsService(ParameterServiceABC):
 
     def _reset_value_widget_parameter(self, param_name: str, manager) -> None:
         """Reset a parameter whose form widget owns its value directly."""
-        dotted_path = f'{manager.field_id}.{param_name}' if manager.field_id else param_name
+        dotted_path = manager._object_state_path_for_field(param_name).value
         manager.state.reset_parameter(dotted_path)
         reset_value = manager.state.parameters.get(dotted_path)
 
@@ -236,9 +209,6 @@ class ParameterOpsService(ParameterServiceABC):
         if not PySide6WidgetEnhancer.supports_placeholder(widget):
             return
 
-        # Compute full dotted path for nested PFMs
-        full_path = f"{manager.field_id}.{field_name}" if manager.field_id else field_name
-
         # Only refresh if value is None (needs placeholder)
         # Use manager.parameters (scoped) not state.parameters (full paths)
         current_value = manager.parameters.get(field_name)
@@ -247,26 +217,7 @@ class ParameterOpsService(ParameterServiceABC):
             logger.debug(f"🔬 RESET_TRACE: value is not None, no placeholder needed")
             return
 
-        logger.debug(f"🔬 RESET_TRACE: value is None, calling get_resolved_value...")
-
-        from objectstate import LazyDefaultPlaceholderService
-
-        # Get raw resolved value from ObjectState (handles context building internally)
-        # Use full_path for nested PFMs
-        resolved_value = manager.state.get_resolved_value(full_path)
-        logger.debug(f"🔬 RESET_TRACE: resolved_value={repr(resolved_value)[:50]}")
-
-        # Format for display (VIEW responsibility)
-        placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
-            resolved_value, manager.config.placeholder_prefix
-        )
-        logger.debug(f"        📝 Formatted placeholder: {repr(placeholder_text)[:50]}")
-
-        if placeholder_text:
-            # Use type-safe method that passes actual value for checkbox groups
-            PySide6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
-            logger.debug(f"        ✅ Applied placeholder to widget")
-
+        if manager._widget_service.show_resolved_value_as_placeholder(widget, field_name, manager):
             # Keep enabled-field styling in sync when placeholder changes the visual state
             if field_name == 'enabled':
                 try:
@@ -337,7 +288,6 @@ class ParameterOpsService(ParameterServiceABC):
                 return
 
             from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
-            from objectstate import LazyDefaultPlaceholderService
             logger.debug(f"[PLACEHOLDER] {manager.field_id}: Refreshing placeholders via ObjectState")
 
             monitor = get_monitor("Placeholder resolution per field")
@@ -354,19 +304,11 @@ class ParameterOpsService(ParameterServiceABC):
                 if not PySide6WidgetEnhancer.supports_placeholder(widget):
                     continue
 
-                full_path = f"{manager.field_id}.{param_name}" if manager.field_id else param_name
-                current_value = manager.state.parameters.get(full_path)
-                should_apply_placeholder = current_value is None
-                resolved_value = manager.state.get_resolved_value(full_path)
-
-                if should_apply_placeholder:
+                full_path = manager._object_state_path_for_field(param_name).value
+                if manager.state.parameters.get(full_path) is None:
                     with monitor.measure():
-                        # Format for display (VIEW responsibility)
-                        placeholder_text = LazyDefaultPlaceholderService._format_placeholder_text(
-                            resolved_value, manager.config.placeholder_prefix
+                        manager._widget_service.show_resolved_value_as_placeholder(
+                            widget, param_name, manager
                         )
-                        if placeholder_text:
-                            # Use type-safe method that passes actual value for checkbox groups
-                            PySide6WidgetEnhancer.apply_placeholder_with_value(widget, resolved_value, placeholder_text)
                 elif PySide6WidgetEnhancer.has_placeholder_state(widget):
                     PySide6WidgetEnhancer._clear_placeholder_state(widget)
