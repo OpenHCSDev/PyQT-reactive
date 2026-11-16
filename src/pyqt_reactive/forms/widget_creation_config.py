@@ -935,7 +935,7 @@ class OptionalNestedWidgetCreation(NestedWidgetCreation):
                 help_btn.setEnabled(True)
                 # ANTI-DUCK-TYPING: Use ABC-based widget discovery
                 for widget in manager._widget_ops.get_all_value_widgets(nested_form):
-                    effect = QGraphicsOpacityEffect()
+                    effect = QGraphicsOpacityEffect(widget)
                     effect.setOpacity(0.4)
                     widget.setGraphicsEffect(effect)
 

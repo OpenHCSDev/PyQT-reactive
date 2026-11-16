@@ -416,7 +416,7 @@ class EnabledFieldStylingService:
 
         widget.setProperty(self._dimmed_property_name, dimmed)
         if dimmed:
-            effect = QGraphicsOpacityEffect()
+            effect = QGraphicsOpacityEffect(widget)
             effect.setOpacity(self._dimmed_opacity)
             widget.setGraphicsEffect(effect)
         else:

@@ -7,6 +7,7 @@ from dataclasses import dataclass, fields, replace
 import time
 
 import pytest
+from PySide6.QtCore import QMetaMethod
 from PySide6.QtWidgets import QLabel, QWidget
 
 from pyqt_reactive.services.window_snapshot import (
@@ -239,7 +240,7 @@ def test_render_complete_waits_for_real_qt_paint_and_captures_once(
     assert receipt.render_frame.renderer_identity == id(canvas)
     assert receipt.started_at_monotonic <= receipt.render_frame.completed_at_monotonic
     assert receipt.painted_frame_count == 1
-    assert canvas.receivers(canvas.frame_completed) == 0
+    assert not canvas.isSignalConnected(QMetaMethod.fromSignal(canvas.frame_completed))
     canvas.color = QColor("blue")
     canvas.update()
     qapp.processEvents()
@@ -318,7 +319,9 @@ def test_render_timeout_never_captures_and_releases_native_signal(
     assert failed[0].observation.render_frame is None
     assert failed[0].observation.painted_frame_count == 0
     assert not tuple(tmp_path.glob("*.png"))
-    assert rendered_canvas.receivers(rendered_canvas.frame_completed) == 0
+    assert not rendered_canvas.isSignalConnected(
+        QMetaMethod.fromSignal(rendered_canvas.frame_completed)
+    )
 
 
 def test_render_completion_after_deadline_cannot_overtake_queued_timeout(
@@ -346,7 +349,9 @@ def test_render_completion_after_deadline_cannot_overtake_queued_timeout(
     assert isinstance(failed[0].error, TimeoutError)
     assert failed[0].observation.render_frame is not None
     assert not tuple(tmp_path.glob("*.png"))
-    assert rendered_canvas.receivers(rendered_canvas.frame_completed) == 0
+    assert not rendered_canvas.isSignalConnected(
+        QMetaMethod.fromSignal(rendered_canvas.frame_completed)
+    )
 
 
 def test_render_owner_destroyed_fails_once_without_capture(
