@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.10.0
+
+Runs on PySide6 (`PySide6-Essentials>=6.12.0`) instead of PyQt6 (#37, #39).
+Signals and slots are `Signal`/`Slot`/`Property`; widget lifetime checks use
+`shiboken6.isValid` and `shiboken6.delete`; classes named after the binding are
+`PySide6WidgetEnhancer`, `PySide6ColorScheme` and `PySide6WidgetCreationAuthority`.
+Requires `ui-theme` (#41).
+
+The code editor no longer uses QScintilla, which PySide6 does not ship.
+`CodeEditorDialog` is one editor: a QPlainTextEdit with line numbers, a
+highlighted current line, four-space indents and Python colouring from Pygments
+(`pyqt_reactive.widgets.editors.python_highlighter.PythonHighlighter`).
+
+Removed from `pyqt_reactive.widgets.editors.simple_code_editor`, and what to use
+instead:
+
+- `QScintillaCodeEditorDialog`: `CodeEditorDialog`, same arguments.
+- The QTextEdit `CodeEditorDialog` fallback: `CodeEditorDialog` is the editor.
+- `QSCINTILLA_AVAILABLE`, `QSCINTILLA_FOLD_MARGIN_INDEX`: nothing.
+- Code folding and the View menu's folding toggle: nothing.
+
+`LogHighlighter.setup_pygments_styles` is `setup_formats`; it never used Pygments.
+
 ## 0.9.0
 
 Requires `objectstate>=5.0.0,<6` and `formbridge>=0.2.0,<0.3` (#33).

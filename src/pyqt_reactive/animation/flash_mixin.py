@@ -38,6 +38,7 @@ from objectstate import DottedFieldPath
 from pyqt_reactive.protocols.widget_protocols import FlashMaskRectProvider
 from PySide6.QtCore import (
     QCoreApplication,
+    QMetaMethod,
     QObject,
     QPoint,
     QPointF,
@@ -47,6 +48,7 @@ from PySide6.QtCore import (
     QRect,
     QRectF,
     Signal,
+    SignalInstance,
     Slot,
 )
 from PySide6.QtWidgets import (
@@ -1255,7 +1257,11 @@ class WindowFlashOverlay(QWidget):
             return False
         handle = self._window.windowHandle()
         return bool((handle is not None and handle.isExposed())
-                    or self.receivers(self.native_render_requested) > 0)
+                    or self._has_receivers(self.native_render_requested))
+
+    def _has_receivers(self, signal: SignalInstance) -> bool:
+        """Whether anything is connected to one of this overlay's signals."""
+        return self.isSignalConnected(QMetaMethod.fromSignal(signal))
 
     # Class-level registry: window_id -> live overlay.
     _overlays: Dict[int, 'WindowFlashOverlay'] = {}
@@ -1318,7 +1324,6 @@ class WindowFlashOverlay(QWidget):
         cls,
         window_id: int,
         overlay_id: int,
-        _destroyed: QObject,
     ) -> None:
         """Remove a destroyed overlay without evicting a later replacement."""
 
@@ -2054,7 +2059,7 @@ class WindowFlashOverlay(QWidget):
         # Capture observers may render this exact computed frame even when the
         # platform does not deliver an exposed-window paint. Normal animation
         # remains update-only; the capture owner supplies any native grab.
-        if rect_count and self.receivers(self.native_render_requested):
+        if rect_count and self._has_receivers(self.native_render_requested):
             self.native_render_requested.emit()
         update_ms = (time.perf_counter() - started) * 1000.0
         elapsed_ms = region_total_ms + union_ms + update_ms
@@ -2250,7 +2255,7 @@ class WindowFlashOverlay(QWidget):
 
         drawn_count = 0
         drawn_source_alphas: dict[str, int] = {}
-        observe_paint = self.receivers(self.frame_painted) > 0
+        observe_paint = self._has_receivers(self.frame_painted)
         painted_elements: list[FlashPaintElement] = []
 
         debug_enabled = logger.isEnabledFor(logging.DEBUG)

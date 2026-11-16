@@ -124,7 +124,6 @@ class SignalService:
     @staticmethod
     def _dispose_destroyed_manager(
         manager_reference: ReferenceType,
-        _destroyed_object: object,
     ) -> None:
         """Dispose Python-owned subscriptions after Qt destroys their widget."""
         manager = manager_reference()
