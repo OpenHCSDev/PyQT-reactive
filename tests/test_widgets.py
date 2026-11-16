@@ -21,7 +21,7 @@ def process_with_quoted_enum_union(
 
 def test_no_scroll_spinbox(qapp):
     """Test NoScrollSpinBox creation."""
-    from pyqt_reactive.widgets import NoScrollSpinBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoScrollSpinBox
     
     widget = NoScrollSpinBox()
     assert widget is not None
@@ -29,7 +29,7 @@ def test_no_scroll_spinbox(qapp):
 
 def test_none_aware_checkbox(qapp):
     """Test NoneAwareCheckBox creation."""
-    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
     assert widget is not None
@@ -37,7 +37,7 @@ def test_none_aware_checkbox(qapp):
 
 def test_none_aware_checkbox_toggle_commits_placeholder(qapp):
     """Programmatic title toggles commit inherited checkbox values."""
-    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
     widget.set_placeholder_preview(False)
@@ -56,7 +56,7 @@ def test_none_aware_checkbox_resolved_preview_dims_lazy_bool(qapp):
     """Generic placeholder previews dim direct lazy-bool checkmarks."""
     from PySide6.QtGui import QColor, QPalette
     from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
-    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
@@ -81,7 +81,7 @@ def test_none_aware_checkbox_resolved_preview_dims_lazy_bool(qapp):
 def test_none_aware_checkbox_concrete_value_restores_palette(qapp):
     """Leaving placeholder mode restores the checkbox palette."""
     from PySide6.QtGui import QColor, QPalette
-    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
     widget.set_placeholder_preview(True)
@@ -103,7 +103,7 @@ def test_none_aware_checkbox_concrete_value_restores_palette(qapp):
 def test_none_aware_checkbox_resolved_none_previews_unchecked_placeholder(qapp):
     """Resolved None is owned by the checkbox preview contract, not string parsing."""
     from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
-    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
@@ -123,7 +123,7 @@ def test_none_aware_checkbox_rejects_text_only_placeholder_route(qapp):
     """Typed preview widgets cannot bypass the resolved-value rendering ABI."""
     import pytest
     from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
-    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
@@ -141,7 +141,7 @@ def test_checkbox_group_resolved_preview_uses_child_preview_contract(qapp):
     from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.protocols import ResolvedValuePreviewSettable
     from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
-    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
     class Component(Enum):
         SITE = "site"
@@ -186,7 +186,7 @@ def test_enableable_dimming_defers_to_placeholder_state_contract(qapp):
     from pyqt_reactive.services.enabled_field_styling_service import (
         EnabledFieldStylingService,
     )
-    from pyqt_reactive.widgets import NoneAwareCheckBox
+    from pyqt_reactive.widgets.no_scroll_spinbox import NoneAwareCheckBox
 
     class Component(Enum):
         SITE = "site"

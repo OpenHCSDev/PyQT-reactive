@@ -5,7 +5,7 @@ from PySide6.QtCore import QLocale, Qt
 from PySide6.QtTest import QTest
 
 from pyqt_reactive.protocols import DoubleSpinBoxAdapter
-from pyqt_reactive.widgets import NoScrollDoubleSpinBox
+from pyqt_reactive.widgets.no_scroll_spinbox import NoScrollDoubleSpinBox
 
 
 @pytest.mark.parametrize("widget_type", [DoubleSpinBoxAdapter, NoScrollDoubleSpinBox])
