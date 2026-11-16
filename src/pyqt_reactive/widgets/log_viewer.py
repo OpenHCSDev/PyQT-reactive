@@ -10,6 +10,7 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from threading import Event
 
@@ -22,18 +23,15 @@ from PySide6.QtCore import (
     QPoint,
     QPointF,
     QRegularExpression,
-    QRunnable,
     QSignalBlocker,
     QSize,
     Qt,
     QThread,
-    QThreadPool,
     QTimer,
     Signal,
     Slot,
 )
 from PySide6.QtGui import (
-    QAbstractTextDocumentLayout,
     QAction,
     QColor,
     QFont,
@@ -53,7 +51,6 @@ from PySide6.QtWidgets import (
     QListView,
     QMainWindow,
     QPushButton,
-    QStyledItemDelegate,
     QStyleOptionViewItem,
     QToolBar,
     QVBoxLayout,
@@ -75,6 +72,7 @@ from formbridge.services.process_tracker import (
     get_log_tooltip,
 )
 from pyqt_reactive.theming.themed_checkbox import ThemedCheckBox
+from pyqt_reactive.widgets.virtual_rows import HtmlRow, PlainRow, RowDocumentDelegate, RowFormatting, VirtualRowView
 from formbridge.utils.log_highlight_client import LogHighlightClient
 from formbridge.utils.log_highlighter import build_log_line_html
 
@@ -321,10 +319,10 @@ class LogListModel(QAbstractListModel):
     def max_line_width(self) -> int:
         return self._max_line_width
 
-    def html_for_row(self, row: int) -> str | None:
-        if row < 0 or row >= len(self._html_lines):
-            return None
-        return self._html_lines[row]
+    def row_formatting(self, row: int) -> RowFormatting:
+        """The html a line was read with, or its plain text."""
+        html = self._html_lines[row]
+        return PlainRow(self._lines[row]) if html is None else HtmlRow(html)
 
     def iter_lines(self) -> list[str]:
         """Expose lines for read-only access (e.g., search)."""
@@ -551,67 +549,48 @@ class SelectableDocument(QTextDocument):
         highlightCursor.mergeCharFormat(selectFormat)
 
 
-class HighlightSignals(QObject):
-    """Signals for background highlighting worker."""
+@dataclass(frozen=True)
+class HighlightedSegments(RowFormatting):
+    """A log line's highlighting, parsed off the GUI thread and applied to its document on it."""
 
-    finished = Signal(object, object)  # (cache_key, List[HighlightedSegment])
+    text: str
+    segments: tuple[HighlightedSegment, ...]
 
-
-class HighlightWorker(QRunnable):
-    """Background worker that does expensive regex parsing to extract formatting info.
-
-    This runs all the expensive regex matching in a background thread and returns
-    just the formatting information (which segments should be what color).
-    The main thread then applies this to a QTextDocument.
-    """
-
-    def __init__(
-        self,
-        text: str,
-        cache_key: tuple[str, str, int],
-        client: LogHighlightClient,
-        signals: HighlightSignals,
-    ):
-        super().__init__()
-        self.text = text
-        self.cache_key = cache_key
-        self.client = client
-        self.signals = signals
-
-    def run(self):
-        """Request formatting segments from subprocess parser."""
-        segments = self.client.parse_line(self.text)
-        if segments is None:
-            return
-        converted = []
-        for seg in segments:
-            converted.append(
-                HighlightedSegment(
-                    start=seg.start,
-                    length=seg.length,
-                    color=seg.color,
-                    bold=seg.bold,
+    def fill(self, document: QTextDocument) -> None:
+        document.setPlainText(self.text)
+        cursor = QTextCursor(document)
+        for segment in self.segments:
+            if segment.start < 0 or segment.length <= 0:
+                continue
+            doc_len = document.characterCount()
+            if segment.start >= doc_len:
+                logger.debug(
+                    "Skipping highlight segment out of range start=%d doc_len=%d",
+                    segment.start,
+                    doc_len,
                 )
-            )
-        self.signals.finished.emit(self.cache_key, converted)
+                continue
+            end = min(segment.start + segment.length, doc_len)
+            if end <= segment.start:
+                continue
+            cursor.setPosition(segment.start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(*segment.color))
+            if segment.bold:
+                fmt.setFontWeight(QFont.Weight.Bold)
+            if segment.italic:
+                fmt.setFontItalic(True)
+            cursor.setCharFormat(fmt)
 
 
-class LogItemDelegate(QStyledItemDelegate):
-    """Delegate responsible for per-line coloring, regex-based syntax, and search highlighting.
+class LogItemDelegate(RowDocumentDelegate):
+    """Per-line colouring, regex-based syntax and search highlighting over virtual rows.
 
-    We avoid document-wide highlighting and instead reuse the existing
-    LogHighlighter rules on a per-line QTextDocument that is only used
-    for visible rows. This keeps work bounded by visible rows and line
-    length, independent of total log size.
-
-    Performance optimization:
-    1. Cache highlighted QTextDocuments to avoid re-running expensive regex highlighting
-    2. Perform highlighting in background thread pool to never block UI
-    3. Paint with plain text if highlighting not ready yet (progressive enhancement)
+    Highlighting is parsed by one serial subprocess through the delegate's pool; a line
+    paints plain until its segments arrive. While a file loads, lines read with html
+    show that html instead of starting a parse for each.
     """
-
-    # Cache configuration
-    MAX_CACHE_SIZE = 10000  # Maximum number of unique lines to cache
 
     def __init__(
         self,
@@ -622,51 +601,12 @@ class LogItemDelegate(QStyledItemDelegate):
         self._color_scheme = color_scheme or LogColorScheme.create_dark_theme()
         self._search_text: str = ""
         self._case_sensitive: bool = False
-
         # Pre-computed search match cache: set of row indices that match search
         self._search_match_rows: set[int] = set()
-
-        # One serial subprocess and thread pool share this delegate's lifetime.
-        self._thread_pool = QThreadPool(self)
-        self._thread_pool.setMaxThreadCount(1)
         self._highlight_client = LogHighlightClient()
-        self._highlighting_enabled = True
-        self._highlighting_cleaned_up = False
-
-        # Signals for background workers
-        self._highlight_signals = HighlightSignals(self._thread_pool)
-        self._highlight_signals.finished.connect(self._on_highlighting_finished)
-
-        # Cache: maps (text, font_family, font_size) -> List[HighlightedSegment]
-        # Stores the parsed formatting information from background thread
-        self._segment_cache: dict[tuple[str, str, int], list[HighlightedSegment]] = {}
-        self._cache_access_order: list[tuple[str, str, int]] = []  # LRU tracking
-
-        # Track which lines are being highlighted in background
-        self._pending_highlights: set[tuple[str, str, int]] = set()
-
         # Text selection state - support multi-line selection
-        self._interactive_documents: dict[int, SelectableDocument] = (
-            {}
-        )  # Map row -> document with selection
-        self._log_model: LogListModel | None = None
-        self._current_render_row = -1
-
-        # QTextDocument cache: maps (text, font_family, font_size, width) -> QTextDocument
-        # Stores rendered documents to avoid recreation on every paint
-        self._document_cache: dict[tuple[str, str, int, int], QTextDocument] = {}
-        self._doc_cache_access_order: list[tuple[str, str, int, int]] = []
-        self.MAX_DOC_CACHE_SIZE = 500  # Cache fewer documents (they're heavier than segments)
-
-        # sizeHint cache: maps (text, font_family, font_size, width) -> QSize
-        self._size_hint_cache: dict[tuple[str, str, int, int], QSize] = {}
-
-        # Debounce timer for viewport updates
-        self._viewport_update_timer = QTimer(self)
-        self._viewport_update_timer.setSingleShot(True)
-        self._viewport_update_timer.setInterval(16)  # ~60fps
-        self._viewport_update_timer.timeout.connect(self._do_viewport_update)
-        self._viewport_needs_update = False
+        self._interactive_documents: dict[int, SelectableDocument] = {}
+        self.log_model = LogListModel(self)
         self._fixed_row_height: int | None = None
 
     def set_fixed_row_height(self, height: int) -> None:
@@ -694,12 +634,6 @@ class LogItemDelegate(QStyledItemDelegate):
                 if needle in haystack:
                     self._search_match_rows.add(row)
 
-    def _do_viewport_update(self) -> None:
-        """Perform the actual viewport update (called by debounce timer)."""
-        if self._viewport_needs_update and self.parent() and isinstance(self.parent(), QListView):
-            self.parent().viewport().update()
-            self._viewport_needs_update = False
-
     def hasInteractiveDocument(self, row: int) -> bool:
         """Check if a row has an interactive document with selection."""
         return row in self._interactive_documents
@@ -719,354 +653,70 @@ class LogItemDelegate(QStyledItemDelegate):
     def create_interactive_document(
         self, text: str, font: QFont, width: int = 0
     ) -> SelectableDocument:
-        """
-        Create a SelectableDocument with syntax highlighting applied.
-
-        This is used by LogListView when creating a new interactive document
-        for text selection. It applies the same syntax highlighting as normal
-        rendering.
-
-        Args:
-            text: The log line text
-            font: The font to use for rendering
-            width: The width for text wrapping (optional)
-
-        Returns:
-            SelectableDocument with syntax highlighting applied
-        """
-        # Create the selectable document
+        """A SelectableDocument for text selection, highlighted as the line paints."""
         doc = SelectableDocument()
         doc.setDefaultFont(font)
         doc.setPlainText(text)
         # Log viewer uses single-line rows with horizontal scrolling. Keep
         # interactive docs unwrapped so selection does not hide off-viewport text.
         doc.setTextWidth(-1)
-
-        # Try to get cached formatting segments
-        segments = self._get_or_request_segments(text, font)
-
-        if segments is not None:
-            # Apply syntax highlighting
-            self._apply_segments_to_document(doc, segments)
-
+        self.keyed_formatting((text, font.family(), font.pointSize()), text,
+                              partial(self.highlighted, text)).fill(doc)
         return doc
 
-    def _on_highlighting_finished(
-        self, cache_key: tuple[str, str, int], segments: list[HighlightedSegment]
-    ) -> None:
-        """
-        Cache formatting segments when background parsing completes.
+    # The virtual rows' member answers
 
-        Args:
-            cache_key: Cache key for this line
-            segments: List of formatting segments from background thread
-        """
-        if self._highlighting_cleaned_up:
-            return
+    def preparation(self, index: QModelIndex, font: QFont, width: int):
+        return partial(self.highlighted, self.row_text(index))
 
-        # Remove from pending set
-        self._pending_highlights.discard(cache_key)
+    def highlighted(self, text: str) -> RowFormatting:
+        """Request formatting segments from the subprocess parser; runs on the pool."""
+        segments = self._highlight_client.parse_line(text)
+        if segments is None:
+            return PlainRow(text)
+        return HighlightedSegments(text, tuple(
+            HighlightedSegment(start=seg.start, length=seg.length, color=seg.color, bold=seg.bold)
+            for seg in segments
+        ))
 
-        # Add to cache
-        self._segment_cache[cache_key] = segments
-        self._cache_access_order.append(cache_key)
+    def formatting(self, index: QModelIndex, font: QFont, width: int) -> RowFormatting:
+        if self.preparing:
+            return super().formatting(index, font, width)
+        return self.log_model.row_formatting(index.row())
 
-        # Enforce cache size limit (LRU eviction)
-        if len(self._segment_cache) > self.MAX_CACHE_SIZE:
-            oldest_key = self._cache_access_order.pop(0)
-            del self._segment_cache[oldest_key]
-
-        # CRITICAL: Invalidate any cached documents for this text+font combo
-        # so they get recreated with the new highlighting
-        text, font_family, font_size = cache_key
-        keys_to_remove = [
-            k
-            for k in self._document_cache.keys()
-            if k[0] == text and k[1] == font_family and k[2] == font_size
-        ]
-        for key in keys_to_remove:
-            del self._document_cache[key]
-            if key in self._doc_cache_access_order:
-                self._doc_cache_access_order.remove(key)
-
-        # Trigger debounced repaint (batches multiple highlight completions)
-        self._viewport_needs_update = True
-        if not self._viewport_update_timer.isActive():
-            self._viewport_update_timer.start()
-
-    def _get_or_request_segments(
-        self, text: str, font: QFont
-    ) -> list[HighlightedSegment] | None:
-        """
-        Get cached formatting segments or start async parsing.
-
-        This dramatically improves paint performance by:
-        1. Running expensive regex parsing in background thread (never blocks UI)
-        2. Caching the results for instant reuse
-        3. Returning None if not ready (caller paints plain text as fallback)
-
-        Args:
-            text: The log line text
-            font: The font to use for rendering
-
-        Returns:
-            List[HighlightedSegment] if cached/ready, None if still parsing in background
-        """
-        # Create cache key from text and font properties
-        cache_key = (text, font.family(), font.pointSize())
-
-        # Check cache first
-        if cache_key in self._segment_cache:
-            # Move to end of access order (LRU)
-            self._cache_access_order.remove(cache_key)
-            self._cache_access_order.append(cache_key)
-            return self._segment_cache[cache_key]
-
-        # Not in cache - start async parsing if not already pending
-        if not self._highlighting_enabled:
-            return None
-        if cache_key not in self._pending_highlights:
-            self._pending_highlights.add(cache_key)
-            worker = HighlightWorker(
-                text,
-                cache_key,
-                self._highlight_client,
-                self._highlight_signals,
-            )
-            self._thread_pool.start(worker)
-
-        # Return None - caller will paint plain text until parsing completes
-        return None
-
-    def cleanup(self) -> None:
-        """Stop and join every highlighting task owned by this delegate."""
-
-        if self._highlighting_cleaned_up:
-            return
-        self._highlighting_cleaned_up = True
-        self._highlighting_enabled = False
-        self._viewport_update_timer.stop()
-        self._thread_pool.clear()
+    def stop_preparation(self) -> None:
         self._highlight_client.shutdown()
-        self._thread_pool.waitForDone()
-        self._pending_highlights.clear()
 
-    def _apply_segments_to_document(
-        self, doc: QTextDocument, segments: list[HighlightedSegment]
-    ) -> None:
-        """
-        Apply formatting segments to a QTextDocument (on main thread).
-
-        Args:
-            doc: Document to format
-            segments: Formatting segments from background parsing
-        """
-        cursor = QTextCursor(doc)
-
-        for segment in segments:
-            if segment.start < 0 or segment.length <= 0:
-                continue
-            doc_len = doc.characterCount()
-            if segment.start >= doc_len:
-                logger.debug(
-                    "Skipping highlight segment out of range start=%d doc_len=%d",
-                    segment.start,
-                    doc_len,
-                )
-                continue
-            end = segment.start + segment.length
-            if end > doc_len:
-                end = doc_len
-                if end <= segment.start:
-                    continue
-            # Select the segment
-            cursor.setPosition(segment.start)
-            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-
-            # Create format
-            fmt = QTextCharFormat()
-            fmt.setForeground(QColor(*segment.color))
-            if segment.bold:
-                fmt.setFontWeight(QFont.Weight.Bold)
-            if segment.italic:
-                fmt.setFontItalic(True)
-
-            # Apply format
-            cursor.setCharFormat(fmt)
-
-    def _get_or_create_document(self, text: str, font: QFont, width: int) -> QTextDocument:
-        """
-        Get cached QTextDocument or create a new one with syntax highlighting.
-
-        This avoids recreating QTextDocument objects on every paint event,
-        which is one of the main performance bottlenecks.
-
-        Args:
-            text: The log line text
-            font: The font to use
-            width: The width for text wrapping
-
-        Returns:
-            Cached or newly created QTextDocument
-        """
-        # Create cache key including width (important for proper wrapping)
-        doc_cache_key = (text, font.family(), font.pointSize(), width)
-
-        # Check document cache first
-        if doc_cache_key in self._document_cache:
-            # Move to end of access order (LRU)
-            self._doc_cache_access_order.remove(doc_cache_key)
-            self._doc_cache_access_order.append(doc_cache_key)
-            return self._document_cache[doc_cache_key]
-
-        # Not cached - create new document
-        doc = QTextDocument()
-        doc.setDocumentMargin(0)  # Remove default 4px margin to prevent position shifts
-        doc.setDefaultFont(font)
-        doc.setPlainText(text)
+    def text_width(self, width: int) -> float:
         # For fixed-height log rows we intentionally keep layout unwrapped and
         # rely on horizontal scrolling for long lines.
-        if self._fixed_row_height is not None:
-            doc.setTextWidth(-1)
-        else:
-            doc.setTextWidth(width)
+        return -1 if self._fixed_row_height is not None else width
 
-        # Try to apply syntax highlighting if available
-        if not self._highlighting_enabled:
-            html = None
-            if hasattr(self, "_log_model") and self._log_model is not None:
-                try:
-                    html = self._log_model.html_for_row(self._current_render_row)
-                except Exception:
-                    html = None
-            if html:
-                doc.setHtml(html)
-            else:
-                doc.setPlainText(text)
-        else:
-            segments = self._get_or_request_segments(text, font)
-            if segments is not None:
-                self._apply_segments_to_document(doc, segments)
-
-        # Add to cache
-        self._document_cache[doc_cache_key] = doc
-        self._doc_cache_access_order.append(doc_cache_key)
-
-        # Enforce cache size limit (LRU eviction)
-        if len(self._document_cache) > self.MAX_DOC_CACHE_SIZE:
-            oldest_doc_key = self._doc_cache_access_order.pop(0)
-            del self._document_cache[oldest_doc_key]
-
-        return doc
-
-    def paint(self, painter, option, index):  # type: ignore[override]
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-
-        text = opt.text
-        row = index.row()
-        self._current_render_row = row
-
-        # Draw a plain background without Qt focus, hover, or selection styling.
-        painter.save()
-
-        # Apply search highlight background if this row matches
+    def paint_background(self, painter, option: QStyleOptionViewItem, row: int) -> None:
         if self._search_text and row in self._search_match_rows:
-            painter.fillRect(opt.rect, QColor(255, 255, 0, 60))
+            painter.fillRect(option.rect, QColor(255, 255, 0, 60))
 
-        painter.restore()
-
-        # Check if this row has an interactive document with text selection
-        if self.hasInteractiveDocument(row):
-            # Use the interactive document which has selection state
-            doc = self.get_interactive_document(row)
-            if doc is None:
-                # Fallback to cached document rendering
-                doc = self._get_or_create_document(text, opt.font, opt.rect.width())
-        else:
-            # Normal rendering: use cached document (avoids QTextDocument recreation!)
-            doc = self._get_or_create_document(text, opt.font, opt.rect.width())
-
-        # Paint the document
-        context = QAbstractTextDocumentLayout.PaintContext()
-        context.palette = opt.palette
-
-        painter.save()
-        painter.translate(opt.rect.topLeft())
-        painter.setClipRect(0, 0, opt.rect.width(), opt.rect.height())
-        doc.documentLayout().draw(painter, context)
-        painter.restore()
+    def painted_document(self, index: QModelIndex, option: QStyleOptionViewItem) -> QTextDocument:
+        """A row being selected paints its interactive document, which holds the selection."""
+        return self._interactive_documents.get(index.row()) or super().painted_document(index, option)
 
     def sizeHint(self, option, index):  # type: ignore[override]
-        """Return height large enough to show wrapped text for this row.
-
-        We compute the document layout for the current line using the
-        available viewport width so that long log lines wrap instead of
-        being clipped or forcing a horizontal scrollbar.
-
-        This method is heavily optimized with caching since Qt calls it
-        frequently during scrolling, resizing, and layout updates.
-        """
-        if self._fixed_row_height is not None:
-            row = index.row()
-            if not self.hasInteractiveDocument(row):
-                width = option.rect.width() if option.rect.width() > 0 else 800
-                if self._log_model is not None:
-                    max_chars = self._log_model.max_line_width()
-                    if max_chars > 0:
-                        metrics = QFontMetrics(option.font)
-                        width = metrics.horizontalAdvance("M") * max_chars + 8
-                return QSize(width, self._fixed_row_height)
-
-        text = index.data(Qt.ItemDataRole.DisplayRole)
-        if text is None:
-            return super().sizeHint(option, index)
-
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-
-        # Determine available width for wrapping. Prefer the parent
-        # QListView viewport width when possible so row heights respond
-        # to window resizing.
-        width = opt.rect.width()
-        parent = self.parent()
-        if width <= 0 and isinstance(parent, QListView) and parent.viewport() is not None:
-            width = parent.viewport().width()
-        if width <= 0:
-            width = 800  # conservative fallback, not critical for layout
-
-        # Check sizeHint cache first
-        cache_key = (text, opt.font.family(), opt.font.pointSize(), width)
-        if cache_key in self._size_hint_cache:
-            return self._size_hint_cache[cache_key]
-
-        # Not cached - calculate size
-        # Reuse document from cache if available (avoids recreation)
-        doc = self._get_or_create_document(text, opt.font, width)
-        doc_size = doc.size()
-        height = int(doc_size.height())
-
-        # Add a small vertical padding so text is not flush with borders.
-        size = QSize(width, height + 4)
-
-        # Cache the result
-        self._size_hint_cache[cache_key] = size
-
-        return size
+        if self._fixed_row_height is not None and not self.hasInteractiveDocument(index.row()):
+            width = option.rect.width() if option.rect.width() > 0 else 800
+            max_chars = self.log_model.max_line_width()
+            if max_chars > 0:
+                width = QFontMetrics(option.font).horizontalAdvance("M") * max_chars + 8
+            return QSize(width, self._fixed_row_height)
+        return super().sizeHint(option, index)
 
     def clear_cache(self) -> None:
         """Clear all caches. Call this when resetting the log viewer or when search changes."""
-        self._segment_cache.clear()
-        self._cache_access_order.clear()
-        self._pending_highlights.clear()
-        self._document_cache.clear()
-        self._doc_cache_access_order.clear()
-        self._size_hint_cache.clear()
+        self.forget_rows()
         self._search_match_rows.clear()
         logger.debug("LogItemDelegate all caches cleared")
 
 
-class LogListView(QListView):
+class LogListView(VirtualRowView):
     """
     Custom QListView that enables text selection within and across items.
 
@@ -1077,8 +727,8 @@ class LogListView(QListView):
     Based on Qt Forum solution for interactive elements in delegates.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, delegate: LogItemDelegate, parent: QWidget | None = None) -> None:
+        super().__init__(delegate, parent)
 
         # State for tracking text selection
         self._selection_start_index = QModelIndex()  # Row where selection started
@@ -1548,19 +1198,6 @@ class LogListView(QListView):
 
         # Pass other events to parent
         super().keyPressEvent(event)
-
-    def resizeEvent(self, event) -> None:  # type: ignore[override]
-        """Handle resize events to invalidate width-dependent caches."""
-        super().resizeEvent(event)
-
-        # Clear width-dependent caches in delegate when viewport width changes
-        delegate = self.itemDelegate()
-        if isinstance(delegate, LogItemDelegate):
-            # Only clear document and sizeHint caches (width-dependent)
-            # Keep segment cache (width-independent) for performance
-            delegate._document_cache.clear()
-            delegate._doc_cache_access_order.clear()
-            delegate._size_hint_cache.clear()
 
 
 class LogFileDetector(QObject):
@@ -2193,7 +1830,10 @@ class LogViewerWindow(QMainWindow):
 
         # Log display area (virtualized with text selection support)
         self.log_model = LogListModel(self)
-        self.log_view = LogListView()
+        self.log_delegate = LogItemDelegate(LogColorScheme.create_dark_theme())
+        self.log_delegate.log_model = self.log_model
+        self.log_delegate.set_fixed_row_height(18)
+        self.log_view = LogListView(self.log_delegate)
         self.log_view.setModel(self.log_model)
         # Enable per-row word wrapping and variable item heights so long
         # log lines are fully visible instead of clipped or forcing
@@ -2203,15 +1843,7 @@ class LogViewerWindow(QMainWindow):
         self.log_view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.log_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.log_view.setResizeMode(QListView.ResizeMode.Fixed)
-        # Disable Qt's native row selection - we use custom text selection instead
-        self.log_view.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.log_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.log_view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.log_view.setFont(QFont("Consolas", 10))  # Monospace font for logs
-        self.log_delegate = LogItemDelegate(LogColorScheme.create_dark_theme(), self.log_view)
-        self.log_delegate._log_model = self.log_model
-        self.log_delegate.set_fixed_row_height(18)
-        self.log_view.setItemDelegate(self.log_delegate)
         main_layout.addWidget(self.log_view)
 
         # Control buttons layout
@@ -2690,7 +2322,7 @@ class LogViewerWindow(QMainWindow):
             if not lines:
                 return
             if self.log_delegate is not None:
-                self.log_delegate._highlighting_enabled = False
+                self.log_delegate.preparing = False
             self.log_model.append_lines(lines)
         except Exception as e:
             logger.error(f"Error displaying loaded chunk: {e}")
@@ -2706,7 +2338,7 @@ class LogViewerWindow(QMainWindow):
 
             self._finish_batch_insert()
             if self.log_delegate is not None:
-                self.log_delegate._highlighting_enabled = True
+                self.log_delegate.preparing = True
         except Exception as e:
             logger.error(f"Error finalizing loaded content: {e}")
 
@@ -2920,7 +2552,7 @@ class LogViewerWindow(QMainWindow):
 
     def scroll_to_bottom(self) -> None:
         """Scroll log view to bottom."""
-        self.log_view.scrollToBottom()
+        self.log_view.follow_end()
 
     # Real-time Tailing Methods
     def start_log_tailing(self, log_path: Path) -> None:
@@ -2960,8 +2592,7 @@ class LogViewerWindow(QMainWindow):
             return
 
         # Check if user has scrolled up (disable auto-scroll)
-        scrollbar = self.log_view.verticalScrollBar()
-        was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 10
+        was_at_bottom = self.log_view.at_end
         self._last_scroll_state = was_at_bottom
 
         # Merge with any pending partial line and split into full lines.
