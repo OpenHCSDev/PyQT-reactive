@@ -19,6 +19,8 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
+from metaclass_registry import AbstractHooksMeta
+
 try:
     from PySide6.QtCore import QLocale, QObject
     from PySide6.QtGui import QKeySequence
@@ -37,12 +39,34 @@ try:
     # PyQt-specific metaclass that combines ABCMeta with Qt's metaclass
     # Order matters: ABCMeta first (it's the "primary" metaclass for ABC functionality)
     _QtMetaclass = type(QObject)
-    class PyQtWidgetMeta(_QtMetaclass, ABCMeta):
+    class PyQtWidgetMeta(AbstractHooksMeta, _QtMetaclass, ABCMeta):
+        """A Qt class that also inherits declared hooks, ABCs or class keywords.
+
+        Shiboken's type constructor takes only (name, bases, namespace) and does not
+        chain to ABCMeta, and Shiboken builds instances without object.__new__'s
+        abstract check. This metaclass hands the class keywords to
+        ``__init_subclass__``, records every abstract method the MRO still resolves
+        (AbstractHooksMeta, as Textual's widgets do), and refuses to build an instance
+        of a class that leaves one open.
+        """
+
         def __new__(mcs, name, bases, namespace, **kwargs):
-            # Shiboken's sbktype rejects extra kwargs (__init_subclass__ keywords
-            # like shows= from DeclaredViews). Strip them here; Python delivers
-            # them to __init_subclass__ separately.
-            return super().__new__(mcs, name, bases, namespace)
+            # The constructor is what hands class keywords to __init_subclass__, so the
+            # parents' __init_subclass__ ran with none; run it with the keywords
+            # (DeclaredViews' shows=, for one) once the class exists.
+            cls = super().__new__(mcs, name, bases, namespace)
+            if kwargs:
+                super(cls, cls).__init_subclass__(**kwargs)
+            return cls
+
+        def __init__(cls, name, bases, namespace, **kwargs):
+            super().__init__(name, bases, namespace)
+
+        def __call__(cls, *args, **kwargs):
+            if cls.__abstractmethods__:
+                missing = ", ".join(sorted(cls.__abstractmethods__))
+                raise TypeError(f"Can't instantiate {cls.__qualname__}, which leaves {missing} abstract")
+            return super().__call__(*args, **kwargs)
 except ImportError:
     PYQT6_AVAILABLE = False
     # Create dummy base classes for type hints
