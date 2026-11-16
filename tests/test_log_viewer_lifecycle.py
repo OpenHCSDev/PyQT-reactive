@@ -68,14 +68,14 @@ def test_log_delegate_cleanup_closes_and_joins_highlighting_tasks(
         wait_until_closed,
     )
     delegate = LogItemDelegate()
-    delegate._get_or_request_segments("background line", QFont("Consolas", 10))
+    delegate.create_interactive_document("background line", QFont("Consolas", 10))
     qtbot.waitUntil(lambda: started == [True])
 
     delegate.cleanup()
 
-    assert delegate._highlighting_cleaned_up
+    assert not delegate.preparing
     assert delegate._thread_pool.activeThreadCount() == 0
-    assert delegate._pending_highlights == set()
+    assert delegate._pending == set()
 
 
 def test_log_line_html_uses_authoritative_highlight_segments() -> None:
