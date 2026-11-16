@@ -9,11 +9,11 @@ Run with:
 """
 
 import sys
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QLabel, QTextEdit, QPushButton
 )
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 
 # Add pyqt-reactive to path (adjust as needed)
 import os

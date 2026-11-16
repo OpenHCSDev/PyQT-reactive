@@ -9,8 +9,8 @@ from typing import Annotated, ClassVar
 import pytest
 from formbridge.forms.raw_display_value import RawDisplayValue
 from metaclass_registry import AutoRegisterMeta
-from PyQt6.QtCore import QEvent
-from PyQt6.QtWidgets import QComboBox, QPushButton, QTableWidget
+from PySide6.QtCore import QEvent
+from PySide6.QtWidgets import QComboBox, QPushButton, QTableWidget
 from python_introspect import RegisteredClassChoices
 
 from pyqt_reactive.forms.inline_dataclass_chrome import StandaloneChildChrome

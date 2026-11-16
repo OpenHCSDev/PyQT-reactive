@@ -8,9 +8,9 @@ Double-click to time-travel to any snapshot.
 from dataclasses import dataclass
 
 from objectstate.object_state import ObjectStateRegistry
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QLabel,

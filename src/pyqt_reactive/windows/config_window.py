@@ -27,8 +27,8 @@ from objectstate import (
     patch_lazy_constructors,
 )
 from objectstate.lazy_factory import LazyDataclass, retain_only_authored_paths
-from PyQt6.QtCore import QSize, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSize, Signal
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
     QPushButton,
@@ -349,8 +349,8 @@ class ConfigWindow(ScrollableFormMixin, CancelSaveWindow):
     document_format: ClassVar[ConfigDocumentFormat]
     default_size: ClassVar[QSize] = QSize(650, 650)
 
-    config_saved = pyqtSignal(object)
-    config_cancelled = pyqtSignal()
+    config_saved = Signal(object)
+    config_cancelled = Signal()
 
     def __init__(
         self,

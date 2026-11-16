@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QSplitter
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QSplitter
 
 from pyqt_reactive.widgets.grid_selector import GridAddressing, GridSelectorWidget
 from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnDef, RowFilter

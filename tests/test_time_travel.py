@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from objectstate import ObjectStateRegistry, ScopeKey
-from PyQt6.QtCore import QTimer
+from PySide6.QtCore import QTimer
 
 from pyqt_reactive.services.time_travel_navigation import (
     FieldPathTarget,

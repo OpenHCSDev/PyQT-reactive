@@ -67,8 +67,8 @@ from formbridge.services.window_snapshot import WindowVisualObservation
 from metaclass_registry import AutoRegisterMeta
 from objectstate import ObjectState
 from objectstate.inspection import field_markers, state_markers
-from PyQt6.QtCore import QModelIndex, Qt
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QMessageBox,
     QWidget,

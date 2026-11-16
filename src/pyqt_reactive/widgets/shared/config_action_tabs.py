@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from objectstate import DottedFieldPath
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QPushButton, QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QPushButton, QWidget
 from python_introspect import Enableable
 
 from pyqt_reactive.theming import ColorScheme
@@ -42,7 +42,7 @@ class ConfigActionTabs(TabbedFormWidget):
     and the owner reports a target (:meth:`set_target_available`).
     """
 
-    action_requested = pyqtSignal(object)
+    action_requested = Signal(object)
     """Emitted with the :class:`ConfigAction` whose button was clicked."""
 
     def __init__(

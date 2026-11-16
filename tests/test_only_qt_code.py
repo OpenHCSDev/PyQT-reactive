@@ -13,7 +13,7 @@ from formbridge.services.window_snapshot import (
 from pyqt_reactive.services.window_snapshot import QtCaptureScope, QtFrameObservation
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "pyqt_reactive"
-QT_PACKAGES = frozenset({"PyQt6", "qtpy", "vispy", "magicgui", "pyqtgraph", "OpenGL"})
+QT_PACKAGES = frozenset({"PySide6", "shiboken6", "qtpy", "vispy", "magicgui", "pyqtgraph", "OpenGL"})
 
 
 def _module_name(path: Path) -> str:

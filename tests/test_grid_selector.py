@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint
+from PySide6.QtCore import QPoint
 
 from pyqt_reactive.widgets.grid_selector import GridAddressing, GridModel, GridSelectorWidget
 

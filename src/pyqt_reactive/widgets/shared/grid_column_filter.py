@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from PyQt6.QtCore import QObject
+from PySide6.QtCore import QObject
 
 from pyqt_reactive.widgets.grid_selector import GridPosition, GridSelectorWidget
 from pyqt_reactive.widgets.shared.record_table_browser import RecordTableBrowser

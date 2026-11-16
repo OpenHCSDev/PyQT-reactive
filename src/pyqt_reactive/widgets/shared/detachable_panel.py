@@ -5,8 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtWidgets import QDialog, QPushButton, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import QDialog, QPushButton, QSplitter, QVBoxLayout, QWidget
 
 from pyqt_reactive.theming import ColorScheme
 
@@ -99,7 +99,7 @@ class DetachablePanel(QObject):
     :meth:`reattach` (or closing that window) moves it back.
     """
 
-    shown = pyqtSignal()
+    shown = Signal()
     """Emitted when the panel becomes visible, so its owner can fill it."""
 
     def __init__(

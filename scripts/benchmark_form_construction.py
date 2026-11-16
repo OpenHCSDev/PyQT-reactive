@@ -13,8 +13,8 @@ from math import ceil
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type  # noqa: E402
-from PyQt6 import sip  # noqa: E402
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+import shiboken6  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from pyqt_reactive.forms.parameter_form_manager import (  # noqa: E402
     FormManagerConfig,
@@ -123,7 +123,7 @@ def run(*, iterations: int, warmups: int, timeout_s: float) -> dict[str, object]
             )
         )
         manager.dispose()
-        sip.delete(manager)
+        shiboken6.delete(manager)
         app.processEvents()
 
     measured = samples[warmups:]

@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Generic, TypeVar
 
-from PyQt6.QtCore import QEvent, QObject
-from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QEvent, QObject
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import QApplication
 
 ConfigT = TypeVar("ConfigT")
 

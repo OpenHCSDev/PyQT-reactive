@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING, ClassVar, TypeVar
 
 from formbridge.services.window_code_document import WindowCodeDocumentDriver
 from objectstate.object_state import ObjectState, ObjectStateRegistry
-from PyQt6.QtCore import QSize, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QMessageBox, QVBoxLayout
+from PySide6.QtCore import QSize, QTimer, Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QMessageBox, QVBoxLayout
 
 from pyqt_reactive.services.window_navigation import (
     CompositeWindowNavigationDriver,
@@ -162,8 +162,8 @@ class TabbedEditorNavigationDriver(CompositeWindowNavigationDriver):
 class TabbedEditorWindow(CancelSaveWindow):
     """Edit one object through the tabs its tab family declares."""
 
-    saved = pyqtSignal(object)
-    cancelled = pyqtSignal()
+    saved = Signal(object)
+    cancelled = Signal()
 
     default_size: ClassVar[QSize] = QSize(550, 600)
 

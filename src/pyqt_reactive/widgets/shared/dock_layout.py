@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QByteArray, QSettings, QSize, Qt, QTimer
-from PyQt6.QtWidgets import QDockWidget, QMainWindow, QStyle, QToolButton, QWidget
+from PySide6.QtCore import QByteArray, QSettings, QSize, Qt, QTimer
+from PySide6.QtWidgets import QDockWidget, QMainWindow, QStyle, QToolButton, QWidget
 
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import ManagerHeaderParts
 

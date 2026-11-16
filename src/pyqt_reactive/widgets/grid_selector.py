@@ -12,9 +12,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar
 
-from PyQt6.QtCore import QEvent, QRect, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QFontMetrics
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -356,8 +356,8 @@ class GridSelectorWidget(QWidget):
         detach_requested: the header's detach button was clicked.
     """
 
-    cells_selected = pyqtSignal(set)
-    detach_requested = pyqtSignal()
+    cells_selected = Signal(set)
+    detach_requested = Signal()
 
     HEADER_STYLE = """
         QPushButton {{

@@ -22,7 +22,7 @@ from ..flash_trace import (
 )
 
 if TYPE_CHECKING:
-    from PySide6.QtCore import pyqtBoundSignal
+    from PySide6.QtCore import SignalInstance
     from PySide6.QtGui import QPixmap
     from PySide6.QtWidgets import QWidget
     from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -195,7 +195,7 @@ class WindowSnapshotRenderOwner(ABC):
 
     @property
     @abstractmethod
-    def frame_completed(self) -> pyqtBoundSignal:
+    def frame_completed(self) -> SignalInstance:
         """Signal emitted by the renderer only after completing a native frame."""
 
     @abstractmethod
@@ -214,7 +214,7 @@ class OpenGLWidgetSnapshotRenderOwner(WindowSnapshotRenderOwner):
         return self.canvas
 
     @property
-    def frame_completed(self) -> pyqtBoundSignal:
+    def frame_completed(self) -> SignalInstance:
         return self.canvas.frameSwapped
 
     def request_frame(self) -> None:
