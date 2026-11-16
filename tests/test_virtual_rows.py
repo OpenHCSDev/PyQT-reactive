@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 
-from PySide6.QtCore import QStringListModel
-from PySide6.QtGui import QFont, QTextDocument
+from PySide6.QtCore import QStringListModel, Qt
+from PySide6.QtGui import QFont, QGuiApplication, QTextDocument
 
 from pyqt_reactive.widgets.virtual_rows import PlainRow, RowDocumentDelegate, RowFormatting, VirtualRowView
 
@@ -67,5 +67,25 @@ def test_rows_added_above_keep_the_reader_on_the_same_row(qtbot) -> None:
         with view.keeping_end():
             model.insertRows(model.rowCount(), 20)
         assert view.at_end
+    finally:
+        view.rows.cleanup()
+
+
+def test_a_suspended_application_lets_row_documents_go_and_keeps_rows_in_place(qtbot) -> None:
+    model = QStringListModel([f"row {number}" for number in range(50)])
+    view = VirtualRowView(BoldRows())
+    qtbot.addWidget(view)
+    view.setModel(model)
+    view.resize(300, 200)
+    view.show()
+    index, font = model.index(3, 0), QFont()
+    try:
+        qtbot.waitUntil(lambda: view.rows.formatting(index, font, 300) == BoldRow("row 3"))
+        laid_out = view.rows.row_document(index, font, 300)
+        place = view.visualRect(index)
+        QGuiApplication.instance().applicationStateChanged.emit(Qt.ApplicationState.ApplicationSuspended)
+        assert view.rows.row_document(index, font, 300) is not laid_out
+        view.executeDelayedItemsLayout()
+        assert view.visualRect(index) == place
     finally:
         view.rows.cleanup()
