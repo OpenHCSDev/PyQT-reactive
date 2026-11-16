@@ -33,7 +33,7 @@ dependencies = [
     "psutil>=5.9",
     "Pygments>=2.15",
     "python-introspect>=0.3.0,<0.4",
-    "ui-theme @ git+https://github.com/OpenHCSDev/ui-theme.git@main",
+    "ui-theme",
     "zmqruntime>=0.6.5,<0.7",
 ]
 
@@ -58,10 +58,6 @@ Homepage = "https://github.com/OpenHCSDev/pyqt-reactive"
 Documentation = "https://pyqt-reactive.readthedocs.io"
 Repository = "https://github.com/OpenHCSDev/pyqt-reactive"
 Issues = "https://github.com/OpenHCSDev/pyqt-reactive/issues"
-
-[tool.hatch.metadata]
-# ui-theme is not on PyPI; it is declared by its repository, as Toad declares it.
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyqt_reactive"]
