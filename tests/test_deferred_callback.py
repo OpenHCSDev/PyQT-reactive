@@ -9,7 +9,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QComboBox, QGroupBox, QListView, QPushButton
 
-from pyqt_reactive.core.deferred_callback import DeferredCallback
+from pyqt_reactive.core.deferred_callback import DeferredCallback, RepeatingCallback
 from pyqt_reactive.services.widget_tree_projection import (
     DEFAULT_WIDGET_DESCRIPTOR_PROJECTOR_REGISTRY,
     SelectItemAction,
@@ -37,6 +37,26 @@ def test_deferred_callback_runs_once_and_retires(qapp):
     qapp.processEvents()
     assert calls == [owner]
     destroy(owner)
+
+
+def test_repeating_callback_runs_until_stopped_or_owner_destroyed(qapp):
+    owner = QObject()
+    calls = []
+    timer = RepeatingCallback(owner, 0, lambda: calls.append("tick"))
+    assert timer.parent() is owner
+    assert timer.isActive() and not timer.isSingleShot()
+    qapp.processEvents()
+    qapp.processEvents()
+    assert len(calls) >= 2
+    timer.stop()
+    stopped = len(calls)
+    qapp.processEvents()
+    assert len(calls) == stopped
+    timer.start()
+    destroy(owner)
+    assert not shiboken6.isValid(timer)
+    qapp.processEvents()
+    assert len(calls) == stopped
 
 
 def test_owner_destruction_cancels_only_its_callbacks(qapp):

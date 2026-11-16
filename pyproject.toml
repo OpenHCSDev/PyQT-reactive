@@ -33,6 +33,7 @@ dependencies = [
     "psutil>=5.9",
     "Pygments>=2.15",
     "python-introspect>=0.3.0,<0.4",
+    "ui-theme",
     "zmqruntime>=0.6.5,<0.7",
 ]
 

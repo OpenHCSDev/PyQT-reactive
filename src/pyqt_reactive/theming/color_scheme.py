@@ -7,12 +7,29 @@ JSON configuration, and WCAG accessibility compliance.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Self, Tuple
 
 from PySide6.QtGui import QColor
+from ui_theme.scheme import (
+    AlternateRowToneColour,
+    BackgroundColour,
+    BlockCursorBackgroundColour,
+    BlockCursorForegroundColour,
+    ColourScheme,
+    ErrorColour,
+    ForegroundColour,
+    HeaderToneColour,
+    MutedColour,
+    PrimaryColour,
+    SidebarToneColour,
+    SuccessColour,
+    SurfaceHoverColour,
+    ThemeColour,
+    WarningColour,
+)
 
 if TYPE_CHECKING:
     from .style_generator import StyleSheetGenerator
@@ -38,6 +55,7 @@ class ColorScheme:
     window_bg: Tuple[int, int, int] = (43, 43, 43)      # #2b2b2b - Main window/dialog backgrounds
     panel_bg: Tuple[int, int, int] = (30, 30, 30)       # #1e1e1e - Panel/widget backgrounds
     frame_bg: Tuple[int, int, int] = (43, 43, 43)       # #2b2b2b - Frame backgrounds
+    alternate_row_bg: Tuple[int, int, int] = (30, 30, 30) # #1e1e1e - Every other row of a list or tree
     
     # Borders and Separators
     border_color: Tuple[int, int, int] = (85, 85, 85)   # #555555 - Primary borders
@@ -225,6 +243,7 @@ class ColorScheme:
             window_bg=(245, 245, 245),          # Light gray background
             panel_bg=(255, 255, 255),           # White panel background
             frame_bg=(240, 240, 240),           # Light frame background
+            alternate_row_bg=(255, 255, 255),   # Every other row: the panel's own white
             border_color=(180, 180, 180),       # Medium gray borders
             border_light=(160, 160, 160),       # Lighter borders
             separator_color=(200, 200, 200),    # Light separators
@@ -290,6 +309,58 @@ class ColorScheme:
             python_builtin_color=(0, 0, 150),   # Darker blue
             python_comment_color=(80, 120, 60), # Darker green
             boolean_color=(0, 0, 150),          # Darker blue
+        )
+
+    @classmethod
+    def from_theme(cls, scheme: ColourScheme) -> Self:
+        """The chrome in a ui_theme scheme's colours, the shared theme a Textual frontend
+        draws too: surfaces from its background, tones and blends toward its foreground,
+        accents and statuses from its named colours. Log and syntax colours keep the dark or
+        light preset's, which ui_theme does not state."""
+
+        background, foreground = BackgroundColour.rgb(scheme), ForegroundColour.rgb(scheme)
+
+        def step(amount: float) -> Tuple[int, int, int]:
+            return background.blend(foreground, amount).triple
+
+        def colour(member: type[ThemeColour]) -> Tuple[int, int, int]:
+            return member.rgb(scheme).triple
+
+        preset = cls.create_dark_theme() if scheme.dark else cls.create_light_theme()
+        return replace(
+            preset,
+            window_bg=colour(BackgroundColour),
+            panel_bg=colour(SidebarToneColour),
+            frame_bg=colour(HeaderToneColour),
+            alternate_row_bg=colour(AlternateRowToneColour),
+            border_color=step(0.25),
+            border_light=step(0.35),
+            separator_color=step(0.15),
+            text_primary=colour(ForegroundColour),
+            text_secondary=colour(MutedColour),
+            text_accent=colour(PrimaryColour),
+            text_disabled=step(0.4),
+            button_normal_bg=colour(SurfaceHoverColour),
+            button_hover_bg=step(0.2),
+            button_pressed_bg=step(0.08),
+            button_disabled_bg=step(0.05),
+            button_text=colour(ForegroundColour),
+            button_disabled_text=step(0.4),
+            input_bg=colour(BackgroundColour),
+            input_border=step(0.25),
+            input_text=colour(ForegroundColour),
+            input_focus_border=colour(PrimaryColour),
+            selection_bg=colour(BlockCursorBackgroundColour),
+            selection_text=colour(BlockCursorForegroundColour),
+            hover_bg=colour(SurfaceHoverColour),
+            focus_outline=colour(PrimaryColour),
+            status_success=colour(SuccessColour),
+            status_warning=colour(WarningColour),
+            status_error=colour(ErrorColour),
+            status_info=colour(PrimaryColour),
+            progress_bg=colour(SidebarToneColour),
+            progress_fill=colour(PrimaryColour),
+            activity_indicator=colour(PrimaryColour),
         )
 
     @classmethod
