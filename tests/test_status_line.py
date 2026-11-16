@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QListWidget, QScroller, QVBoxLayout, QWidget
 
 from pyqt_reactive.theming import ColorScheme, StatusColorRole
 from pyqt_reactive.widgets.shared.touch_scrolled import TouchScrolled
+from pyqt_reactive.widgets.elided_line import ElidedLine
 from pyqt_reactive.widgets.status_line import StatusLine
 
 
@@ -57,6 +58,21 @@ def test_a_long_word_wraps_inside_a_phone_width(qapp) -> None:
     assert line.width() <= 412
     assert line.text_rect(line.width()).width() <= line.contentsRect().width()
     assert line.height() >= line.heightForWidth(line.width())
+
+
+def test_a_long_elided_line_does_not_widen_a_phone_window(qapp) -> None:
+    """A line longer than the screen takes the width it is given and ends in an ellipsis; the
+    window stays at the phone's width."""
+    text = "7 active · " + ", ".join(f"teammate-{index:02d}" for index in range(20))
+    line = ElidedLine(text)
+    window = QWidget()
+    QVBoxLayout(window).addWidget(line)
+    window.resize(412, 200)
+    window.show()
+    qapp.processEvents()
+    assert line.sizeHint().width() > 412
+    assert window.width() == 412 and line.width() <= 412
+    assert line.toolTip() == text
 
 
 def test_touch_scrolled_area_holds_a_kinetic_scroller(qapp) -> None:
