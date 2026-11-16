@@ -452,23 +452,17 @@ def test_theme_manager_renders_message_box_buttons_from_shared_style(qapp):
         message_box.close()
 
 
-def test_qscintilla_editor_uses_shared_borderless_button_style(qapp):
-    """The code editor must not restore its former outlined button mirror."""
+def test_code_editor_uses_shared_borderless_button_style(qapp):
+    """The code editor must not restore its former outlined button mirror, and its
+    line-number gutter is painted in the frame colour."""
     from pyqt_reactive.theming import ColorScheme, ThemeManager
-    from pyqt_reactive.widgets.editors.simple_code_editor import (
-        QSCINTILLA_AVAILABLE,
-        QSCINTILLA_FOLD_MARGIN_INDEX,
-        QScintillaCodeEditorDialog,
-    )
-
-    if not QSCINTILLA_AVAILABLE:
-        pytest.skip("QScintilla is not installed")
+    from pyqt_reactive.widgets.editors.simple_code_editor import CodeEditorDialog
 
     dialog = None
     try:
         scheme = ColorScheme()
         ThemeManager(scheme).apply_color_scheme(scheme)
-        dialog = QScintillaCodeEditorDialog(None, "x = 1", "Edit Pipeline")
+        dialog = CodeEditorDialog(None, "x = 1", "Edit Pipeline")
         dialog.show()
         qapp.processEvents()
 
@@ -485,18 +479,10 @@ def test_qscintilla_editor_uses_shared_borderless_button_style(qapp):
             }
             assert scheme.to_hex(scheme.button_normal_bg) in rendered_colors
 
-        fold_margin_x = sum(
-            dialog.editor.marginWidth(index) for index in range(QSCINTILLA_FOLD_MARGIN_INDEX)
-        ) + (dialog.editor.marginWidth(QSCINTILLA_FOLD_MARGIN_INDEX) // 2)
-        rendered_fold_margin = (
-            dialog.editor.grab()
-            .toImage()
-            .pixelColor(
-                fold_margin_x,
-                dialog.editor.height() // 2,
-            )
-        )
-        assert rendered_fold_margin.name() == scheme.to_hex(scheme.frame_bg)
+        gutter = dialog.editor._gutter
+        assert gutter.width() == dialog.editor.gutter_width() > 0
+        rendered_gutter = gutter.grab().toImage().pixelColor(1, gutter.height() - 2)
+        assert rendered_gutter.name() == scheme.to_hex(scheme.frame_bg)
     finally:
         if dialog is not None:
             dialog.close()

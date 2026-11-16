@@ -1,52 +1,49 @@
 """
-Simple Code Editor Service for PyQt GUI.
-
-Provides modular text editing with QScintilla (default) or external program launch.
-No threading complications - keeps it simple and direct.
+Code editor for Python source: a floating dialog over a line-numbered, highlighted
+QPlainTextEdit, or an external program from $EDITOR.
 """
 
 import hashlib
 import logging
 import os
 import subprocess
+import sys
 import tempfile
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont, QKeySequence
+from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtGui import QAction, QFont, QKeyEvent, QKeySequence, QPainter, QPaintEvent, QResizeEvent, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QMenuBar,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
+from formbridge.core.path_cache import CodeEditor, cache_path, get_initial_path
+from formbridge.protocols.codegen_provider import get_codegen_provider
 from formbridge.services.window_code_document import (
     PYTHON_MIME_TYPE,
     WindowCodeDocument,
     WindowCodeDocumentDriver,
 )
 from pyqt_reactive.services.window_manager import WindowManager
+from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.widgets.editors.python_highlighter import PythonHighlighter
 
 logger = logging.getLogger(__name__)
 DeclarationT = TypeVar("DeclarationT")
-QSCINTILLA_FOLD_MARGIN_INDEX = 2
-
-# Try to import QScintilla, fall back to QTextEdit if not available
-try:
-    from PySide6.Qsci import QsciScintilla, QsciLexerPython
-    QSCINTILLA_AVAILABLE = True
-    logger.info("QScintilla successfully imported")
-except ImportError as e:
-    logger.warning(f"QScintilla not available: {e}")
-    logger.info("Install with: pip install PySide6-QScintilla")
-    QSCINTILLA_AVAILABLE = False
+INDENT = "    "
 
 
 class SimpleCodeEditorWindowCodeDocumentDriver(
@@ -102,8 +99,7 @@ class SimpleCodeEditorService(Generic[DeclarationT]):
     """
     Simple, modular code editor service.
 
-    Uses QScintilla for professional Python editing (default) or external programs.
-    Falls back to QTextEdit if QScintilla is not available.
+    Opens a CodeEditorDialog, or the external program named by $EDITOR.
     No threading - keeps it simple and reliable.
     """
     
@@ -148,18 +144,13 @@ class SimpleCodeEditorService(Generic[DeclarationT]):
                            declaration_type: type[DeclarationT] | None = None,
                            code_data: dict = None,
                            error_line: int = None) -> None:
-        """Edit code using Qt native text editor dialog (QScintilla preferred)."""
+        """Edit code in a floating CodeEditorDialog."""
         try:
-            if QSCINTILLA_AVAILABLE:
-                logger.debug("Using QScintilla editor for code editing")
-                dialog = QScintillaCodeEditorDialog(self.parent, initial_content, title,
-                                                   callback=callback,
-                                                   declaration_type=declaration_type,
-                                                   code_data=code_data,
-                                                   initial_line=error_line)
-            else:
-                logger.debug("QScintilla not available, using QTextEdit fallback")
-                dialog = CodeEditorDialog(self.parent, initial_content, title)
+            dialog = CodeEditorDialog(self.parent, initial_content, title,
+                                      callback=callback,
+                                      declaration_type=declaration_type,
+                                      code_data=code_data,
+                                      initial_line=error_line)
 
             # Show dialog as non-blocking floating window (like other OpenHCS windows)
             # Use .show() instead of .exec() to allow interaction with other windows
@@ -253,14 +244,132 @@ class SimpleCodeEditorService(Generic[DeclarationT]):
         """Show error message to user."""
         QMessageBox.critical(self.parent, "Editor Error", message)
 
+class LineNumberGutter(QWidget):
+    """The strip left of a CodeTextEdit that paints its visible line numbers."""
 
-class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
+    def __init__(self, editor: "CodeTextEdit") -> None:
+        super().__init__(editor)
+        self._editor = editor
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt virtual method name
+        return QSize(self._editor.gutter_width(), 0)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt virtual method name
+        self._editor.paint_gutter(self, event)
+
+
+class CodeTextEdit(QPlainTextEdit):
+    """Python source editing: monospace text, Python highlighting, line numbers,
+    a highlighted current line, four-space indents and auto-indent on Enter."""
+
+    def __init__(self, color_scheme: ColorScheme, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._color_scheme = color_scheme
+        self._gutter = LineNumberGutter(self)
+        self.highlighter = PythonHighlighter(self.document(), color_scheme)
+
+        font = QFont("Consolas", 10)
+        if not font.exactMatch():
+            font = QFont("Courier New", 10)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self.setFont(font)
+        self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * len(INDENT))
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+
+        self.blockCountChanged.connect(self._update_gutter_width)
+        self.updateRequest.connect(self._update_gutter)
+        self.cursorPositionChanged.connect(self._highlight_current_line)
+        self._update_gutter_width()
+        self._highlight_current_line()
+
+    # Line numbers
+    def gutter_width(self) -> int:
+        if self._gutter.isHidden():
+            return 0
+        digits = max(4, len(str(max(1, self.blockCount()))))
+        return 6 + self.fontMetrics().horizontalAdvance("9") * digits
+
+    def set_line_numbers_visible(self, visible: bool) -> None:
+        self._gutter.setVisible(visible)
+        self._update_gutter_width()
+
+    def _update_gutter_width(self, _block_count: int = 0) -> None:
+        self.setViewportMargins(self.gutter_width(), 0, 0, 0)
+
+    def _update_gutter(self, rect: QRect, dy: int) -> None:
+        if dy:
+            self._gutter.scroll(0, dy)
+        else:
+            self._gutter.update(0, rect.y(), self._gutter.width(), rect.height())
+        if rect.contains(self.viewport().rect()):
+            self._update_gutter_width()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt virtual method name
+        super().resizeEvent(event)
+        contents = self.contentsRect()
+        self._gutter.setGeometry(QRect(contents.left(), contents.top(), self.gutter_width(), contents.height()))
+
+    def paint_gutter(self, gutter: QWidget, event: QPaintEvent) -> None:
+        cs = self._color_scheme
+        painter = QPainter(gutter)
+        painter.fillRect(event.rect(), cs.to_qcolor(cs.frame_bg))
+        painter.setPen(cs.to_qcolor(cs.text_secondary))
+        block = self.firstVisibleBlock()
+        top = round(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
+        height = self.fontMetrics().height()
+        while block.isValid() and top <= event.rect().bottom():
+            bottom = top + round(self.blockBoundingRect(block).height())
+            if block.isVisible() and bottom >= event.rect().top():
+                painter.drawText(
+                    0, top, gutter.width() - 3, height,
+                    Qt.AlignmentFlag.AlignRight, str(block.blockNumber() + 1),
+                )
+            block = block.next()
+            top = bottom
+        painter.end()
+
+    # Current line
+    def _highlight_current_line(self) -> None:
+        cs = self._color_scheme
+        selection = QTextEdit.ExtraSelection()
+        selection.format.setBackground(cs.to_qcolor(cs.frame_bg))
+        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        selection.cursor = self.textCursor()
+        selection.cursor.clearSelection()
+        self.setExtraSelections([selection])
+
+    # Indentation
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt virtual method name
+        if event.key() == Qt.Key.Key_Tab and not self.textCursor().hasSelection():
+            self.insertPlainText(INDENT)
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            line = self.textCursor().block().text()
+            indent = line[: len(line) - len(line.lstrip())]
+            if line.rstrip().endswith(":"):
+                indent += INDENT
+            super().keyPressEvent(event)
+            self.insertPlainText(indent)
+            return
+        super().keyPressEvent(event)
+
+    def goto_line(self, line_number: int) -> None:
+        """Select line `line_number` (1-based) and scroll it into view."""
+        block = self.document().findBlockByNumber(line_number - 1)
+        if not block.isValid():
+            return
+        cursor = QTextCursor(block)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+        self.centerCursor()
+
+
+class CodeEditorDialog(QDialog, Generic[DeclarationT]):
     """
-    Professional code editor dialog using QScintilla.
+    Floating Python code editor dialog.
 
-    Provides Python syntax highlighting, code folding, line numbers, and more.
-    Integrates with ColorScheme for consistent theming.
-    Supports clean mode toggle for orchestrator/pipeline/function code.
+    Line numbers and Python highlighting from the ColorScheme; supports the clean
+    mode toggle for orchestrator/pipeline/function code.
     """
 
     def __init__(self, parent, initial_content: str, title: str,
@@ -284,546 +393,103 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
         self.setModal(False)  # Non-modal - allow other windows to be interactable
         self.resize(900, 700)
 
-        # Store callback and code generation context
         self.callback = callback
         self.declaration_type = declaration_type
         self.code_data = code_data or {}
         self.clean_mode = self.code_data.get('clean_mode', True)  # Default to clean mode
-        self.initial_line = initial_line
-        # Get color scheme from parent
-        from pyqt_reactive.theming import ColorScheme
         self.color_scheme = ColorScheme()
 
-        # Setup UI
-        self._setup_ui(initial_content)
-
-        # Apply theming
-        self._apply_theme()
-
-        # Move cursor to error line if specified
-        if self.initial_line is not None:
-            self._goto_line(self.initial_line)
-
-        # Focus on editor
-        self.editor.setFocus()
-
-
-
-    def _setup_ui(self, initial_content: str):
-        """Setup the UI components."""
-        # Main layout
         main_layout = QVBoxLayout(self)
-
-        # Menu bar (compact)
         self._setup_menu_bar()
-        self.menu_bar.setMaximumHeight(25)  # Limit menu bar height
-        main_layout.addWidget(self.menu_bar, 0)  # 0 stretch factor
+        self.menu_bar.setMaximumHeight(25)
+        main_layout.addWidget(self.menu_bar, 0)
 
-        # QScintilla editor
-        self.editor = QsciScintilla()
-        self.editor.setText(initial_content)
-
-        # Set Python lexer for syntax highlighting
-        self.lexer = QsciLexerPython()
-        self.editor.setLexer(self.lexer)
-
-        # Configure editor features
-        self._configure_editor()
-
+        self.editor = CodeTextEdit(self.color_scheme, self)
+        self.editor.setPlainText(initial_content)
         main_layout.addWidget(self.editor)
 
-        # Buttons
         button_layout = QHBoxLayout()
-
         self.save_btn = QPushButton("Save")
-        # Support Shift+Click for 'Save without close'
+        # Shift+Click saves without closing
         self.save_btn.clicked.connect(self._on_save_clicked)
         button_layout.addWidget(self.save_btn)
-
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_btn)
-
         button_layout.addStretch()
         main_layout.addLayout(button_layout)
 
+        self._apply_theme()
+
+        if initial_line is not None:
+            self._goto_line(initial_line)
+        self.editor.setFocus()
+
     def _setup_menu_bar(self):
         """Setup menu bar with File, Edit, View menus."""
-
         self.menu_bar = QMenuBar(self)
 
-        # File menu
         file_menu = self.menu_bar.addMenu("&File")
-
-        # New action
-        new_action = QAction("&New", self)
-        new_action.setShortcut(QKeySequence.StandardKey.New)
-        new_action.triggered.connect(self._new_file)
-        file_menu.addAction(new_action)
-
-        # Open action
-        open_action = QAction("&Open...", self)
-        open_action.setShortcut(QKeySequence.StandardKey.Open)
-        open_action.triggered.connect(self._open_file)
-        file_menu.addAction(open_action)
-
+        self._add_action(file_menu, "&New", QKeySequence.StandardKey.New, self._new_file)
+        self._add_action(file_menu, "&Open...", QKeySequence.StandardKey.Open, self._open_file)
         file_menu.addSeparator()
-
-        # Save action
-        save_action = QAction("&Save", self)
-        save_action.setShortcut(QKeySequence.StandardKey.Save)
-        save_action.triggered.connect(self.accept)
-        file_menu.addAction(save_action)
-
-        # Save As action
-        save_as_action = QAction("Save &As...", self)
-        save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
-        save_as_action.triggered.connect(self._save_as)
-        file_menu.addAction(save_as_action)
-
+        self._add_action(file_menu, "&Save", QKeySequence.StandardKey.Save, self.accept)
+        self._add_action(file_menu, "Save &As...", QKeySequence.StandardKey.SaveAs, self._save_as)
         file_menu.addSeparator()
+        self._add_action(file_menu, "&Close", QKeySequence.StandardKey.Close, self.reject)
 
-        # Close action
-        close_action = QAction("&Close", self)
-        close_action.setShortcut(QKeySequence.StandardKey.Close)
-        close_action.triggered.connect(self.reject)
-        file_menu.addAction(close_action)
-
-        # Edit menu
         edit_menu = self.menu_bar.addMenu("&Edit")
-
-        # Undo action
-        undo_action = QAction("&Undo", self)
-        undo_action.setShortcut(QKeySequence.StandardKey.Undo)
-        undo_action.triggered.connect(lambda: self.editor.undo())
-        edit_menu.addAction(undo_action)
-
-        # Redo action
-        redo_action = QAction("&Redo", self)
-        redo_action.setShortcut(QKeySequence.StandardKey.Redo)
-        redo_action.triggered.connect(lambda: self.editor.redo())
-        edit_menu.addAction(redo_action)
-
+        self._add_action(edit_menu, "&Undo", QKeySequence.StandardKey.Undo, lambda: self.editor.undo())
+        self._add_action(edit_menu, "&Redo", QKeySequence.StandardKey.Redo, lambda: self.editor.redo())
         edit_menu.addSeparator()
-
-        # Cut, Copy, Paste
-        cut_action = QAction("Cu&t", self)
-        cut_action.setShortcut(QKeySequence.StandardKey.Cut)
-        cut_action.triggered.connect(lambda: self.editor.cut())
-        edit_menu.addAction(cut_action)
-
-        copy_action = QAction("&Copy", self)
-        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
-        copy_action.triggered.connect(lambda: self.editor.copy())
-        edit_menu.addAction(copy_action)
-
-        paste_action = QAction("&Paste", self)
-        paste_action.setShortcut(QKeySequence.StandardKey.Paste)
-        paste_action.triggered.connect(lambda: self.editor.paste())
-        edit_menu.addAction(paste_action)
-
+        self._add_action(edit_menu, "Cu&t", QKeySequence.StandardKey.Cut, lambda: self.editor.cut())
+        self._add_action(edit_menu, "&Copy", QKeySequence.StandardKey.Copy, lambda: self.editor.copy())
+        self._add_action(edit_menu, "&Paste", QKeySequence.StandardKey.Paste, lambda: self.editor.paste())
         edit_menu.addSeparator()
+        self._add_action(edit_menu, "Select &All", QKeySequence.StandardKey.SelectAll, lambda: self.editor.selectAll())
 
-        # Select All
-        select_all_action = QAction("Select &All", self)
-        select_all_action.setShortcut(QKeySequence.StandardKey.SelectAll)
-        select_all_action.triggered.connect(lambda: self.editor.selectAll())
-        edit_menu.addAction(select_all_action)
-
-        # View menu
         view_menu = self.menu_bar.addMenu("&View")
-
-        # Toggle line numbers
         toggle_line_numbers = QAction("Toggle &Line Numbers", self)
         toggle_line_numbers.setCheckable(True)
         toggle_line_numbers.setChecked(True)
-        toggle_line_numbers.triggered.connect(self._toggle_line_numbers)
+        toggle_line_numbers.triggered.connect(lambda checked: self.editor.set_line_numbers_visible(checked))
         view_menu.addAction(toggle_line_numbers)
-
-        # Toggle code folding
-        toggle_folding = QAction("Toggle Code &Folding", self)
-        toggle_folding.setCheckable(True)
-        toggle_folding.setChecked(True)
-        toggle_folding.triggered.connect(self._toggle_code_folding)
-        view_menu.addAction(toggle_folding)
-
-        # Add separator before clean mode toggle
         view_menu.addSeparator()
-
-        # Toggle clean mode - always available
         toggle_clean_mode = QAction("Toggle &Clean Mode", self)
         toggle_clean_mode.setCheckable(True)
         toggle_clean_mode.setChecked(self.clean_mode)
         toggle_clean_mode.triggered.connect(self._toggle_clean_mode)
         view_menu.addAction(toggle_clean_mode)
 
-    def _configure_editor(self):
-        """Configure QScintilla editor with professional features."""
-        # Line numbers
-        self.editor.setMarginType(0, QsciScintilla.MarginType.NumberMargin)
-        self.editor.setMarginWidth(0, "0000")
-        self.editor.setMarginLineNumbers(0, True)
-        self.editor.setMarginsBackgroundColor(Qt.GlobalColor.lightGray)
-
-        # Current line highlighting
-        self.editor.setCaretLineVisible(True)
-        self.editor.setCaretLineBackgroundColor(Qt.GlobalColor.lightGray)
-
-        # Set font
-        font = QFont("Consolas", 10)
-        if not font.exactMatch():
-            font = QFont("Courier New", 10)
-        self.editor.setFont(font)
-
-        # Indentation
-        self.editor.setIndentationsUseTabs(False)
-        self.editor.setIndentationWidth(4)
-        self.editor.setTabWidth(4)
-        self.editor.setAutoIndent(True)
-
-        # Code folding
-        self.editor.setFolding(
-            QsciScintilla.FoldStyle.BoxedTreeFoldStyle,
-            QSCINTILLA_FOLD_MARGIN_INDEX,
-        )
-
-        # Brace matching
-        self.editor.setBraceMatching(QsciScintilla.BraceMatch.SloppyBraceMatch)
-
-        # Selection
-        self.editor.setSelectionBackgroundColor(Qt.GlobalColor.blue)
-
-        # Enable UTF-8
-        self.editor.setUtf8(True)
-
-        # Autocomplete disabled - causes Qt event loop crashes with widget deletion
-        # self._configure_autocomplete()
-
-    def _configure_autocomplete(self):
-        """Configure autocomplete for Python code."""
-        logger.info("🔧 Configuring Jedi-powered autocomplete...")
-
-        # Use custom autocomplete source (we'll populate it with Jedi)
-        self.editor.setAutoCompletionSource(QsciScintilla.AutoCompletionSource.AcsAPIs)
-        logger.info("  ✓ Autocomplete source set to AcsAPIs")
-
-        # Show autocomplete after typing 2 characters
-        self.editor.setAutoCompletionThreshold(2)
-        logger.info("  ✓ Autocomplete threshold: 2 characters")
-
-        # Case-insensitive matching
-        self.editor.setAutoCompletionCaseSensitivity(False)
-
-        # Replace word when selecting from autocomplete
-        self.editor.setAutoCompletionReplaceWord(True)
-
-        # Show single item automatically
-        self.editor.setAutoCompletionUseSingle(QsciScintilla.AutoCompletionUseSingle.AcusNever)
-
-        # Note: setAutoCompletionMaxVisibleItems() doesn't exist in QScintilla
-        # The list size is automatically managed
-
-        # Setup Jedi-based API
-        self._setup_jedi_api()
-
-        # Install event filter to catch key presses for autocomplete triggering
-        self.editor.installEventFilter(self)
-        logger.info("  ✓ Event filter installed for '.' trigger")
-
-    def eventFilter(self, obj, event):
-        """Filter events to trigger Jedi autocomplete on '.' """
-        try:
-            from PySide6.QtCore import QEvent
-
-            if obj == self.editor and event.type() == QEvent.Type.KeyPress:
-                key_event = event
-                # Trigger autocomplete when '.' is typed
-                if key_event.text() == '.':
-                    logger.info("🔍 Detected '.' keypress - triggering Jedi autocomplete")
-                    # Let the '.' be inserted first
-                    from PySide6.QtCore import QTimer
-                    # Use a lambda to check if dialog still exists before calling autocomplete
-                    QTimer.singleShot(10, lambda: self._show_jedi_completions() if hasattr(self, 'editor') else None)
-
-            return super().eventFilter(obj, event)
-        except Exception as e:
-            logger.warning(f"Autocomplete event filter error (ignoring): {e}")
-            return super().eventFilter(obj, event)
-
-    def _setup_jedi_api(self):
-        """Setup initial API with basic Python keywords for fallback."""
-        try:
-            from PySide6.Qsci import QsciAPIs
-
-            # Create API object for Python lexer
-            self.api = QsciAPIs(self.lexer)
-            logger.info("  ✓ Created QsciAPIs object")
-
-            # Add basic Python keywords as fallback
-            python_keywords = [
-                'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await',
-                'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except',
-                'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is',
-                'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return',
-                'try', 'while', 'with', 'yield', 'print', 'len', 'range', 'str',
-                'int', 'float', 'list', 'dict', 'tuple', 'set'
-            ]
-
-            for keyword in python_keywords:
-                self.api.add(keyword)
-
-            # Prepare the API
-            self.api.prepare()
-
-            logger.info(f"  ✓ Added {len(python_keywords)} Python keywords to API")
-
-        except Exception as e:
-            logger.error(f"❌ Failed to setup Jedi API autocomplete: {e}")
-
-    def _show_jedi_completions(self):
-        """Show Jedi-powered autocomplete suggestions."""
-        logger.info("🧠 _show_jedi_completions called")
-        try:
-            # Check if editor still exists and is valid
-            if not hasattr(self, 'editor') or self.editor is None:
-                logger.warning("Editor widget no longer exists, skipping autocomplete")
-                return
-
-            # Check if editor widget is still valid (not deleted)
-            try:
-                # Try to access a property - will raise RuntimeError if C++ object deleted
-                _ = self.editor.isVisible()
-            except RuntimeError:
-                logger.warning("Editor widget has been deleted, skipping autocomplete")
-                return
-
-            # Wrap entire autocomplete logic to catch widget deletion errors
-            import jedi
-
-            # Get current code and cursor position
-            code = self.editor.text()
-            line, col = self.editor.getCursorPosition()
-
-            # Get the current line text to see what we're completing
-            current_line = self.editor.text(line)
-            logger.info(f"  📍 Cursor position: line={line}, col={col}")
-            logger.info(f"  📝 Current line: '{current_line}'")
-            logger.info(f"  📝 Code length: {len(code)} chars")
-
-            # Check if we're typing an import statement or module access
-            # If the line starts with 'import' or 'from', add it if not already there
-            current_line_stripped = current_line.strip()
-            if current_line_stripped and not current_line_stripped.startswith(('import ', 'from ')):
-                # User is typing module.attribute without import - add implicit import for Jedi
-                # Extract the module path before the cursor
-                before_cursor = current_line[:col].strip()
-                if '.' in before_cursor:
-                    # Get the base module (everything before last dot)
-                    parts = before_cursor.rsplit('.', 1)
-                    if parts:
-                        module_path = parts[0]
-                        # Add import statement for Jedi
-                        code = f"import {module_path}\n" + code
-                        # Adjust line number since we added a line
-                        jedi_line = line + 2  # +1 for 1-based, +1 for added import
-                        logger.info(f"  💡 Added implicit import for Jedi: 'import {module_path}'")
-                    else:
-                        jedi_line = line + 1
-                else:
-                    jedi_line = line + 1
-            else:
-                jedi_line = line + 1
-
-            # jedi_line already set above based on whether we added import
-            jedi_col = col
-
-            # Create Jedi script with current code
-            # Use project parameter to tell Jedi where to find project modules
-            # Use configured project roots for Jedi (defaults to cwd)
-            from formbridge.protocols.form_config import get_form_config
-            config = get_form_config()
-            project_paths = [Path(p) for p in getattr(config, "jedi_project_paths", []) if p]
-            if not project_paths:
-                project_paths = [Path.cwd()]
-
-            project = jedi.Project(
-                path=str(project_paths[0]),
-                sys_path=[str(p) for p in project_paths],
-            )
-
-            script = jedi.Script(code, path='<editor>', project=project)
-            logger.info(
-                "  ✓ Created Jedi script with project root: %s",
-                project_paths[0],
-            )
-
-            # Get completions at cursor position
-            completions = script.complete(jedi_line, jedi_col)
-            logger.info(f"  🔍 Jedi returned {len(completions)} completions")
-
-            # If no completions, try to get more info about what Jedi sees
-            if len(completions) == 0:
-                logger.info("  ⚠️  No completions - Jedi may not be able to resolve the module")
-                logger.info("  💡 Project root: %s", project_paths[0])
-
-            if completions:
-                # Log first few completions for debugging
-                sample = [c.name for c in completions[:5]]
-                logger.info(f"  📋 Sample completions: {sample}")
-
-                # Check if editor is still valid before showing autocomplete
-                try:
-                    _ = self.editor.isVisible()
-                except RuntimeError:
-                    logger.warning("Editor deleted before showing completions")
-                    return
-
-                # Check if autocomplete is already active
-                try:
-                    if self.editor.isListActive():
-                        logger.info("  ⚠️  Autocomplete list already active, canceling first")
-                        self.editor.cancelList()
-                except RuntimeError:
-                    logger.warning("Editor deleted while checking list state")
-                    return
-
-                # Build completion list
-                # Format for each item: "name?type" where ?type is optional
-                completion_items = []
-                for c in completions:
-                    if c.type:
-                        completion_items.append(f"{c.name}?{c.type}")
-                    else:
-                        completion_items.append(c.name)
-
-                logger.info(f"  📝 Built {len(completion_items)} completion items")
-
-                # Use showUserList instead of autoCompleteFromAll to avoid QScintilla's filtering
-                # showUserList(id, list) - id=1 for user completions, list is an iterable of strings
-                try:
-                    self.editor.showUserList(1, completion_items)
-                    logger.info(f"  ✅ Called showUserList() with {len(completions)} completions")
-
-                    # Check if it's showing
-                    if self.editor.isListActive():
-                        logger.info("  ✅ Autocomplete list is now active!")
-                    else:
-                        logger.info("  ❌ Autocomplete list is NOT active")
-                except RuntimeError:
-                    logger.warning("Editor deleted while showing autocomplete list")
-                    return
-
-            else:
-                logger.info("  ⚠️  No Jedi completions - trying standard autocomplete")
-                # No Jedi completions, try standard autocomplete
-                try:
-                    self.editor.autoCompleteFromAll()
-                except RuntimeError:
-                    logger.warning("Editor deleted while showing standard autocomplete")
-                    return
-
-        except RuntimeError as e:
-            # Widget deletion errors - just log as warning and ignore
-            logger.warning(f"Autocomplete widget error (ignoring): {e}")
-        except Exception as e:
-            # Other autocomplete errors - log as warning and try fallback
-            logger.warning(f"Jedi autocomplete failed (ignoring): {e}")
-            # Fall back to standard autocomplete
-            try:
-                self.editor.autoCompleteFromAll()
-            except Exception as fallback_error:
-                logger.warning(f"Standard autocomplete also failed (ignoring): {fallback_error}")
+    def _add_action(self, menu, text: str, shortcut: QKeySequence.StandardKey, slot) -> None:
+        action = QAction(text, self)
+        action.setShortcut(shortcut)
+        action.triggered.connect(slot)
+        menu.addAction(action)
 
     def _apply_theme(self):
-        """Apply ColorScheme theming to QScintilla editor."""
+        """The dialog surface and the editor's text colours from the ColorScheme; buttons
+        use the application's shared button style."""
         cs = self.color_scheme
-
-        # Keep the editor-specific dialog surface local while sharing the
-        # application button authority with every other dialog.
-        dialog_style = f"""
+        self.setStyleSheet(f"""
             QDialog {{
                 background-color: {cs.to_hex(cs.window_bg)};
                 color: {cs.to_hex(cs.text_primary)};
             }}
-        """
-        self.setStyleSheet(
-            dialog_style + cs.styles.generate_button_style()
-        )
+            CodeTextEdit {{
+                background-color: {cs.to_hex(cs.panel_bg)};
+                color: {cs.to_hex(cs.text_primary)};
+                selection-background-color: {cs.to_hex(cs.selection_bg)};
+                selection-color: {cs.to_hex(cs.selection_text)};
+            }}
+        """ + cs.styles.generate_button_style())
 
-        # Apply QScintilla-specific theming
-        self._apply_qscintilla_theme()
-
-    def _apply_qscintilla_theme(self):
-        """Apply color scheme to QScintilla editor and lexer."""
-        cs = self.color_scheme
-
-        # Set editor background and text colors
-        self.editor.setColor(cs.to_qcolor(cs.text_primary))
-        self.editor.setPaper(cs.to_qcolor(cs.panel_bg))
-
-        # Set margin colors
-        margin_background = cs.to_qcolor(cs.frame_bg)
-        self.editor.setMarginsBackgroundColor(margin_background)
-        self.editor.setMarginsForegroundColor(cs.to_qcolor(cs.text_secondary))
-        self.editor.setFoldMarginColors(margin_background, margin_background)
-
-        # Set caret line color
-        self.editor.setCaretLineBackgroundColor(cs.to_qcolor(cs.selection_bg))
-
-        # Set selection colors
-        self.editor.setSelectionBackgroundColor(cs.to_qcolor(cs.selection_bg))
-        self.editor.setSelectionForegroundColor(cs.to_qcolor(cs.selection_text))
-
-        # Configure Python lexer colors
-        if self.lexer:
-            # Keywords (def, class, if, etc.)
-            self.lexer.setColor(cs.to_qcolor(cs.python_keyword_color), QsciLexerPython.Keyword)
-
-            # Strings
-            self.lexer.setColor(cs.to_qcolor(cs.python_string_color), QsciLexerPython.SingleQuotedString)
-            self.lexer.setColor(cs.to_qcolor(cs.python_string_color), QsciLexerPython.DoubleQuotedString)
-            self.lexer.setColor(cs.to_qcolor(cs.python_string_color), QsciLexerPython.TripleSingleQuotedString)
-            self.lexer.setColor(cs.to_qcolor(cs.python_string_color), QsciLexerPython.TripleDoubleQuotedString)
-
-            # F-strings
-            self.lexer.setColor(cs.to_qcolor(cs.python_string_color), QsciLexerPython.SingleQuotedFString)
-            self.lexer.setColor(cs.to_qcolor(cs.python_string_color), QsciLexerPython.DoubleQuotedFString)
-            self.lexer.setColor(cs.to_qcolor(cs.python_string_color), QsciLexerPython.TripleSingleQuotedFString)
-            self.lexer.setColor(cs.to_qcolor(cs.python_string_color), QsciLexerPython.TripleDoubleQuotedFString)
-
-            # Comments
-            self.lexer.setColor(cs.to_qcolor(cs.python_comment_color), QsciLexerPython.Comment)
-            self.lexer.setColor(cs.to_qcolor(cs.python_comment_color), QsciLexerPython.CommentBlock)
-
-            # Numbers
-            self.lexer.setColor(cs.to_qcolor(cs.python_number_color), QsciLexerPython.Number)
-
-            # Functions and classes
-            self.lexer.setColor(cs.to_qcolor(cs.python_function_color), QsciLexerPython.FunctionMethodName)
-            self.lexer.setColor(cs.to_qcolor(cs.python_class_color), QsciLexerPython.ClassName)
-
-            # Operators
-            self.lexer.setColor(cs.to_qcolor(cs.python_operator_color), QsciLexerPython.Operator)
-
-            # Identifiers
-            self.lexer.setColor(cs.to_qcolor(cs.python_name_color), QsciLexerPython.Identifier)
-            self.lexer.setColor(cs.to_qcolor(cs.python_name_color), QsciLexerPython.HighlightedIdentifier)
-
-            # Decorators
-            self.lexer.setColor(cs.to_qcolor(cs.python_function_color), QsciLexerPython.Decorator)
-
-            # Set default background for lexer
-            self.lexer.setPaper(cs.to_qcolor(cs.panel_bg))
-
-    # Menu action handlers
     def _new_file(self):
         """Clear editor content."""
         self.editor.clear()
 
     def _open_file(self):
         """Open file dialog and load content."""
-        from formbridge.core.path_cache import CodeEditor, cache_path, get_initial_path
-
         # Get cached initial directory
         initial_dir = str(get_initial_path(CodeEditor, fallback=Path.home()))
 
@@ -838,14 +504,12 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
 
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                self.editor.setText(content)
+                self.editor.setPlainText(content)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to open file: {str(e)}")
 
     def _save_as(self):
         """Save content to file."""
-        from formbridge.core.path_cache import CodeEditor, cache_path, get_initial_path
-
         # Get cached initial directory
         initial_dir = str(get_initial_path(CodeEditor, fallback=Path.home()))
 
@@ -865,44 +529,22 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
                 cache_path(CodeEditor, selected_path.parent)
 
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(self.editor.text())
+                    f.write(self.editor.toPlainText())
                 QMessageBox.information(self, "Success", f"File saved to {file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
 
-    def _toggle_line_numbers(self, checked):
-        """Toggle line number display."""
-        if checked:
-            self.editor.setMarginType(0, QsciScintilla.MarginType.NumberMargin)
-            self.editor.setMarginWidth(0, "0000")
-            self.editor.setMarginLineNumbers(0, True)
-        else:
-            self.editor.setMarginWidth(0, 0)
-
-    def _toggle_code_folding(self, checked):
-        """Toggle code folding."""
-        if checked:
-            self.editor.setFolding(
-                QsciScintilla.FoldStyle.BoxedTreeFoldStyle,
-                QSCINTILLA_FOLD_MARGIN_INDEX,
-            )
-        else:
-            self.editor.setFolding(QsciScintilla.FoldStyle.NoFoldStyle)
-
     def _toggle_clean_mode(self, checked):
         """Toggle between clean mode (minimal) and explicit mode (full)."""
         try:
-            current_code = self.editor.text()
-            from formbridge.protocols.codegen_provider import get_codegen_provider
+            current_code = self.editor.toPlainText()
             provider = get_codegen_provider()
             if provider is None:
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Clean Mode Toggle",
                                   "No codegen provider registered. Call register_codegen_provider(...) in the host app.")
                 return
 
             if self.declaration_type is None:
-                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Clean Mode Toggle",
                                   "This editor has no nominal declaration type.")
                 return
@@ -914,29 +556,24 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             )
             self.clean_mode = checked
             self.code_data['clean_mode'] = self.clean_mode
-            self.editor.setText(new_code)
+            self.editor.setPlainText(new_code)
 
         except Exception as e:
-            import traceback
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Failed to toggle clean mode: {e}\n{traceback.format_exc()}")
 
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Clean Mode Toggle Error",
                                f"Failed to toggle clean mode: {str(e)}")
 
     def get_content(self) -> str:
         """Get the edited content."""
-        return self.editor.text()
+        return self.editor.toPlainText()
 
     def set_content(self, content: str) -> None:
         """Replace the edited content."""
-        self.editor.setText(content)
+        self.editor.setPlainText(content)
 
     def _on_save_clicked(self) -> None:
         """Handle save button click with Shift+Click detection."""
-        from PySide6.QtWidgets import QApplication
         modifiers = QApplication.keyboardModifiers()
         is_shift = modifiers & Qt.KeyboardModifier.ShiftModifier
         self._handle_save(close_window=not is_shift)
@@ -982,7 +619,6 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             if error_line:
                 error_msg = f"Line {error_line}: {error_msg}"
 
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error Parsing Code", error_msg)
 
             # Move cursor to error line
@@ -1001,8 +637,6 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             return exception.lineno
 
         # For other exceptions, try to extract from traceback
-        import traceback
-        import sys
         tb = sys.exc_info()[2]
         if tb:
             # Find the frame that executed the user's code (marked as '<string>')
@@ -1013,77 +647,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
         return None
 
     def _goto_line(self, line_number: int) -> None:
-        """
-        Move cursor to specified line and highlight it.
-
-        Args:
-            line_number: Line number to go to (1-based)
-        """
+        """Select line `line_number` (1-based) and scroll it into view."""
         if line_number is None or line_number < 1:
             return
-
-        # Convert to 0-based line number for QScintilla
-        line_index = line_number - 1
-
-        # Move cursor to the line
-        self.editor.setCursorPosition(line_index, 0)
-
-        # Ensure the line is visible
-        self.editor.ensureLineVisible(line_index)
-
-        # Select the entire line to highlight it
-        line_length = self.editor.lineLength(line_index)
-        self.editor.setSelection(line_index, 0, line_index, line_length)
-
-class CodeEditorDialog(QDialog):
-    """
-    Fallback Qt native code editor dialog using QTextEdit.
-
-    Used when QScintilla is not available.
-    """
-
-    def __init__(self, parent, initial_content: str, title: str):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setModal(True)
-        self.resize(800, 600)
-
-        # Setup UI
-        layout = QVBoxLayout(self)
-
-        # Text editor
-        self.text_edit = QTextEdit()
-        self.text_edit.setPlainText(initial_content)
-
-        # Use monospace font for code
-        font = QFont("Consolas", 10)
-        if not font.exactMatch():
-            font = QFont("Courier New", 10)
-        self.text_edit.setFont(font)
-
-        layout.addWidget(self.text_edit)
-
-        # Buttons
-        button_layout = QHBoxLayout()
-
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(self.accept)
-        button_layout.addWidget(save_btn)
-
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_btn)
-
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
-
-        # Focus on text editor
-        self.text_edit.setFocus()
-
-    def get_content(self) -> str:
-        """Get the edited content."""
-        return self.text_edit.toPlainText()
-
-    def set_content(self, content: str) -> None:
-        """Replace the edited content."""
-        self.text_edit.setPlainText(content)
+        self.editor.goto_line(line_number)

@@ -14,7 +14,6 @@ from pathlib import Path
 from threading import Event
 
 from objectstate import spawn_thread_with_context
-from pygments.token import Token
 from PySide6.QtCore import (
     QAbstractListModel,
     QFileSystemWatcher,
@@ -1709,7 +1708,7 @@ class LogFileDetector(QObject):
 
 class LogHighlighter(QSyntaxHighlighter):
     """
-    Advanced syntax highlighter for log files using Pygments.
+    Regex syntax highlighter for log files.
 
     Provides sophisticated highlighting for OpenHCS log format with support for:
     - Log levels and timestamps
@@ -1729,14 +1728,13 @@ class LogHighlighter(QSyntaxHighlighter):
         """
         super().__init__(parent)
         self.color_scheme = color_scheme or LogColorScheme()
-        self.setup_pygments_styles()
+        self.setup_formats()
         self.setup_highlighting_rules()
 
-    def setup_pygments_styles(self) -> None:
-        """Setup Pygments token to QTextCharFormat mapping using color scheme."""
+    def setup_formats(self) -> None:
+        """One QTextCharFormat per highlighting rule, from the color scheme."""
         cs = self.color_scheme  # Shorthand for readability
 
-        # Create a mapping from Pygments tokens to Qt text formats
         self.token_formats = {
             # Log levels with distinct colors and backgrounds
             "log_critical": self._create_format(
@@ -1749,27 +1747,6 @@ class LogHighlighter(QSyntaxHighlighter):
             # Timestamps and metadata
             "timestamp": self._create_format(cs.to_qcolor(cs.timestamp_color)),
             "logger_name": self._create_format(cs.to_qcolor(cs.logger_name_color), bold=True),
-            # Python syntax highlighting (for complex data structures)
-            Token.Keyword: self._create_format(cs.to_qcolor(cs.python_keyword_color), bold=True),
-            Token.String: self._create_format(cs.to_qcolor(cs.python_string_color)),
-            Token.String.Single: self._create_format(cs.to_qcolor(cs.python_string_color)),
-            Token.String.Double: self._create_format(cs.to_qcolor(cs.python_string_color)),
-            Token.Number: self._create_format(cs.to_qcolor(cs.python_number_color)),
-            Token.Number.Integer: self._create_format(cs.to_qcolor(cs.python_number_color)),
-            Token.Number.Float: self._create_format(cs.to_qcolor(cs.python_number_color)),
-            Token.Number.Hex: self._create_format(cs.to_qcolor(cs.python_number_color)),
-            Token.Number.Oct: self._create_format(cs.to_qcolor(cs.python_number_color)),
-            Token.Number.Bin: self._create_format(cs.to_qcolor(cs.python_number_color)),
-            Token.Operator: self._create_format(cs.to_qcolor(cs.python_operator_color)),
-            Token.Punctuation: self._create_format(cs.to_qcolor(cs.python_operator_color)),
-            Token.Name: self._create_format(cs.to_qcolor(cs.python_name_color)),
-            Token.Name.Function: self._create_format(
-                cs.to_qcolor(cs.python_function_color), bold=True
-            ),
-            Token.Name.Class: self._create_format(cs.to_qcolor(cs.python_class_color), bold=True),
-            Token.Name.Builtin: self._create_format(cs.to_qcolor(cs.python_builtin_color)),
-            Token.Comment: self._create_format(cs.to_qcolor(cs.python_comment_color)),
-            Token.Literal: self._create_format(cs.to_qcolor(cs.python_number_color)),
             # Special patterns for log content
             "memory_address": self._create_format(cs.to_qcolor(cs.memory_address_color)),
             "file_path": self._create_format(cs.to_qcolor(cs.file_path_color)),
@@ -1922,7 +1899,7 @@ class LogHighlighter(QSyntaxHighlighter):
             color_scheme: New color scheme to apply
         """
         self.color_scheme = color_scheme
-        self.setup_pygments_styles()
+        self.setup_formats()
         self.setup_highlighting_rules()
         # Trigger re-highlighting of the entire document
         self.rehighlight()
