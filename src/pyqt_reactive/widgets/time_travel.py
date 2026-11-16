@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from objectstate.object_state import ObjectStateRegistry
-from PyQt6.QtCore import QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -102,7 +102,7 @@ class TimeTravelWidget(QWidget):
     """
 
     # Emitted when time-travel position changes
-    position_changed = pyqtSignal(int)  # (index)
+    position_changed = Signal(int)  # (index)
 
     def __init__(
         self,

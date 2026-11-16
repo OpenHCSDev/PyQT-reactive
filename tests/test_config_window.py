@@ -14,7 +14,7 @@ from objectstate import (
     mark_global_config_type,
     set_base_config_type,
 )
-from PyQt6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 from pyqt_reactive.windows.config_window import (
     ConfigDocumentFormat,

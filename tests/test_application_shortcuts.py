@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import pytest
-from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtGui import QAction, QKeyEvent
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QAction, QKeyEvent
 
 from pyqt_reactive.services.application_shortcuts import ShortcutLifecycle
 

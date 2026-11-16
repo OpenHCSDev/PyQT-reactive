@@ -113,7 +113,7 @@ def test_scrolling_manager_header_preserves_usable_status_viewport(
 
 
 def test_status_marquee_keeps_one_timer_across_messages(qapp) -> None:
-    from PyQt6.QtCore import Qt, QTimer
+    from PySide6.QtCore import Qt, QTimer
 
     from pyqt_reactive.widgets.shared.manager_status_controller import ManagerStatusController
 

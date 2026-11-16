@@ -31,8 +31,8 @@ from objectstate import (
     ObjectStateSubfieldSemanticIndex,
     StructuralValuePath,
 )
-from PyQt6.QtCore import QSignalBlocker, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSignalBlocker, Signal
+from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QPushButton,
@@ -789,7 +789,7 @@ class SectionedDataclassEditor(
     """
 
     value_type: ClassVar[type]
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(
         self,

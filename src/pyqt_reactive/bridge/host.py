@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, ClassVar
 from formbridge.bridge.identities import UiStableWidgetIdentityDeclaration
 
 if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.widgets.shared.dock_layout import DockPanes
 

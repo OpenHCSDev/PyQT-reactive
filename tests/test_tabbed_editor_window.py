@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 import pytest
 from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-from PyQt6.QtCore import QEvent
-from PyQt6.QtWidgets import QLabel, QMessageBox
+from PySide6.QtCore import QEvent
+from PySide6.QtWidgets import QLabel, QMessageBox
 
 from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
 from pyqt_reactive.services.window_navigation import (

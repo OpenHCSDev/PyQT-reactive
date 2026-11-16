@@ -7,8 +7,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.abstract_table_browser import RowFilter
@@ -51,7 +51,7 @@ class OneFolder(FolderSelection):
 class FolderTreeWidget(QTreeWidget):
     """Shows the parent folders of a set of keys; one folder can be selected."""
 
-    folder_changed = pyqtSignal(object)
+    folder_changed = Signal(object)
     """Emitted with the new :class:`FolderSelection` when the user picks a folder."""
 
     def __init__(

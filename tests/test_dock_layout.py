@@ -5,9 +5,9 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from PyQt6.QtCore import QByteArray, QObject, QSettings, QSize, Qt, pyqtSignal
-from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QDockWidget, QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtCore import QByteArray, QObject, QSettings, QSize, Qt, Signal
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QDockWidget, QMainWindow, QVBoxLayout, QWidget
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.dock_layout import DockLayoutStore, DockPane, DockPanes
@@ -30,7 +30,7 @@ TEST_ZMQ_FLOATING_SIZE = QSize(900, 600)
 
 
 class DockedHeightEmitter(QObject):
-    changed = pyqtSignal(int)
+    changed = Signal(int)
 
 
 def _workspace(qapp) -> tuple[QMainWindow, DockPanes]:

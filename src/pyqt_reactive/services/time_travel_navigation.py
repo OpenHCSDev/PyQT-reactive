@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from objectstate import ObjectState, ObjectStateRegistry, ScopeKey
 from objectstate.time_travel_profile import TimeTravelProfiler
-from PyQt6.QtCore import QTimer
+from PySide6.QtCore import QTimer
 
 from formbridge.services.function_navigation import (
     FUNCTION_FIELD_ROOT,

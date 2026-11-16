@@ -6,9 +6,9 @@ from collections.abc import Callable, Sequence
 from typing import ClassVar
 
 from formbridge.forms.layout_constants import CURRENT_LAYOUT
-from PyQt6.QtCore import QSize
-from PyQt6.QtGui import QColor, QShowEvent
-from PyQt6.QtWidgets import QLabel, QPushButton
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QColor, QShowEvent
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.base_form_dialog import (
