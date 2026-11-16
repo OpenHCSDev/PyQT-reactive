@@ -1,9 +1,9 @@
 """Real Qt layout/paint regressions for optional manager-list preview wrapping."""
 
 import pytest
-from PyQt6.QtCore import Qt, QPoint
-from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtWidgets import QListWidgetItem, QStyleOptionViewItem
+from PySide6.QtCore import Qt, QPoint
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import QListWidgetItem, QStyleOptionViewItem
 
 from pyqt_reactive.core import ReorderableListWidget
 from pyqt_reactive.widgets.shared.list_item_delegate import (

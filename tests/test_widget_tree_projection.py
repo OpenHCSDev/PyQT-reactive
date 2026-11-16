@@ -1,8 +1,8 @@
 """Tests for generic QWidget tree projection."""
 
 import pytest
-from PyQt6.QtCore import QStringListModel
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QStringListModel
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QGroupBox,

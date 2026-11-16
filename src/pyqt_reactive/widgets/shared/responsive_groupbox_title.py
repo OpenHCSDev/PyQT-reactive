@@ -2,8 +2,8 @@
 
 from typing import List, Optional, Tuple
 
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import StagedWrapLayout
 

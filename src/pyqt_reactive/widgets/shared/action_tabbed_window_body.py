@@ -5,9 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from PyQt6.QtCore import QSignalBlocker, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QSignalBlocker, Signal
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
     QTabBar,
@@ -16,7 +15,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from formbridge.forms.layout_constants import CURRENT_LAYOUT
+from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from pyqt_reactive.services.tab_identity import (
+    TabLabelDeclarationMixin as TabLabelDeclarationMixin,
+)
 from pyqt_reactive.widgets.shared.responsive_layout_widgets import ResponsiveTwoRowWidget
 
 
@@ -52,9 +54,9 @@ class ActionTabSpec:
 class ActionTabbedWindowBody(QWidget):
     """Render tabs on the left and the active tab's actions on the right."""
 
-    current_changed = pyqtSignal(int)
-    tab_materialized = pyqtSignal(int, object)
-    tab_materialization_failed = pyqtSignal(int, object)
+    current_changed = Signal(int)
+    tab_materialized = Signal(int, object)
+    tab_materialization_failed = Signal(int, object)
 
     def __init__(
         self,
@@ -284,30 +286,6 @@ class ActionTabbedWindowBody(QWidget):
         self.tab_row.setVisible(
             self.content_stack.count() > 1 or not self._active_actions_released
         )
-
-    def apply_accent(self, accent_color: QColor) -> None:
-        """Colour the selected and hovered tab with a scope accent."""
-        if self.color_scheme is None:
-            return
-        self.tab_bar.setStyleSheet(f"""
-            QTabBar::tab {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
-                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
-                padding: 0px 16px;
-                margin-right: 2px;
-                border: none;
-                border-radius: 4px 4px 0 0;
-                height: {CURRENT_LAYOUT.button_height}px;
-            }}
-            QTabBar::tab:selected {{
-                background-color: {accent_color.name()};
-                color: white;
-            }}
-            QTabBar::tab:hover:!selected {{
-                background-color: {accent_color.lighter(115).name()};
-                color: white;
-            }}
-        """)
 
     def _apply_default_tab_style(self) -> None:
         if self.color_scheme is None:

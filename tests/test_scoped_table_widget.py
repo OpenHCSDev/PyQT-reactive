@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QColor, QImage, QPalette
-from PyQt6.QtWidgets import QTableWidgetItem, QWidget
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QImage, QPalette
+from PySide6.QtWidgets import QTableWidgetItem, QWidget
 
-from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
     PyQtWidgetMeta,
@@ -178,7 +178,7 @@ def test_inline_dataclass_groupbox_clears_placeholder_on_inline_change(qapp) -> 
     groupbox.mark_placeholder_state()
     groupbox.set_cached_placeholder_text("Pipeline default: inherited")
 
-    PyQt6WidgetEnhancer.connect_change_signal(
+    PySide6WidgetEnhancer.connect_change_signal(
         groupbox,
         "source_bindings",
         lambda name, value: emitted.append((name, value)),

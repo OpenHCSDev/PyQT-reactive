@@ -1,6 +1,6 @@
 """Lifecycle coverage for the generic ZMQ server browser."""
 
-from PyQt6.QtCore import QCoreApplication, QEvent
+from PySide6.QtCore import QCoreApplication, QEvent
 from zmqruntime import (
     EndpointShutdownMode,
     EndpointShutdownResult,

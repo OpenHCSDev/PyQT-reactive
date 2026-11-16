@@ -156,7 +156,7 @@ class WidgetOperations:
         # Fallback: also include any child that declares ValueGettable via ABC
         # (e.g., NoneAwareLineEdit/CheckBox which are registered virtually, not in WIDGET_IMPLEMENTATIONS)
         try:
-            from PyQt6.QtCore import QObject
+            from PySide6.QtCore import QObject
             for widget in container.findChildren(QObject):
                 if isinstance(widget, ValueGettable):
                     collected.append(widget)

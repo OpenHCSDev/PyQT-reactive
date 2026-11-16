@@ -5,8 +5,8 @@ Single source of truth for reorderable list widgets across PipelineEditor,
 PlateManager, and other widgets.
 """
 
-from PyQt6.QtWidgets import QListWidget
-from PyQt6.QtCore import pyqtSignal, Qt
+from PySide6.QtWidgets import QListWidget
+from PySide6.QtCore import Signal, Qt
 
 
 class ReorderableListWidget(QListWidget):
@@ -16,7 +16,7 @@ class ReorderableListWidget(QListWidget):
     This is a shared implementation used by both PipelineEditor and PlateManager.
     """
 
-    items_reordered = pyqtSignal(int, int)  # from_index, to_index
+    items_reordered = Signal(int, int)  # from_index, to_index
 
     def __init__(self, parent=None):
         """Initialize reorderable list widget.

@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 import objectstate.config as config_module
 import pytest
 from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
-from PyQt6.QtGui import QColor, QPainterPath
-from PyQt6.QtWidgets import QDialog, QLabel, QVBoxLayout
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QPainterPath
+from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
 from pyqt_reactive.animation.flash_mixin import (
     LEAF_WIDGET_TYPES,

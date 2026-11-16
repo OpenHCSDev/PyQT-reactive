@@ -6,8 +6,8 @@ from typing import Any
 from weakref import WeakKeyDictionary
 
 from objectstate.time_travel_profile import TimeTravelProfiler
-from PyQt6 import sip
-from PyQt6.QtWidgets import QCheckBox, QGraphicsOpacityEffect, QLabel, QWidget
+import shiboken6
+from PySide6.QtWidgets import QCheckBox, QGraphicsOpacityEffect, QLabel, QWidget
 
 from pyqt_reactive.protocols import PlaceholderStateTrackable, ValueGettable
 
@@ -50,7 +50,7 @@ class EnabledFieldStylingService:
         for widget in materialized_widgets:
             if (
                 not isinstance(widget, ValueGettable)
-                or sip.isdeleted(widget)
+                or not shiboken6.isValid(widget)
                 or id(widget) in direct_widget_ids
             ):
                 continue
@@ -91,7 +91,7 @@ class EnabledFieldStylingService:
         if not enabled_widget:
             logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, no enabled widget found")
             return
-        if sip.isdeleted(enabled_widget):
+        if not shiboken6.isValid(enabled_widget):
             logger.debug(f"[INITIAL_STYLING] field_id={manager.field_id}, enabled widget was deleted")
             return
 
@@ -129,7 +129,7 @@ class EnabledFieldStylingService:
         if 'enabled' in manager.parameters:
             # Get the enabled widget to read the CURRENT resolved value
             enabled_widget = manager.widgets.get('enabled')
-            if enabled_widget and sip.isdeleted(enabled_widget):
+            if enabled_widget and not shiboken6.isValid(enabled_widget):
                 logger.debug(f"[REFRESH ENABLED STYLING] field_id={manager.field_id}, enabled widget was deleted")
                 return
             if enabled_widget and isinstance(enabled_widget, QCheckBox):
@@ -259,7 +259,7 @@ class EnabledFieldStylingService:
         direct_widgets = [
             widget
             for widget in all_widgets
-            if not sip.isdeleted(widget) and id(widget) not in nested_widget_ids
+            if not not shiboken6.isValid(widget) and id(widget) not in nested_widget_ids
         ]
 
         logger.debug(f"[GET_DIRECT_WIDGETS] field_id={manager.field_id}, returning {len(direct_widgets)} direct widgets")
@@ -284,7 +284,7 @@ class EnabledFieldStylingService:
         while current is not None:
             if 'enabled' in current.parameters:
                 enabled_widget = current.widgets.get('enabled')
-                if enabled_widget and sip.isdeleted(enabled_widget):
+                if enabled_widget and not shiboken6.isValid(enabled_widget):
                     return False
                 if enabled_widget and isinstance(enabled_widget, QCheckBox):
                     if not enabled_widget.isChecked():
@@ -303,7 +303,7 @@ class EnabledFieldStylingService:
         group_box = manager.form_tree.owning_groupbox(manager)
         if not group_box:
             return
-        if sip.isdeleted(group_box):
+        if not shiboken6.isValid(group_box):
             return
 
         logger.debug(f"[ENABLED HANDLER] field_id={manager.field_id}, applying to GroupBox container")
@@ -369,7 +369,7 @@ class EnabledFieldStylingService:
                     if not group_box:
                         logger.debug(f"[ENABLED HANDLER] ⚠️ Still no group_box found, skipping")
                         continue
-                if sip.isdeleted(group_box):
+                if not shiboken6.isValid(group_box):
                     continue
 
                 widgets_to_dim = self._get_value_widgets(group_box)
@@ -399,7 +399,7 @@ class EnabledFieldStylingService:
         preserve_placeholder_paint: bool = True,
     ) -> bool:
         """Apply this service's dimming effect only when the widget state changes."""
-        if sip.isdeleted(widget):
+        if not shiboken6.isValid(widget):
             return False
 
         if (
@@ -435,7 +435,7 @@ class EnabledFieldStylingService:
         """Apply dimming to a widget batch with coalesced repaint scheduling."""
         changed = False
         for widget in widgets:
-            if sip.isdeleted(widget):
+            if not shiboken6.isValid(widget):
                 continue
             if skip_labels and isinstance(widget, QLabel):
                 continue

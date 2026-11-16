@@ -8,8 +8,8 @@ from typing import Any, ClassVar
 
 from abc import ABC, abstractmethod
 from metaclass_registry import AutoRegisterMeta
-from PyQt6.QtCore import QItemSelectionModel
-from PyQt6.QtWidgets import QListWidgetItem
+from PySide6.QtCore import QItemSelectionModel
+from PySide6.QtWidgets import QListWidgetItem
 
 from pyqt_reactive.widgets.mixins import handle_selection_change_with_prevention
 

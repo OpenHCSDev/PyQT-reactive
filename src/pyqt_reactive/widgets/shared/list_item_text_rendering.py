@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from math import ceil
 
-from PyQt6.QtCore import QPointF, QSize
-from PyQt6.QtGui import QColor, QFont, QPainter, QTextCharFormat, QTextLayout, QTextOption
+from PySide6.QtCore import QPointF, QSize
+from PySide6.QtGui import QColor, QFont, QPainter, QTextCharFormat, QTextLayout, QTextOption
 from objectstate import DottedFieldPath
 
 from pyqt_reactive.widgets.shared.styled_text_layout import (

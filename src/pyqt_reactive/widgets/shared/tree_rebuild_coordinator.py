@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PyQt6.QtWidgets import QTreeWidget
+from PySide6.QtWidgets import QTreeWidget
 
 from .tree_state_adapter import TreeStateAdapter
 

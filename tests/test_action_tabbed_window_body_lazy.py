@@ -27,7 +27,7 @@ def test_tab_declaration_resolves_live_label_without_fixed_position() -> None:
 
 
 def test_inactive_tab_materializes_once_on_first_activation(qapp):
-    from PyQt6.QtWidgets import QLabel, QPushButton
+    from PySide6.QtWidgets import QLabel, QPushButton
 
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabbedWindowBody,
@@ -93,7 +93,7 @@ def test_inactive_tab_materializes_once_on_first_activation(qapp):
 
 
 def test_first_lazy_tab_materializes_when_added(qapp):
-    from PyQt6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel
 
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabbedWindowBody,
@@ -121,7 +121,7 @@ def test_first_lazy_tab_materializes_when_added(qapp):
 
 def test_lazy_tab_factory_must_return_widget(qapp):
     import pytest
-    from PyQt6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel
 
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabbedWindowBody,
@@ -143,7 +143,7 @@ def test_lazy_tab_factory_must_return_widget(qapp):
 
 
 def test_user_activation_publishes_factory_failure_and_keeps_previous_tab(qapp):
-    from PyQt6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel
 
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabbedWindowBody,
@@ -178,7 +178,7 @@ def test_user_activation_publishes_factory_failure_and_keeps_previous_tab(qapp):
 
 def test_programmatic_activation_publishes_factory_failure_once(qapp):
     """Programmatic selection delegates to the same single activation route."""
-    from PyQt6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel
 
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabbedWindowBody,
@@ -217,7 +217,7 @@ def test_programmatic_activation_publishes_factory_failure_once(qapp):
 
 
 def test_invalid_lazy_actions_leave_placeholder_and_previous_tab_intact(qapp):
-    from PyQt6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel
 
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabbedWindowBody,
@@ -253,7 +253,7 @@ def test_invalid_lazy_actions_leave_placeholder_and_previous_tab_intact(qapp):
 
 def test_tab_spec_rejects_ambiguous_content_authority(qapp):
     import pytest
-    from PyQt6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel
 
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import ActionTabSpec
 

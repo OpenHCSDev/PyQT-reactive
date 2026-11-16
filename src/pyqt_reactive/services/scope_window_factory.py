@@ -23,7 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from objectstate import ObjectState
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget
 
 logger = logging.getLogger(__name__)
 

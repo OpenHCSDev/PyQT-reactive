@@ -14,9 +14,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction, QFont, QKeySequence
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QFont, QKeySequence
+from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -40,12 +40,12 @@ QSCINTILLA_FOLD_MARGIN_INDEX = 2
 
 # Try to import QScintilla, fall back to QTextEdit if not available
 try:
-    from PyQt6.Qsci import QsciScintilla, QsciLexerPython
+    from PySide6.Qsci import QsciScintilla, QsciLexerPython
     QSCINTILLA_AVAILABLE = True
     logger.info("QScintilla successfully imported")
 except ImportError as e:
     logger.warning(f"QScintilla not available: {e}")
-    logger.info("Install with: pip install PyQt6-QScintilla")
+    logger.info("Install with: pip install QScintilla")
     QSCINTILLA_AVAILABLE = False
 
 
@@ -533,7 +533,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
     def eventFilter(self, obj, event):
         """Filter events to trigger Jedi autocomplete on '.' """
         try:
-            from PyQt6.QtCore import QEvent
+            from PySide6.QtCore import QEvent
 
             if obj == self.editor and event.type() == QEvent.Type.KeyPress:
                 key_event = event
@@ -541,7 +541,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
                 if key_event.text() == '.':
                     logger.info("🔍 Detected '.' keypress - triggering Jedi autocomplete")
                     # Let the '.' be inserted first
-                    from PyQt6.QtCore import QTimer
+                    from PySide6.QtCore import QTimer
                     # Use a lambda to check if dialog still exists before calling autocomplete
                     QTimer.singleShot(10, lambda: self._show_jedi_completions() if hasattr(self, 'editor') else None)
 
@@ -553,7 +553,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
     def _setup_jedi_api(self):
         """Setup initial API with basic Python keywords for fallback."""
         try:
-            from PyQt6.Qsci import QsciAPIs
+            from PySide6.Qsci import QsciAPIs
 
             # Create API object for Python lexer
             self.api = QsciAPIs(self.lexer)
@@ -896,13 +896,13 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             from formbridge.protocols.codegen_provider import get_codegen_provider
             provider = get_codegen_provider()
             if provider is None:
-                from PyQt6.QtWidgets import QMessageBox
+                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Clean Mode Toggle",
                                   "No codegen provider registered. Call register_codegen_provider(...) in the host app.")
                 return
 
             if self.declaration_type is None:
-                from PyQt6.QtWidgets import QMessageBox
+                from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Clean Mode Toggle",
                                   "This editor has no nominal declaration type.")
                 return
@@ -922,7 +922,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to toggle clean mode: {e}\n{traceback.format_exc()}")
 
-            from PyQt6.QtWidgets import QMessageBox
+            from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Clean Mode Toggle Error",
                                f"Failed to toggle clean mode: {str(e)}")
 
@@ -936,7 +936,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
 
     def _on_save_clicked(self) -> None:
         """Handle save button click with Shift+Click detection."""
-        from PyQt6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
         modifiers = QApplication.keyboardModifiers()
         is_shift = modifiers & Qt.KeyboardModifier.ShiftModifier
         self._handle_save(close_window=not is_shift)
@@ -982,7 +982,7 @@ class QScintillaCodeEditorDialog(QDialog, Generic[DeclarationT]):
             if error_line:
                 error_msg = f"Line {error_line}: {error_msg}"
 
-            from PyQt6.QtWidgets import QMessageBox
+            from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error Parsing Code", error_msg)
 
             # Move cursor to error line

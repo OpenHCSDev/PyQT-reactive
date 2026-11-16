@@ -1,5 +1,5 @@
 """
-Group By Selector Dialog for PyQt6 GUI.
+Group By Selector Dialog for PySide6 GUI.
 
 Mirrors the Textual TUI GroupBySelectorWindow functionality with dual list selection.
 """
@@ -7,12 +7,13 @@ Mirrors the Textual TUI GroupBySelectorWindow functionality with dual list selec
 import logging
 from typing import List, Optional, Callable, Any
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QPushButton, 
     QLabel, QWidget
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
+from pyqt_reactive.forms.ui_utils import format_enum_display
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class GroupBySelectorDialog(QDialog):
     """
     
     # Signals
-    selection_changed = pyqtSignal(list)  # Selected components
+    selection_changed = Signal(list)  # Selected components
     
     def __init__(
         self,

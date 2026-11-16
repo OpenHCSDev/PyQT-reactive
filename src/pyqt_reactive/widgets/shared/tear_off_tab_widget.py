@@ -1,5 +1,5 @@
 """
-TearOffTabWidget - Chrome-style detachable tabs for PyQt6.
+TearOffTabWidget - Chrome-style detachable tabs for PySide6.
 
 Allows users to drag tabs out to create floating windows,
 and drag them into other windows to dock them.
@@ -8,12 +8,12 @@ and drag them into other windows to dock them.
 import logging
 from dataclasses import dataclass
 from typing import Optional, List, Callable
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QTabWidget, QTabBar, QWidget, QVBoxLayout, QDialog,
     QApplication, QFrame
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QPoint, QRect
-from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QCursor
+from PySide6.QtCore import Qt, Signal, QMimeData, QPoint, QRect
+from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor, QCursor
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class TearOffTabBar(QTabBar):
     """Custom tab bar that supports tear-off drag operations."""
     
     # Signal emitted when a tab should be torn off
-    tab_tear_off_requested = pyqtSignal(int, QPoint)  # tab_index, global_pos
+    tab_tear_off_requested = Signal(int, QPoint)  # tab_index, global_pos
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -130,8 +130,8 @@ class TearOffTabWidget(QTabWidget):
     """
     
     # Signals
-    tab_torn_off = pyqtSignal(QWidget, str)  # tab_widget, tab_text
-    tab_docked = pyqtSignal(QWidget, str, int)  # tab_widget, tab_text, index
+    tab_torn_off = Signal(QWidget, str)  # tab_widget, tab_text
+    tab_docked = Signal(QWidget, str, int)  # tab_widget, tab_text, index
     
     def __init__(self, parent=None):
         super().__init__(parent)

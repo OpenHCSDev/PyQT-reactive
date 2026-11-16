@@ -1,11 +1,11 @@
-"""PyQt6 help windows backed by the shared rich-document renderer."""
+"""PySide6 help windows backed by the shared rich-document renderer."""
 
 import inspect
 import logging
 from collections.abc import Callable
 
-from PyQt6.QtGui import QCursor, QGuiApplication
-from PyQt6.QtWidgets import (
+from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QMessageBox,
@@ -285,7 +285,7 @@ class ParameterHelpWindow(BaseHelpWindow):
 
 
 class HelpWindowManager:
-    """PyQt6 help window manager - unified window for all help content."""
+    """PySide6 help window manager - unified window for all help content."""
 
     # Class-level window reference for singleton behavior
     _help_window = None
@@ -419,7 +419,7 @@ class HelpWindowManager:
 
 
 class HelpableWidget:
-    """Mixin class to add help functionality to PyQt6 widgets - mirrors Textual TUI."""
+    """Mixin class to add help functionality to PySide6 widgets - mirrors Textual TUI."""
 
     def show_function_help(self, target: Callable | type) -> None:
         """Show help window for a function or class."""

@@ -1,7 +1,7 @@
 """Reactive service for scope-based colors with strategy support."""
 
 from typing import Optional, Dict, Tuple
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 import logging
 
 from formbridge.theming.scope_color_strategy import (
@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 class ScopeColorService(QObject):
     """Singleton service managing scope colors with caching and signals."""
 
-    color_changed = pyqtSignal(str)
-    all_colors_reset = pyqtSignal()
+    color_changed = Signal(str)
+    all_colors_reset = Signal()
 
     _instance: Optional["ScopeColorService"] = None
 
@@ -131,7 +131,7 @@ class ScopeColorService(QObject):
             step_index: optional explicit step index
 
         Returns:
-            PyQt6.QtGui.QColor or None
+            PySide6.QtGui.QColor or None
         """
         # Always return a QColor. If no scheme exists, fall back to neutral scheme.
         scheme = self.get_color_scheme(scope_id, step_index=step_index)

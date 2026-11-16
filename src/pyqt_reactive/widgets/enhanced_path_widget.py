@@ -1,5 +1,5 @@
 """
-Enhanced Path Widget for PyQt6 GUI
+Enhanced Path Widget for PySide6 GUI
 
 Provides intelligent path selection with browse button functionality.
 Uses standard Qt dialogs for consistency with the host application.
@@ -9,21 +9,17 @@ import logging
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import ClassVar
 
-from metaclass_registry import AutoRegisterMeta
-from PyQt6.QtCore import QSize, pyqtSignal
-from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLineEdit, QPushButton, QWidget
+from PySide6.QtCore import QSize, Signal
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLineEdit, QPushButton, QWidget
 from python_introspect import ParameterInfo
 
-from formbridge.core.path_cache import (
-    DirectorySelection,
-    FileSelection,
-    General,
+from pyqt_reactive.core.path_cache import (
     PathCacheKey,
-    cache_path,
-    get_initial_path,
+    cache_dialog_path,
+    get_cached_dialog_path,
 )
 from pyqt_reactive.protocols import (
     ChangeSignalEmitter,
@@ -37,17 +33,13 @@ from pyqt_reactive.theming import ColorScheme
 logger = logging.getLogger(__name__)
 
 
-def _role_name(name: str, cls: type) -> str | None:
-    return None if "__registry__" in vars(cls) else name
-
-
 @dataclass(frozen=True, slots=True)
 class PathBehavior:
     """Defines behavior for path widget based on parameter analysis."""
 
     is_directory: bool = False
     extensions: tuple[str, ...] | None = None
-    cache_key: type[PathCacheKey] = General
+    cache_key: PathCacheKey = PathCacheKey.GENERAL
     description: str = "path"
 
     @classmethod
@@ -61,11 +53,11 @@ class PathBehavior:
         return cls(
             is_directory=False,
             extensions=declared_extensions,
-            cache_key=FileSelection,
+            cache_key=PathCacheKey.FILE_SELECTION,
             description=description,
         )
 
-    def with_cache_key(self, cache_key: type[PathCacheKey]) -> "PathBehavior":
+    def with_cache_key(self, cache_key: PathCacheKey) -> "PathBehavior":
         return PathBehavior(
             is_directory=self.is_directory,
             extensions=self.extensions,
@@ -126,7 +118,7 @@ class PathBehaviorDetector:
             if docstring_behavior:
                 if base_behavior:
                     return docstring_behavior.with_cache_key(base_behavior.cache_key)
-                return docstring_behavior.with_cache_key(General)
+                return docstring_behavior.with_cache_key(PathCacheKey.GENERAL)
 
         # Fall back to base behavior or smart default
         if base_behavior:
@@ -139,8 +131,10 @@ class PathBehaviorDetector:
         desc_lower = description.lower()
 
         # Directory specification derives its accepted words from the role owner.
-        if any(f"{token} only" in desc_lower for token in DirectoryPathRole.tokens):
-            return DirectoryPathRole.behavior
+        if any(
+            f"{token} only" in desc_lower for token in PathNameRole.DIRECTORY.tokens
+        ):
+            return PathNameRole.DIRECTORY.behavior
 
         # Extension patterns: (.ext only), (.ext1, .ext2), (.ext1/.ext2), etc.
         patterns = [
@@ -167,55 +161,89 @@ class PathBehaviorDetector:
     @staticmethod
     def _detect_from_parameter_name(param_name: str) -> PathBehavior | None:
         """Detect behavior from parameter name patterns."""
-        role = PathNameRole.for_tokens(PathParameterNameTokens.parse(param_name))
+        tokens = PathParameterNameTokens.parse(param_name)
+        role = PATH_NAME_ROLE_CLASSIFIER.classify(tokens)
         if role is None:
             return None
         return role.behavior
 
 
-class PathNameRole(metaclass=AutoRegisterMeta):
-    """A path-parameter role declared by words in the parameter's name.
+class PathNameRole(Enum):
+    """Nominal path behavior roles inferred from parameter-name tokens."""
 
-    Roles are tried in declaration order; applications add roles by subclassing.
-    """
-
-    __registry_key__ = "role_name"
-    __key_extractor__ = _role_name
-    __skip_if_no_key__ = True
-
-    tokens: ClassVar[frozenset[str]]
-    behavior: ClassVar[PathBehavior]
-
-    @classmethod
-    def for_tokens(cls, tokens: "PathParameterNameTokens") -> "type[PathNameRole] | None":
-        for role in cls.__registry__.values():
-            if tokens.contains_any(role.tokens):
-                return role
-        return None
-
-
-class DirectoryPathRole(PathNameRole):
-    tokens = frozenset({"dir", "directory", "folder"})
-    behavior = PathBehavior(
-        is_directory=True,
-        cache_key=DirectorySelection,
-        description="directory",
+    DIRECTORY = (
+        "directory",
+        frozenset({"dir", "directory", "folder"}),
+        PathBehavior(
+            is_directory=True,
+            cache_key=PathCacheKey.DIRECTORY_SELECTION,
+            description="directory",
+        ),
+    )
+    FILE = (
+        "file",
+        frozenset({"file", "filepath", "filename"}),
+        PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.FILE_SELECTION,
+            description="file",
+        ),
+    )
+    PIPELINE = (
+        "pipeline",
+        frozenset({"pipeline"}),
+        PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.PIPELINE_FILES,
+            description="pipeline file",
+        ),
+    )
+    STEP = (
+        "step",
+        frozenset({"step"}),
+        PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.STEP_SETTINGS,
+            description="step file",
+        ),
+    )
+    FUNCTION = (
+        "function",
+        frozenset({"function", "func"}),
+        PathBehavior(
+            is_directory=False,
+            cache_key=PathCacheKey.FUNCTION_PATTERNS,
+            description="function file",
+        ),
     )
 
+    def __new__(
+        cls,
+        value: str,
+        tokens: frozenset[str],
+        behavior: PathBehavior,
+    ) -> "PathNameRole":
+        member = object.__new__(cls)
+        member._value_ = value
+        member._tokens = tokens
+        member._behavior = behavior
+        return member
 
-class FilePathRole(PathNameRole):
-    tokens = frozenset({"file", "filepath", "filename"})
-    behavior = PathBehavior(
-        is_directory=False,
-        cache_key=FileSelection,
-        description="file",
-    )
+    @property
+    def tokens(self) -> frozenset[str]:
+        """Parameter-name tokens that declare this role."""
+        return self._tokens
+
+    @property
+    def behavior(self) -> PathBehavior:
+        """Path selection behavior owned by this role."""
+        return self._behavior
 
 
 DEFAULT_PATH_BEHAVIOR = PathBehavior(
     is_directory=False,
     extensions=None,
-    cache_key=General,
+    cache_key=PathCacheKey.GENERAL,
     description="file or directory",
 )
 
@@ -235,6 +263,19 @@ class PathParameterNameTokens:
         return bool(self.values.intersection(candidates))
 
 
+class PathNameRoleClassifier:
+    """Classify parsed path-name tokens into a nominal behavior role."""
+
+    def classify(self, tokens: PathParameterNameTokens) -> PathNameRole | None:
+        for role in PathNameRole:
+            if tokens.contains_any(role.tokens):
+                return role
+        return None
+
+
+PATH_NAME_ROLE_CLASSIFIER = PathNameRoleClassifier()
+
+
 class EnhancedPathWidget(
     PlaceholderStateMixin,
     QWidget,
@@ -245,7 +286,7 @@ class EnhancedPathWidget(
 ):
     """Enhanced path widget with browse button using standard Qt dialogs."""
 
-    path_changed = pyqtSignal(str)
+    path_changed = Signal(str)
 
     def __init__(
         self,
@@ -379,7 +420,7 @@ class EnhancedPathWidget(
         """Open appropriate Qt dialog based on behavior."""
         try:
             # Get cached initial directory
-            initial_dir = str(get_initial_path(self.behavior.cache_key, fallback=Path.home()))
+            initial_dir = str(get_cached_dialog_path(self.behavior.cache_key, fallback=Path.home()))
 
             # Use None as parent to create a clean, top-level dialog
             # This prevents inheriting the dark styling from nested containers
@@ -403,8 +444,8 @@ class EnhancedPathWidget(
                 self.path_changed.emit(str(path_obj))
 
                 # Cache the selection (directory for files, path itself for directories)
-                selected_directory = path_obj.parent if path_obj.is_file() else path_obj
-                cache_path(self.behavior.cache_key, selected_directory)
+                cache_path = path_obj.parent if path_obj.is_file() else path_obj
+                cache_dialog_path(self.behavior.cache_key, cache_path)
 
         except Exception as e:
             logger.error(f"Failed to open dialog: {e}")

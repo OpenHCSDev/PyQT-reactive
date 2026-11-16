@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSlot
+from PySide6.QtCore import QObject, QTimer, Slot
 
 
 class DeferredCallback(QTimer):
@@ -15,7 +15,7 @@ class DeferredCallback(QTimer):
         self.timeout.connect(self._invoke)
         self.start(delay_ms)
 
-    @pyqtSlot()
+    @Slot()
     def _invoke(self) -> None:
         # The callback may destroy the owner, including this child timer.
         self.deleteLater()

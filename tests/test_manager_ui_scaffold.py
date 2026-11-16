@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from PyQt6.QtCore import QPoint, QRect
-from PyQt6.QtWidgets import QPushButton, QWidget
+from PySide6.QtCore import QPoint, QRect
+from PySide6.QtWidgets import QPushButton, QWidget
 
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import (

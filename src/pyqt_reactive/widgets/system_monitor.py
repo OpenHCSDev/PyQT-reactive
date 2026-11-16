@@ -1,5 +1,5 @@
 """
-System Monitor Widget for PyQt6
+System Monitor Widget for PySide6
 Real-time system monitoring with CPU, RAM, GPU, and VRAM usage graphs.
 Migrated from Textual TUI with full feature parity.
 """
@@ -13,11 +13,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout, QSizePolicy, QPushButton, QSplitter
 )
-from PyQt6.QtCore import QTimer, pyqtSignal, Qt
-from PyQt6.QtGui import QFont, QResizeEvent
+from PySide6.QtCore import QTimer, Signal, Qt
+from PySide6.QtGui import QFont, QResizeEvent
 
 from formbridge.services.system_metrics_sampler import SystemMetrics, SystemMetricsSampler
 from formbridge.services.system_monitor_config import PerformanceMonitorConfig
@@ -155,7 +155,7 @@ class SystemMonitorRuntime:
 
 class SystemMonitorWidget(QWidget):
     """
-    PyQt6 System Monitor Widget.
+    PySide6 System Monitor Widget.
     
     Displays real-time system metrics with graphs for CPU, RAM, GPU, and VRAM usage.
     Provides the same functionality as the Textual SystemMonitorTextual widget.
@@ -167,16 +167,16 @@ class SystemMonitorWidget(QWidget):
     BUTTON_GRID_COLUMNS = 0  # Single row (all buttons next to each other)
     
     # Signals
-    metrics_updated = pyqtSignal(object)  # Emits SystemMetrics.
-    embedded_content_height_changed = pyqtSignal(int)
-    _pyqtgraph_loaded = pyqtSignal()  # Internal signal for async pyqtgraph loading
-    _pyqtgraph_failed = pyqtSignal()  # Internal signal for async pyqtgraph loading failure
+    metrics_updated = Signal(object)  # Emits SystemMetrics.
+    embedded_content_height_changed = Signal(int)
+    _pyqtgraph_loaded = Signal()  # Internal signal for async pyqtgraph loading
+    _pyqtgraph_failed = Signal()  # Internal signal for async pyqtgraph loading failure
     
     # Button action signals
-    show_global_config = pyqtSignal()  # Request to show global config
-    show_log_viewer = pyqtSignal()  # Request to show log viewer
-    show_custom_functions = pyqtSignal()  # Request to show custom functions manager
-    show_test_plate_generator = pyqtSignal()  # Request to show synthetic plate generator
+    show_global_config = Signal()  # Request to show global config
+    show_log_viewer = Signal()  # Request to show log viewer
+    show_custom_functions = Signal()  # Request to show custom functions manager
+    show_test_plate_generator = Signal()  # Request to show synthetic plate generator
     
     def __init__(self,
                  color_scheme: Optional[ColorScheme] = None,
@@ -244,8 +244,8 @@ class SystemMonitorWidget(QWidget):
         Returns:
             Simple loading label widget
         """
-        from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
-        from PyQt6.QtCore import Qt
+        from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+        from PySide6.QtCore import Qt
 
         placeholder = QWidget()
         layout = QVBoxLayout(placeholder)
@@ -291,7 +291,7 @@ class SystemMonitorWidget(QWidget):
                     pass
 
             # Schedule UI switch on next event loop tick so startup screen can update
-            from PyQt6.QtCore import QTimer as _QTimer
+            from PySide6.QtCore import QTimer as _QTimer
             _QTimer.singleShot(
                 0,
                 lambda: self._activate_presentation_backend(
@@ -302,7 +302,7 @@ class SystemMonitorWidget(QWidget):
             logger.warning(f"❌ PyQtGraph not available: {e}")
 
             # Schedule fallback switch similarly
-            from PyQt6.QtCore import QTimer as _QTimer
+            from PySide6.QtCore import QTimer as _QTimer
             _QTimer.singleShot(
                 0,
                 lambda: self._activate_presentation_backend(
@@ -340,7 +340,7 @@ class SystemMonitorWidget(QWidget):
         # Defer font size update until after layout is complete
         if hasattr(self, 'info_widget'):
             # Use a timer to update after the layout has settled
-            from PyQt6.QtCore import QTimer
+            from PySide6.QtCore import QTimer
             QTimer.singleShot(0, self._update_font_sizes_from_panel)
 
     def closeEvent(self, event):
@@ -490,7 +490,7 @@ class SystemMonitorWidget(QWidget):
     def _create_button_panel(self) -> QWidget:
         """Create button panel using reusable ButtonPanel component."""
         from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
-        from PyQt6.QtWidgets import QSizePolicy
+        from PySide6.QtWidgets import QSizePolicy
         
         panel = ButtonPanel(
             button_configs=self.BUTTON_CONFIGS,

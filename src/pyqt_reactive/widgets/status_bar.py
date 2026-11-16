@@ -1,19 +1,19 @@
 """
-Status Bar Widget for PyQt6
+Status Bar Widget for PySide6
 
 Status display with system information and current operation status.
-Uses hybrid approach: extracted business logic + clean PyQt6 UI.
+Uses hybrid approach: extracted business logic + clean PySide6 UI.
 """
 
 import logging
 from datetime import datetime
 from typing import Optional
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QProgressBar, QFrame
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QFont
 
 from pyqt_reactive.theming import ColorScheme
 
@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 
 class StatusBarWidget(QWidget):
     """
-    PyQt6 Status Bar Widget.
+    PySide6 Status Bar Widget.
     
     Displays current status, progress, and system information.
-    Preserves all business logic from Textual version with clean PyQt6 UI.
+    Preserves all business logic from Textual version with clean PySide6 UI.
     """
     
     # Signals
-    status_updated = pyqtSignal(str)  # status message
+    status_updated = Signal(str)  # status message
     
     def __init__(self, color_scheme: Optional[ColorScheme] = None, parent=None):
         """

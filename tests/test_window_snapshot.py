@@ -7,7 +7,7 @@ from dataclasses import dataclass, fields, replace
 import time
 
 import pytest
-from PyQt6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QLabel, QWidget
 
 from pyqt_reactive.services.window_snapshot import (
     QtWindowSnapshotRequest,
@@ -25,8 +25,8 @@ from formbridge.services.window_snapshot import (
 def observed_form(qapp, qtbot):
     import objectstate.config as config_module
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-    from PyQt6.QtCore import QEvent
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QDialog, QVBoxLayout
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay, _GlobalFlashCoordinator
     from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
     from pyqt_reactive.theming import ColorScheme
@@ -76,9 +76,9 @@ def observed_form(qapp, qtbot):
     coordinator._playbacks.clear()
     coordinator._pending_flash_keys.clear()
     coordinator._active_windows.clear()
-    from PyQt6 import sip
+    import shiboken6
 
-    if not sip.isdeleted(window):
+    if not not shiboken6.isValid(window):
         WindowFlashOverlay.cleanup_window(window)
         window.close()
         window.deleteLater()
@@ -132,11 +132,11 @@ def test_capture_comparison_ignores_carrier_fields_outside_owner(tmp_path):
 @pytest.fixture
 def rendered_canvas(qapp, qtbot):
     """A real Qt painter and completion receipt, never a pixel/content mock."""
-    from PyQt6.QtCore import QEvent, pyqtSignal
-    from PyQt6.QtGui import QColor, QPainter
+    from PySide6.QtCore import QEvent, Signal
+    from PySide6.QtGui import QColor, QPainter
 
     class Canvas(QWidget):
-        frame_completed = pyqtSignal()
+        frame_completed = Signal()
 
         def __init__(self):
             super().__init__()
@@ -157,9 +157,9 @@ def rendered_canvas(qapp, qtbot):
     with qtbot.waitExposed(canvas):
         canvas.show()
     yield canvas
-    from PyQt6 import sip
+    import shiboken6
 
-    if not sip.isdeleted(canvas):
+    if not not shiboken6.isValid(canvas):
         canvas.close()
         canvas.deleteLater()
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -220,7 +220,7 @@ def test_render_complete_waits_for_real_qt_paint_and_captures_once(
     rendered_canvas,
     tmp_path,
 ):
-    from PyQt6.QtGui import QColor, QImage
+    from PySide6.QtGui import QColor, QImage
 
     canvas = rendered_canvas
     completed, failed = [], []
@@ -354,7 +354,7 @@ def test_render_owner_destroyed_fails_once_without_capture(
     rendered_canvas,
     tmp_path,
 ):
-    from PyQt6.QtCore import QEvent
+    from PySide6.QtCore import QEvent
 
     completed, failed = [], []
     QtWindowSnapshotService().request_capture(
@@ -393,7 +393,7 @@ def test_operation_deadline_consumes_queue_time_and_preserves_failure(
 def test_operation_deadline_cancels_late_real_png_commit(
     qapp, rendered_canvas, tmp_path, monkeypatch
 ):
-    from PyQt6.QtCore import QSaveFile
+    from PySide6.QtCore import QSaveFile
     from zmqruntime.timeouts import OperationDeadline
 
     now = [time.monotonic()]
@@ -454,7 +454,7 @@ def test_capture_follows_actual_maximum_alpha_paint_without_recursion(
     observed_form,
     tmp_path,
 ):
-    from PyQt6.QtGui import QImage
+    from PySide6.QtGui import QImage
 
     window, form = observed_form
     completed, failed = [], []
@@ -496,7 +496,7 @@ def test_capture_follows_actual_maximum_alpha_paint_without_recursion(
 
 
 def test_armed_native_render_captures_actual_occluded_window(qtbot, observed_form, tmp_path):
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     window, form = observed_form
     cover = QWidget()
@@ -727,7 +727,7 @@ def test_two_actual_windows_both_present_maximum_before_shared_hold(
     tmp_path,
     flash_clock,
 ):
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QVBoxLayout
     from pyqt_reactive.animation.flash_config import FlashPhase
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay, _GlobalFlashCoordinator
     from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
@@ -791,7 +791,7 @@ def test_observation_destruction_fails_once_with_stable_window_identity(
     observed_form,
     tmp_path,
 ):
-    from PyQt6.QtCore import QEvent
+    from PySide6.QtCore import QEvent
 
     window, form = observed_form
     completed, failed = [], []
@@ -877,14 +877,14 @@ import sys
 original_import = builtins.__import__
 
 def reject_pyqt(name, globals=None, locals=None, fromlist=(), level=0):
-    if name == 'PyQt6' or name.startswith('PyQt6.'):
+    if name == 'PySide6' or name.startswith('PySide6.'):
         raise AssertionError(f'window snapshot declarations imported {name}')
     return original_import(name, globals, locals, fromlist, level)
 
 builtins.__import__ = reject_pyqt
 from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 assert tuple(scope.value for scope in WindowSnapshotCaptureScope) == ('widget', 'window')
-assert not any(name == 'PyQt6' or name.startswith('PyQt6.') for name in sys.modules)
+assert not any(name == 'PySide6' or name.startswith('PySide6.') for name in sys.modules)
 """
 
     completed = subprocess.run(

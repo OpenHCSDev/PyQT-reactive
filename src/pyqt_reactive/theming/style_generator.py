@@ -1,5 +1,5 @@
 """
-QStyleSheet Generator for OpenHCS PyQt6 GUI
+QStyleSheet Generator for OpenHCS PySide6 GUI
 
 Generates dynamic QStyleSheet strings from ColorScheme objects, enabling
 centralized styling with theme support. Replaces hardcoded color strings with
@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable
 from enum import Enum
 
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor
 
 from formbridge.forms import layout_constants
 

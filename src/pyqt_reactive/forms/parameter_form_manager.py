@@ -12,9 +12,9 @@ from objectstate import (
     register_hierarchy_relationship,
     unregister_hierarchy_relationship,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from pyqt_reactive.animation import FlashMixin
 from pyqt_reactive.core.deferred_callback import DeferredCallback
@@ -166,7 +166,7 @@ class ParameterFormManager(
     metaclass=_CombinedMeta,
 ):
     """
-    React-quality reactive form manager for PyQt6.
+    React-quality reactive form manager for PySide6.
 
     Inherits from both QWidget and ParameterFormManagerABC with combined metaclass.
     All abstract methods MUST be implemented by this class.
@@ -187,13 +187,13 @@ class ParameterFormManager(
     - Proper ABC inheritance with metaclass conflict resolution
     """
 
-    parameter_changed = pyqtSignal(str, object)  # param_name, value
-    form_build_failed = pyqtSignal(object)
-    form_build_completed = pyqtSignal()
+    parameter_changed = Signal(str, object)  # param_name, value
+    form_build_failed = Signal(object)
+    form_build_completed = Signal()
 
     # Cross-window context change signal (simplified API)
     # Args: (scope_id, field_path) - field_path is None for bulk refresh
-    context_changed = pyqtSignal(str, str)  # scope_id, field_path
+    context_changed = Signal(str, str)  # scope_id, field_path
 
     # NOTE: Class-level cross-cutting concerns moved to LiveContextService:
     # - _active_form_managers -> LiveContextService._active_form_managers

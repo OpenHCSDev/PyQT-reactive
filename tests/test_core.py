@@ -84,8 +84,8 @@ def test_delayed_close_cannot_evict_new_window_for_reused_scope(qapp):
 
 def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatch):
     """Qt window discovery never exposes wrappers after C++ object deletion."""
-    from PyQt6 import sip
-    from PyQt6.QtWidgets import QApplication, QWidget
+    import shiboken6
+    from PySide6.QtWidgets import QApplication, QWidget
 
     from pyqt_reactive.services.window_manager import WindowManager
 
@@ -94,7 +94,7 @@ def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatc
     live_window.show()
     deleted_window.show()
     qapp.processEvents()
-    sip.delete(deleted_window)
+    shiboken6.delete(deleted_window)
     monkeypatch.setattr(
         QApplication,
         "topLevelWidgets",
@@ -110,8 +110,8 @@ def test_visible_top_level_windows_excludes_deleted_qt_wrappers(qapp, monkeypatc
 
 def test_live_window_projection_contains_deletion_during_projection(qapp):
     """A window deleted after discovery cannot escape through its projection."""
-    from PyQt6 import sip
-    from PyQt6.QtWidgets import QWidget
+    import shiboken6
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.services.window_manager import WindowManager
 
@@ -119,7 +119,7 @@ def test_live_window_projection_contains_deletion_during_projection(qapp):
     window.setWindowTitle("Transient")
 
     def delete_before_read(projected_window):
-        sip.delete(projected_window)
+        shiboken6.delete(projected_window)
         return projected_window.windowTitle()
 
     assert WindowManager.project_live_window(window, delete_before_read) is None
@@ -128,7 +128,7 @@ def test_live_window_projection_contains_deletion_during_projection(qapp):
 def test_live_window_projection_preserves_unrelated_runtime_errors(qapp):
     """Projection failures remain visible while the Qt object is still live."""
     import pytest
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.services.window_manager import WindowManager
 
@@ -241,9 +241,9 @@ def test_live_context_refresh_replays_root_flash_registrations():
 
 def test_deferred_live_context_refresh_obeys_manager_qobject_lifetime(qapp):
     """Deferred form work is cancelled when Qt destroys its manager owner."""
-    from PyQt6 import sip
-    from PyQt6.QtCore import QCoreApplication, QEvent
-    from PyQt6.QtWidgets import QWidget
+    import shiboken6
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
     from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
@@ -269,7 +269,7 @@ def test_deferred_live_context_refresh_obeys_manager_qobject_lifetime(qapp):
     service.refresh_with_live_context(deleted_manager, defer=True)
     deleted_manager.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert sip.isdeleted(deleted_manager)
+    assert not shiboken6.isValid(deleted_manager)
 
     qapp.processEvents()
     assert refreshed == []
@@ -332,7 +332,7 @@ def test_form_disposal_invalidates_hierarchy_without_broadcasting_model_change()
 
 def test_window_flash_overlay_replaces_stale_cached_overlay(qapp, monkeypatch):
     """Overlay cache entries stay owned by the exact live top-level window."""
-    from PyQt6.QtWidgets import QDialog
+    from PySide6.QtWidgets import QDialog
 
     import pyqt_reactive.animation.flash_mixin as flash_mixin
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
@@ -389,7 +389,7 @@ def test_managed_window_cleanup_unregisters_form_managers_once(qapp):
 
 def test_managed_window_reject_authorizes_before_restore(qapp, monkeypatch):
     """Inherited reject lifecycle prevents a partial state restore."""
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     from pyqt_reactive.widgets.shared.base_form_dialog import BaseManagedWindow
 

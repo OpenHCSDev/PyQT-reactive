@@ -5,8 +5,8 @@ import threading
 import weakref
 from concurrent.futures import Future
 
-from PyQt6 import sip
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QThread, pyqtSlot
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QThread, Slot
 
 from pyqt_reactive.core.future_completion import FutureCompletion
 
@@ -16,7 +16,7 @@ class Receiver(QObject):
         super().__init__()
         self.deliveries = []
 
-    @pyqtSlot(object)
+    @Slot(object)
     def receive(self, future):
         self.deliveries.append((future, QThread.currentThread()))
 
@@ -24,7 +24,7 @@ class Receiver(QObject):
 def destroy(receiver):
     receiver.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert sip.isdeleted(receiver)
+    assert not shiboken6.isValid(receiver)
 
 
 def test_completion_after_receiver_destruction_preserves_other_subscribers(qapp):

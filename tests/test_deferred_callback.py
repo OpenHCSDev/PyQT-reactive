@@ -4,10 +4,10 @@ import gc
 import weakref
 
 import pytest
-from PyQt6 import sip
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject
-from PyQt6.QtGui import QStandardItem, QStandardItemModel
-from PyQt6.QtWidgets import QComboBox, QGroupBox, QListView, QPushButton
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QObject
+from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtWidgets import QComboBox, QGroupBox, QListView, QPushButton
 
 from pyqt_reactive.core.deferred_callback import DeferredCallback
 from pyqt_reactive.services.widget_tree_projection import (
@@ -20,7 +20,7 @@ from pyqt_reactive.services.widget_tree_projection import (
 def destroy(owner):
     owner.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert sip.isdeleted(owner)
+    assert not shiboken6.isValid(owner)
 
 
 def test_deferred_callback_runs_once_and_retires(qapp):
@@ -32,7 +32,7 @@ def test_deferred_callback_runs_once_and_retires(qapp):
     qapp.processEvents()
     assert calls == [owner]
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert sip.isdeleted(timer)
+    assert not shiboken6.isValid(timer)
     assert owner.children() == []
     qapp.processEvents()
     assert calls == [owner]
@@ -45,7 +45,7 @@ def test_owner_destruction_cancels_only_its_callbacks(qapp):
     timer = DeferredCallback(cancelled, 0, lambda: calls.append("cancelled"))
     DeferredCallback(surviving, 0, lambda: calls.append("surviving"))
     destroy(cancelled)
-    assert sip.isdeleted(timer)
+    assert not shiboken6.isValid(timer)
     qapp.processEvents()
     assert calls == ["surviving"]
     destroy(surviving)
@@ -53,10 +53,10 @@ def test_owner_destruction_cancels_only_its_callbacks(qapp):
 
 def test_callback_can_destroy_its_owner(qapp):
     owner = QObject()
-    timer = DeferredCallback(owner, 0, lambda: sip.delete(owner))
+    timer = DeferredCallback(owner, 0, lambda: shiboken6.delete(owner))
     qapp.processEvents()
-    assert sip.isdeleted(owner)
-    assert sip.isdeleted(timer)
+    assert not shiboken6.isValid(owner)
+    assert not shiboken6.isValid(timer)
 
 
 def test_cancelled_callback_does_not_retain_target(qapp):
@@ -89,7 +89,7 @@ def test_projected_actions_are_cancelled_with_target(qapp, widget_type, action, 
     timers = widget.findChildren(DeferredCallback)
     assert len(timers) == 1
     destroy(widget)
-    assert sip.isdeleted(timers[0])
+    assert not shiboken6.isValid(timers[0])
     qapp.processEvents()
 
 

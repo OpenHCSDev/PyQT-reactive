@@ -1,5 +1,5 @@
 """
-PyQt6 Log Viewer Window
+PySide6 Log Viewer Window
 
 Provides comprehensive log viewing capabilities with real-time tailing, search functionality,
 and integration with OpenHCS subprocess execution. Reimplements log viewing using Qt widgets
@@ -15,7 +15,7 @@ from threading import Event
 
 from objectstate import spawn_thread_with_context
 from pygments.token import Token
-from PyQt6.QtCore import (
+from PySide6.QtCore import (
     QAbstractListModel,
     QFileSystemWatcher,
     QModelIndex,
@@ -30,10 +30,10 @@ from PyQt6.QtCore import (
     QThread,
     QThreadPool,
     QTimer,
-    pyqtSignal,
-    pyqtSlot,
+    Signal,
+    Slot,
 )
-from PyQt6.QtGui import (
+from PySide6.QtGui import (
     QAbstractTextDocumentLayout,
     QAction,
     QColor,
@@ -45,7 +45,7 @@ from PyQt6.QtGui import (
     QTextCursor,
     QTextDocument,
 )
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
@@ -555,7 +555,7 @@ class SelectableDocument(QTextDocument):
 class HighlightSignals(QObject):
     """Signals for background highlighting worker."""
 
-    finished = pyqtSignal(object, object)  # (cache_key, List[HighlightedSegment])
+    finished = Signal(object, object)  # (cache_key, List[HighlightedSegment])
 
 
 class HighlightWorker(QRunnable):
@@ -1574,7 +1574,7 @@ class LogFileDetector(QObject):
     """
 
     # Signals
-    new_log_detected = pyqtSignal(object)  # LogFileInfo object
+    new_log_detected = Signal(object)  # LogFileInfo object
 
     def __init__(
         self,
@@ -1989,9 +1989,9 @@ class LogFileLoader(QThread):
     """Interruptible worker thread for loading large log files."""
 
     # Signals
-    chunk_loaded = pyqtSignal(object, list)  # Emits (loader, list[str])
-    load_finished = pyqtSignal(object)  # Emits loader when all chunks loaded
-    load_failed = pyqtSignal(object, str)  # Emits (loader, error message)
+    chunk_loaded = Signal(object, list)  # Emits (loader, list[str])
+    load_finished = Signal(object)  # Emits loader when all chunks loaded
+    load_failed = Signal(object, str)  # Emits (loader, error message)
 
     def __init__(
         self,
@@ -2042,9 +2042,9 @@ class LogTailer(QThread):
     """Background thread for tailing log files without blocking UI."""
 
     # Signals
-    new_content = pyqtSignal(str, int)  # Emits (new_content, new_file_position)
-    log_rotated = pyqtSignal()  # Emits when log rotation detected
-    error_occurred = pyqtSignal(str)  # Emits error message
+    new_content = Signal(str, int)  # Emits (new_content, new_file_position)
+    log_rotated = Signal()  # Emits when log rotation detected
+    error_occurred = Signal(str)  # Emits error message
 
     def __init__(self, log_path: Path, initial_position: int = 0):
         super().__init__()
@@ -2099,9 +2099,9 @@ class LogTailer(QThread):
 class LogViewerWindow(QMainWindow):
     """Main log viewer window with dropdown, search, and real-time tailing."""
 
-    window_closed = pyqtSignal()
-    _subprocess_scan_complete = pyqtSignal(list)  # Internal signal for async subprocess scan
-    _server_scan_complete = pyqtSignal(list)  # Internal signal for async server scan
+    window_closed = Signal()
+    _subprocess_scan_complete = Signal(list)  # Internal signal for async subprocess scan
+    _server_scan_complete = Signal(list)  # Internal signal for async server scan
 
     def __init__(self, file_manager, service_adapter, parent=None):
         super().__init__(parent)
@@ -2399,7 +2399,7 @@ class LogViewerWindow(QMainWindow):
         spawn_thread_with_context(scan_and_update, name="scan_server_logs")
         logger.debug("Started async server scan in background")
 
-    @pyqtSlot(list)
+    @Slot(list)
     def _on_subprocess_scan_complete(self, subprocess_logs: list[LogFileInfo]) -> None:
         """Handle subprocess scan completion on UI thread."""
         if not subprocess_logs:
@@ -2422,7 +2422,7 @@ class LogViewerWindow(QMainWindow):
             f"(scanned {len(subprocess_logs)} total)"
         )
 
-    @pyqtSlot(list)
+    @Slot(list)
     def _on_server_scan_complete(self, server_logs: list[LogFileInfo]) -> None:
         """Handle server scan completion on UI thread."""
         if server_logs:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor
 
 from pyqt_reactive.theming import AccentChromeColorPolicy, ColorScheme, StyleSheetGenerator
 from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme

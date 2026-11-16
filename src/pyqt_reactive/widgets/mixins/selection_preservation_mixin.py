@@ -1,5 +1,5 @@
 """
-Selection Preservation Utilities for PyQt6 List Widgets
+Selection Preservation Utilities for PySide6 List Widgets
 
 Simple utility functions for preserving selection when updating QListWidget contents,
 similar to the ButtonListWidget pattern used in the Textual TUI.
@@ -7,8 +7,8 @@ similar to the ButtonListWidget pattern used in the Textual TUI.
 
 import logging
 from typing import Callable, TypeVar
-from PyQt6.QtWidgets import QListWidget
-from PyQt6.QtCore import QSignalBlocker, Qt
+from PySide6.QtWidgets import QListWidget
+from PySide6.QtCore import QSignalBlocker, Qt
 
 logger = logging.getLogger(__name__)
 

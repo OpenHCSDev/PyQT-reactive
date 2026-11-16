@@ -10,15 +10,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import cast
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QStyle,
     QAbstractItemView,
     QListView,
 )
-from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QPolygon
-from PyQt6.QtCore import (
+from PySide6.QtGui import QPainter, QColor, QFont, QPen, QPolygon
+from PySide6.QtCore import (
     Qt,
     QRect,
     QPoint,

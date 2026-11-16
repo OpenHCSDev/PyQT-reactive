@@ -23,8 +23,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
 if TYPE_CHECKING:
-    from PyQt6.QtCore import QRect
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtCore import QRect
+    from PySide6.QtWidgets import QWidget
     from objectstate import (
         DottedFieldPath,
         ObjectStateSubfieldSemanticIndex,

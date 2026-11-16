@@ -1,7 +1,7 @@
 """
-Core PyQt6 utilities.
+Core PySide6 utilities.
 
-Pure PyQt6 utility components with zero external dependencies.
+Pure PySide6 utility components with zero external dependencies.
 Foundational widgets and helpers with no domain-specific logic.
 """
 

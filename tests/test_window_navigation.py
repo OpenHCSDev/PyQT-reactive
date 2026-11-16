@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_scope_route_preserves_requested_scope_for_registered_driver(qapp) -> None:
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
     from pyqt_reactive.services.scope_window_navigation import (
@@ -53,7 +53,7 @@ def test_scope_route_preserves_requested_scope_for_registered_driver(qapp) -> No
 
 
 def test_null_driver_focuses_without_claiming_target_navigation(qapp) -> None:
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.services.window_manager import WindowManager
 
@@ -77,7 +77,7 @@ def test_null_driver_focuses_without_claiming_target_navigation(qapp) -> None:
 
 
 def test_list_driver_accepts_only_present_identity_and_preserves_dispatch(qapp) -> None:
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.services.window_manager import WindowManager
     from pyqt_reactive.services.window_navigation import ListItemWindowNavigationDriver
@@ -121,7 +121,7 @@ def test_list_driver_accepts_only_present_identity_and_preserves_dispatch(qapp) 
 
 
 def test_build_owned_readiness_does_not_spend_poll_retry_budget(qapp) -> None:
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.services.window_manager import NavigationRetryScheduler
     from pyqt_reactive.services.window_navigation import (
@@ -161,7 +161,7 @@ def test_build_owned_readiness_does_not_spend_poll_retry_budget(qapp) -> None:
 
 
 def test_composite_dispatches_only_to_matching_nominal_driver(qapp) -> None:
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.services.window_navigation import (
         CompositeWindowNavigationDriver,
@@ -220,7 +220,7 @@ def test_composite_dispatches_only_to_matching_nominal_driver(qapp) -> None:
 
 
 def test_terminal_navigation_distinguishes_execution_from_unknown_exposure(qtbot):
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
     from pyqt_reactive.services.window_manager import WindowManager
     from pyqt_reactive.services.window_navigation import ListItemWindowNavigationDriver
 
@@ -241,7 +241,7 @@ def test_terminal_navigation_distinguishes_execution_from_unknown_exposure(qtbot
 
 
 def test_terminal_navigation_reports_exhausted_readiness(qtbot):
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
     from pyqt_reactive.services.window_manager import WindowManager
     from pyqt_reactive.services.window_navigation import (
         FieldWindowNavigationDriver, NavigationWaitReason, RegisteredWindowNavigationReadiness,
@@ -267,8 +267,8 @@ def test_terminal_navigation_reports_exhausted_readiness(qtbot):
 
 
 def test_terminal_navigation_reports_destroyed_window_once(qapp, qtbot):
-    from PyQt6.QtCore import QEvent
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QWidget
     from pyqt_reactive.services.window_manager import WindowManager
     from pyqt_reactive.services.window_navigation import FieldWindowNavigationDriver
 
@@ -289,7 +289,7 @@ def test_terminal_navigation_reports_destroyed_window_once(qapp, qtbot):
 
 
 def test_scrollable_terminal_exposure_uses_actual_target_viewport(qtbot):
-    from PyQt6.QtWidgets import QWidget, QScrollArea, QVBoxLayout, QLabel
+    from PySide6.QtWidgets import QWidget, QScrollArea, QVBoxLayout, QLabel
     from pyqt_reactive.services.window_manager import WindowManager
     from pyqt_reactive.services.window_navigation import RegisteredWindowNavigationReadiness
     from pyqt_reactive.widgets.shared.scrollable_form_mixin import (

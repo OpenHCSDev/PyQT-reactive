@@ -1,7 +1,7 @@
 """
-PyQt6 Widget Utilities
+PySide6 Widget Utilities
 
-Shared utility functions for PyQt6 widgets, mirroring patterns from the Textual TUI.
+Shared utility functions for PySide6 widgets, mirroring patterns from the Textual TUI.
 """
 
 from pyqt_reactive.widgets.mixins.selection_preservation_mixin import (

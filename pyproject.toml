@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pyqt-reactive"
 dynamic = ["version"]
-description = "React-quality reactive form generation framework for PyQt6"
+description = "React-quality reactive form generation framework for PySide6"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
 license = {text = "MIT"}
 readme = "README.md"
@@ -21,14 +21,14 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: User Interfaces",
 ]
-keywords = ["pyqt6", "forms", "reactive", "gui", "widgets", "dataclass"]
+keywords = ["pyside6", "forms", "reactive", "gui", "widgets", "dataclass"]
 
 dependencies = [
     "annotated-types>=0.7.0",
     "formbridge>=0.2.0,<0.3",
     "magicgui>=0.7.0",
     "metaclass-registry>=0.4.0",
-    "PyQt6>=6.4.0",
+    "PySide6>=6.12.0",
     "objectstate>=5.0.0,<6",
     "psutil>=5.9",
     "Pygments>=2.15",

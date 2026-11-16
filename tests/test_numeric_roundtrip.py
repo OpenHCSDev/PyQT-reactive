@@ -1,8 +1,8 @@
 """Decimal presentation must not expose binary noise or change numeric values."""
 
 import pytest
-from PyQt6.QtCore import QLocale, Qt
-from PyQt6.QtTest import QTest
+from PySide6.QtCore import QLocale, Qt
+from PySide6.QtTest import QTest
 
 from pyqt_reactive.protocols import DoubleSpinBoxAdapter
 from pyqt_reactive.widgets import NoScrollDoubleSpinBox

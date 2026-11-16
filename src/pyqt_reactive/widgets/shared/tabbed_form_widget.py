@@ -8,10 +8,10 @@ shows one or more ParameterFormManagers, all sharing the same ObjectState.
 from dataclasses import dataclass, field, fields, is_dataclass
 from types import SimpleNamespace
 from typing import List, Optional, Any
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
 from pyqt_reactive.widgets.shared.tear_off_tab_widget import TearOffTabWidget
-from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QIcon
+from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QIcon
 
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
 from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
@@ -67,7 +67,7 @@ class TabbedFormWidget(QWidget):
     """
     
     # Aggregate signal from all child PFMs
-    parameter_changed = pyqtSignal(str, object)
+    parameter_changed = Signal(str, object)
     
     def __init__(
         self,

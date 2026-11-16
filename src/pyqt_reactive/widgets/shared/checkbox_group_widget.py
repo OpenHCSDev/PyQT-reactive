@@ -7,8 +7,8 @@ Provides explicit type-based dispatch instead of duck typing with monkey-patched
 from typing import List, Optional, Type
 from enum import Enum
 
-from PyQt6.QtWidgets import QVBoxLayout
-from PyQt6.QtCore import pyqtSignal
+from PySide6.QtWidgets import QVBoxLayout
+from PySide6.QtCore import Signal
 
 from pyqt_reactive.widgets import NoneAwareCheckBox
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
@@ -25,7 +25,7 @@ class CheckboxGroupWidget(CheckboxGroupAdapter):
     """
 
     # Signal emitted when selection changes
-    selection_changed = pyqtSignal()
+    selection_changed = Signal()
 
     def __init__(self, param_name: str, enum_type: Type[Enum], current_value: Optional[List[Enum]] = None, parent=None):
         """

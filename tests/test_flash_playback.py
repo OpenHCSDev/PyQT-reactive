@@ -63,9 +63,9 @@ def test_phase_leaves_own_duration_and_opacity(config, phase):
 
 
 @pytest.fixture
-def actual_surfaces(qapp, qtbot, flash_clock):
-    from PyQt6 import sip
-    from PyQt6.QtWidgets import QDialog, QPushButton, QVBoxLayout
+def actual_surfaces(qapp):
+    import shiboken6
+    from PySide6.QtWidgets import QDialog, QPushButton, QVBoxLayout
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay, _GlobalFlashCoordinator, create_widget_rect_element
 
     coordinator = _GlobalFlashCoordinator.get()
@@ -79,10 +79,8 @@ def actual_surfaces(qapp, qtbot, flash_clock):
         layout = QVBoxLayout(window)
         for key in keys:
             layout.addWidget(QPushButton(key))
-        # Only natively exposed windows receive the flash, and native
-        # platforms expose a shown window asynchronously.
-        with qtbot.waitExposed(window):
-            window.show()
+        window.show()
+        qapp.processEvents()
         overlay = WindowFlashOverlay.get_for_window(window)
         for key, button in zip(keys, window.findChildren(QPushButton)):
             overlay.register_element(create_widget_rect_element(key, button))
@@ -90,7 +88,7 @@ def actual_surfaces(qapp, qtbot, flash_clock):
         overlays.append(overlay)
         return window, overlay
 
-    yield coordinator, create, flash_clock
+    yield coordinator, create
     if coordinator._timer is not None:
         coordinator._timer.stop()
     coordinator._playbacks.clear()
@@ -98,14 +96,14 @@ def actual_surfaces(qapp, qtbot, flash_clock):
     coordinator._pending_flash_keys.clear()
     coordinator._active_windows.clear()
     for window in windows:
-        if not sip.isdeleted(window):
+        if not not shiboken6.isValid(window):
             WindowFlashOverlay.cleanup_window(window)
             window.close()
             window.deleteLater()
 
 
 def test_native_subset_retrigger_drops_former_only_recipients_from_old_cohort(actual_surfaces, qtbot):
-    coordinator, create, clock = actual_surfaces
+    coordinator, create = actual_surfaces
     window, overlay = create("first", "second")
     painted = []
     overlay.frame_painted.connect(painted.append)
@@ -121,7 +119,6 @@ def test_native_subset_retrigger_drops_former_only_recipients_from_old_cohort(ac
     coordinator._on_global_tick()
     assert len(old.pending_recipients) == 1
     assert len(retrigger.pending_recipients) == 1
-    clock.advance(coordinator._config.fade_in_s)
     qtbot.waitUntil(lambda: old.phase is FlashPhase.HOLD and retrigger.phase is FlashPhase.HOLD, timeout=1500)
     assert any(element.key == "second" and element.rgba[3] == 255
                for frame in painted for element in frame.elements)
@@ -129,8 +126,8 @@ def test_native_subset_retrigger_drops_former_only_recipients_from_old_cohort(ac
 
 @pytest.mark.parametrize("disappears", ("hidden", "disposed"))
 def test_native_hidden_or_disposed_window_cannot_block_exposed_peer(actual_surfaces, qtbot, qapp, disappears):
-    from PyQt6.QtCore import QEvent
-    coordinator, create, clock = actual_surfaces
+    from PySide6.QtCore import QEvent
+    coordinator, create = actual_surfaces
     first, overlay = create("first")
     second, _ = create("second")
     painted = []
@@ -145,7 +142,6 @@ def test_native_hidden_or_disposed_window_cannot_block_exposed_peer(actual_surfa
     else:
         second.deleteLater()
         qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    clock.advance(coordinator._config.fade_in_s)
     qtbot.waitUntil(lambda: playback.phase is FlashPhase.HOLD, timeout=1500)
     assert "second" not in coordinator._playbacks
     assert any(frame.has_maximum_alpha for frame in painted)

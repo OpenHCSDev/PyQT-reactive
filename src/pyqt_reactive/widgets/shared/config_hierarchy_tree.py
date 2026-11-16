@@ -1,5 +1,5 @@
 """
-Shared helpers for rendering configuration hierarchy trees in the PyQt6 GUI.
+Shared helpers for rendering configuration hierarchy trees in the PySide6 GUI.
 
 Both the pipeline ConfigWindow and the StepParameterEditor need to display the
 same inheritance-aware tree that highlights which dataclass sections are
@@ -16,9 +16,9 @@ from enum import Enum
 from types import UnionType
 from typing import Callable, ClassVar, Dict, Type, Optional, Iterable, Mapping, Union, get_args, get_origin
 
-from PyQt6.QtCore import Qt, QRect
-from PyQt6.QtGui import QColor, QPainter, QFont, QFontMetrics, QBrush
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle
+from PySide6.QtCore import Qt, QRect
+from PySide6.QtGui import QColor, QPainter, QFont, QFontMetrics, QBrush
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 
 from metaclass_registry import AutoRegisterMeta
 from objectstate.lazy_factory import get_base_type_for_lazy, is_lazy_dataclass

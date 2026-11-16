@@ -20,9 +20,9 @@ from enum import Enum
 from typing import Any
 
 try:
-    from PyQt6.QtCore import QLocale, QObject
-    from PyQt6.QtGui import QKeySequence
-    from PyQt6.QtWidgets import (
+    from PySide6.QtCore import QLocale, QObject
+    from PySide6.QtGui import QKeySequence
+    from PySide6.QtWidgets import (
         QComboBox,
         QDoubleSpinBox,
         QGroupBox,
@@ -38,8 +38,11 @@ try:
     # Order matters: ABCMeta first (it's the "primary" metaclass for ABC functionality)
     _QtMetaclass = type(QObject)
     class PyQtWidgetMeta(_QtMetaclass, ABCMeta):
-        """Metaclass for PyQt widgets that need ABC support."""
-        pass
+        def __new__(mcs, name, bases, namespace, **kwargs):
+            # Shiboken's sbktype rejects extra kwargs (__init_subclass__ keywords
+            # like shows= from DeclaredViews). Strip them here; Python delivers
+            # them to __init_subclass__ separately.
+            return super().__new__(mcs, name, bases, namespace)
 except ImportError:
     PYQT6_AVAILABLE = False
     # Create dummy base classes for type hints

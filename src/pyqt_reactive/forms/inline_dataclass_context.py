@@ -10,7 +10,7 @@ from objectstate.lazy_factory import get_base_type_for_lazy, replace_raw
 
 if TYPE_CHECKING:
     from objectstate import ObjectState
-    from PyQt6.QtGui import QColor
+    from PySide6.QtGui import QColor
     from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
     from formbridge.forms.parameter_info_types import InlineDataclassWidgetInfo
     from pyqt_reactive.theming import ColorScheme

@@ -44,7 +44,7 @@ def test_signal_relay_exits_qt_loop_without_keyboard_interrupt_traceback() -> No
     script = textwrap.dedent("""
         import signal
 
-        from PyQt6.QtCore import QCoreApplication, QTimer
+        from PySide6.QtCore import QCoreApplication, QTimer
         from pyqt_reactive.process_signals import QtProcessSignalRelay
 
         application = QCoreApplication([])

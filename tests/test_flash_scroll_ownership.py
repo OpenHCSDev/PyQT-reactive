@@ -1,7 +1,7 @@
 """Regression tests for flash clipping to the target's own scroll hierarchy."""
 
-from PyQt6.QtCore import QPoint, QRect
-from PyQt6.QtWidgets import QDialog, QGroupBox, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import QPoint, QRect
+from PySide6.QtWidgets import QDialog, QGroupBox, QScrollArea, QVBoxLayout, QWidget
 
 
 def _viewport_rect_in_window(scroll_area: QScrollArea, window: QWidget) -> QRect:

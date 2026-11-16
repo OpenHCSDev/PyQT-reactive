@@ -16,7 +16,7 @@ def test_qt_type_declarations_do_not_import_pyqt6() -> None:
                 "from pyqt_reactive.qt_types import QtColorText, QtKeySequenceText; "
                 "assert QtColorText is not None; "
                 "assert QtKeySequenceText is not None; "
-                "assert not any(name == 'PyQt6' or name.startswith('PyQt6.') "
+                "assert not any(name == 'PySide6' or name.startswith('PySide6.') "
                 "for name in sys.modules)"
             ),
         ],

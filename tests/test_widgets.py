@@ -54,13 +54,13 @@ def test_none_aware_checkbox_toggle_commits_placeholder(qapp):
 
 def test_none_aware_checkbox_resolved_preview_dims_lazy_bool(qapp):
     """Generic placeholder previews dim direct lazy-bool checkmarks."""
-    from PyQt6.QtGui import QColor, QPalette
-    from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+    from PySide6.QtGui import QColor, QPalette
+    from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.widgets import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         widget,
         True,
         "Pipeline default: True",
@@ -80,7 +80,7 @@ def test_none_aware_checkbox_resolved_preview_dims_lazy_bool(qapp):
 
 def test_none_aware_checkbox_concrete_value_restores_palette(qapp):
     """Leaving placeholder mode restores the checkbox palette."""
-    from PyQt6.QtGui import QColor, QPalette
+    from PySide6.QtGui import QColor, QPalette
     from pyqt_reactive.widgets import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
@@ -102,12 +102,12 @@ def test_none_aware_checkbox_concrete_value_restores_palette(qapp):
 
 def test_none_aware_checkbox_resolved_none_previews_unchecked_placeholder(qapp):
     """Resolved None is owned by the checkbox preview contract, not string parsing."""
-    from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+    from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.widgets import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         widget,
         None,
         "Pipeline default: None",
@@ -122,13 +122,13 @@ def test_none_aware_checkbox_resolved_none_previews_unchecked_placeholder(qapp):
 def test_none_aware_checkbox_rejects_text_only_placeholder_route(qapp):
     """Typed preview widgets cannot bypass the resolved-value rendering ABI."""
     import pytest
-    from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+    from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.widgets import NoneAwareCheckBox
 
     widget = NoneAwareCheckBox()
 
     with pytest.raises(TypeError, match="apply_placeholder_with_value"):
-        PyQt6WidgetEnhancer.apply_placeholder_text(
+        PySide6WidgetEnhancer.apply_placeholder_text(
             widget,
             "Pipeline default: True",
         )
@@ -137,8 +137,8 @@ def test_none_aware_checkbox_rejects_text_only_placeholder_route(qapp):
 def test_checkbox_group_resolved_preview_uses_child_preview_contract(qapp):
     """Enum checkbox groups preview inherited membership through the same widget ABI."""
     from enum import Enum
-    from PyQt6.QtGui import QColor, QPalette
-    from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+    from PySide6.QtGui import QColor, QPalette
+    from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
     from pyqt_reactive.protocols import ResolvedValuePreviewSettable
     from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
     from pyqt_reactive.widgets import NoneAwareCheckBox
@@ -155,7 +155,7 @@ def test_checkbox_group_resolved_preview_uses_child_preview_contract(qapp):
 
     assert isinstance(group, ResolvedValuePreviewSettable)
 
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         group,
         [Component.SITE],
         "Pipeline default: [site]",
@@ -317,7 +317,7 @@ def test_enum_string_union_uses_union_widget(qapp):
 
 def test_function_form_uses_signature_enums_and_concrete_nested_config(qapp):
     """Function forms derive widgets from signatures and ObjectState path types."""
-    from PyQt6.QtWidgets import QComboBox
+    from PySide6.QtWidgets import QComboBox
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.forms.parameter_form_manager import (
         FormManagerConfig,
@@ -441,7 +441,7 @@ def test_editable_function_pattern_resolves_quoted_enum_annotations(qapp):
 
 def test_action_tabbed_window_body_switches_active_actions(qapp):
     """Action tab bodies expose only the current tab's actions."""
-    from PyQt6.QtWidgets import QLabel, QPushButton
+    from PySide6.QtWidgets import QLabel, QPushButton
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabSpec,
         ActionTabbedWindowBody,
@@ -468,7 +468,7 @@ def test_action_tabbed_window_body_switches_active_actions(qapp):
 
 def test_action_tabbed_window_body_shows_tabs_only_for_multiple_pages(qapp):
     """A single page renders without tab chrome; a second page enables it."""
-    from PyQt6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabSpec,
         ActionTabbedWindowBody,
@@ -488,7 +488,7 @@ def test_action_tabbed_window_body_shows_tabs_only_for_multiple_pages(qapp):
 
 def test_action_tabbed_window_body_releases_one_live_action_projection(qapp):
     """A caller can place the active actions without copying per-tab buttons."""
-    from PyQt6.QtWidgets import QLabel, QPushButton
+    from PySide6.QtWidgets import QLabel, QPushButton
 
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabSpec,
@@ -519,7 +519,7 @@ def test_action_tabbed_window_body_releases_one_live_action_projection(qapp):
 
 def test_enhanced_path_widget_reserves_editor_width_beside_browse(qapp):
     """Path rows wrap before the browse button crushes the text editor."""
-    from PyQt6.QtWidgets import QLabel, QPushButton
+    from PySide6.QtWidgets import QLabel, QPushButton
 
     from pyqt_reactive.widgets.enhanced_path_widget import EnhancedPathWidget
     from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
@@ -552,7 +552,7 @@ def test_enhanced_path_widget_reserves_editor_width_beside_browse(qapp):
 
 def test_responsive_parameter_row_wraps_only_below_minimum_capacity(qapp):
     """Parameter rows use all available width without an empty editor column."""
-    from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton
+    from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
     from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
         ResponsiveParameterRow,
         ResponsiveRowLayoutMode,
@@ -598,7 +598,7 @@ def test_responsive_parameter_row_coalesces_logical_content_construction(
     monkeypatch,
 ):
     """One row pipeline update performs one layout ownership transfer."""
-    from PyQt6.QtWidgets import QLabel, QLineEdit, QPushButton
+    from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
 
     from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
         ResponsiveParameterRow,
@@ -632,7 +632,7 @@ def test_responsive_parameter_row_coalesces_logical_content_construction(
 
 def test_staged_wrap_layout_keeps_unchanged_group_ownership(qapp, monkeypatch):
     """Content growth does not repeatedly remove and reinsert stable groups."""
-    from PyQt6.QtWidgets import QLabel, QWidget
+    from PySide6.QtWidgets import QLabel, QWidget
 
     from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
         StagedWrapLayout,
@@ -663,7 +663,7 @@ def test_staged_wrap_layout_keeps_unchanged_group_ownership(qapp, monkeypatch):
 
 def test_staged_wrap_layout_reclassifies_same_widget_after_intrinsic_growth(qapp):
     """A stable group identity still wraps when its required width changes."""
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
         StagedWrapLayout,
@@ -693,7 +693,7 @@ def test_staged_wrap_layout_reclassifies_same_widget_after_intrinsic_growth(qapp
 
 def test_staged_wrap_layout_can_lock_all_groups_to_one_row(qapp):
     """Dock chrome can disable responsive rows without duplicating group ownership."""
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
 
     from pyqt_reactive.widgets.shared.responsive_layout_widgets import (
         StagedWrapLayout,
@@ -719,7 +719,7 @@ def test_staged_wrap_layout_can_lock_all_groups_to_one_row(qapp):
 
 def test_action_tab_row_keeps_tabs_and_actions_on_one_row_when_they_fit(qapp):
     """Top-level tabs and active actions wrap only under horizontal pressure."""
-    from PyQt6.QtWidgets import QLabel, QPushButton
+    from PySide6.QtWidgets import QLabel, QPushButton
     from pyqt_reactive.widgets.shared.action_tabbed_window_body import (
         ActionTabSpec,
         ActionTabbedWindowBody,
@@ -776,7 +776,7 @@ def test_action_tab_border_uses_top_level_foreground_color(qapp):
 
 def test_form_window_action_header_exposes_stable_actions(qapp):
     """Form headers keep title and actions behind stable IDs."""
-    from PyQt6.QtWidgets import QPushButton
+    from PySide6.QtWidgets import QPushButton
     from pyqt_reactive.widgets.shared.form_window_action_header import (
         FormWindowActionHeader,
         HeaderAction,
@@ -808,8 +808,8 @@ def test_form_window_action_header_exposes_stable_actions(qapp):
 
 def test_form_window_action_header_places_semantic_groups_by_capacity(qapp):
     """Semantic groups stay attached to their declared header regions."""
-    from PyQt6.QtCore import QRect, Qt
-    from PyQt6.QtWidgets import QPushButton
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtWidgets import QPushButton
 
     from pyqt_reactive.widgets.shared.form_window_action_header import (
         FormWindowActionHeader,
@@ -910,8 +910,8 @@ def test_form_window_action_header_places_semantic_groups_by_capacity(qapp):
 
 def test_form_window_action_header_contains_wrapped_title_and_restores_wide_layout(qapp):
     """Genuine pressure wraps the title without clipping or stale row geometry."""
-    from PyQt6.QtCore import QRect, Qt
-    from PyQt6.QtWidgets import QPushButton
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtWidgets import QPushButton
 
     from pyqt_reactive.widgets.shared.form_window_action_header import (
         FormWindowActionHeader,
@@ -1027,7 +1027,7 @@ def test_form_window_action_header_contains_wrapped_title_and_restores_wide_layo
 
 def test_groupbox_title_keeps_reset_all_on_one_row_at_capacity(qapp):
     """Dataclass titles wrap their explicit Reset All action only under pressure."""
-    from PyQt6.QtWidgets import QPushButton
+    from PySide6.QtWidgets import QPushButton
     from pyqt_reactive.widgets.shared.clickable_help_components import (
         GroupBoxWithHelp,
     )
@@ -1084,8 +1084,8 @@ def test_groupbox_title_keeps_reset_all_on_one_row_at_capacity(qapp):
 
 def test_manager_list_in_place_refresh_skips_unchanged_tooltip(qapp):
     """Unchanged list rows avoid expensive tooltip rebuilds during live refresh."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
     from pyqt_reactive.widgets.shared.manager_list_updater import (
         ManagerListUpdateOperations,
         ManagerListUpdater,
@@ -1138,8 +1138,8 @@ def test_manager_list_in_place_refresh_skips_unchanged_tooltip(qapp):
 
 def test_manager_list_scope_refresh_updates_only_matching_rows(qapp):
     """ObjectState row refreshes avoid full-list formatting work."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
     from pyqt_reactive.widgets.shared.manager_list_updater import (
         ManagerListUpdateOperations,
         ManagerListUpdater,
@@ -1194,8 +1194,8 @@ def test_manager_list_scope_refresh_updates_only_matching_rows(qapp):
 
 def test_manager_list_in_place_refresh_does_not_infer_flash_from_text(qapp):
     """Rendered text changes are not semantic flash events by themselves."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
     from pyqt_reactive.widgets.shared.manager_list_updater import (
         ManagerListUpdateOperations,
         ManagerListUpdater,
@@ -1240,7 +1240,7 @@ def test_manager_list_in_place_refresh_does_not_infer_flash_from_text(qapp):
 
 def test_manager_list_rebuild_does_not_infer_flash_from_new_scope(qapp):
     """Row materialization is view state, not an ObjectState value change."""
-    from PyQt6.QtWidgets import QListWidget
+    from PySide6.QtWidgets import QListWidget
     from pyqt_reactive.widgets.shared.manager_list_updater import (
         ManagerListUpdateOperations,
         ManagerListUpdater,
@@ -1288,7 +1288,7 @@ def test_manager_list_rebuild_does_not_infer_flash_from_new_scope(qapp):
 
 def test_manager_list_rebuild_does_not_flash_existing_scope(qapp):
     """Rebuilds caused by deletion do not flash scopes that already existed."""
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
     from pyqt_reactive.widgets.shared.manager_list_updater import (
         ManagerListUpdateOperations,
         ManagerListUpdater,
@@ -1333,7 +1333,7 @@ def test_manager_list_rebuild_does_not_flash_existing_scope(qapp):
 def test_manager_list_visual_state_flashes_visible_objectstate_change(qapp):
     """Visible list rows flash from ObjectState resolved-change authority."""
     from dataclasses import dataclass
-    from PyQt6.QtWidgets import QDialog, QListWidget, QListWidgetItem
+    from PySide6.QtWidgets import QDialog, QListWidget, QListWidgetItem
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.animation import WindowFlashOverlay
     from pyqt_reactive.widgets.shared.manager_list_visual_state import (
@@ -1399,7 +1399,7 @@ def test_manager_list_visual_state_flashes_visible_objectstate_change(qapp):
 def test_manager_list_visual_state_buffers_objectstate_change_until_row_visible(qapp):
     """Resolved changes that precede row materialization flash once on subscribe."""
     from dataclasses import dataclass
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.widgets.shared.manager_list_visual_state import (
         ManagerListVisualState,
@@ -1457,7 +1457,7 @@ def test_manager_list_visual_state_flashes_registered_row_when_visible(qapp):
     from dataclasses import dataclass
 
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget
 
     from pyqt_reactive.widgets.shared.manager_list_visual_state import (
         ManagerListVisualState,
@@ -1548,7 +1548,7 @@ def test_manager_list_visual_state_flashes_registered_row_when_visible(qapp):
 def test_manager_list_visual_state_reset_context_discards_pending_flash(qapp):
     """Explicit list-context resets do not replay stale ObjectState flashes."""
     from dataclasses import dataclass
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.widgets.shared.manager_list_visual_state import (
         ManagerListVisualState,
@@ -1602,8 +1602,8 @@ def test_manager_list_visual_state_reset_context_discards_pending_flash(qapp):
 
 def test_manager_list_role_update_skips_equal_values(qapp) -> None:
     """Equal role values do not emit QListWidget data updates."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QListWidgetItem
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidgetItem
     from pyqt_reactive.widgets.shared.manager_list_updater import ManagerListUpdater
 
     class CountingItem(QListWidgetItem):
@@ -1638,7 +1638,7 @@ def test_manager_list_role_update_skips_equal_values(qapp) -> None:
 
 def test_styled_text_size_calculator_caches_layout_metrics(qapp) -> None:
     """Repeated size hints reuse the layout/font metric cache."""
-    from PyQt6.QtWidgets import QListWidget
+    from PySide6.QtWidgets import QListWidget
     from pyqt_reactive.widgets.shared.list_item_text_rendering import (
         StyledTextSizeCalculator,
         TextMetricCache,
@@ -1665,7 +1665,7 @@ def test_styled_text_size_calculator_caches_layout_metrics(qapp) -> None:
 
 def test_flash_delegate_update_targets_only_item_rect() -> None:
     """Delegate-painted flashes repaint the visible row rect, not the whole viewport."""
-    from PyQt6.QtCore import QRect
+    from PySide6.QtCore import QRect
     from pyqt_reactive.animation.flash_mixin import FlashElement, _GlobalFlashCoordinator
 
     class Index:
@@ -1711,39 +1711,39 @@ def test_flash_delegate_update_targets_only_item_rect() -> None:
 
 def test_global_flash_coordinator_recreates_after_qt_owner_deletion(qapp) -> None:
     """The shared coordinator follows the active Qt application's lifetime."""
-    from PyQt6 import sip
+    import shiboken6
     from pyqt_reactive.animation.flash_mixin import _GlobalFlashCoordinator
 
     original = _GlobalFlashCoordinator.get()
     assert original.parent() is qapp
 
-    sip.delete(original)
-    assert sip.isdeleted(original)
+    shiboken6.delete(original)
+    assert not shiboken6.isValid(original)
 
     replacement = _GlobalFlashCoordinator.get()
     assert replacement is not original
     assert replacement.parent() is qapp
-    assert not sip.isdeleted(replacement)
+    assert not not shiboken6.isValid(replacement)
 
 
 def test_window_flash_overlay_registry_discards_deleted_qt_wrapper(qapp) -> None:
     """Overlay lookup never returns a wrapper whose Qt object was destroyed."""
-    from PyQt6 import sip
-    from PyQt6.QtWidgets import QDialog
+    import shiboken6
+    from PySide6.QtWidgets import QDialog
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
 
     dialog = QDialog()
     original = WindowFlashOverlay.get_for_window(dialog)
     assert original is not None
 
-    sip.delete(original)
-    assert sip.isdeleted(original)
+    shiboken6.delete(original)
+    assert not shiboken6.isValid(original)
     assert WindowFlashOverlay.live_for_window_id(id(dialog)) is None
 
     replacement = WindowFlashOverlay.get_for_window(dialog)
     assert replacement is not None
     assert replacement is not original
-    assert not sip.isdeleted(replacement)
+    assert not not shiboken6.isValid(replacement)
 
     WindowFlashOverlay.cleanup_window(dialog)
     dialog.close()
@@ -1751,8 +1751,8 @@ def test_window_flash_overlay_registry_discards_deleted_qt_wrapper(qapp) -> None
 
 def test_delegate_flash_tracks_descendant_objectstate_key() -> None:
     """Delegate-painted rows repaint from descendant ObjectState flash paths."""
-    from PyQt6.QtCore import QRect
-    from PyQt6.QtGui import QColor
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor
     from pyqt_reactive.animation.flash_mixin import (
         FlashElement,
         _GlobalFlashCoordinator,
@@ -1941,7 +1941,7 @@ def test_config_hierarchy_tree_row_flashes_from_unscoped_descendant_path(qapp) -
     """Global config hierarchy rows use the same ObjectState path flashes as forms."""
     from dataclasses import field
 
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QVBoxLayout
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2042,7 +2042,7 @@ def test_nested_reset_flash_masks_each_changed_input_widget(qapp) -> None:
     from dataclasses import field
 
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2113,7 +2113,7 @@ def test_local_field_edit_preserves_input_and_label_inside_opaque_context(qapp) 
     from dataclasses import field
 
     from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         LEAF_WIDGET_TYPES,
@@ -2121,7 +2121,7 @@ def test_local_field_edit_preserves_input_and_label_inside_opaque_context(qapp) 
         get_child_mask_path,
         resolve_mask_widgets,
     )
-    from PyQt6.QtGui import QColor
+    from PySide6.QtGui import QColor
     from pyqt_reactive.forms.parameter_form_manager import (
         FormManagerConfig,
         ParameterFormManager,
@@ -2179,8 +2179,8 @@ def test_local_field_edit_preserves_input_and_label_inside_opaque_context(qapp) 
 
 def test_widget_rect_flash_element_paints_visible_pixels_over_children(qapp) -> None:
     """Widget-rect flashes paint the target section itself, including child tables."""
-    from PyQt6.QtGui import QColor
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QTableWidget, QVBoxLayout
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QDialog, QGroupBox, QTableWidget, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2285,7 +2285,7 @@ def test_flash_coordinator_batches_queue_calls_until_event_loop(qapp) -> None:
 def test_groupbox_flash_cache_invalidates_when_mask_child_geometry_changes(qapp) -> None:
     """Cached rounded mask paths track child label/button geometry changes."""
 
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QLabel, QPushButton, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QGroupBox, QLabel, QPushButton, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2343,7 +2343,7 @@ def test_groupbox_flash_cache_invalidates_when_mask_child_geometry_changes(qapp)
 def test_groupbox_flash_cache_tracks_label_widget_geometry_not_text(qapp) -> None:
     """Text changes do not invalidate masks owned by unchanged widget geometry."""
 
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QLabel, QPushButton, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QGroupBox, QLabel, QPushButton, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2411,7 +2411,7 @@ def test_groupbox_flash_cache_tracks_label_widget_geometry_not_text(qapp) -> Non
 def test_full_groupbox_flash_uses_unmasked_visual_source(qapp) -> None:
     """Full groupbox flashes paint the whole rounded widget without child subtraction."""
 
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QLabel, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QGroupBox, QLabel, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import create_groupbox_element
 
@@ -2440,7 +2440,7 @@ def test_full_groupbox_flash_uses_unmasked_visual_source(qapp) -> None:
 def test_structural_masked_flash_invalidates_only_declared_geometry(qapp) -> None:
     """Structural masked flashes watch exact target geometry, not all descendants."""
 
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QLabel, QPushButton, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QGroupBox, QLabel, QPushButton, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2510,7 +2510,7 @@ def test_structural_masked_flash_invalidates_only_declared_geometry(qapp) -> Non
 def test_flash_region_cache_reuses_steady_state_key_set(qapp, monkeypatch) -> None:
     """Repeated animation frames reuse the derived region for unchanged active keys."""
 
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QLabel, QVBoxLayout
+    from PySide6.QtWidgets import QDialog, QGroupBox, QLabel, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2560,7 +2560,7 @@ def test_flash_region_cache_reuses_steady_state_key_set(qapp, monkeypatch) -> No
 def test_visual_frame_callbacks_coalesce_by_owner(qapp, qtbot) -> None:
     """Shared visual-frame callbacks keep one pending update per owner."""
 
-    from PyQt6.QtCore import QObject
+    from PySide6.QtCore import QObject
 
     from pyqt_reactive.animation import queue_visual_frame_callback
 
@@ -2576,8 +2576,8 @@ def test_visual_frame_callbacks_coalesce_by_owner(qapp, qtbot) -> None:
 def test_overlay_batches_multiple_keys_for_same_visual_source(qapp) -> None:
     """One visual target registered under multiple keys paints as one source."""
 
-    from PyQt6.QtGui import QColor
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QLabel, QVBoxLayout
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QDialog, QGroupBox, QLabel, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2637,7 +2637,7 @@ def test_overlay_batches_multiple_keys_for_same_visual_source(qapp) -> None:
 def test_flash_registration_skips_factory_for_existing_visual_source(qapp) -> None:
     """Duplicate widget-source registration avoids rebuilding the flash element."""
 
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
     from pyqt_reactive.animation.flash_mixin import (
         FlashElement,
@@ -2703,7 +2703,7 @@ def test_flash_overlay_cleanup_detaches_refreshed_event_sources(
     """Cleanup detaches retained event sources even after scroll discovery refreshes."""
     import sys
 
-    from PyQt6.QtWidgets import QDialog, QScrollArea, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import QDialog, QScrollArea, QVBoxLayout, QWidget
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -2773,9 +2773,9 @@ def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
     """Destroyed targets clean captured flash state without dereferencing the owner."""
     import sys
 
-    from PyQt6 import sip
-    from PyQt6.QtCore import QCoreApplication, QEvent
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout, QWidget
+    import shiboken6
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
     from pyqt_reactive.animation.flash_mixin import (
         VisualUpdateMixin,
@@ -2827,7 +2827,7 @@ def test_flash_lifecycle_cleanup_survives_owner_deletion_and_recreation(
     manager._simulate_deleted_wrapper = True
     manager.deleteLater()
     QCoreApplication.sendPostedEvents(manager, QEvent.Type.DeferredDelete)
-    assert sip.isdeleted(manager)
+    assert not shiboken6.isValid(manager)
     target.deleteLater()
     QCoreApplication.sendPostedEvents(target, QEvent.Type.DeferredDelete)
     qapp.processEvents()
@@ -2890,8 +2890,8 @@ def test_flash_lifecycle_cleanup_static_ast_has_no_owner_reference() -> None:
 def test_geometry_rebuild_reuses_duplicate_visual_source(qapp) -> None:
     """Fanout keys sharing one source reuse the same expensive geometry build."""
 
-    from PyQt6.QtCore import QRect
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout, QWidget
+    from PySide6.QtCore import QRect
+    from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
     from pyqt_reactive.animation.flash_mixin import (
         FlashElement, WindowFlashOverlay, mask_path_from_rect,
@@ -2952,8 +2952,8 @@ def test_geometry_rebuild_reuses_duplicate_visual_source(qapp) -> None:
 
 def test_dynamic_flash_registration_rebuilds_valid_geometry_cache(qapp) -> None:
     """Newly registered elements paint even when the overlay cache was already valid."""
-    from PyQt6.QtGui import QColor
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QTableWidget, QVBoxLayout
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QDialog, QGroupBox, QTableWidget, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -3011,8 +3011,8 @@ def test_dynamic_flash_registration_rebuilds_valid_geometry_cache(qapp) -> None:
 
 def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
     """The real local queue path must produce visible overlay pixels."""
-    from PyQt6.QtCore import QCoreApplication, QEvent
-    from PyQt6.QtWidgets import QDialog, QGroupBox, QVBoxLayout, QWidget
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QDialog, QGroupBox, QVBoxLayout, QWidget
 
     from pyqt_reactive.animation.flash_mixin import (
         VisualUpdateMixin,
@@ -3093,8 +3093,8 @@ def test_local_widget_rect_queue_paints_after_coordinator_tick(qapp) -> None:
 
 def test_table_cell_flash_element_paints_visible_cell_pixels(qapp) -> None:
     """Structural table-cell flashes paint the target cell, not just queue metadata."""
-    from PyQt6.QtGui import QColor
-    from PyQt6.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QVBoxLayout
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QVBoxLayout
 
     from pyqt_reactive.animation.flash_mixin import (
         WindowFlashOverlay,
@@ -3276,7 +3276,7 @@ def test_resolved_preview_placeholder_uses_cached_placeholder_text(qapp):
     """Inherited preview widgets are not repainted when placeholder text is unchanged."""
     from pyqt_reactive.forms.widget_strategies import (
         NoneAwareLineEdit,
-        PyQt6WidgetEnhancer,
+        PySide6WidgetEnhancer,
     )
     from pyqt_reactive.protocols import ResolvedValuePreviewSettable
 
@@ -3290,12 +3290,12 @@ def test_resolved_preview_placeholder_uses_cached_placeholder_text(qapp):
 
     widget = PreviewWidget()
 
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         widget,
         "resolved",
         "Pipeline default: resolved",
     )
-    PyQt6WidgetEnhancer.apply_placeholder_with_value(
+    PySide6WidgetEnhancer.apply_placeholder_with_value(
         widget,
         "resolved",
         "Pipeline default: resolved",
@@ -3350,7 +3350,7 @@ def test_none_aware_line_edit_debounces_text_commits(qapp):
 
 def test_none_aware_int_edit_preserves_committed_value_during_invalid_text(qapp):
     """Reactive refreshes can inspect transient invalid text without crashing."""
-    from PyQt6.QtGui import QValidator
+    from PySide6.QtGui import QValidator
 
     from pyqt_reactive.forms.widget_strategies import NoneAwareIntEdit
     from pyqt_reactive.services.widget_service import WidgetService
@@ -3406,9 +3406,9 @@ def test_multiline_delegate_plain_text_fallback_is_quiet(qapp, caplog):
     """List placeholder rows without structured layouts are normal rows."""
     import logging
 
-    from PyQt6.QtCore import QRect, Qt
-    from PyQt6.QtGui import QColor, QPainter, QPixmap
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QStyle, QStyleOptionViewItem
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QColor, QPainter, QPixmap
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyle, QStyleOptionViewItem
     from pyqt_reactive.widgets.shared.list_item_delegate import MultilinePreviewItemDelegate
 
     item_list = QListWidget()
@@ -3446,9 +3446,9 @@ def test_multiline_delegate_plain_text_fallback_is_quiet(qapp, caplog):
 
 def test_multiline_delegate_leading_marker_paints_visible_pixels(qapp):
     """Declared row markers render as visible debugger-style row chrome."""
-    from PyQt6.QtCore import QRect, Qt
-    from PyQt6.QtGui import QColor, QPainter, QPixmap
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QStyle, QStyleOptionViewItem
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QColor, QPainter, QPixmap
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyle, QStyleOptionViewItem
     from pyqt_reactive.widgets.shared.list_item_delegate import (
         LEADING_MARKER_ROLE,
         MultilinePreviewItemDelegate,
@@ -3493,8 +3493,8 @@ def test_multiline_delegate_leading_marker_paints_visible_pixels(qapp):
 
 def test_restore_selection_by_id_preserves_without_selection_signal(qapp):
     """Programmatic refresh selection does not emit semantic selection changes."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
     from pyqt_reactive.widgets.mixins import restore_selection_by_id
 
     item_list = QListWidget()
@@ -3530,8 +3530,8 @@ def test_restore_selection_by_id_preserves_without_selection_signal(qapp):
 
 def test_manager_reorder_resolves_transport_safe_identity_after_qt_move(qapp):
     """Qt drag MIME data stays scalar while the backing item is resolved by id."""
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
 
     from formbridge.managers.item_hooks import DictItemIdProjection, ManagerItemHooks
     from formbridge.managers.reorder_controller import (
@@ -3584,7 +3584,7 @@ def test_manager_reorder_resolves_transport_safe_identity_after_qt_move(qapp):
 
 def test_visual_update_batch_repaints_after_text_update(qapp):
     """Role-only list updates still need an explicit repaint after batching."""
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
     from pyqt_reactive.animation.flash_mixin import VisualUpdateMixin
 
     class VisualUpdateProbe(QWidget, VisualUpdateMixin):

@@ -5,9 +5,9 @@ from __future__ import annotations
 from math import ceil
 from pathlib import Path, PureWindowsPath
 
-from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QBrush, QTextCharFormat, QTextCursor, QTextDocument, QTextOption
-from PyQt6.QtWidgets import QTextBrowser
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QBrush, QTextCharFormat, QTextCursor, QTextDocument, QTextOption
+from PySide6.QtWidgets import QTextBrowser
 
 from formbridge.services.help_document import HelpDocument, HelpDocumentFormat
 from pyqt_reactive.theming import ColorScheme

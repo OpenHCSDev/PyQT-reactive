@@ -14,11 +14,11 @@ Key features:
 """
 
 from typing import Any, Optional, List, Type, Callable, Dict
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QCheckBox, QLineEdit, QSpinBox, QDoubleSpinBox, 
     QComboBox, QTextEdit, QAbstractSpinBox
 )
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 from pyqt_reactive.protocols import ValueGettable
 import logging
 
@@ -47,10 +47,10 @@ class WidgetService:
     def __init__(self):
         """Initialize widget service with dependencies."""
         from pyqt_reactive.forms.widget_operations import WidgetOperations
-        from pyqt_reactive.forms.widget_strategies import PyQt6WidgetEnhancer
+        from pyqt_reactive.forms.widget_strategies import PySide6WidgetEnhancer
 
         self.widget_ops = WidgetOperations
-        self.widget_enhancer = PyQt6WidgetEnhancer
+        self.widget_enhancer = PySide6WidgetEnhancer
 
     # ========== WIDGET FINDING (from WidgetFinderService) ==========
 

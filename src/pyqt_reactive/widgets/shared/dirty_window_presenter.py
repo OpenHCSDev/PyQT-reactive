@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
-from PyQt6.QtWidgets import QDialog, QLabel, QPushButton
+from PySide6.QtWidgets import QDialog, QLabel, QPushButton
 
 if TYPE_CHECKING:
     from objectstate import ObjectState

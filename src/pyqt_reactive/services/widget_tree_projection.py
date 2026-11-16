@@ -9,7 +9,7 @@ from functools import partial
 from typing import ClassVar, TypeAlias, TypeVar, cast
 
 from metaclass_registry import AutoRegisterMeta
-from PyQt6.QtCore import (
+from PySide6.QtCore import (
     QAbstractItemModel,
     QModelIndex,
     QPersistentModelIndex,
@@ -18,7 +18,7 @@ from PyQt6.QtCore import (
     Qt,
     QItemSelectionModel,
 )
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
     QAbstractSpinBox,

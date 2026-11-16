@@ -9,7 +9,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
 from objectstate import DottedFieldPath, ObjectState
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget
 
 if TYPE_CHECKING:
     from pyqt_reactive.forms.widget_creation_types import ParameterFormManager

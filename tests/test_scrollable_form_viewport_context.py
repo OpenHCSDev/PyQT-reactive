@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLineEdit, QScrollArea, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLineEdit, QScrollArea, QWidget
 
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import (
     ScrollableFormMixin,

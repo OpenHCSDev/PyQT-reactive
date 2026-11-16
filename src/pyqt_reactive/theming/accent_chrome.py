@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, TypeAlias
 
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor
 
 from .color_scheme import ColorScheme
 

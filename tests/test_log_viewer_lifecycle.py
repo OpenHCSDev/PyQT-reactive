@@ -5,9 +5,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, qInstallMessageHandler
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QStyleOptionViewItem
+from PySide6.QtCore import Qt, qInstallMessageHandler
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QStyleOptionViewItem
 from zmqruntime.messages import ProcessIdentity
 
 from formbridge.core.log_utils import LogType
@@ -31,7 +31,7 @@ from pyqt_reactive.widgets.log_viewer import (
 
 
 def test_log_delegate_uses_pyqt6_item_data_role(qtbot) -> None:
-    """Search and sizing must use PyQt6's scoped item-data enum."""
+    """Search and sizing must use PySide6's scoped item-data enum."""
 
     model = LogListModel()
     model.append_lines(["alpha", "matching line"])

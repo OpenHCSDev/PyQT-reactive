@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from objectstate import DottedFieldPath
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget
 
 
 class ParameterFormTreeIndex:

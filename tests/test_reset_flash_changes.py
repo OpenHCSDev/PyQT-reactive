@@ -6,8 +6,8 @@ import objectstate.config as config_module
 import pytest
 from objectstate import ObjectState, ObjectStateRegistry, set_base_config_type
 from objectstate.lazy_factory import LazyDataclassFactory
-from PyQt6.QtCore import QEvent
-from PyQt6.QtWidgets import QDialog, QVBoxLayout
+from PySide6.QtCore import QEvent
+from PySide6.QtWidgets import QDialog, QVBoxLayout
 
 from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
 from formbridge.flash_trace import FlashTrace

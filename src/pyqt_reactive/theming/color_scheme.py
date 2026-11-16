@@ -1,5 +1,5 @@
 """
-PyQt6 Color Scheme for OpenHCS GUI
+PySide6 Color Scheme for OpenHCS GUI
 
 Comprehensive color scheme system extending the LogColorScheme pattern to cover
 all GUI components. Provides centralized color management with theme support,
@@ -12,7 +12,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Self, Tuple
 
-from PyQt6.QtGui import QColor
+from PySide6.QtGui import QColor
 
 if TYPE_CHECKING:
     from .style_generator import StyleSheetGenerator
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ColorScheme:
     """
-    Comprehensive color scheme for OpenHCS PyQt6 GUI with semantic color names.
+    Comprehensive color scheme for OpenHCS PySide6 GUI with semantic color names.
     
     Extends the LogColorScheme pattern to cover all GUI components including
     windows, dialogs, widgets, and interactive elements. Supports light/dark
@@ -194,7 +194,7 @@ class ColorScheme:
         adjustments for better contrast on dark backgrounds.
 
         Returns:
-            PyQt6ColorScheme: Dark theme color scheme with enhanced contrast
+            PySide6ColorScheme: Dark theme color scheme with enhanced contrast
         """
         return cls(
             # Enhanced colors for dark backgrounds with better contrast
@@ -218,7 +218,7 @@ class ColorScheme:
         backgrounds while preserving the semantic meaning and visual hierarchy.
 
         Returns:
-            PyQt6ColorScheme: Light theme color scheme with appropriate contrast
+            PySide6ColorScheme: Light theme color scheme with appropriate contrast
         """
         return cls(
             # Base UI colors for light theme
@@ -301,7 +301,7 @@ class ColorScheme:
             config_path: Path to JSON config file (optional)
 
         Returns:
-            PyQt6ColorScheme: Loaded color scheme or default if file not found
+            PySide6ColorScheme: Loaded color scheme or default if file not found
         """
         if config_path and Path(config_path).exists():
             try:
