@@ -114,18 +114,29 @@ class StyleSheetGenerator:
             QLabel {{
                 color: {cs.to_hex(cs.text_secondary)};
             }}
-            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+            QCheckBox {{
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+        """ + self.generate_text_input_style()
+
+    def generate_text_input_style(self) -> str:
+        """Every field a user types into, one line or many: the input colours, a border,
+        and the focus border while it has focus. A dialog applies it to its fields; a
+        window applies it to a composer or editor it owns."""
+
+        cs = self.color_scheme
+        layout = layout_constants.CURRENT_LAYOUT
+        fields = ("QLineEdit", "QPlainTextEdit", "QTextEdit", "QSpinBox", "QDoubleSpinBox", "QComboBox")
+        return f"""
+            {", ".join(fields)} {{
                 background-color: {cs.to_hex(cs.input_bg)};
                 color: {cs.to_hex(cs.input_text)};
                 border: 1px solid {cs.to_hex(cs.input_border)};
                 border-radius: {layout.widget_corner_radius}px;
                 padding: 5px;
             }}
-            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
+            {", ".join(f"{field}:focus" for field in fields)} {{
                 border: 1px solid {cs.to_hex(cs.input_focus_border)};
-            }}
-            QCheckBox {{
-                color: {cs.to_hex(cs.text_primary)};
             }}
         """
 
