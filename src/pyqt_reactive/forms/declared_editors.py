@@ -17,10 +17,11 @@ from PySide6.QtWidgets import (
     QComboBox,
     QLineEdit,
     QTextEdit,
+    QVBoxLayout,
     QWidget,
 )
 
-from formbridge.forms.declared_fields import DeclaredField, DeclaredViews, Multiline
+from formbridge.forms.declared_fields import Multiline
 from formbridge.forms.value_editing import (
     ChoicesEditing,
     ControlConstruction,
@@ -32,14 +33,17 @@ from formbridge.forms.value_editing import (
     ValueEditing,
 )
 from pyqt_reactive.protocols.widget_adapters import PyQtWidgetMeta
+from python_introspect import AnnotationChoices
 
 
 class QtValueEditor(ValueEditing):
     """Shared Qt editing mixin — signal, feedback and paint.
 
     Shiboken's sbktype() caps at 3 bases, so the signal lives here.
-    Concrete editors: ControlConstruction + NativeControl + QtValueEditor,
-    metaclass=PyQtWidgetMeta.
+    Concrete editors: ControlConstruction + QtValueEditor + native control,
+    metaclass=PyQtWidgetMeta. The editing parents come before the Qt widget so
+    DeclaredViews takes each member's ``shows`` keyword before Shiboken's
+    ``__init_subclass__`` would swallow it.
     """
 
     feedback_changed = Signal(str)
@@ -57,7 +61,7 @@ class QtValueEditor(ValueEditing):
         """Repaint the control from the field's current value."""
 
 
-class QtBoolEditor(ControlConstruction, QCheckBox, QtValueEditor, metaclass=PyQtWidgetMeta, shows=(bool,)):
+class QtBoolEditor(ControlConstruction, QtValueEditor, QCheckBox, metaclass=PyQtWidgetMeta, shows=(bool,)):
 
     def control_arguments(self) -> dict[str, object]:
         return {}
@@ -75,20 +79,24 @@ class QtBoolEditor(ControlConstruction, QCheckBox, QtValueEditor, metaclass=PyQt
         self.blockSignals(False)
 
 
-class QtLineEditor(LineEditing, ControlConstruction, QLineEdit, QtValueEditor, metaclass=PyQtWidgetMeta):
+class QtLineEditor(LineEditing, ControlConstruction, QtValueEditor, QLineEdit, metaclass=PyQtWidgetMeta):
 
     def control_arguments(self) -> dict[str, object]:
         return {}
 
     def bind_control(self) -> None:
         self.setText(self.value_text(self.field.value))
-        self.editingFinished.connect(self._on_finished)
+        self.editingFinished.connect(self.finish)
 
     def read_text(self) -> str:
         return self.text()
 
-    def _on_finished(self) -> None:
-        text = self.text()
+    def finish(self) -> None:
+        """Commit the typed text: on Enter, on leaving the control, or when the form
+        finishes before it reads its values."""
+        text = self.read_text()
+        if text == self.value_text(self.field.value):
+            return
         try:
             value = self.read(text)
         except (TypeError, ValueError) as error:
@@ -117,7 +125,7 @@ class QtStrEditor(QtLineEditor, shows=(str,)):
     pass
 
 
-class QtMultilineEditor(MultilineEditing, ControlConstruction, QTextEdit, QtValueEditor, metaclass=PyQtWidgetMeta, shows=(Multiline,)):
+class QtMultilineEditor(MultilineEditing, ControlConstruction, QtValueEditor, QTextEdit, metaclass=PyQtWidgetMeta, shows=(Multiline,)):
 
     def control_arguments(self) -> dict[str, object]:
         return {}
@@ -138,7 +146,7 @@ class QtMultilineEditor(MultilineEditing, ControlConstruction, QTextEdit, QtValu
             self.blockSignals(False)
 
 
-class QtSelectEditor(SelectEditing, ControlConstruction, QComboBox, QtValueEditor, metaclass=PyQtWidgetMeta):
+class QtSelectEditor(SelectEditing, ControlConstruction, QtValueEditor, QComboBox, metaclass=PyQtWidgetMeta):
 
     def control_arguments(self) -> dict[str, object]:
         return {}
@@ -170,7 +178,7 @@ class QtSelectEditor(SelectEditing, ControlConstruction, QComboBox, QtValueEdito
         self._paint_selection()
 
 
-class QtChoicesEditor(ChoicesEditing, QtSelectEditor, shows=(object,)):
+class QtChoicesEditor(ChoicesEditing, QtSelectEditor, shows=(AnnotationChoices,)):
 
     def paint(self) -> None:
         self.blockSignals(True)
@@ -185,13 +193,12 @@ class QtEnumEditor(EnumEditing, QtSelectEditor, shows=(Enum,)):
     pass
 
 
-class QtOptionalEditor(OptionalEditing, ControlConstruction, QWidget, QtValueEditor, metaclass=PyQtWidgetMeta, shows=(Optional,)):
+class QtOptionalEditor(OptionalEditing, ControlConstruction, QtValueEditor, QWidget, metaclass=PyQtWidgetMeta, shows=(Optional,)):
 
     def control_arguments(self) -> dict[str, object]:
         return {}
 
     def bind_control(self) -> None:
-        from PySide6.QtWidgets import QVBoxLayout
         self._checkbox = QCheckBox("Set", self)
         self._member_editor = QtValueEditor.declared_for(self.field.member)
         layout = QVBoxLayout(self)
