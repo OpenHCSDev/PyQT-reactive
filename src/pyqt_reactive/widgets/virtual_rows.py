@@ -3,7 +3,8 @@
 Only the rows on screen are laid out. Each row's document and height are cached by the
 row, its font and the width it is laid out at. A row's expensive formatting is prepared
 on the delegate's thread pool while the row paints plain, and a finished preparation
-repaints the viewport once per frame however many rows finish in it.
+repaints the viewport once per frame however many rows finish in it. A suspended
+application (Android, once the reader switches away) lets its laid-out documents go.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAbstractTextDocumentLayout, QFont, QTextDocument
+from PySide6.QtGui import QAbstractTextDocumentLayout, QFont, QGuiApplication, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QListView,
@@ -122,6 +123,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._viewport_update_timer.setSingleShot(True)
         self._viewport_update_timer.setInterval(16)
         self._viewport_update_timer.timeout.connect(self._update_viewport)
+        QGuiApplication.instance().applicationStateChanged.connect(self._application_state_changed)
 
     # What a member says about its rows
 
@@ -206,9 +208,18 @@ class RowDocumentDelegate(QStyledItemDelegate):
     def _update_viewport(self) -> None:
         self.view.rows_changed()
 
+    def _application_state_changed(self, state: Qt.ApplicationState) -> None:
+        if state is Qt.ApplicationState.ApplicationSuspended:
+            self.release_documents()
+
+    def release_documents(self) -> None:
+        """The laid-out documents go: the rows on screen lay theirs out again from the
+        prepared formatting when they next paint. Heights stay, so no row moves."""
+        self._documents.clear()
+
     def width_changed(self) -> None:
         """Documents and heights hold one width; prepared formatting may hold any."""
-        self._documents.clear()
+        self.release_documents()
         self._size_hints.clear()
 
     def forget_rows(self) -> None:
