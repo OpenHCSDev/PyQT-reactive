@@ -89,3 +89,27 @@ def test_a_suspended_application_lets_row_documents_go_and_keeps_rows_in_place(q
         assert view.visualRect(index) == place
     finally:
         view.rows.cleanup()
+
+
+def test_measured_height_is_cached_by_key_and_dropped_when_formatting_arrives(qtbot) -> None:
+    """A row is laid out into a document once per width, and re-measures only when its
+    prepared formatting replaces the plain one it was measured under."""
+    delegate = BoldRows()
+    qtbot.addWidget(VirtualRowView(delegate))
+    font = QFont()
+    key = ("row 3", font.family(), font.pointSize())
+    try:
+        plain = delegate.measured_height(key, font, 300, PlainRow("row 3"))
+        # A second call under the same key returns the cached height: the different
+        # formatting it is handed is never laid out, because the key is already measured.
+        assert delegate.measured_height(key, font, 300, BoldRow("row 3")) == plain
+        assert (key, 300) in delegate._size_hints
+        # A different width is a different measurement.
+        assert (key, 150) not in delegate._size_hints
+        # When the row's prepared formatting arrives, its cached height is dropped, so the
+        # next measurement lays out the taller prepared row.
+        delegate._row_prepared(key, BoldRow("row 3"))
+        assert (key, 300) not in delegate._size_hints
+        assert delegate.measured_height(key, font, 300, BoldRow("row 3")) > plain
+    finally:
+        delegate.cleanup()
