@@ -2282,7 +2282,10 @@ class LogViewerWindow(QMainWindow):
             self.log_model.append_lines([f"Loading log file ({file_size // 1024} KB)..."])
 
             # Create and start async loader
-            self.file_loader = LogFileLoader(log_path, parent=self)
+            # The viewer's loader set is the loader's one owner: no Qt parent, no deleteLater.
+            # A finished loader leaves the set and Python frees it; cleanup waits for every
+            # running one before clearing the set, so no thread object dies while running.
+            self.file_loader = LogFileLoader(log_path)
             self._file_loaders.add(self.file_loader)
             self.file_loader.chunk_loaded.connect(self._on_file_chunk_loaded)
             self.file_loader.load_finished.connect(self._on_file_load_finished)
@@ -2312,7 +2315,6 @@ class LogViewerWindow(QMainWindow):
         if loader is self.file_loader:
             return
         self._file_loaders.discard(loader)
-        loader.deleteLater()
 
     def _on_file_chunk_loaded(self, loader: LogFileLoader, lines: list) -> None:
         """Handle a chunk of lines loaded from subprocess."""
