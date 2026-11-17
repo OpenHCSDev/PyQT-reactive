@@ -190,6 +190,23 @@ class RowDocumentDelegate(QStyledItemDelegate):
         document.setTextWidth(self.text_width(width))
         return document
 
+    def measured_height(self, key: Hashable, font: QFont, width: int, formatting: RowFormatting) -> int:
+        """How tall `formatting` is at `width`, cached by (key, width).
+
+        The row measurement sizeHint caches, offered to a caller that has a row's key and
+        formatting but no model index — a pager summing the pixels its loaded rows take.
+        The cache is shared with sizeHint, so a row is laid out into a document once per
+        width however many times its height is asked for, and a row whose prepared
+        formatting arrives drops its cached height the same frame its documents do.
+        """
+        cache_key = (key, width)
+        size = self._size_hints.get(cache_key)
+        if size is None:
+            document = self.new_document(font, width)
+            formatting.fill(document)
+            size = self._size_hints[cache_key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+        return size.height()
+
     def _row_prepared(self, key: Hashable, prepared: RowFormatting) -> None:
         if self._stopped:
             return

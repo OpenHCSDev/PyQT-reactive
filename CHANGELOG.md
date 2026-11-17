@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+`RowDocumentDelegate.measured_height(key, font, width, formatting)` returns a row's
+height from the same cache `sizeHint` fills, keyed by `(key, width)` and dropped when the
+row's prepared formatting arrives. A caller that measures rows by key outside a paint — a
+pager summing the pixels its loaded rows take on every scrolled frame — lays each row into
+a document once per width instead of rendering it afresh every frame (#53).
+
 ## 0.10.0
 
 Runs on PySide6 (`PySide6-Essentials>=6.12.0`) instead of PyQt6 (#37, #39).
