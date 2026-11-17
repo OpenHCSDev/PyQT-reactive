@@ -25,16 +25,16 @@ keywords = ["pyside6", "forms", "reactive", "gui", "widgets", "dataclass"]
 
 dependencies = [
     "annotated-types>=0.7.0",
-    "formbridge>=0.2.0,<0.3",
+    "formbridge>=0.2.0",
     "magicgui>=0.7.0",
-    "metaclass-registry>=0.5.0,<0.6",
+    "metaclass-registry>=0.5.0",
     "PySide6-Essentials>=6.12.0",
-    "objectstate>=5.0.0,<6",
+    "objectstate>=5.0.0",
     "psutil>=5.9",
     "Pygments>=2.15",
-    "python-introspect>=0.4.0,<0.5",
+    "python-introspect>=0.4.0",
     "ui-theme",
-    "zmqruntime>=0.6.5,<0.7",
+    "zmqruntime>=0.6.5",
 ]
 
 [project.optional-dependencies]
