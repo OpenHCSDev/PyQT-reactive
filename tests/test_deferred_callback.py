@@ -23,7 +23,7 @@ def destroy(owner):
     assert not shiboken6.isValid(owner)
 
 
-def test_deferred_callback_runs_once_and_retires(qapp):
+def test_deferred_callback_runs_once_and_owner_owns_it(qapp):
     owner = QObject()
     calls = []
     timer = DeferredCallback(owner, 0, lambda: calls.append(owner))
@@ -31,12 +31,35 @@ def test_deferred_callback_runs_once_and_retires(qapp):
     assert calls == []
     qapp.processEvents()
     assert calls == [owner]
+    # The owner is the one lifetime owner: the timer stops but stays in the tree
+    # until the owner dies. No self-scheduled delete, so no DeferredDelete race
+    # with the owner's own destruction cascade.
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert not shiboken6.isValid(timer)
-    assert owner.children() == []
+    assert shiboken6.isValid(timer)
+    assert not timer.isActive()
+    assert owner.children() == [timer]
     qapp.processEvents()
     assert calls == [owner]
     destroy(owner)
+    assert not shiboken6.isValid(timer)
+
+
+def test_parentless_owner_drop_mid_eventloop_does_not_segfault(qapp):
+    """Regression for bus 2f8b474c7a7c: a DeferredCallback whose owner is a local
+    widget dropped mid-event-loop used to post ``DeferredDelete`` from its slot,
+    race the owner's child-cascade delete, and SIGSEGV in
+    ``QTimer::~QTimer -> QTimer::stop -> QPropertyBindingData``. Keeping the owner
+    as the one lifetime owner removes the race."""
+
+    def fire_and_drop():
+        combo = QComboBox()
+        DeferredCallback(combo, 0, lambda: None)
+        qapp.processEvents()  # fires the timer; previously also posted its deleteLater
+
+    fire_and_drop()
+    qapp.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()  # the second pass is where the previous release crashed
 
 
 def test_repeating_callback_runs_until_stopped_or_owner_destroyed(qapp):
