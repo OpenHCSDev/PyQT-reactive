@@ -443,6 +443,38 @@ class StyleSheetGenerator:
             }}
         """
 
+    def generate_sidebar_pane_style(self) -> str:
+        """QStyleSheet for a formbridge `SidebarPane` background: paints the scheme's
+        sidebar tone on the pane itself and its direct `QWidget` children (the content
+        and placement-control band) instead of letting the pane leak its parent's
+        colour. Mirrors Textual's `SideBar.tone = SidebarToneColour` — the same
+        declaration both backends are supposed to honour. The `#SidebarPane` object-name
+        selector is set by the pane constructor so this doesn't bleed into unrelated
+        QWidget children of the same ancestors.
+        """
+        cs = self.color_scheme
+        return f"""
+            QWidget#SidebarPane, QWidget#SidebarPane > QWidget {{
+                background-color: {cs.to_hex(cs.panel_bg)};
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+        """
+
+    def generate_sidebar_bar_style(self) -> str:
+        """QStyleSheet for a formbridge `SidebarToggle`: a sliver along the pane's edge
+        that reads as a header strip against the pane's own tone. Mirrors Textual's
+        toggle-bar CSS at `widgets/side_bar.py:322` which uses `PrimaryColour` tinted
+        8% as its background; here we read the already-tinted `frame_bg`
+        (HeaderToneColour) so the two sides agree on which tone names the bar.
+        """
+        cs = self.color_scheme
+        return f"""
+            QWidget#SidebarToggle, QWidget#SidebarToggle > QWidget {{
+                background-color: {cs.to_hex(cs.frame_bg)};
+                color: {cs.to_hex(cs.text_primary)};
+            }}
+        """
+
     def generate_tab_color_style(self) -> str:
         """Color native tab controls without changing their layout geometry."""
 
