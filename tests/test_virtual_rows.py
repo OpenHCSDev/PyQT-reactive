@@ -142,3 +142,17 @@ def test_a_page_of_rows_arrives_as_one_batch(qtbot) -> None:
                    for row in range(40))
     finally:
         view.rows.cleanup()
+
+
+def test_a_scroll_moves_only_the_part_nothing_floats_over():
+    """A pinned header across the top and an overlay bar down the right edge: the rows below the
+    header and left of the bar are moved by their pixels; only the covered bands repaint."""
+    from PySide6.QtCore import QRect
+
+    from pyqt_reactive.widgets.virtual_rows import VirtualRowView
+
+    viewport = QRect(0, 0, 400, 800)
+    header, bar = QRect(0, 0, 400, 60), QRect(392, 0, 8, 800)
+    assert VirtualRowView.uncovered(viewport, [header, bar]) == QRect(0, 60, 392, 740)
+    assert VirtualRowView.uncovered(viewport, []) == viewport
+    assert VirtualRowView.uncovered(viewport, [viewport]).isEmpty()
