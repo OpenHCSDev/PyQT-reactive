@@ -24,6 +24,7 @@ from ui_theme.scheme import (
     HeaderToneColour,
     MutedColour,
     PrimaryColour,
+    SelectedTabToneColour,
     SidebarToneColour,
     SuccessColour,
     SurfaceHoverColour,
@@ -56,7 +57,9 @@ class ColorScheme:
     panel_bg: Tuple[int, int, int] = (30, 30, 30)       # #1e1e1e - Panel/widget backgrounds
     frame_bg: Tuple[int, int, int] = (43, 43, 43)       # #2b2b2b - Frame backgrounds
     alternate_row_bg: Tuple[int, int, int] = (30, 30, 30) # #1e1e1e - Every other row of a list or tree
-    
+    tab_bg: Tuple[int, int, int] = (64, 64, 64)          # #404040 - A tab that is not the open one
+    selected_tab_bg: Tuple[int, int, int] = (30, 30, 30) # #1e1e1e - The open tab
+
     # Borders and Separators
     border_color: Tuple[int, int, int] = (85, 85, 85)   # #555555 - Primary borders
     border_light: Tuple[int, int, int] = (102, 102, 102) # #666666 - Secondary borders
@@ -244,6 +247,8 @@ class ColorScheme:
             panel_bg=(255, 255, 255),           # White panel background
             frame_bg=(240, 240, 240),           # Light frame background
             alternate_row_bg=(255, 255, 255),   # Every other row: the panel's own white
+            tab_bg=(230, 230, 230),             # A tab that is not the open one
+            selected_tab_bg=(255, 255, 255),    # The open tab
             border_color=(180, 180, 180),       # Medium gray borders
             border_light=(160, 160, 160),       # Lighter borders
             separator_color=(200, 200, 200),    # Light separators
@@ -333,6 +338,8 @@ class ColorScheme:
             panel_bg=colour(SidebarToneColour),
             frame_bg=colour(HeaderToneColour),
             alternate_row_bg=colour(AlternateRowToneColour),
+            tab_bg=colour(HeaderToneColour),
+            selected_tab_bg=colour(SelectedTabToneColour),
             border_color=step(0.25),
             border_light=step(0.35),
             separator_color=step(0.15),
