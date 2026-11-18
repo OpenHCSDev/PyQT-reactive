@@ -28,6 +28,7 @@ from PySide6.QtCore import (
     QModelIndex,
     QObject,
     QPersistentModelIndex,
+    QRect,
     QRunnable,
     QSize,
     Qt,
@@ -35,7 +36,14 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAbstractTextDocumentLayout, QFont, QFontMetrics, QGuiApplication, QTextDocument
+from PySide6.QtGui import (
+    QAbstractTextDocumentLayout,
+    QFont,
+    QFontMetrics,
+    QGuiApplication,
+    QRegion,
+    QTextDocument,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QListView,
@@ -493,6 +501,52 @@ class VirtualRowView(QListView):
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802 - Qt virtual method name
+        """Move the drawn rows' pixels and repaint only what floats over them.
+
+        Qt scrolls a viewport by moving its pixels and painting the strip that came into view,
+        unless a sibling widget overlaps what it scrolls: then it repaints the whole viewport,
+        every row's text again. A view with something floating over its rows (a pinned header,
+        an overlay scrollbar, a jump button) repainted all of it on every frame of a glide,
+        which a phone cannot do at 120 Hz (Tristan, Pixel 8a, 2026-11-18). This scrolls the
+        largest part of the viewport nothing floats over, by moving its pixels, and repaints
+        the parts under the floating widgets."""
+        viewport = self.viewport()
+        covers = self.floating_over()
+        clear = self.uncovered(viewport.rect(), covers) if covers and not dx else QRect()
+        if clear.isEmpty():
+            super().scrollContentsBy(dx, dy)
+            return
+        viewport.scroll(dx, dy, clear)
+        viewport.update(QRegion(viewport.rect()).subtracted(QRegion(clear)))
+
+    def floating_over(self) -> list[QRect]:
+        """Where the visible widgets floating over the viewport cover it, in its coordinates:
+        this view's other children that overlap it (its scroll bars sit beside it)."""
+        viewport = self.viewport()
+        area = viewport.geometry()
+        return [child.geometry().intersected(area).translated(-area.topLeft())
+                for child in self.children()
+                if isinstance(child, QWidget) and child is not viewport and child.isVisible()
+                and child.geometry().intersects(area)]
+
+    @staticmethod
+    def uncovered(rect: QRect, covers: list[QRect]) -> QRect:
+        """The largest rectangle of `rect` that no cover overlaps, found one cover at a time:
+        each leaves the biggest of the bands above, below, left and right of it."""
+        for cover in sorted(covers, key=lambda cover: cover.width() * cover.height(), reverse=True):
+            if not rect.intersects(cover):
+                continue
+            left, top, width, height = rect.left(), rect.top(), rect.width(), rect.height()
+            bands = (QRect(left, top, width, cover.top() - top),
+                     QRect(left, cover.bottom() + 1, width, rect.bottom() - cover.bottom()),
+                     QRect(left, top, cover.left() - left, height),
+                     QRect(cover.right() + 1, top, rect.right() - cover.right(), height))
+            rect = max(bands, key=lambda band: max(0, band.width()) * max(0, band.height()))
+            if rect.width() <= 0 or rect.height() <= 0:
+                return QRect()
+        return rect
 
     @property
     def at_end(self) -> bool:
