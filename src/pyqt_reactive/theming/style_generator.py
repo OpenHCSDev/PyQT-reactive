@@ -479,8 +479,6 @@ class StyleSheetGenerator:
         """Color native tab controls without changing their layout geometry."""
 
         cs = self.color_scheme
-        inactive_tab_bg = cs.button_normal_bg
-        selected_tab_bg = cs.panel_bg
         return f"""
             QTabWidget::pane {{
                 background-color: {cs.to_hex(cs.panel_bg)};
@@ -490,11 +488,11 @@ class StyleSheetGenerator:
                 color: {cs.to_hex(cs.text_primary)};
             }}
             QTabBar::tab {{
-                background-color: {cs.to_hex(inactive_tab_bg)};
+                background-color: {cs.to_hex(cs.tab_bg)};
                 color: {cs.to_hex(cs.text_secondary)};
             }}
             QTabBar::tab:selected {{
-                background-color: {cs.to_hex(selected_tab_bg)};
+                background-color: {cs.to_hex(cs.selected_tab_bg)};
                 color: {cs.to_hex(cs.text_primary)};
             }}
             QTabBar::tab:hover {{
