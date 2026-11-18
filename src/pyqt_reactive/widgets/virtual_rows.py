@@ -174,6 +174,16 @@ class DetachedRows:
         return False
 
 
+class RowSize:
+    """One model row's measured size at a layout's font and width, and the preparation key it
+    was measured under, so the row's new formatting (`_row_prepared`) drops it."""
+
+    __slots__ = ("key", "size", "estimated")
+
+    def __init__(self, key: Hashable, size: QSize | None, estimated: bool = False) -> None:
+        self.key, self.size, self.estimated = key, size, estimated
+
+
 class RowDocumentDelegate(QStyledItemDelegate):
     """Paints each row as a QTextDocument at the view's width.
 
@@ -210,6 +220,18 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._viewport_update_timer.setSingleShot(True)
         self._viewport_update_timer.setInterval(16)
         self._viewport_update_timer.timeout.connect(self._update_viewport)
+        # Each model row's measured size, aligned with the model's rows, at the font and width
+        # they were measured for (`_row_sizes_for`). Qt's list layout asks every row's size
+        # on each layout; while one runs (`_layout_for`), a row answers from here without
+        # building a style option or a preparation key. The view keeps them aligned with the
+        # model's inserts, removals and changes, so rows that arrive are the only ones measured.
+        # A kept size answers without asking the row's preparation key again: a member whose
+        # key for a row changes with no model signal (a look changed in place) emits the
+        # model's dataChanged for that row, or calls forget_row_sizes when every key changes.
+        self._row_sizes: list[RowSize | None] = []
+        self._row_size_keys: dict[Hashable, list[RowSize]] = {}
+        self._row_sizes_for: Hashable = None
+        self._layout_for: Hashable = None
         # Rows a layout estimated, away from the reader: measured a slice at a time.
         self._unmeasured: dict[QPersistentModelIndex, None] = {}
         self._measure_timer = QTimer(self)
@@ -344,6 +366,8 @@ class RowDocumentDelegate(QStyledItemDelegate):
         for width in self._cached_widths.pop(key, ()):
             self._documents.pop((key, width), None)
             self._size_hints.pop((key, width), None)
+        for kept in self._row_size_keys.pop(key, ()):
+            kept.size = None
         if not self._viewport_update_timer.isActive():
             self._viewport_update_timer.start()
 
@@ -364,6 +388,68 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self.release_documents()
         self._size_hints.clear()
         self._cached_widths.clear()
+        self.forget_row_sizes()
+
+    # Row sizes kept aligned with the model's rows
+
+    def forget_row_sizes(self) -> None:
+        """Every row is measured again, from the key-and-width cache, at the next layout: what a
+        member calls when every row's preparation key changes at once (a new style or links)."""
+        self._row_sizes = []
+        self._row_size_keys.clear()
+        self._row_sizes_for = None
+
+    def begin_layout(self, font: QFont, width: int, rows: int) -> None:
+        """A layout of `rows` rows at this font and width starts: rows answer their kept size."""
+        layout = (font.key(), width)
+        if layout != self._row_sizes_for or len(self._row_sizes) != rows:
+            self._row_sizes = [None] * rows
+            self._row_size_keys.clear()
+            self._row_sizes_for = layout
+        self._layout_for = layout
+
+    def end_layout(self) -> None:
+        self._layout_for = None
+
+    def rows_inserted(self, first: int, last: int) -> None:
+        """Rows arrived: each starts unmeasured; every other row keeps its size."""
+        if self._row_sizes_for is not None and first <= len(self._row_sizes):
+            self._row_sizes[first:first] = [None] * (last - first + 1)
+        else:
+            self.forget_row_sizes()
+
+    def rows_removed(self, first: int, last: int) -> None:
+        if self._row_sizes_for is not None and last < len(self._row_sizes):
+            del self._row_sizes[first:last + 1]
+        else:
+            self.forget_row_sizes()
+
+    def rows_data_changed(self, first: int, last: int) -> None:
+        """A row's content changed: it is measured again; the others keep their sizes."""
+        sizes = self._row_sizes
+        for row in range(first, min(last + 1, len(sizes))):
+            sizes[row] = None
+
+    def kept_size(self, row: int, *, measured: bool = False) -> QSize | None:
+        """The row's kept size while a layout runs (only a measured one when `measured`)."""
+        if self._layout_for is None or row >= len(self._row_sizes):
+            return None
+        kept = self._row_sizes[row]
+        if kept is None or kept.size is None or (measured and kept.estimated):
+            return None
+        return kept.size
+
+    def keep_row_size(
+        self, row: int, key: Hashable, size: QSize, *, estimated: bool = False
+    ) -> None:
+        """A row's size at the width the kept sizes are for keeps until the row changes: its
+        measured size, or (away from the reader) its estimate until a slice measures it."""
+        sizes, layout = self._row_sizes, self._row_sizes_for
+        if layout is None or row >= len(sizes) or size.width() != layout[1]:
+            return
+        kept = RowSize(key, size, estimated)
+        sizes[row] = kept
+        self._row_size_keys.setdefault(key, []).append(kept)
 
     def forget_rows(self) -> None:
         """Every cached formatting, document and height goes, as when the rows are replaced."""
@@ -418,32 +504,41 @@ class RowDocumentDelegate(QStyledItemDelegate):
         return self.final_document(index, option.font, option.rect.width())
 
     def sizeHint(self, option, index) -> QSize:  # type: ignore[override]
+        if (kept := self.kept_size(index.row())) is not None:
+            return kept
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         width = self.available_width(opt)
-        size = self._size_hints.get((self.preparation_key(index, opt.font, width), width))
+        key = self.preparation_key(index, opt.font, width)
+        size = self._size_hints.get((key, width))
         if size is not None:
+            self.keep_row_size(index.row(), key, size)
             return size
         if self.view.estimating():
             # Away from the reader: an estimate now, measured between frames.
             self._unmeasured[QPersistentModelIndex(index)] = None
             if not self._measure_timer.isActive():
                 self._measure_timer.start()
-            return self.estimated_size(index, opt.font, width)
+            size = self.estimated_size(index, opt.font, width)
+            self.keep_row_size(index.row(), key, size, estimated=True)
+            return size
         return self.measured_size(index, opt.font, width)
 
     def measured_size(self, index: QModelIndex, font: QFont, width: int) -> QSize:
         """The row's height laid out at `width`, kept; a pending row's estimate, not kept, so
         its arrival lays it out once."""
+        if (kept := self.kept_size(index.row(), measured=True)) is not None:
+            return kept
         key = (self.preparation_key(index, font, width), width)
         size = self._size_hints.get(key)
-        if size is not None:
-            return size
-        document = self.final_document(index, font, width)
-        if document is None:
-            return self.estimated_size(index, font, width)
-        size = self._size_hints[key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
-        self._cached_widths.setdefault(key[0], set()).add(width)
+        if size is None:
+            document = self.final_document(index, font, width)
+            if document is None:
+                return self.estimated_size(index, font, width)
+            height = int(document.size().height()) + self.ROW_PADDING
+            size = self._size_hints[key] = QSize(width, height)
+            self._cached_widths.setdefault(key[0], set()).add(width)
+        self.keep_row_size(index.row(), key[0], size)
         return size
 
     def estimated_size(self, index: QModelIndex, font: QFont, width: int) -> QSize:
@@ -488,6 +583,10 @@ class VirtualRowView(QListView):
     """
 
     END_SLACK = 10
+    _row_connections: tuple = ()
+    _layouts = 0
+    """Layouts run, so a layout that found its reader by running a pending one stops there."""
+    """The model signals this view's kept row sizes follow, to disconnect on the next model."""
     MEASURED_VIEWPORTS = 2
     """A layout lays out the rows within this many viewports above and below the reader's
     row; the delegate measures the rest between frames."""
@@ -602,8 +701,12 @@ class VirtualRowView(QListView):
         top; the newest while nothing is laid out yet."""
         model = self.model()
         count = model.rowCount() if model is not None else 0
+        if self.at_end:
+            # Asked before `indexAt`, which runs a pending layout first: rows that just arrived
+            # under a reader at the end would otherwise lay the view out inside this layout.
+            return count - 1
         top = self.indexAt(self.viewport().rect().topLeft())
-        return top.row() if top.isValid() and not self.at_end else count - 1
+        return top.row() if top.isValid() else count - 1
 
     def doItemsLayout(self) -> None:  # type: ignore[override]
         """Measure the rows within `MEASURED_VIEWPORTS` viewports of the reader, then lay the
@@ -612,19 +715,55 @@ class VirtualRowView(QListView):
         if model is None or model.rowCount() == 0:
             super().doItemsLayout()
             return
+        laid_out = self._layouts
         reader, reach = self.reader_row(), self.MEASURED_VIEWPORTS * max(1, self.viewport().height())
+        if self._layouts != laid_out:
+            return  # finding the reader ran the pending layout, which did all of this
         font, width = self.font(), self.viewport_width() or 800
-        for rows in (range(reader, model.rowCount()), range(reader - 1, -1, -1)):
-            covered = 0
-            for row in rows:
-                if covered >= reach:
-                    break
-                covered += self.rows.measured_size(model.index(row, 0), font, width).height()
-        self._estimating = True
+        self.rows.begin_layout(font, width, model.rowCount())
         try:
-            super().doItemsLayout()
+            for rows in (range(reader, model.rowCount()), range(reader - 1, -1, -1)):
+                covered = 0
+                for row in rows:
+                    if covered >= reach:
+                        break
+                    covered += self.rows.measured_size(model.index(row, 0), font, width).height()
+            self._estimating = True
+            try:
+                super().doItemsLayout()
+            finally:
+                self._estimating = False
         finally:
-            self._estimating = False
+            self.rows.end_layout()
+            self._layouts += 1
+
+    def setModel(self, model) -> None:  # type: ignore[override]  # noqa: N802
+        """The rows' kept sizes follow this model's inserts, removals and changes, so a layout
+        after rows arrive measures only them; a reset or reordering measures every row again."""
+        for signal, slot in self._row_connections:
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass  # the previous model is already gone
+        self._row_connections = ()
+        self.rows.forget_row_sizes()
+        super().setModel(model)
+        if model is not None:
+            self._row_connections = self._row_signals(model)
+            for signal, slot in self._row_connections:
+                signal.connect(slot)
+
+    def _row_signals(self, model):
+        rows = self.rows
+        return (
+            (model.rowsInserted, lambda parent, first, last: rows.rows_inserted(first, last)),
+            (model.rowsRemoved, lambda parent, first, last: rows.rows_removed(first, last)),
+            (model.dataChanged,
+             lambda top, bottom, roles=(): rows.rows_data_changed(top.row(), bottom.row())),
+            (model.modelReset, rows.forget_row_sizes),
+            (model.layoutChanged, lambda *args: rows.forget_row_sizes()),
+            (model.rowsMoved, lambda *args: rows.forget_row_sizes()),
+        )
 
     def viewport_width(self) -> int:
         return self.viewport().width()
