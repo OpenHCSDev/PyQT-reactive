@@ -10,7 +10,7 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
 from .color_scheme import ColorScheme
@@ -162,6 +162,15 @@ class ThemeManager:
         """Switch to light theme variant."""
         self.apply_color_scheme(ColorScheme.create_light_theme())
     
+    # Qt platform plugins whose own file dialog is the system's picker: on these an
+    # application's files live behind content providers that only it can open.
+    NATIVE_DIALOG_PLATFORMS = frozenset({"android", "ios"})
+
+    @classmethod
+    def native_dialogs_required(cls, platform_name: str) -> bool:
+        """Whether ``platform_name`` (QGuiApplication.platformName()) keeps native dialogs."""
+        return platform_name in cls.NATIVE_DIALOG_PLATFORMS
+
     def apply_color_scheme(self, color_scheme: ColorScheme):
         """
         Apply a new color scheme to the entire application.
@@ -175,10 +184,13 @@ class ThemeManager:
         # Native file dialogs are painted by the host OS and bypass both the
         # shared Qt palette and the application stylesheet.  Select Qt's
         # inherited dialog implementation once at the application boundary so
-        # every QFileDialog caller receives the active theme automatically.
+        # every QFileDialog caller receives the active theme automatically -
+        # except on a phone, where the system's picker is the only way into
+        # its storage (content providers, photos, cloud drives): Qt's widget
+        # dialog there lists only the app's own directories.
         QApplication.setAttribute(
             Qt.ApplicationAttribute.AA_DontUseNativeDialogs,
-            True,
+            not self.native_dialogs_required(QGuiApplication.platformName()),
         )
         
         # Apply to application
