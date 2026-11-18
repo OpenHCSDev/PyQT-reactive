@@ -1,14 +1,16 @@
 """Rows drawn as rich-text documents in a virtual list.
 
-Only the rows on screen are laid out, and each is laid out once, in its final form. A
-row's expensive formatting is prepared on the delegate's thread pool; until it arrives the
-row stands in at a height estimated from its plain text's lines and paints that text plain,
-with no document laid out for it. Each row's document and height are cached by the row, its
-font and the width it is laid out at, for final formatting only, so an arrival has nothing
-to drop. Preparations reach the GUI thread in batches (when the pool's queue empties, and
-at most every `BATCH_SECONDS` while it works), and each batch lays the view out once. A
-suspended application (Android, once the reader switches away) lets its laid-out documents
-go.
+Each row is laid out once, in its final form, and a layout of the view lays out only the
+rows near the reader: those within `MEASURED_VIEWPORTS` viewports of the reader's row. A row
+further away stands in at a height estimated from its plain text's lines and is measured
+later, nearest the reader first, a `MEASURE_SLICE_SECONDS` slice at a time between frames,
+each slice laying the view out again with the reader held where they are. A row's expensive
+formatting is prepared on the delegate's thread pool; until it arrives the row stands in
+the same way and paints its text plain. Each row's document and height are cached by the
+row, its font and the width it is laid out at. Preparations reach the GUI thread in batches
+(when the pool's queue empties, and at most every `BATCH_SECONDS` while it works), and each
+batch lays the view out once. A suspended application (Android, once the reader switches
+away) lets its laid-out documents go.
 """
 
 from __future__ import annotations
@@ -159,6 +161,10 @@ class DetachedRows:
     def viewport_width(self) -> int:
         return 0
 
+    def estimating(self) -> bool:
+        """No view lays rows out, so every row asked for is measured."""
+        return False
+
 
 class RowDocumentDelegate(QStyledItemDelegate):
     """Paints each row as a QTextDocument at the view's width.
@@ -171,6 +177,8 @@ class RowDocumentDelegate(QStyledItemDelegate):
     MAX_PREPARED_ROWS = 10_000
     MAX_DOCUMENTS = 500
     ROW_PADDING = 4
+    MEASURE_SLICE_SECONDS = 0.008
+    """How long one slice of measuring the rows away from the reader may take."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -194,6 +202,12 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._viewport_update_timer.setSingleShot(True)
         self._viewport_update_timer.setInterval(16)
         self._viewport_update_timer.timeout.connect(self._update_viewport)
+        # Rows a layout estimated, away from the reader: measured a slice at a time.
+        self._unmeasured: dict[QPersistentModelIndex, None] = {}
+        self._measure_timer = QTimer(self)
+        self._measure_timer.setSingleShot(True)
+        self._measure_timer.setInterval(0)
+        self._measure_timer.timeout.connect(self._measure_slice)
         QGuiApplication.instance().applicationStateChanged.connect(self._application_state_changed)
 
     # What a member says about its rows
@@ -399,17 +413,63 @@ class RowDocumentDelegate(QStyledItemDelegate):
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         width = self.available_width(opt)
-        key = (self.preparation_key(index, opt.font, width), width)
+        size = self._size_hints.get((self.preparation_key(index, opt.font, width), width))
+        if size is not None:
+            return size
+        if self.view.estimating():
+            # Away from the reader: an estimate now, measured between frames.
+            self._unmeasured[QPersistentModelIndex(index)] = None
+            if not self._measure_timer.isActive():
+                self._measure_timer.start()
+            return self.estimated_size(index, opt.font, width)
+        return self.measured_size(index, opt.font, width)
+
+    def measured_size(self, index: QModelIndex, font: QFont, width: int) -> QSize:
+        """The row's height laid out at `width`, kept; a pending row's estimate, not kept, so
+        its arrival lays it out once."""
+        key = (self.preparation_key(index, font, width), width)
         size = self._size_hints.get(key)
-        if size is None:
-            document = self.final_document(index, opt.font, width)
-            if document is None:
-                # Pending: an estimate, not kept, so the arrival lays it out once.
-                estimate = self.formatting(index, opt.font, width).estimated_height(opt.font, self.text_width(width))
-                return QSize(width, estimate + self.ROW_PADDING)
-            size = self._size_hints[key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
-            self._cached_widths.setdefault(key[0], set()).add(width)
+        if size is not None:
+            return size
+        document = self.final_document(index, font, width)
+        if document is None:
+            return self.estimated_size(index, font, width)
+        size = self._size_hints[key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+        self._cached_widths.setdefault(key[0], set()).add(width)
         return size
+
+    def estimated_size(self, index: QModelIndex, font: QFont, width: int) -> QSize:
+        estimate = PendingRow(self.row_text(index)).estimated_height(font, self.text_width(width))
+        return QSize(width, estimate + self.ROW_PADDING)
+
+    def is_measured(self, index: QModelIndex, font: QFont, width: int) -> bool:
+        return (self.preparation_key(index, font, width), width) in self._size_hints
+
+    def _measure_slice(self) -> None:
+        """Lay out the estimated rows nearest the reader, for one slice, then the view once
+        with the reader held where they are; the rest wait for the next slice."""
+        view = self.view
+        if self._stopped or not isinstance(view, VirtualRowView) or view.model() is None:
+            self._unmeasured.clear()
+            return
+        reader = view.reader_row()
+        waiting = sorted((index for index in self._unmeasured if index.isValid()),
+                         key=lambda index: abs(index.row() - reader))
+        self._unmeasured.clear()
+        font, width = view.font(), view.viewport_width() or 800
+        started, measured = time.monotonic(), False
+        while waiting and time.monotonic() - started < self.MEASURE_SLICE_SECONDS:
+            persistent = waiting.pop(0)
+            index = view.model().index(persistent.row(), 0)
+            if not self.is_measured(index, font, width):
+                self.measured_size(index, font, width)
+                measured = True
+        for persistent in waiting:
+            self._unmeasured[persistent] = None
+        if measured:
+            view.rows_changed()
+        elif self._unmeasured:
+            self._measure_timer.start()
 
 
 class VirtualRowView(QListView):
@@ -420,6 +480,9 @@ class VirtualRowView(QListView):
     """
 
     END_SLACK = 10
+    MEASURED_VIEWPORTS = 2
+    """A layout lays out the rows within this many viewports above and below the reader's
+    row; the delegate measures the rest between frames."""
 
     def __init__(self, delegate: RowDocumentDelegate, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -467,10 +530,47 @@ class VirtualRowView(QListView):
         scroll = self.verticalScrollBar()
         scroll.setValue(scroll.value() + moved)
 
+    _estimating = False
+
     def rows_changed(self) -> None:
-        """Prepared rows may change height: lay them out again and repaint."""
-        self.scheduleDelayedItemsLayout()
+        """Rows may change height: lay them out again, the reader where they were (at the
+        end, or on the row they read), and repaint."""
+        with self.keeping_end() if self.at_end else self.holding_position():
+            self.scheduleDelayedItemsLayout()
         self.viewport().update()
+
+    def estimating(self) -> bool:
+        """Whether a layout of the view is running, past its measured rows."""
+        return self._estimating
+
+    def reader_row(self) -> int:
+        """The row the reader reads: the newest at the end, else the one at the viewport's
+        top; the newest while nothing is laid out yet."""
+        model = self.model()
+        count = model.rowCount() if model is not None else 0
+        top = self.indexAt(self.viewport().rect().topLeft())
+        return top.row() if top.isValid() and not self.at_end else count - 1
+
+    def doItemsLayout(self) -> None:  # type: ignore[override]
+        """Measure the rows within `MEASURED_VIEWPORTS` viewports of the reader, then lay the
+        view out with every other unmeasured row at its estimate."""
+        model = self.model()
+        if model is None or model.rowCount() == 0:
+            super().doItemsLayout()
+            return
+        reader, reach = self.reader_row(), self.MEASURED_VIEWPORTS * max(1, self.viewport().height())
+        font, width = self.font(), self.viewport_width() or 800
+        for rows in (range(reader, model.rowCount()), range(reader - 1, -1, -1)):
+            covered = 0
+            for row in rows:
+                if covered >= reach:
+                    break
+                covered += self.rows.measured_size(model.index(row, 0), font, width).height()
+        self._estimating = True
+        try:
+            super().doItemsLayout()
+        finally:
+            self._estimating = False
 
     def viewport_width(self) -> int:
         return self.viewport().width()
