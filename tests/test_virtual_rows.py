@@ -113,6 +113,11 @@ def test_measured_height_is_kept_only_for_final_formatting(qtbot) -> None:
         assert delegate.measured_height(key, font, 300, PendingRow("row 3")) == laid_out
         # A different width is a different measurement.
         assert (key, 150) not in delegate._size_hints
+        # A member can draw a row under its key with another final look while the new one is
+        # prepared (the look it last showed): the arrival drops what was laid out from it, so
+        # the row lays out from what arrived.
+        delegate._row_prepared(key, BoldRow("row 3"))
+        assert (key, 300) not in delegate._size_hints
     finally:
         delegate.cleanup()
 

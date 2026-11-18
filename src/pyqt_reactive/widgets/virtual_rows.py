@@ -187,6 +187,8 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._pending: set[Hashable] = set()
         self._documents: OrderedDict[tuple[Hashable, int], QTextDocument] = OrderedDict()
         self._size_hints: dict[tuple[Hashable, int], QSize] = {}
+        # The widths each key has a document or height cached at, so an arrival drops them.
+        self._cached_widths: dict[Hashable, set[int]] = {}
         # A batch of finished preparations lays the view out once, in the next frame.
         self._viewport_update_timer = QTimer(self)
         self._viewport_update_timer.setSingleShot(True)
@@ -254,6 +256,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         document = self.new_document(font, width)
         formatting.fill(document)
         self._documents[key] = document
+        self._cached_widths.setdefault(key[0], set()).add(width)
         if len(self._documents) > self.MAX_DOCUMENTS:
             self._documents.popitem(last=False)
         return document
@@ -294,18 +297,31 @@ class RowDocumentDelegate(QStyledItemDelegate):
         document = self.new_document(font, width)
         formatting.fill(document)
         size = self._size_hints[cache_key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+        self._cached_widths.setdefault(key, set()).add(width)
         return size.height()
 
     def _rows_prepared(self, batch: list[tuple[Hashable, RowFormatting]]) -> None:
-        """A batch of rows' formatting arrived: nothing was laid out for them while they
-        were pending, so they lay out with the view's one relayout for the batch."""
+        """A batch of rows' formatting arrived; each lands as `_row_prepared`, and the view
+        lays out once for the batch, in the next frame."""
         if self._stopped:
             return
         for key, prepared in batch:
-            self._pending.discard(key)
-            self._prepared[key] = prepared
-        while len(self._prepared) > self.MAX_PREPARED_ROWS:
+            self._row_prepared(key, prepared)
+
+    def _row_prepared(self, key: Hashable, prepared: RowFormatting) -> None:
+        """One row's formatting arrived (from the pool, or adopted by a member): it is what
+        the row lays out from now on. A pending row cached nothing; what a member drew under
+        the key meanwhile (a look it showed before) is dropped, so the row lays out once,
+        from this. The view lays out again in the next frame, once however many arrive."""
+        if self._stopped:
+            return
+        self._pending.discard(key)
+        self._prepared[key] = prepared
+        if len(self._prepared) > self.MAX_PREPARED_ROWS:
             self._prepared.popitem(last=False)
+        for width in self._cached_widths.pop(key, ()):
+            self._documents.pop((key, width), None)
+            self._size_hints.pop((key, width), None)
         if not self._viewport_update_timer.isActive():
             self._viewport_update_timer.start()
 
@@ -325,6 +341,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         """Documents and heights hold one width; prepared formatting may hold any."""
         self.release_documents()
         self._size_hints.clear()
+        self._cached_widths.clear()
 
     def forget_rows(self) -> None:
         """Every cached formatting, document and height goes, as when the rows are replaced."""
@@ -391,6 +408,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
                 estimate = self.formatting(index, opt.font, width).estimated_height(opt.font, self.text_width(width))
                 return QSize(width, estimate + self.ROW_PADDING)
             size = self._size_hints[key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+            self._cached_widths.setdefault(key[0], set()).add(width)
         return size
 
 
