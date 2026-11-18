@@ -1,4 +1,5 @@
-"""The virtual row family: rows paint plain until prepared, and the reader stays put."""
+"""The virtual row family: rows stand in plain until prepared and are laid out once, in
+their final form; prepared rows arrive in batches; and the reader stays put."""
 
 from __future__ import annotations
 
@@ -8,7 +9,7 @@ from functools import partial
 from PySide6.QtCore import QStringListModel, Qt
 from PySide6.QtGui import QFont, QGuiApplication, QTextDocument
 
-from pyqt_reactive.widgets.virtual_rows import PlainRow, RowDocumentDelegate, RowFormatting, VirtualRowView
+from pyqt_reactive.widgets.virtual_rows import PendingRow, RowDocumentDelegate, RowFormatting, VirtualRowView
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,11 @@ def test_rows_paint_plain_until_their_formatting_is_prepared(qtbot) -> None:
     index = model.index(3, 0)
     font = QFont()
     try:
-        assert view.rows.formatting(index, font, 300) == PlainRow("row 3")
+        assert view.rows.formatting(index, font, 300) == PendingRow("row 3")
+        # A pending row is not laid out: no document is kept for it, and its height is an
+        # estimate from its text's lines.
+        assert view.rows.final_document(index, font, 300) is None
+        assert not view.rows._documents and not view.rows._size_hints
         qtbot.waitUntil(lambda: view.rows.formatting(index, font, 300) == BoldRow("row 3"))
         # The prepared row lays out taller than its plain line.
         assert view.rows.row_document(index, font, 300).size().height() > plain_line_height(font)
@@ -91,25 +96,44 @@ def test_a_suspended_application_lets_row_documents_go_and_keeps_rows_in_place(q
         view.rows.cleanup()
 
 
-def test_measured_height_is_cached_by_key_and_dropped_when_formatting_arrives(qtbot) -> None:
-    """A row is laid out into a document once per width, and re-measures only when its
-    prepared formatting replaces the plain one it was measured under."""
+def test_measured_height_is_kept_only_for_final_formatting(qtbot) -> None:
+    """A pending row's height is an estimate that is never kept, so its prepared formatting
+    is laid out once when it arrives; a final row is laid out into a document once per width."""
     delegate = BoldRows()
     qtbot.addWidget(VirtualRowView(delegate))
     font = QFont()
     key = ("row 3", font.family(), font.pointSize())
     try:
-        plain = delegate.measured_height(key, font, 300, PlainRow("row 3"))
-        # A second call under the same key returns the cached height: the different
-        # formatting it is handed is never laid out, because the key is already measured.
-        assert delegate.measured_height(key, font, 300, BoldRow("row 3")) == plain
+        estimate = delegate.measured_height(key, font, 300, PendingRow("row 3"))
+        assert estimate > 0
+        assert (key, 300) not in delegate._size_hints
+        laid_out = delegate.measured_height(key, font, 300, BoldRow("row 3"))
         assert (key, 300) in delegate._size_hints
+        # Kept: the formatting handed on a later call is not laid out again.
+        assert delegate.measured_height(key, font, 300, PendingRow("row 3")) == laid_out
         # A different width is a different measurement.
         assert (key, 150) not in delegate._size_hints
-        # When the row's prepared formatting arrives, its cached height is dropped, so the
-        # next measurement lays out the taller prepared row.
-        delegate._row_prepared(key, BoldRow("row 3"))
-        assert (key, 300) not in delegate._size_hints
-        assert delegate.measured_height(key, font, 300, BoldRow("row 3")) > plain
     finally:
         delegate.cleanup()
+
+
+def test_a_page_of_rows_arrives_as_one_batch(qtbot) -> None:
+    """Rows queued together are worked out by one drain of the pool's queue and reach the
+    GUI thread together, so the view lays them out once rather than once per row."""
+    model = QStringListModel([f"row {number}" for number in range(40)])
+    view = VirtualRowView(BoldRows())
+    qtbot.addWidget(view)
+    view.setModel(model)
+    view.resize(300, 2000)
+    batches: list[int] = []
+    view.rows._prepared_signals.finished.connect(lambda batch: batches.append(len(batch)))
+    font = QFont()
+    try:
+        for row in range(40):
+            view.rows.formatting(model.index(row, 0), font, 300)
+        qtbot.waitUntil(lambda: sum(batches) == 40)
+        assert len(batches) < 40
+        assert all(view.rows.formatting(model.index(row, 0), font, 300) == BoldRow(f"row {row}")
+                   for row in range(40))
+    finally:
+        view.rows.cleanup()

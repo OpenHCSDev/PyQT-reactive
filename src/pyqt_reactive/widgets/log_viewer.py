@@ -696,7 +696,7 @@ class LogItemDelegate(RowDocumentDelegate):
         if self._search_text and row in self._search_match_rows:
             painter.fillRect(option.rect, QColor(255, 255, 0, 60))
 
-    def painted_document(self, index: QModelIndex, option: QStyleOptionViewItem) -> QTextDocument:
+    def painted_document(self, index: QModelIndex, option: QStyleOptionViewItem) -> QTextDocument | None:
         """A row being selected paints its interactive document, which holds the selection."""
         return self._interactive_documents.get(index.row()) or super().painted_document(index, option)
 
