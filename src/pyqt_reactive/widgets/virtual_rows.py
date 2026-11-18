@@ -1,16 +1,23 @@
 """Rows drawn as rich-text documents in a virtual list.
 
-Only the rows on screen are laid out. Each row's document and height are cached by the
-row, its font and the width it is laid out at. A row's expensive formatting is prepared
-on the delegate's thread pool while the row paints plain, and a finished preparation
-repaints the viewport once per frame however many rows finish in it. A suspended
-application (Android, once the reader switches away) lets its laid-out documents go.
+Only the rows on screen are laid out, and each is laid out once, in its final form. A
+row's expensive formatting is prepared on the delegate's thread pool; until it arrives the
+row stands in at a height estimated from its plain text's lines and paints that text plain,
+with no document laid out for it. Each row's document and height are cached by the row, its
+font and the width it is laid out at, for final formatting only, so an arrival has nothing
+to drop. Preparations reach the GUI thread in batches (when the pool's queue empties, and
+at most every `BATCH_SECONDS` while it works), and each batch lays the view out once. A
+suspended application (Android, once the reader switches away) lets its laid-out documents
+go.
 """
 
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections import OrderedDict
+import math
+import threading
+import time
+from collections import OrderedDict, deque
 from collections.abc import Callable, Hashable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -26,7 +33,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAbstractTextDocumentLayout, QFont, QGuiApplication, QTextDocument
+from PySide6.QtGui import QAbstractTextDocumentLayout, QFont, QFontMetrics, QGuiApplication, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QListView,
@@ -39,8 +46,15 @@ from PySide6.QtWidgets import (
 class RowFormatting:
     """How one row's text is formatted in its document."""
 
+    final = True
+    """Whether this is the row's formatting to lay out, rather than a stand-in for it."""
+
     @abstractmethod
     def fill(self, document: QTextDocument) -> None: ...
+
+    def resolved(self) -> RowFormatting:
+        """The formatting this one fills with; a member that prepares on demand prepares here."""
+        return self
 
 
 @dataclass(frozen=True)
@@ -54,6 +68,21 @@ class PlainRow(RowFormatting):
 
 
 @dataclass(frozen=True)
+class PendingRow(PlainRow):
+    """A row whose formatting is still being prepared: it stands in at the height its plain
+    text's lines take and paints that text plain, without a document laid out for it, so
+    the row is laid out once, when its formatting arrives."""
+
+    final = False
+
+    def estimated_height(self, font: QFont, width: float) -> int:
+        metrics = QFontMetrics(font)
+        per_line = max(1, int(width // max(1, metrics.averageCharWidth())))
+        lines = sum(max(1, math.ceil(len(line) / per_line)) for line in self.text.split("\n"))
+        return lines * metrics.lineSpacing()
+
+
+@dataclass(frozen=True)
 class HtmlRow(RowFormatting):
     """A row drawn from rich text prepared for it."""
 
@@ -64,22 +93,61 @@ class HtmlRow(RowFormatting):
 
 
 class PreparedRowSignals(QObject):
-    """A finished preparation: the key it was prepared under and its formatting."""
+    """Finished preparations: a batch of (key, formatting) pairs."""
 
-    finished = Signal(object, object)
+    finished = Signal(object)
 
 
-class RowPreparation(QRunnable):
-    """One row's formatting, worked out on the pool; the delegate applies it on the GUI thread."""
+class PreparationQueue:
+    """The rows waiting for their formatting, and whether a worker is draining them."""
 
-    def __init__(self, key: Hashable, prepare: Callable[[], RowFormatting], signals: PreparedRowSignals) -> None:
+    def __init__(self) -> None:
+        self.waiting: deque[tuple[Hashable, Callable[[], RowFormatting]]] = deque()
+        self.lock = threading.Lock()
+        self.draining = False
+
+    def add(self, key: Hashable, prepare: Callable[[], RowFormatting]) -> bool:
+        """Queue a row; True when no worker is draining, so the caller starts one."""
+        with self.lock:
+            self.waiting.append((key, prepare))
+            starting, self.draining = not self.draining, True
+        return starting
+
+    def next(self) -> tuple[Hashable, Callable[[], RowFormatting]] | None:
+        with self.lock:
+            if not self.waiting:
+                self.draining = False
+                return None
+            return self.waiting.popleft()
+
+    def clear(self) -> None:
+        with self.lock:
+            self.waiting.clear()
+
+
+class RowPreparations(QRunnable):
+    """Works out queued rows' formatting on the pool, one after another, and hands them to
+    the GUI thread in batches: when the queue empties, and at most every `BATCH_SECONDS`
+    while it is still working, so a page of rows arrives as one batch, not one at a time."""
+
+    BATCH_SECONDS = 0.1
+
+    def __init__(self, queue: PreparationQueue, signals: PreparedRowSignals) -> None:
         super().__init__()
-        self.key = key
-        self.prepare = prepare
+        self.queue = queue
         self.signals = signals
 
     def run(self) -> None:
-        self.signals.finished.emit(self.key, self.prepare())
+        batch: list[tuple[Hashable, RowFormatting]] = []
+        started = time.monotonic()
+        while (queued := self.queue.next()) is not None:
+            key, prepare = queued
+            batch.append((key, prepare()))
+            if time.monotonic() - started >= self.BATCH_SECONDS:
+                self.signals.finished.emit(batch)
+                batch, started = [], time.monotonic()
+        if batch:
+            self.signals.finished.emit(batch)
 
 
 class DetachedRows:
@@ -111,14 +179,17 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._thread_pool = QThreadPool(self)
         self._thread_pool.setMaxThreadCount(1)
         self._prepared_signals = PreparedRowSignals(self._thread_pool)
-        self._prepared_signals.finished.connect(self._row_prepared)
+        self._prepared_signals.finished.connect(self._rows_prepared)
+        self._queue = PreparationQueue()
         self.preparing = True
         self._stopped = False
         self._prepared: OrderedDict[Hashable, RowFormatting] = OrderedDict()
         self._pending: set[Hashable] = set()
         self._documents: OrderedDict[tuple[Hashable, int], QTextDocument] = OrderedDict()
         self._size_hints: dict[tuple[Hashable, int], QSize] = {}
-        # Finished preparations repaint once per frame, however many arrive in it.
+        # The widths each key has a document or height cached at, so an arrival drops them.
+        self._cached_widths: dict[Hashable, set[int]] = {}
+        # A batch of finished preparations lays the view out once, in the next frame.
         self._viewport_update_timer = QTimer(self)
         self._viewport_update_timer.setSingleShot(True)
         self._viewport_update_timer.setInterval(16)
@@ -160,26 +231,43 @@ class RowDocumentDelegate(QStyledItemDelegate):
                                      self.preparation(index, font, width))
 
     def keyed_formatting(self, key: Hashable, text: str, prepare: Callable[[], RowFormatting]) -> RowFormatting:
-        """The formatting prepared under `key`, starting `prepare` on the pool the first time."""
+        """The formatting prepared under `key`, queueing `prepare` on the pool the first time;
+        a `PendingRow` stands in until it arrives."""
         if key in self._prepared:
             self._prepared.move_to_end(key)
             return self._prepared[key]
         if self.preparing and key not in self._pending:
             self._pending.add(key)
-            self._thread_pool.start(RowPreparation(key, prepare, self._prepared_signals))
-        return PlainRow(text)
+            if self._queue.add(key, prepare):
+                self._thread_pool.start(RowPreparations(self._queue, self._prepared_signals))
+        return PendingRow(text)
 
-    def row_document(self, index: QModelIndex, font: QFont, width: int) -> QTextDocument:
+    def final_document(self, index: QModelIndex, font: QFont, width: int) -> QTextDocument | None:
+        """The row's document laid out in its final form, or None while its formatting is
+        being prepared: a pending row is never laid out."""
         key = (self.preparation_key(index, font, width), width)
         document = self._documents.get(key)
         if document is not None:
             self._documents.move_to_end(key)
             return document
+        formatting = self.formatting(index, font, width)
+        if not formatting.final:
+            return None
         document = self.new_document(font, width)
-        self.formatting(index, font, width).fill(document)
+        formatting.fill(document)
         self._documents[key] = document
+        self._cached_widths.setdefault(key[0], set()).add(width)
         if len(self._documents) > self.MAX_DOCUMENTS:
             self._documents.popitem(last=False)
+        return document
+
+    def row_document(self, index: QModelIndex, font: QFont, width: int) -> QTextDocument:
+        """The row's document; a pending row's is its plain text, laid out for this one ask
+        (a tap over it) and not kept."""
+        document = self.final_document(index, font, width)
+        if document is None:
+            document = self.new_document(font, width)
+            PlainRow(self.row_text(index)).fill(document)
         return document
 
     def new_document(self, font: QFont, width: int) -> QTextDocument:
@@ -201,24 +289,39 @@ class RowDocumentDelegate(QStyledItemDelegate):
         """
         cache_key = (key, width)
         size = self._size_hints.get(cache_key)
-        if size is None:
-            document = self.new_document(font, width)
-            formatting.fill(document)
-            size = self._size_hints[cache_key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+        if size is not None:
+            return size.height()
+        formatting = formatting.resolved()
+        if not formatting.final:
+            return formatting.estimated_height(font, self.text_width(width)) + self.ROW_PADDING
+        document = self.new_document(font, width)
+        formatting.fill(document)
+        size = self._size_hints[cache_key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+        self._cached_widths.setdefault(key, set()).add(width)
         return size.height()
 
+    def _rows_prepared(self, batch: list[tuple[Hashable, RowFormatting]]) -> None:
+        """A batch of rows' formatting arrived; each lands as `_row_prepared`, and the view
+        lays out once for the batch, in the next frame."""
+        if self._stopped:
+            return
+        for key, prepared in batch:
+            self._row_prepared(key, prepared)
+
     def _row_prepared(self, key: Hashable, prepared: RowFormatting) -> None:
+        """One row's formatting arrived (from the pool, or adopted by a member): it is what
+        the row lays out from now on. A pending row cached nothing; what a member drew under
+        the key meanwhile (a look it showed before) is dropped, so the row lays out once,
+        from this. The view lays out again in the next frame, once however many arrive."""
         if self._stopped:
             return
         self._pending.discard(key)
         self._prepared[key] = prepared
         if len(self._prepared) > self.MAX_PREPARED_ROWS:
             self._prepared.popitem(last=False)
-        # The row's plain documents and heights give way to the prepared ones.
-        for document_key in [entry for entry in self._documents if entry[0] == key]:
-            del self._documents[document_key]
-        for size_key in [entry for entry in self._size_hints if entry[0] == key]:
-            del self._size_hints[size_key]
+        for width in self._cached_widths.pop(key, ()):
+            self._documents.pop((key, width), None)
+            self._size_hints.pop((key, width), None)
         if not self._viewport_update_timer.isActive():
             self._viewport_update_timer.start()
 
@@ -238,6 +341,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         """Documents and heights hold one width; prepared formatting may hold any."""
         self.release_documents()
         self._size_hints.clear()
+        self._cached_widths.clear()
 
     def forget_rows(self) -> None:
         """Every cached formatting, document and height goes, as when the rows are replaced."""
@@ -252,6 +356,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._stopped = True
         self.preparing = False
         self._viewport_update_timer.stop()
+        self._queue.clear()
         self._thread_pool.clear()
         self.stop_preparation()
         self._thread_pool.waitForDone()
@@ -271,16 +376,24 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self.paint_background(painter, opt, index.row())
         painter.restore()
         document = self.painted_document(index, opt)
-        context = QAbstractTextDocumentLayout.PaintContext()
-        context.palette = opt.palette
         painter.save()
         painter.translate(opt.rect.topLeft())
         painter.setClipRect(0, 0, opt.rect.width(), opt.rect.height())
-        document.documentLayout().draw(painter, context)
+        if document is None:
+            # Pending: its plain text, drawn without a document laid out for it.
+            painter.setFont(opt.font)
+            painter.setPen(opt.palette.text().color())
+            painter.drawText(0, 0, int(self.text_width(opt.rect.width())), opt.rect.height(),
+                             int(Qt.TextFlag.TextWordWrap), self.row_text(index))
+        else:
+            context = QAbstractTextDocumentLayout.PaintContext()
+            context.palette = opt.palette
+            document.documentLayout().draw(painter, context)
         painter.restore()
 
-    def painted_document(self, index: QModelIndex, option: QStyleOptionViewItem) -> QTextDocument:
-        return self.row_document(index, option.font, option.rect.width())
+    def painted_document(self, index: QModelIndex, option: QStyleOptionViewItem) -> QTextDocument | None:
+        """The document a row paints, or None for a pending row, which paints its text plain."""
+        return self.final_document(index, option.font, option.rect.width())
 
     def sizeHint(self, option, index) -> QSize:  # type: ignore[override]
         opt = QStyleOptionViewItem(option)
@@ -289,8 +402,13 @@ class RowDocumentDelegate(QStyledItemDelegate):
         key = (self.preparation_key(index, opt.font, width), width)
         size = self._size_hints.get(key)
         if size is None:
-            height = int(self.row_document(index, opt.font, width).size().height())
-            size = self._size_hints[key] = QSize(width, height + self.ROW_PADDING)
+            document = self.final_document(index, opt.font, width)
+            if document is None:
+                # Pending: an estimate, not kept, so the arrival lays it out once.
+                estimate = self.formatting(index, opt.font, width).estimated_height(opt.font, self.text_width(width))
+                return QSize(width, estimate + self.ROW_PADDING)
+            size = self._size_hints[key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+            self._cached_widths.setdefault(key[0], set()).add(width)
         return size
 
 
