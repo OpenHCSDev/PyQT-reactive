@@ -166,6 +166,9 @@ class DetachedRows:
     def rows_changed(self) -> None:
         """No view, so nothing to lay out again."""
 
+    def rows_repainted(self) -> None:
+        """No view, so nothing to repaint."""
+
     def viewport_width(self) -> int:
         return 0
 
@@ -176,12 +179,14 @@ class DetachedRows:
 
 class RowSize:
     """One model row's measured size at a layout's font and width, and the preparation key it
-    was measured under, so the row's new formatting (`_row_prepared`) drops it."""
+    was measured under, so the row's new formatting (`_row_prepared`) measures it against
+    this and drops it when it differs."""
 
-    __slots__ = ("key", "size", "estimated")
+    __slots__ = ("key", "size", "font", "estimated")
 
-    def __init__(self, key: Hashable, size: QSize | None, estimated: bool = False) -> None:
-        self.key, self.size, self.estimated = key, size, estimated
+    def __init__(self, key: Hashable, size: QSize | None, font: QFont, estimated: bool = False) -> None:
+        # Its own copy: the font it was handed belongs to a style option Qt frees.
+        self.key, self.size, self.font, self.estimated = key, size, QFont(font), estimated
 
 
 class RowDocumentDelegate(QStyledItemDelegate):
@@ -356,9 +361,11 @@ class RowDocumentDelegate(QStyledItemDelegate):
         """One row's formatting arrived (from the pool, or adopted by a member): it is what
         the row lays out from now on. A pending row cached nothing; what a member drew under
         the key meanwhile (a look it showed before) is dropped, so the row lays out once,
-        from this. The view lays out again in the next frame, once however many arrive."""
+        from this. In the next frame, once however many arrive, the view lays out again if
+        a row changed height (`_moves_rows`), and otherwise repaints."""
         if self._stopped:
             return
+        awaited = key in self._pending
         self._pending.discard(key)
         self._prepared[key] = prepared
         if len(self._prepared) > self.MAX_PREPARED_ROWS:
@@ -366,13 +373,49 @@ class RowDocumentDelegate(QStyledItemDelegate):
         for width in self._cached_widths.pop(key, ()):
             self._documents.pop((key, width), None)
             self._size_hints.pop((key, width), None)
-        for kept in self._row_size_keys.pop(key, ()):
-            kept.size = None
+        if self._moves_rows(key, prepared, awaited):
+            self._arrivals_moved_rows = True
         if not self._viewport_update_timer.isActive():
             self._viewport_update_timer.start()
 
+    def _moves_rows(self, key: Hashable, prepared: RowFormatting, awaited: bool) -> bool:
+        """Whether the formatting that arrived under `key` changes a drawn row's height.
+
+        - A row measured under the key (from the look a member drew meanwhile) that is as
+          tall from what arrived keeps its size; one that differs, or was an estimate, is
+          measured by the layout its arrival asks for.
+        - A row that was waiting for the key with no measured size drew its plain text at an
+          estimate nothing kept: its arrival lays it out.
+        - Formatting no row was waiting for (a member prepared it before drawing the row,
+          `adopt`) changes no drawn row.
+
+        Every arrival used to lay every row out. Scrolling ten pages back in a Toad history
+        ran 97 whole layouts: 422 arrivals were rows prepared before they were drawn, and
+        109 were new looks of a row at the height it had (a sent message's receipt).
+        """
+        kept_sizes = self._row_size_keys.pop(key, ())
+        moves = awaited and not kept_sizes
+        for kept in kept_sizes:
+            size = kept.size
+            if size is None:
+                continue
+            if kept.estimated or self.measured_height(key, kept.font, size.width(), prepared) != size.height():
+                kept.size = None
+                moves = True
+            else:
+                self._row_size_keys.setdefault(key, []).append(kept)
+        return moves
+
+    _arrivals_moved_rows = False
+
     def _update_viewport(self) -> None:
-        self.view.rows_changed()
+        """The frame after a batch of arrivals: one layout when a row changed height,
+        else a repaint."""
+        moved, self._arrivals_moved_rows = self._arrivals_moved_rows, False
+        if moved:
+            self.view.rows_changed()
+        else:
+            self.view.rows_repainted()
 
     def _application_state_changed(self, state: Qt.ApplicationState) -> None:
         if state is Qt.ApplicationState.ApplicationSuspended:
@@ -440,14 +483,14 @@ class RowDocumentDelegate(QStyledItemDelegate):
         return kept.size
 
     def keep_row_size(
-        self, row: int, key: Hashable, size: QSize, *, estimated: bool = False
+        self, row: int, key: Hashable, size: QSize, font: QFont, *, estimated: bool = False
     ) -> None:
         """A row's size at the width the kept sizes are for keeps until the row changes: its
         measured size, or (away from the reader) its estimate until a slice measures it."""
         sizes, layout = self._row_sizes, self._row_sizes_for
         if layout is None or row >= len(sizes) or size.width() != layout[1]:
             return
-        kept = RowSize(key, size, estimated)
+        kept = RowSize(key, size, font, estimated)
         sizes[row] = kept
         self._row_size_keys.setdefault(key, []).append(kept)
 
@@ -512,7 +555,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         key = self.preparation_key(index, opt.font, width)
         size = self._size_hints.get((key, width))
         if size is not None:
-            self.keep_row_size(index.row(), key, size)
+            self.keep_row_size(index.row(), key, size, opt.font)
             return size
         if self.view.estimating():
             # Away from the reader: an estimate now, measured between frames.
@@ -520,7 +563,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
             if not self._measure_timer.isActive():
                 self._measure_timer.start()
             size = self.estimated_size(index, opt.font, width)
-            self.keep_row_size(index.row(), key, size, estimated=True)
+            self.keep_row_size(index.row(), key, size, opt.font, estimated=True)
             return size
         return self.measured_size(index, opt.font, width)
 
@@ -538,7 +581,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
             height = int(document.size().height()) + self.ROW_PADDING
             size = self._size_hints[key] = QSize(width, height)
             self._cached_widths.setdefault(key[0], set()).add(width)
-        self.keep_row_size(index.row(), key[0], size)
+        self.keep_row_size(index.row(), key[0], size, font)
         return size
 
     def estimated_size(self, index: QModelIndex, font: QFont, width: int) -> QSize:
@@ -690,6 +733,10 @@ class VirtualRowView(QListView):
         end, or on the row they read), and repaint."""
         with self.keeping_end() if self.at_end else self.holding_position():
             self.scheduleDelayedItemsLayout()
+        self.viewport().update()
+
+    def rows_repainted(self) -> None:
+        """Rows changed how they are drawn at the height they had: repaint, and move none."""
         self.viewport().update()
 
     def estimating(self) -> bool:

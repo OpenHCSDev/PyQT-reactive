@@ -156,3 +156,66 @@ def test_a_scroll_moves_only_the_part_nothing_floats_over():
     assert VirtualRowView.uncovered(viewport, [header, bar]) == QRect(0, 60, 392, 740)
     assert VirtualRowView.uncovered(viewport, []) == viewport
     assert VirtualRowView.uncovered(viewport, [viewport]).isEmpty()
+
+
+@dataclass(frozen=True)
+class TallRow(RowFormatting):
+    text: str
+
+    def fill(self, document: QTextDocument) -> None:
+        document.setHtml("<br>".join([self.text] * 6))
+
+
+class CountedRows(VirtualRowView):
+    laid_out = repainted = 0
+
+    def rows_changed(self) -> None:
+        self.laid_out += 1
+        super().rows_changed()
+
+    def rows_repainted(self) -> None:
+        self.repainted += 1
+        super().rows_repainted()
+
+
+def test_a_look_that_arrives_at_the_rows_height_is_repainted_and_moves_no_row(qtbot) -> None:
+    model = QStringListModel([f"row {number}" for number in range(6)])
+    view = CountedRows(BoldRows())
+    qtbot.addWidget(view)
+    view.setModel(model)
+    view.resize(300, 400)
+    view.show()
+    rows = view.rows
+    try:
+        qtbot.waitUntil(lambda: any(
+            kept.size is not None and not kept.estimated
+            for sizes in rows._row_size_keys.values() for kept in sizes
+        ) and not rows._pending)
+        qtbot.wait(50)
+        key = next(key for key, sizes in rows._row_size_keys.items()
+                   if any(kept.size is not None and not kept.estimated for kept in sizes))
+        height = rows._row_size_keys[key][0].size.height()
+        view.laid_out = view.repainted = 0
+
+        # The same look again, as a row's new look of the same height arrives.
+        rows._row_prepared(key, rows._prepared[key])
+        rows._update_viewport()
+        assert (view.laid_out, view.repainted) == (0, 1)
+        assert rows._row_size_keys[key][0].size.height() == height
+
+        rows._row_prepared(key, TallRow("row"))
+        rows._update_viewport()
+        assert (view.laid_out, view.repainted) == (1, 1)
+
+        # Formatting prepared before any row is drawn with it changes no drawn row.
+        rows._row_prepared(("not drawn yet",), BoldRow("later"))
+        rows._update_viewport()
+        assert (view.laid_out, view.repainted) == (1, 2)
+
+        # A row that drew its plain text while waiting is laid out when its formatting arrives.
+        rows._pending.add(("waited for",))
+        rows._row_prepared(("waited for",), BoldRow("waited"))
+        rows._update_viewport()
+        assert (view.laid_out, view.repainted) == (2, 2)
+    finally:
+        rows.cleanup()
