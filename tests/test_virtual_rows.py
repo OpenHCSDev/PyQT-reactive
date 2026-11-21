@@ -122,6 +122,64 @@ def test_measured_height_is_kept_only_for_final_formatting(qtbot) -> None:
         delegate.cleanup()
 
 
+@dataclass(frozen=True)
+class UnwrappedRow(RowFormatting):
+    text: str
+
+    def fill(self, document: QTextDocument) -> None:
+        document.setHtml(f"<pre>{self.text}</pre>")
+
+
+def test_a_row_measured_before_it_is_drawn_is_laid_out_once(qtbot) -> None:
+    """A member that sizes a row before drawing it (a pager measuring the page it is about to
+    publish) and the paint that follows read one document: the measurement keeps what it
+    laid out."""
+    model = QStringListModel(["row 0"])
+    view = VirtualRowView(BoldRows())
+    qtbot.addWidget(view)
+    view.setModel(model)
+    delegate, font, index = view.rows, QFont(), model.index(0, 0)
+    key = delegate.preparation_key(index, font, 300)
+    laid_out = []
+    new_document = delegate.new_document
+    def counted(*arguments):
+        laid_out.append(arguments)
+        return new_document(*arguments)
+    delegate.new_document = counted
+    try:
+        delegate._row_prepared(key, BoldRow("row 0"))
+        height = delegate.measured_height(key, font, 300, BoldRow("row 0"))
+        document = delegate.final_document(index, font, 300)
+        assert len(laid_out) == 1
+        assert int(document.size().height()) + delegate.ROW_PADDING == height
+    finally:
+        delegate.cleanup()
+
+
+def test_a_rows_extent_is_recorded_when_it_is_laid_out(qtbot) -> None:
+    """Content that does not wrap is wider than the width it was laid out at; the delegate
+    keeps that with the height, so asking it lays nothing out, and it outlives the documents."""
+    delegate = BoldRows()
+    qtbot.addWidget(VirtualRowView(delegate))
+    font = QFont()
+    wrapped, unwrapped = ("wrapped", font.family()), ("unwrapped", font.family())
+    try:
+        # Not laid out yet: the layout width.
+        assert delegate.row_extent(unwrapped, 200) == 200
+        delegate.measured_height(wrapped, font, 200, BoldRow("a short row"))
+        delegate.measured_height(unwrapped, font, 200, UnwrappedRow("x" * 200))
+        assert delegate.row_extent(wrapped, 200) == 200
+        extent = delegate.row_extent(unwrapped, 200)
+        assert extent > 200
+        delegate.release_documents()
+        assert delegate.row_extent(unwrapped, 200) == extent
+        # New formatting under the key drops what was laid out from the old.
+        delegate._row_prepared(unwrapped, BoldRow("now it wraps"))
+        assert delegate.row_extent(unwrapped, 200) == 200
+    finally:
+        delegate.cleanup()
+
+
 def test_a_page_of_rows_arrives_as_one_batch(qtbot) -> None:
     """Rows queued together are worked out by one drain of the pool's queue and reach the
     GUI thread together, so the view lays them out once rather than once per row."""

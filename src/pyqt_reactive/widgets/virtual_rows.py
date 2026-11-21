@@ -218,6 +218,9 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._pending: set[Hashable] = set()
         self._documents: OrderedDict[tuple[Hashable, int], QTextDocument] = OrderedDict()
         self._size_hints: dict[tuple[Hashable, int], QSize] = {}
+        # A laid-out row wider than its layout width (unwrapped content): how wide, by the
+        # same key the height is kept under.
+        self._extents: dict[tuple[Hashable, int], int] = {}
         # The widths each key has a document or height cached at, so an arrival drops them.
         self._cached_widths: dict[Hashable, set[int]] = {}
         # A batch of finished preparations lays the view out once, in the next frame.
@@ -302,13 +305,38 @@ class RowDocumentDelegate(QStyledItemDelegate):
         formatting = self.formatting(index, font, width)
         if not formatting.final:
             return None
+        return self.laid_out(key[0], font, width, formatting)
+
+    def laid_out(
+        self, key: Hashable, font: QFont, width: int, formatting: RowFormatting
+    ) -> QTextDocument:
+        """The document of a row's final formatting at `width`, laid out once and kept: the
+        measurement that sizes the row and the paint that draws it read the same document.
+        A measurement used to lay out a document of its own and drop it, so a row a member
+        measured before drawing it (a pager sizing a page it is about to publish) was laid
+        out twice."""
+        cache_key = (key, width)
+        document = self._documents.get(cache_key)
+        if document is not None:
+            self._documents.move_to_end(cache_key)
+            return document
         document = self.new_document(font, width)
         formatting.fill(document)
-        self._documents[key] = document
-        self._cached_widths.setdefault(key[0], set()).add(width)
+        self._documents[cache_key] = document
+        self._cached_widths.setdefault(key, set()).add(width)
+        extent = max(math.ceil(document.idealWidth()), math.ceil(document.size().width()))
+        if extent > width:
+            self._extents[cache_key] = extent
         if len(self._documents) > self.MAX_DOCUMENTS:
             self._documents.popitem(last=False)
         return document
+
+    def row_extent(self, key: Hashable, width: int) -> int:
+        """How wide the row's content is when laid out at `width`: `width` itself where it
+        wraps, more where it holds content that does not (a `pre` block). Recorded when the
+        row is laid out and kept with its height, so asking it lays nothing out; a row not
+        laid out yet answers `width`."""
+        return self._extents.get((key, width), width)
 
     def row_document(self, index: QModelIndex, font: QFont, width: int) -> QTextDocument:
         """The row's document; a pending row's is its plain text, laid out for this one ask
@@ -343,10 +371,8 @@ class RowDocumentDelegate(QStyledItemDelegate):
         formatting = formatting.resolved()
         if not formatting.final:
             return formatting.estimated_height(font, self.text_width(width)) + self.ROW_PADDING
-        document = self.new_document(font, width)
-        formatting.fill(document)
+        document = self.laid_out(key, font, width, formatting)
         size = self._size_hints[cache_key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
-        self._cached_widths.setdefault(key, set()).add(width)
         return size.height()
 
     def _rows_prepared(self, batch: list[tuple[Hashable, RowFormatting]]) -> None:
@@ -373,6 +399,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         for width in self._cached_widths.pop(key, ()):
             self._documents.pop((key, width), None)
             self._size_hints.pop((key, width), None)
+            self._extents.pop((key, width), None)
         if self._moves_rows(key, prepared, awaited):
             self._arrivals_moved_rows = True
         if not self._viewport_update_timer.isActive():
@@ -430,6 +457,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         """Documents and heights hold one width; prepared formatting may hold any."""
         self.release_documents()
         self._size_hints.clear()
+        self._extents.clear()
         self._cached_widths.clear()
         self.forget_row_sizes()
 
