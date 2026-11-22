@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from typing import Generic, TypeVar
 
 from PySide6.QtCore import QEvent, QObject
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import QApplication
 
 from pyqt_reactive.widgets.editors.simple_code_editor import CodeEditorDialog
@@ -54,6 +54,12 @@ class ApplicationShortcutFilter(QObject):
 
     def eventFilter(self, obj, event):  # noqa: N802 - Qt virtual method name
         del obj
+        # Every event the application delivers passes here, and nearly none is a key. Asking
+        # the event's class first answers that without leaving C: reading its type builds a
+        # Python enum member (two Python calls), and decoding a sequence from it took four
+        # Python calls an event, 64 a frame in a Toad window with nothing pressed.
+        if not isinstance(event, QKeyEvent):
+            return False
         sequence = KeyEventSequence.from_event(event)
         if sequence is None:
             return False

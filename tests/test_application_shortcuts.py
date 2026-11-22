@@ -87,3 +87,19 @@ def test_an_open_popup_keeps_its_keys_from_application_commands(qapp) -> None:
         assert calls == ["back"]
     finally:
         lifecycle.close()
+
+
+def test_an_event_that_is_no_key_is_let_through_without_reading_its_type():
+    """The filter sees every event of the application: one that is not a key event is
+    answered by its class, with nothing of it read."""
+    from pyqt_reactive.services.application_shortcuts import ApplicationShortcutFilter
+
+    class Untouchable:
+        def __getattr__(self, name):
+            raise AssertionError(f"read {name} of an event that is no key")
+
+    ran = []
+    held = ApplicationShortcutFilter({"Ctrl+B": lambda: ran.append("b")})
+    assert held.eventFilter(None, Untouchable()) is False
+    assert held.eventFilter(None, QEvent(QEvent.Type.Paint)) is False
+    assert ran == []
