@@ -501,14 +501,27 @@ class RowDocumentDelegate(QStyledItemDelegate):
         for row in range(first, min(last + 1, len(sizes))):
             sizes[row] = None
 
-    def kept_size(self, row: int, *, measured: bool = False) -> QSize | None:
-        """The row's kept size while a layout runs (only a measured one when `measured`)."""
+    def kept_row(self, row: int, *, measured: bool = False) -> RowSize | None:
+        """The row's kept size and the key it was measured under, while a layout runs (only a
+        measured one when `measured`)."""
         if self._layout_for is None or row >= len(self._row_sizes):
             return None
         kept = self._row_sizes[row]
         if kept is None or kept.size is None or (measured and kept.estimated):
             return None
-        return kept.size
+        return kept
+
+    def kept_size(self, row: int, *, measured: bool = False) -> QSize | None:
+        kept = self.kept_row(row, measured=measured)
+        return None if kept is None else kept.size
+
+    def hinted(self, key: Hashable, size: QSize) -> QSize:
+        """What the view is told a row takes, from its size at the layout width: that size.
+        A view that scrolls sideways answers the row's extent as the width (`row_extent`).
+        A layout asks this of every row, so it is answered from the kept key and size with
+        nothing built: a subclass that overrode `sizeHint` to widen its rows built each
+        row's key again on every layout, kept size or not."""
+        return size
 
     def keep_row_size(
         self, row: int, key: Hashable, size: QSize, font: QFont, *, estimated: bool = False
@@ -575,8 +588,8 @@ class RowDocumentDelegate(QStyledItemDelegate):
         return self.final_document(index, option.font, option.rect.width())
 
     def sizeHint(self, option, index) -> QSize:  # type: ignore[override]
-        if (kept := self.kept_size(index.row())) is not None:
-            return kept
+        if (kept := self.kept_row(index.row())) is not None:
+            return self.hinted(kept.key, kept.size)
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         width = self.available_width(opt)
@@ -584,7 +597,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         size = self._size_hints.get((key, width))
         if size is not None:
             self.keep_row_size(index.row(), key, size, opt.font)
-            return size
+            return self.hinted(key, size)
         if self.view.estimating():
             # Away from the reader: an estimate now, measured between frames.
             self._unmeasured[QPersistentModelIndex(index)] = None
@@ -592,8 +605,8 @@ class RowDocumentDelegate(QStyledItemDelegate):
                 self._measure_timer.start()
             size = self.estimated_size(index, opt.font, width)
             self.keep_row_size(index.row(), key, size, opt.font, estimated=True)
-            return size
-        return self.measured_size(index, opt.font, width)
+            return self.hinted(key, size)
+        return self.hinted(key, self.measured_size(index, opt.font, width))
 
     def measured_size(self, index: QModelIndex, font: QFont, width: int) -> QSize:
         """The row's height laid out at `width`, kept; a pending row's estimate, not kept, so

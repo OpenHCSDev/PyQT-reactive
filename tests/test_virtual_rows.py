@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 
-from PySide6.QtCore import QStringListModel, Qt
+from PySide6.QtCore import QSize, QStringListModel, Qt
 from PySide6.QtGui import QFont, QGuiApplication, QTextDocument
 
 from pyqt_reactive.widgets.virtual_rows import PendingRow, RowDocumentDelegate, RowFormatting, VirtualRowView
@@ -176,6 +176,46 @@ def test_a_rows_extent_is_recorded_when_it_is_laid_out(qtbot) -> None:
         # New formatting under the key drops what was laid out from the old.
         delegate._row_prepared(unwrapped, BoldRow("now it wraps"))
         assert delegate.row_extent(unwrapped, 200) == 200
+    finally:
+        delegate.cleanup()
+
+
+class WideRows(BoldRows):
+    """Rows of a view that scrolls sideways: a row's hint is as wide as its content."""
+
+    def preparation(self, index, font, width):
+        return partial(UnwrappedRow, self.row_text(index))
+
+    def hinted(self, key, size):
+        return QSize(self.row_extent(key, size.width()), size.height())
+
+
+def test_a_layout_answers_each_rows_hint_from_its_kept_key(qtbot) -> None:
+    """A layout asks every row's size. A row whose size is kept answers from the kept key and
+    size, widened by the subclass's own `hinted`, without building the row's key again."""
+    model = QStringListModel(["x" * 200, "short"])
+    view = VirtualRowView(WideRows())
+    qtbot.addWidget(view)
+    view.setModel(model)
+    view.resize(300, 400)
+    delegate = view.rows
+    try:
+        view.show()
+        qtbot.waitUntil(lambda: all(
+            delegate.is_measured(model.index(row, 0), view.font(), view.viewport_width())
+            for row in range(2)), timeout=3000)
+        view.doItemsLayout()
+        width = view.viewport_width()
+        assert view.sizeHintForIndex(model.index(0, 0)).width() > width
+        assert view.sizeHintForIndex(model.index(1, 0)).width() == width
+        built = []
+        preparation_key = delegate.preparation_key
+        def counted(*arguments):
+            built.append(arguments)
+            return preparation_key(*arguments)
+        delegate.preparation_key = counted
+        view.doItemsLayout()
+        assert built == []
     finally:
         delegate.cleanup()
 
