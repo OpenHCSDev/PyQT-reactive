@@ -366,3 +366,38 @@ def test_a_member_prepares_its_rows_where_it_says(qtbot) -> None:
     rows.formatting(model.index(4, 0), font, 300)
     rows.cleanup()
     assert rows.preparer.stopped and not rows.preparer.held
+
+
+def test_a_size_that_leaves_its_row_leaves_the_sizes_kept_under_its_key(qtbot) -> None:
+    """Rows that change, go, or are measured again hold one kept size each, however often
+    that happens: the sizes kept under a key are the sizes in the rows' slots."""
+    model = QStringListModel([f"row {number}" for number in range(6)])
+    view = VirtualRowView(BoldRows())
+    qtbot.addWidget(view)
+    view.setModel(model)
+    view.resize(300, 200)
+    rows = view.rows
+    font, size = QFont(), QSize(300, 40)
+
+    def kept_under_keys() -> int:
+        return sum(len(kept) for kept in rows._row_size_keys.values())
+
+    try:
+        rows.begin_layout(font, 300, model.rowCount())
+        for number in range(model.rowCount()):
+            rows.keep_row_size(number, ("key", number), size, font)
+        assert kept_under_keys() == 6
+        for _again in range(50):
+            rows.rows_data_changed(0, 5)
+            for number in range(model.rowCount()):
+                rows.keep_row_size(number, ("key", number), size, font)
+        assert kept_under_keys() == 6
+        for _again in range(50):
+            rows.keep_row_size(2, ("key", 2), size, font)
+        assert kept_under_keys() == 6
+        rows.rows_removed(1, 3)
+        assert kept_under_keys() == 3
+        assert sorted(rows._row_size_keys) == [("key", 0), ("key", 4), ("key", 5)]
+    finally:
+        rows.end_layout()
+        rows.cleanup()
