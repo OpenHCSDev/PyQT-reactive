@@ -1,5 +1,6 @@
 """One Qt text layout for painting and measuring styled list previews."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import ceil
 
@@ -56,9 +57,18 @@ class PreparedTextLayout:
     size: QSize
     line_guides: tuple[PreparedLineGuide, ...] = ()
 
-    def paint(self, painter: QPainter, origin: QPointF) -> None:
-        for paragraph in self.paragraphs:
-            paragraph.draw(painter, origin)
+    def paint(
+        self,
+        painter: QPainter,
+        origin: QPointF,
+        inks: Sequence[Sequence[QTextLayout.FormatRange]] = (),
+    ) -> None:
+        """Draw the paragraphs and their guides. ``inks`` holds, for each leading paragraph,
+        the format ranges drawn over that paragraph's own formats. They are applied as the
+        glyphs are drawn, so the text is not laid out again: a colour that changes on every
+        frame (a band moving along a name) costs a draw of text that is already shaped."""
+        for number, paragraph in enumerate(self.paragraphs):
+            paragraph.draw(painter, origin, list(inks[number]) if number < len(inks) else [])
         for guide in self.line_guides:
             guide.paint(painter, origin)
 
