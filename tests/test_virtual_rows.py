@@ -9,7 +9,9 @@ from functools import partial
 from PySide6.QtCore import QSize, QStringListModel, Qt
 from PySide6.QtGui import QFont, QGuiApplication, QTextDocument
 
-from pyqt_reactive.widgets.virtual_rows import PendingRow, RowDocumentDelegate, RowFormatting, VirtualRowView
+from pyqt_reactive.widgets.virtual_rows import (
+    PendingRow, RowDocumentDelegate, RowFormatting, RowPreparer, VirtualRowView,
+)
 
 
 @dataclass(frozen=True)
@@ -229,7 +231,7 @@ def test_a_page_of_rows_arrives_as_one_batch(qtbot) -> None:
     view.setModel(model)
     view.resize(300, 2000)
     batches: list[int] = []
-    view.rows._prepared_signals.finished.connect(lambda batch: batches.append(len(batch)))
+    view.rows.preparer.signals.finished.connect(lambda batch: batches.append(len(batch)))
     font = QFont()
     try:
         for row in range(40):
@@ -317,3 +319,50 @@ def test_a_look_that_arrives_at_the_rows_height_is_repainted_and_moves_no_row(qt
         assert (view.laid_out, view.repainted) == (2, 2)
     finally:
         rows.cleanup()
+
+
+class HeldPreparer(RowPreparer):
+    """Rows' work kept until the test hands a batch back: a preparer that is not a thread."""
+
+    def __init__(self, arrived) -> None:
+        super().__init__(arrived)
+        self.held: dict = {}
+        self.stopped = False
+
+    def prepare(self, key, work) -> None:
+        self.held[key] = work
+
+    def land(self) -> None:
+        held, self.held = self.held, {}
+        self.arrived([(key, work()) for key, work in held.items()])
+
+    def clear(self) -> None:
+        self.held.clear()
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+class HeldRows(BoldRows):
+    def row_preparer(self) -> HeldPreparer:
+        return HeldPreparer(self._rows_prepared)
+
+
+def test_a_member_prepares_its_rows_where_it_says(qtbot) -> None:
+    """A delegate's rows are prepared by its own preparer and nowhere else: the row's work
+    goes to it once, the row stands in plain until the preparer hands it back, and closing
+    the delegate drops what it had not started and joins it."""
+    model = QStringListModel([f"row {number}" for number in range(5)])
+    view = VirtualRowView(HeldRows())
+    qtbot.addWidget(view)
+    view.setModel(model)
+    view.resize(300, 200)
+    rows, font = view.rows, QFont()
+    for _ in range(2):
+        assert rows.formatting(model.index(3, 0), font, 300) == PendingRow("row 3")
+    assert len(rows.preparer.held) == 1
+    rows.preparer.land()
+    assert rows.formatting(model.index(3, 0), font, 300) == BoldRow("row 3")
+    rows.formatting(model.index(4, 0), font, 300)
+    rows.cleanup()
+    assert rows.preparer.stopped and not rows.preparer.held
