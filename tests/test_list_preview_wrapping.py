@@ -554,3 +554,91 @@ def test_manager_rebuild_reuses_row_owned_wrap_choice(qtbot, preview_list):
     updater.update(operations)
     assert view.item(1) is not first
     assert view.item(1).data(PREVIEW_WRAP_ROLE) is None
+
+
+def test_a_row_is_drawn_with_ink_over_its_prepared_text_and_is_not_laid_out_again(qtbot):
+    """A delegate's `text_inks` colours part of a row as it is drawn. The prepared text is
+    the same object before and after, so the colour cost no layout."""
+    from PySide6.QtGui import QImage, QPainter, QTextCharFormat, QTextLayout
+
+    red = QColor(255, 0, 0)
+
+    class Inked(MultilinePreviewItemDelegate):
+        span = (0, 0)
+
+        def text_inks(self, index):
+            band = QTextLayout.FormatRange()
+            band.start, band.length = self.span[0], self.span[1] - self.span[0]
+            ink = QTextCharFormat()
+            ink.setForeground(red)
+            band.format = ink
+            return ([band],)
+
+    view = ReorderableListWidget()
+    qtbot.addWidget(view)
+    delegate = Inked(QColor("black"), QColor("gray"), QColor("white"), parent=view)
+    view.setItemDelegate(delegate)
+    view.resize(380, 200)
+    view.addItem(QListWidgetItem("MMMMMMMMMMMMMMMMMMMM"))
+    view.show()
+    index = view.model().index(0, 0)
+    option = QStyleOptionViewItem()
+    option.initFrom(view)
+    option.rect = view.visualRect(index)
+
+    def reds() -> list[int]:
+        image = QImage(view.viewport().size(), QImage.Format.Format_ARGB32)
+        image.fill(QColor("white"))
+        painter = QPainter(image)
+        delegate.paint(painter, option, index)
+        painter.end()
+        return [x for x in range(image.width())
+                if any(image.pixelColor(x, y) == red for y in range(option.rect.top(), option.rect.bottom()))]
+
+    prepared = delegate._prepared_text(option, index)
+    assert reds() == []
+    delegate.span = (0, 3)
+    left = reds()
+    delegate.span = (10, 13)
+    right = reds()
+    assert left and right and max(left) < min(right)
+    assert delegate._prepared_text(option, index) is prepared
+
+
+def test_a_row_is_read_from_its_model_once_until_the_model_says_it_changed(qtbot, preview_list):
+    """Painting and measuring a row again reads nothing from its model and lays nothing out;
+    a change of the row's data does both once more."""
+    from PySide6.QtGui import QImage, QPainter
+
+    view = preview_list
+    delegate = view.itemDelegate()
+    item = QListWidgetItem("first line\nsecond line")
+    view.addItem(item)
+    index = view.model().index(0, 0)
+    option = QStyleOptionViewItem()
+    option.initFrom(view)
+    option.rect = view.visualRect(index)
+    read, laid = [], []
+    prepare_row, laid_out_text = delegate.prepare_row, delegate._laid_out_text
+    delegate.prepare_row = lambda index: (read.append(1), prepare_row(index))[1]
+    delegate._laid_out_text = lambda *args: (laid.append(1), laid_out_text(*args))[1]
+    delegate.forget_rows()
+
+    def drawn() -> None:
+        image = QImage(view.viewport().size(), QImage.Format.Format_ARGB32)
+        painter = QPainter(image)
+        delegate.paint(painter, option, index)
+        painter.end()
+        delegate.sizeHint(option, index)
+
+    drawn()
+    drawn()
+    drawn()
+    assert (len(read), len(laid)) == (1, 1)
+    item.setText("another line")
+    drawn()
+    drawn()
+    assert (len(read), len(laid)) == (2, 2)
+    delegate.name_color = QColor("blue")
+    drawn()
+    assert (len(read), len(laid)) == (3, 3)

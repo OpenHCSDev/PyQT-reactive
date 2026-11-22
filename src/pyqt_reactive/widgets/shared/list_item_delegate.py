@@ -6,7 +6,8 @@ and other widgets that display items with preview labels.
 """
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import cast
 
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QListView,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QPen, QPolygon
+from PySide6.QtGui import QPainter, QColor, QFont, QPen, QPolygon, QTextLayout
 from PySide6.QtCore import (
     Qt,
     QRect,
@@ -127,6 +128,27 @@ class ListItemLeadingMarker:
     color: QColor | None = None
 
 
+@dataclass(slots=True)
+class PreparedRow:
+    """What a row is drawn from, read from its model once and kept until the model says its
+    rows changed (`MultilinePreviewItemDelegate.prepared_row`).
+
+    A paint draws; it does not ask the model what the row is. Reading a row's roles, building
+    its fonts and the key of its text for every paint is the same work on a desktop and a
+    phone, and only the phone is slow enough to show it: a sidebar row that repainted for a
+    colour moving along its name entered 99 Python functions a paint (Toad's frame-work
+    count, 2026-11-22). What stays read at paint is what can change without the model
+    saying so: the view's own wrap default, a flash's colour, the option's state."""
+
+    scheme: object
+    object_state_path: object
+    leading_marker: "ListItemLeadingMarker | None"
+    wrap_mode: "PreviewWrapMode | None"
+    disclosure: bool
+    texts: dict[tuple[bool, int | None], PreparedTextLayout] = field(default_factory=dict)
+    """The row's laid-out text, by whether it is selected and the width it wraps to."""
+
+
 class MultilinePreviewItemDelegate(QStyledItemDelegate):
     """Custom delegate to render multiline items with grey preview text.
 
@@ -145,6 +167,14 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
     TEXT_INSET_Y = 3
     MINIMUM_ROW_HEIGHT = 29
     DISCLOSURE_WIDTH = 16
+    SELECTED = QStyle.StateFlag.State_Selected.value
+    KEPT_ROWS = 4096
+    """How many rows' prepared state is kept; past it every row is dropped and read again."""
+    # What changes how every row is drawn without the model saying so: the rows are read again.
+    REDRAWN_BY = frozenset({
+        QEvent.Type.FontChange, QEvent.Type.PaletteChange, QEvent.Type.StyleChange,
+        QEvent.Type.EnabledChange, QEvent.Type.ApplicationFontChange,
+    })
 
     def __init__(
         self,
@@ -164,30 +194,120 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
             manager: Flash-color provider that owns delegate paint acknowledgements
         """
         super().__init__(parent)
-        self.name_color = name_color
-        self.preview_color = preview_color
-        self.selected_text_color = selected_text_color
+        self._rows: dict[tuple[int, int, int], PreparedRow] = {}
+        self._rows_model: object = None
+        # The index a row was last asked for by and that row: one paint or measure asks for
+        # its row several times with the same index object, which then costs a comparison.
+        self._asked: tuple[object, PreparedRow | None] = (None, None)
+        # The option a paint is drawing with and whether it is selected, while it paints.
+        self._painting: tuple[object, bool] = (None, False)
+        self._name_color = name_color
+        self._preview_color = preview_color
+        self._selected_text_color = selected_text_color
         self._manager = manager
         self._text_metric_cache = TextMetricCache()
         self._text_renderer = StyledTextRenderer(self._text_metric_cache)
         self._pressed_disclosure = QPersistentModelIndex()
         parent.viewport().installEventFilter(self)
+        # The view's own font, palette, style and enabled changes drop the kept rows
+        # (`REDRAWN_BY`). Under an application stylesheet a new font on the view is not
+        # passed on to its viewport as a change of the viewport's, so the view is watched.
+        parent.installEventFilter(self)
         # NOTE: Flash rendering moved to WindowFlashOverlay for O(1) performance
+
+    # The text colours are part of every row's laid-out text: a new colour reads the rows again.
+
+    @property
+    def name_color(self) -> QColor:
+        return self._name_color
+
+    @name_color.setter
+    def name_color(self, color: QColor) -> None:
+        self._name_color = color
+        self.forget_rows()
+
+    @property
+    def preview_color(self) -> QColor:
+        return self._preview_color
+
+    @preview_color.setter
+    def preview_color(self, color: QColor) -> None:
+        self._preview_color = color
+        self.forget_rows()
+
+    @property
+    def selected_text_color(self) -> QColor:
+        return self._selected_text_color
+
+    @selected_text_color.setter
+    def selected_text_color(self, color: QColor) -> None:
+        self._selected_text_color = color
+        self.forget_rows()
+
+    def prepared_row(self, index) -> PreparedRow:
+        """The row at ``index``, as last read from its model."""
+        asked, kept = self._asked
+        if asked is index:
+            return kept
+        model = index.model()
+        if model is not self._rows_model:
+            self._follow(model)
+        key = (index.row(), index.column(), index.internalId())
+        row = self._rows.get(key)
+        if row is None:
+            if len(self._rows) >= self.KEPT_ROWS:
+                self._rows.clear()
+            row = self._rows[key] = self.prepare_row(index)
+        self._asked = (index, row)
+        return row
+
+    def prepare_row(self, index) -> PreparedRow:
+        """Read from the model what a row is drawn from."""
+        marker = index.data(LEADING_MARKER_ROLE)
+        return PreparedRow(
+            scheme=index.data(SCOPE_SCHEME_ROLE),
+            object_state_path=index.data(OBJECT_STATE_PATH_ROLE),
+            leading_marker=marker if isinstance(marker, ListItemLeadingMarker) else None,
+            wrap_mode=index.data(PREVIEW_WRAP_ROLE),
+            disclosure=PreviewWrapMode.available(self.parent(), index),
+        )
+
+    def forget_rows(self, *_changed) -> None:
+        """Every row is read from its model again at its next paint or measure. The model's
+        own change signals call this; so does anything else a row's drawing depends on."""
+        self._rows.clear()
+        self._asked = (None, None)
+
+    def _follow(self, model) -> None:
+        """Drop the kept rows whenever ``model`` says its rows or their data changed."""
+        self.forget_rows()
+        self._rows_model = model
+        for changed in (
+            model.dataChanged, model.rowsInserted, model.rowsRemoved, model.rowsMoved,
+            model.columnsInserted, model.columnsRemoved, model.layoutChanged, model.modelReset,
+        ):
+            changed.connect(self.forget_rows)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         """Paint the item with multiline support and flash behind text."""
+        row = self.prepared_row(index)
         # Prepare a copy to let style draw backgrounds, hover, selection, borders, etc.
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         # A wrapped row owns one viewport-anchored paint frame for native style,
         # flash/background, marker and text, independent of other rows' overflow.
-        opt.rect = self._row_rect(option, index)
+        view = self.parent()
+        if view.wordWrap() if row.wrap_mode is None else row.wrap_mode.wrapped:
+            frame = QRect(option.rect)
+            frame.setLeft(0)
+            frame.setWidth(view.viewport().width())
+            opt.rect = frame
 
         # Capture text and prevent default text draw
         opt.text = ""
 
         # Calculate border inset (used for background and flash)
-        scheme = index.data(SCOPE_SCHEME_ROLE)
+        scheme = row.scheme
         border_inset = 0
         layers = None
         if isinstance(scheme, ScopeColorScheme):
@@ -197,12 +317,13 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         content_rect = opt.rect.adjusted(border_inset, border_inset, -border_inset, -border_inset)
 
         # Scope-based background: match border colors (only when not selected)
-        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        if not is_selected:
+        is_selected = bool(option.state.value & self.SELECTED)
+        self._painting = (opt, is_selected)
+        if not is_selected and scheme is not None:
             self._paint_scope_background(painter, content_rect, scheme, layers)
 
         # Flash effect - drawn BEHIND text but inside borders
-        object_state_path = index.data(OBJECT_STATE_PATH_ROLE)
+        object_state_path = row.object_state_path
         painted_flash_alpha = None
         if object_state_path and self._manager is not None:
             flash_color = self._manager.get_flash_color_for_object_state_path(object_state_path)
@@ -230,9 +351,9 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         # Now draw text manually with custom colors
         painter.save()
 
-        leading_marker = index.data(LEADING_MARKER_ROLE)
+        leading_marker = row.leading_marker
         text_rect = opt.rect
-        if isinstance(leading_marker, ListItemLeadingMarker):
+        if leading_marker is not None:
             self._paint_leading_marker(
                 painter,
                 text_rect,
@@ -241,7 +362,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
             )
         try:
             painter.setClipRect(text_rect)
-            if self._has_disclosure(index):
+            if row.disclosure:
                 disclosure = QStyleOptionViewItem(opt)
                 disclosure.rect = self.disclosure_rect(opt, index)
                 disclosure.state = QStyle.StateFlag.State_Children
@@ -252,14 +373,19 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
                 self.parent().style().drawPrimitive(
                     QStyle.PrimitiveElement.PE_IndicatorBranch, disclosure, painter, self.parent()
                 )
+            gutter = self.DISCLOSURE_WIDTH if row.disclosure else 0
+            if leading_marker is not None:
+                gutter += get_scope_visual_config().LIST_ITEM_LEADING_MARKER_GUTTER_WIDTH_PX
             self._prepared_text(opt, index).paint(
                 painter,
                 QPointF(
-                    text_rect.left() + self.TEXT_INSET_X + self._text_gutter(index),
+                    text_rect.left() + self.TEXT_INSET_X + gutter,
                     text_rect.top() + self.TEXT_INSET_Y,
                 ),
+                self.text_inks(index),
             )
         finally:
+            self._painting = (None, False)
             painter.restore()
 
         if scheme is not None:
@@ -438,12 +564,12 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _marker_gutter(self, index) -> int:
-        if isinstance(index.data(LEADING_MARKER_ROLE), ListItemLeadingMarker):
+        if self.prepared_row(index).leading_marker is not None:
             return get_scope_visual_config().LIST_ITEM_LEADING_MARKER_GUTTER_WIDTH_PX
         return 0
 
     def _has_disclosure(self, index: QModelIndex) -> bool:
-        return PreviewWrapMode.available(self.parent(), index)
+        return self.prepared_row(index).disclosure
 
     def _text_gutter(self, index: QModelIndex) -> int:
         return self._marker_gutter(index) + (
@@ -451,7 +577,10 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         )
 
     def _row_wraps(self, index: QModelIndex) -> bool:
-        return PreviewWrapMode.for_index(self.parent(), index).wrapped
+        """`PreviewWrapMode.for_index`, from the kept row: its own choice, or the view's
+        default, which the view can change without its model saying so and is read now."""
+        mode = self.prepared_row(index).wrap_mode
+        return self.parent().wordWrap() if mode is None else mode.wrapped
 
     def _row_rect(self, option: QStyleOptionViewItem, index: QModelIndex) -> QRect:
         """One row frame for native decoration, flash, content and disclosure hits."""
@@ -476,7 +605,12 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         )
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
-        """Consume disclosure clicks before QListView selection/drag/activation."""
+        """Consume disclosure clicks before QListView selection/drag/activation. A change
+        of the view's font, palette, style or enabled state redraws every row from
+        another font or colour, so the kept rows are read again. The view and its viewport
+        are both watched for those; only the viewport's clicks are the disclosure's."""
+        if event.type() in self.REDRAWN_BY:
+            self.forget_rows()
         if event.type() not in {
             QEvent.Type.MouseButtonPress,
             QEvent.Type.MouseButtonRelease,
@@ -509,21 +643,41 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
             PreviewWrapMode.toggle(view, index)
         return pressed.isValid()
 
+    def text_inks(self, index) -> Sequence[Sequence[QTextLayout.FormatRange]]:
+        """Format ranges drawn over a row's prepared paragraphs, one sequence for each leading
+        paragraph (`PreparedTextLayout.paint`): colour that moves from frame to frame, which
+        the prepared text is not laid out again for. None by default."""
+        return ()
+
     def _prepared_text(self, option: QStyleOptionViewItem, index) -> PreparedTextLayout:
-        """Use identical fonts, field markers and available width in both passes."""
+        """Use identical fonts, field markers and available width in both passes. The row's
+        text is laid out once for a selection state and a width, and kept with the row."""
+        painting, selected = self._painting
+        if painting is not option:
+            selected = bool(option.state.value & self.SELECTED)
+        row = self.prepared_row(index)
+        width = None
+        view = self.parent()
+        if view.wordWrap() if row.wrap_mode is None else row.wrap_mode.wrapped:
+            width = max(
+                1,
+                view.viewport().width() - self.TEXT_INSET_X * 2 - self._text_gutter(index),
+            )
+        texts = row.texts
+        text = texts.get((selected, width))
+        if text is None:
+            text = texts[(selected, width)] = self._laid_out_text(option, index, selected, width)
+        return text
+
+    def _laid_out_text(
+        self, option: QStyleOptionViewItem, index, selected: bool, width: int | None
+    ) -> PreparedTextLayout:
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         font = QFont(opt.font)
         font.setStrikeOut(bool(index.data(Qt.ItemDataRole.UserRole + 1)))
         font.setUnderline(False)
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
         layout = index.data(LAYOUT_ROLE)
-        width = None
-        if self._row_wraps(index):
-            width = max(
-                1,
-                self.parent().viewport().width() - self.TEXT_INSET_X * 2 - self._text_gutter(index),
-            )
         return self._text_renderer.prepare(
             layout if isinstance(layout, StyledTextLayout) else opt.text,
             TextPaintContext(
