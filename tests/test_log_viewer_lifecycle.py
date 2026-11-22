@@ -74,7 +74,7 @@ def test_log_delegate_cleanup_closes_and_joins_highlighting_tasks(
     delegate.cleanup()
 
     assert not delegate.preparing
-    assert delegate._thread_pool.activeThreadCount() == 0
+    assert delegate.preparer.pool.activeThreadCount() == 0
     assert delegate._pending == set()
 
 

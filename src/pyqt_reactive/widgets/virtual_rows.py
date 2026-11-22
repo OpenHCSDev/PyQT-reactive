@@ -15,7 +15,7 @@ away) lets its laid-out documents go.
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 import math
 import threading
 import time
@@ -23,6 +23,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable, Hashable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cached_property
 
 from PySide6.QtCore import (
     QModelIndex,
@@ -160,6 +161,56 @@ class RowPreparations(QRunnable):
             self.signals.finished.emit(batch)
 
 
+class RowPreparer(ABC):
+    """Where rows' formatting is worked out, away from the GUI thread. A delegate queues each
+    row's work here and is told, on the GUI thread, of the batches that finish (`arrived`).
+
+    Which member a delegate uses is its own (`RowDocumentDelegate.row_preparer`). The work
+    is the member's too: `ThreadRowPreparer` calls it on a thread of this process, so Python
+    work there takes turns with the GUI thread for the interpreter; a member that hands the
+    work to another process needs it to be something that process can receive."""
+
+    def __init__(self, arrived: Callable[[list[tuple[Hashable, RowFormatting]]], None]) -> None:
+        self.arrived = arrived
+
+    @abstractmethod
+    def prepare(self, key: Hashable, work: Callable[[], RowFormatting]) -> None:
+        """Work out the row's formatting; it arrives in a batch, under `key`."""
+
+    @abstractmethod
+    def clear(self) -> None:
+        """Drop the rows queued and not started."""
+
+    @abstractmethod
+    def stop(self) -> None:
+        """Join what is running: nothing arrives after this returns."""
+
+
+class ThreadRowPreparer(RowPreparer):
+    """One worker thread of this process, draining the queue in order."""
+
+    def __init__(self, arrived: Callable[[list[tuple[Hashable, RowFormatting]]], None],
+                 parent: QObject) -> None:
+        super().__init__(arrived)
+        # The thread and its signals share the delegate's lifetime.
+        self.pool = QThreadPool(parent)
+        self.pool.setMaxThreadCount(1)
+        self.signals = PreparedRowSignals(self.pool)
+        self.signals.finished.connect(arrived)
+        self.queue = PreparationQueue()
+
+    def prepare(self, key: Hashable, work: Callable[[], RowFormatting]) -> None:
+        if self.queue.add(key, work):
+            self.pool.start(RowPreparations(self.queue, self.signals))
+
+    def clear(self) -> None:
+        self.queue.clear()
+        self.pool.clear()
+
+    def stop(self) -> None:
+        self.pool.waitForDone()
+
+
 class DetachedRows:
     """Rows no view draws yet: nothing to lay out again or repaint, and no viewport width."""
 
@@ -206,12 +257,6 @@ class RowDocumentDelegate(QStyledItemDelegate):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.view: DetachedRows | VirtualRowView = DetachedRows()
-        # One worker thread and its signals share this delegate's lifetime.
-        self._thread_pool = QThreadPool(self)
-        self._thread_pool.setMaxThreadCount(1)
-        self._prepared_signals = PreparedRowSignals(self._thread_pool)
-        self._prepared_signals.finished.connect(self._rows_prepared)
-        self._queue = PreparationQueue()
         self.preparing = True
         self._stopped = False
         self._prepared: OrderedDict[Hashable, RowFormatting] = OrderedDict()
@@ -273,7 +318,16 @@ class RowDocumentDelegate(QStyledItemDelegate):
         """Rows draw no background of their own."""
 
     def stop_preparation(self) -> None:
-        """Close whatever the preparations run through; the pool itself is joined after."""
+        """Close whatever the preparations run through; the preparer itself is joined after."""
+
+    @cached_property
+    def preparer(self) -> RowPreparer:
+        """Where this delegate's rows are prepared, made when the first row asks."""
+        return self.row_preparer()
+
+    def row_preparer(self) -> RowPreparer:
+        """A worker thread of this process, unless a member prepares its rows elsewhere."""
+        return ThreadRowPreparer(self._rows_prepared, self)
 
     # Caches
 
@@ -283,15 +337,14 @@ class RowDocumentDelegate(QStyledItemDelegate):
                                      self.preparation(index, font, width))
 
     def keyed_formatting(self, key: Hashable, text: str, prepare: Callable[[], RowFormatting]) -> RowFormatting:
-        """The formatting prepared under `key`, queueing `prepare` on the pool the first time;
-        a `PendingRow` stands in until it arrives."""
+        """The formatting prepared under `key`, queueing `prepare` with the delegate's
+        preparer the first time; a `PendingRow` stands in until it arrives."""
         if key in self._prepared:
             self._prepared.move_to_end(key)
             return self._prepared[key]
         if self.preparing and key not in self._pending:
             self._pending.add(key)
-            if self._queue.add(key, prepare):
-                self._thread_pool.start(RowPreparations(self._queue, self._prepared_signals))
+            self.preparer.prepare(key, prepare)
         return PendingRow(text)
 
     def final_document(self, index: QModelIndex, font: QFont, width: int) -> QTextDocument | None:
@@ -548,10 +601,9 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._stopped = True
         self.preparing = False
         self._viewport_update_timer.stop()
-        self._queue.clear()
-        self._thread_pool.clear()
+        self.preparer.clear()
         self.stop_preparation()
-        self._thread_pool.waitForDone()
+        self.preparer.stop()
         self._pending.clear()
 
     # Qt's delegate calls
