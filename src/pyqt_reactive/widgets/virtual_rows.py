@@ -544,6 +544,8 @@ class RowDocumentDelegate(QStyledItemDelegate):
 
     def rows_removed(self, first: int, last: int) -> None:
         if self._row_sizes_for is not None and last < len(self._row_sizes):
+            for kept in self._row_sizes[first:last + 1]:
+                self._unkeep(kept)
             del self._row_sizes[first:last + 1]
         else:
             self.forget_row_sizes()
@@ -552,7 +554,27 @@ class RowDocumentDelegate(QStyledItemDelegate):
         """A row's content changed: it is measured again; the others keep their sizes."""
         sizes = self._row_sizes
         for row in range(first, min(last + 1, len(sizes))):
+            self._unkeep(sizes[row])
             sizes[row] = None
+
+    def _unkeep(self, kept: RowSize | None) -> None:
+        """A row's kept size leaves its slot (the row went, changed, or is measured again):
+        it leaves the sizes kept under its key with it. The slots forgot a size and the keys
+        kept it, so a history that paged rows in and out held every size it had ever
+        measured: after a finger scroll back through a long Toad thread, 171,302 of these
+        (each with its font) for 4,436 rows, four fifths of what Python's collector walked,
+        and its full collections stopped the GUI thread for 158 to 321 ms (2026-11-22)."""
+        if kept is None:
+            return
+        under = self._row_size_keys.get(kept.key)
+        if under is None:
+            return
+        try:
+            under.remove(kept)
+        except ValueError:
+            return
+        if not under:
+            del self._row_size_keys[kept.key]
 
     def kept_row(self, row: int, *, measured: bool = False) -> RowSize | None:
         """The row's kept size and the key it was measured under, while a layout runs (only a
@@ -584,6 +606,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         sizes, layout = self._row_sizes, self._row_sizes_for
         if layout is None or row >= len(sizes) or size.width() != layout[1]:
             return
+        self._unkeep(sizes[row])
         kept = RowSize(key, size, font, estimated)
         sizes[row] = kept
         self._row_size_keys.setdefault(key, []).append(kept)
