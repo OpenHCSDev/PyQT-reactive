@@ -45,7 +45,7 @@ def test_a_layout_lays_out_only_the_rows_near_the_reader(qtbot) -> None:
     try:
         view.follow_end()
         view.executeDelayedItemsLayout()
-        measured = len(view.rows._size_hints)
+        measured = view.rows.measured_count()
         assert 0 < measured < 100
         qtbot.waitUntil(lambda: all_measured(view), timeout=10_000)
         assert view.at_end
@@ -62,5 +62,27 @@ def test_measuring_rows_above_keeps_the_reader_on_the_same_row(qtbot) -> None:
         top = view.indexAt(view.viewport().rect().topLeft()).row()
         qtbot.waitUntil(lambda: all_measured(view), timeout=10_000)
         assert view.indexAt(view.viewport().rect().topLeft()).row() == top
+    finally:
+        view.rows.cleanup()
+
+
+def test_multi_slice_measurement_reschedules_until_all_rows_are_measured(qtbot) -> None:
+    """When unmeasured rows exceed one slice budget, `_measure_slice` must reschedule
+    the timer even after `rows_changed()` lays out the rows measured so far."""
+
+    class SmallSliceRows(FinalRows):
+        MEASURE_SLICE_SECONDS = 0.0005
+
+    model = QStringListModel([f"row {number}" for number in range(80)])
+    view = VirtualRowView(SmallSliceRows())
+    qtbot.addWidget(view)
+    view.resize(300, 200)
+    view.setModel(model)
+    view.show()
+    try:
+        view.follow_end()
+        view.executeDelayedItemsLayout()
+        assert view.rows._unmeasured
+        qtbot.waitUntil(lambda: all_measured(view), timeout=5_000)
     finally:
         view.rows.cleanup()

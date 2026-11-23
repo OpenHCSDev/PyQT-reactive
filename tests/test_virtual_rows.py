@@ -40,7 +40,7 @@ def test_rows_paint_plain_until_their_formatting_is_prepared(qtbot) -> None:
         # A pending row is not laid out: no document is kept for it, and its height is an
         # estimate from its text's lines.
         assert view.rows.final_document(index, font, 300) is None
-        assert not view.rows._documents and not view.rows._size_hints
+        assert not view.rows._documents and view.rows.measured_count() == 0
         qtbot.waitUntil(lambda: view.rows.formatting(index, font, 300) == BoldRow("row 3"))
         # The prepared row lays out taller than its plain line.
         assert view.rows.row_document(index, font, 300).size().height() > plain_line_height(font)
@@ -108,18 +108,18 @@ def test_measured_height_is_kept_only_for_final_formatting(qtbot) -> None:
     try:
         estimate = delegate.measured_height(key, font, 300, PendingRow("row 3"))
         assert estimate > 0
-        assert (key, 300) not in delegate._size_hints
+        assert delegate.measured_size_for(key, 300) is None
         laid_out = delegate.measured_height(key, font, 300, BoldRow("row 3"))
-        assert (key, 300) in delegate._size_hints
+        assert delegate.measured_size_for(key, 300) is not None
         # Kept: the formatting handed on a later call is not laid out again.
         assert delegate.measured_height(key, font, 300, PendingRow("row 3")) == laid_out
         # A different width is a different measurement.
-        assert (key, 150) not in delegate._size_hints
+        assert delegate.measured_size_for(key, 150) is None
         # A member can draw a row under its key with another final look while the new one is
         # prepared (the look it last showed): the arrival drops what was laid out from it, so
         # the row lays out from what arrived.
         delegate._row_prepared(key, BoldRow("row 3"))
-        assert (key, 300) not in delegate._size_hints
+        assert delegate.measured_size_for(key, 300) is None
     finally:
         delegate.cleanup()
 
@@ -401,3 +401,41 @@ def test_a_size_that_leaves_its_row_leaves_the_sizes_kept_under_its_key(qtbot) -
     finally:
         rows.end_layout()
         rows.cleanup()
+
+
+def test_row_metrics_evict_with_prepared_and_stay_bounded(qtbot) -> None:
+    """Evicting a prepared row drops its kept measurements, extents and documents too,
+    and keys measured directly without entering `_prepared` stay LRU-bounded to
+    `MAX_PREPARED_ROWS`."""
+
+    class SmallCacheRows(BoldRows):
+        MAX_PREPARED_ROWS = 4
+
+    delegate = SmallCacheRows()
+    qtbot.addWidget(VirtualRowView(delegate))
+    font = QFont()
+    try:
+        for i in range(6):
+            key = ("prepared", i)
+            row = UnwrappedRow("x" * 200)
+            delegate._row_prepared(key, row)
+            delegate.measured_height(key, font, 200, row)
+
+        # Keys 0 and 1 were evicted from _prepared and must also leave metrics and documents.
+        assert len(delegate._prepared) == 4
+        assert len(delegate._metrics) <= 4
+        for evicted in (("prepared", 0), ("prepared", 1)):
+            assert delegate.measured_size_for(evicted, 200) is None
+            assert delegate.row_extent(evicted, 200) == 200
+            assert (evicted, 200) not in delegate._documents
+        assert delegate.row_extent(("prepared", 5), 200) > 200
+
+        # Direct measured_height keys (never in _prepared, e.g. pinned sub-blocks) stay bounded.
+        for i in range(10):
+            direct = ("direct", i)
+            delegate.measured_height(direct, font, 200, UnwrappedRow("y" * 200))
+        assert len(delegate._metrics) == 4
+        assert delegate.measured_size_for(("direct", 0), 200) is None
+        assert delegate.measured_size_for(("direct", 9), 200) is not None
+    finally:
+        delegate.cleanup()

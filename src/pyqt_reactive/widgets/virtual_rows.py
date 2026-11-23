@@ -240,6 +240,16 @@ class RowSize:
         self.key, self.size, self.font, self.estimated = key, size, QFont(font), estimated
 
 
+class RowMetrics:
+    """A row key's laid-out size and horizontal extent at one width."""
+
+    __slots__ = ("size", "extent")
+
+    def __init__(self, size: QSize | None = None, extent: int | None = None) -> None:
+        self.size = size
+        self.extent = extent
+
+
 class RowDocumentDelegate(QStyledItemDelegate):
     """Paints each row as a QTextDocument at the view's width.
 
@@ -262,12 +272,10 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._prepared: OrderedDict[Hashable, RowFormatting] = OrderedDict()
         self._pending: set[Hashable] = set()
         self._documents: OrderedDict[tuple[Hashable, int], QTextDocument] = OrderedDict()
-        self._size_hints: dict[tuple[Hashable, int], QSize] = {}
-        # A laid-out row wider than its layout width (unwrapped content): how wide, by the
-        # same key the height is kept under.
-        self._extents: dict[tuple[Hashable, int], int] = {}
-        # The widths each key has a document or height cached at, so an arrival drops them.
-        self._cached_widths: dict[Hashable, set[int]] = {}
+        # Per-key laid-out metrics keyed by width (measured size and horizontal extent for
+        # unwrapped content), LRU-bounded to MAX_PREPARED_ROWS so evicted or direct-measured
+        # keys cannot accumulate without bound.
+        self._metrics: OrderedDict[Hashable, dict[int, RowMetrics]] = OrderedDict()
         # A batch of finished preparations lays the view out once, in the next frame.
         self._viewport_update_timer = QTimer(self)
         self._viewport_update_timer.setSingleShot(True)
@@ -360,6 +368,46 @@ class RowDocumentDelegate(QStyledItemDelegate):
             return None
         return self.laid_out(key[0], font, width, formatting)
 
+    def _key_metrics(self, key: Hashable) -> dict[int, RowMetrics]:
+        """The per-width metrics kept under `key`, LRU-bounded to `MAX_PREPARED_ROWS`."""
+        widths = self._metrics.get(key)
+        if widths is not None:
+            self._metrics.move_to_end(key)
+            return widths
+        widths = {}
+        self._metrics[key] = widths
+        if len(self._metrics) > self.MAX_PREPARED_ROWS:
+            evicted, evicted_widths = self._metrics.popitem(last=False)
+            for width in evicted_widths:
+                self._documents.pop((evicted, width), None)
+        return widths
+
+    def _record_measured_size(self, key: Hashable, width: int, size: QSize) -> None:
+        widths = self._key_metrics(key)
+        entry = widths.get(width)
+        if entry is None:
+            widths[width] = RowMetrics(size=size)
+        else:
+            entry.size = size
+
+    def _drop_key_metrics(self, key: Hashable) -> None:
+        widths = self._metrics.pop(key, None)
+        if widths is not None:
+            for width in widths:
+                self._documents.pop((key, width), None)
+
+    def measured_size_for(self, key: Hashable, width: int) -> QSize | None:
+        """The kept size for `key` at `width`, or None if not measured yet."""
+        widths = self._metrics.get(key)
+        if widths is None:
+            return None
+        entry = widths.get(width)
+        return None if entry is None else entry.size
+
+    def measured_count(self) -> int:
+        """How many `(key, width)` measurements are currently kept."""
+        return sum(1 for widths in self._metrics.values() for entry in widths.values() if entry.size is not None)
+
     def laid_out(
         self, key: Hashable, font: QFont, width: int, formatting: RowFormatting
     ) -> QTextDocument:
@@ -376,10 +424,13 @@ class RowDocumentDelegate(QStyledItemDelegate):
         document = self.new_document(font, width)
         formatting.fill(document)
         self._documents[cache_key] = document
-        self._cached_widths.setdefault(key, set()).add(width)
+        widths = self._key_metrics(key)
+        entry = widths.get(width)
+        if entry is None:
+            entry = widths[width] = RowMetrics()
         extent = max(math.ceil(document.idealWidth()), math.ceil(document.size().width()))
         if extent > width:
-            self._extents[cache_key] = extent
+            entry.extent = extent
         if len(self._documents) > self.MAX_DOCUMENTS:
             self._documents.popitem(last=False)
         return document
@@ -389,7 +440,11 @@ class RowDocumentDelegate(QStyledItemDelegate):
         wraps, more where it holds content that does not (a `pre` block). Recorded when the
         row is laid out and kept with its height, so asking it lays nothing out; a row not
         laid out yet answers `width`."""
-        return self._extents.get((key, width), width)
+        widths = self._metrics.get(key)
+        if widths is None:
+            return width
+        entry = widths.get(width)
+        return width if entry is None or entry.extent is None else entry.extent
 
     def row_document(self, index: QModelIndex, font: QFont, width: int) -> QTextDocument:
         """The row's document; a pending row's is its plain text, laid out for this one ask
@@ -417,15 +472,15 @@ class RowDocumentDelegate(QStyledItemDelegate):
         width however many times its height is asked for, and a row whose prepared
         formatting arrives drops its cached height the same frame its documents do.
         """
-        cache_key = (key, width)
-        size = self._size_hints.get(cache_key)
+        size = self.measured_size_for(key, width)
         if size is not None:
             return size.height()
         formatting = formatting.resolved()
         if not formatting.final:
             return formatting.estimated_height(font, self.text_width(width)) + self.ROW_PADDING
         document = self.laid_out(key, font, width, formatting)
-        size = self._size_hints[cache_key] = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+        size = QSize(width, int(document.size().height()) + self.ROW_PADDING)
+        self._record_measured_size(key, width, size)
         return size.height()
 
     def _rows_prepared(self, batch: list[tuple[Hashable, RowFormatting]]) -> None:
@@ -448,11 +503,9 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self._pending.discard(key)
         self._prepared[key] = prepared
         if len(self._prepared) > self.MAX_PREPARED_ROWS:
-            self._prepared.popitem(last=False)
-        for width in self._cached_widths.pop(key, ()):
-            self._documents.pop((key, width), None)
-            self._size_hints.pop((key, width), None)
-            self._extents.pop((key, width), None)
+            evicted, _ = self._prepared.popitem(last=False)
+            self._drop_key_metrics(evicted)
+        self._drop_key_metrics(key)
         if self._moves_rows(key, prepared, awaited):
             self._arrivals_moved_rows = True
         if not self._viewport_update_timer.isActive():
@@ -509,9 +562,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
     def width_changed(self) -> None:
         """Documents and heights hold one width; prepared formatting may hold any."""
         self.release_documents()
-        self._size_hints.clear()
-        self._extents.clear()
-        self._cached_widths.clear()
+        self._metrics.clear()
         self.forget_row_sizes()
 
     # Row sizes kept aligned with the model's rows
@@ -669,7 +720,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
         width = self.available_width(opt)
         key = self.preparation_key(index, opt.font, width)
-        size = self._size_hints.get((key, width))
+        size = self.measured_size_for(key, width)
         if size is not None:
             self.keep_row_size(index.row(), key, size, opt.font)
             return self.hinted(key, size)
@@ -688,16 +739,16 @@ class RowDocumentDelegate(QStyledItemDelegate):
         its arrival lays it out once."""
         if (kept := self.kept_size(index.row(), measured=True)) is not None:
             return kept
-        key = (self.preparation_key(index, font, width), width)
-        size = self._size_hints.get(key)
+        key = self.preparation_key(index, font, width)
+        size = self.measured_size_for(key, width)
         if size is None:
             document = self.final_document(index, font, width)
             if document is None:
                 return self.estimated_size(index, font, width)
             height = int(document.size().height()) + self.ROW_PADDING
-            size = self._size_hints[key] = QSize(width, height)
-            self._cached_widths.setdefault(key[0], set()).add(width)
-        self.keep_row_size(index.row(), key[0], size, font)
+            size = QSize(width, height)
+            self._record_measured_size(key, width, size)
+        self.keep_row_size(index.row(), key, size, font)
         return size
 
     def estimated_size(self, index: QModelIndex, font: QFont, width: int) -> QSize:
@@ -705,7 +756,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
         return QSize(width, estimate + self.ROW_PADDING)
 
     def is_measured(self, index: QModelIndex, font: QFont, width: int) -> bool:
-        return (self.preparation_key(index, font, width), width) in self._size_hints
+        return self.measured_size_for(self.preparation_key(index, font, width), width) is not None
 
     def _measure_slice(self) -> None:
         """Lay out the estimated rows nearest the reader, for one slice, then the view once
@@ -730,7 +781,7 @@ class RowDocumentDelegate(QStyledItemDelegate):
             self._unmeasured[persistent] = None
         if measured:
             view.rows_changed()
-        elif self._unmeasured:
+        if self._unmeasured:
             self._measure_timer.start()
 
 
