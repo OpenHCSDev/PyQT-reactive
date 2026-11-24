@@ -175,6 +175,12 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         QEvent.Type.FontChange, QEvent.Type.PaletteChange, QEvent.Type.StyleChange,
         QEvent.Type.EnabledChange, QEvent.Type.ApplicationFontChange,
     })
+    DISCLOSURE_EVENTS = frozenset({
+        QEvent.Type.MouseButtonPress,
+        QEvent.Type.MouseButtonRelease,
+        QEvent.Type.MouseButtonDblClick,
+        QEvent.Type.MouseMove,
+    })
 
     def __init__(
         self,
@@ -199,8 +205,9 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         # The index a row was last asked for by and that row: one paint or measure asks for
         # its row several times with the same index object, which then costs a comparison.
         self._asked: tuple[object, PreparedRow | None] = (None, None)
-        # The option a paint is drawing with and whether it is selected, while it paints.
-        self._painting: tuple[object, bool] = (None, False)
+        # While paint() runs, keep the option, selection state, prepared row and wrap state
+        # so _prepared_text() does not re-read the row, option state, or view.wordWrap().
+        self._painting: tuple[object, bool, PreparedRow | None, bool] = (None, False, None, False)
         self._name_color = name_color
         self._preview_color = preview_color
         self._selected_text_color = selected_text_color
@@ -297,7 +304,8 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         # A wrapped row owns one viewport-anchored paint frame for native style,
         # flash/background, marker and text, independent of other rows' overflow.
         view = self.parent()
-        if view.wordWrap() if row.wrap_mode is None else row.wrap_mode.wrapped:
+        wraps = view.wordWrap() if row.wrap_mode is None else row.wrap_mode.wrapped
+        if wraps:
             frame = QRect(option.rect)
             frame.setLeft(0)
             frame.setWidth(view.viewport().width())
@@ -314,11 +322,15 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
             layers = scheme.step_border_layers
             if layers:
                 border_inset = sum(layer[0] for layer in layers)
-        content_rect = opt.rect.adjusted(border_inset, border_inset, -border_inset, -border_inset)
+        content_rect = (
+            opt.rect.adjusted(border_inset, border_inset, -border_inset, -border_inset)
+            if border_inset
+            else opt.rect
+        )
 
         # Scope-based background: match border colors (only when not selected)
         is_selected = bool(option.state.value & self.SELECTED)
-        self._painting = (opt, is_selected)
+        self._painting = (opt, is_selected, row, wraps)
         if not is_selected and scheme is not None:
             self._paint_scope_background(painter, content_rect, scheme, layers)
 
@@ -344,8 +356,8 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
                 painted_flash_alpha = flash_color.alpha()
 
         # Let the style draw selection, hover, borders
-        self.parent().style().drawControl(
-            QStyle.ControlElement.CE_ItemViewItem, opt, painter, self.parent()
+        view.style().drawControl(
+            QStyle.ControlElement.CE_ItemViewItem, opt, painter, view
         )
 
         # Now draw text manually with custom colors
@@ -366,12 +378,12 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
                 disclosure = QStyleOptionViewItem(opt)
                 disclosure.rect = self.disclosure_rect(opt, index)
                 disclosure.state = QStyle.StateFlag.State_Children
-                if PreviewWrapMode.interactive(self.parent(), index):
+                if PreviewWrapMode.interactive(view, index):
                     disclosure.state |= QStyle.StateFlag.State_Enabled
-                if self._row_wraps(index):
+                if wraps:
                     disclosure.state |= QStyle.StateFlag.State_Open
-                self.parent().style().drawPrimitive(
-                    QStyle.PrimitiveElement.PE_IndicatorBranch, disclosure, painter, self.parent()
+                view.style().drawPrimitive(
+                    QStyle.PrimitiveElement.PE_IndicatorBranch, disclosure, painter, view
                 )
             gutter = self.DISCLOSURE_WIDTH if row.disclosure else 0
             if leading_marker is not None:
@@ -385,13 +397,13 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
                 self.text_inks(index),
             )
         finally:
-            self._painting = (None, False)
+            self._painting = (None, False, None, False)
             painter.restore()
 
         if scheme is not None:
             self._paint_border_layers(painter, opt.rect, scheme)
         if painted_flash_alpha is not None:
-            self._manager.acknowledge_flash_paint(object_state_path, self.parent(), painted_flash_alpha)
+            self._manager.acknowledge_flash_paint(object_state_path, view, painted_flash_alpha)
 
     def _paint_leading_marker(
         self,
@@ -609,19 +621,15 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         of the view's font, palette, style or enabled state redraws every row from
         another font or colour, so the kept rows are read again. The view and its viewport
         are both watched for those; only the viewport's clicks are the disclosure's."""
-        if event.type() in self.REDRAWN_BY:
+        event_type = event.type()
+        if event_type in self.REDRAWN_BY:
             self.forget_rows()
-        if event.type() not in {
-            QEvent.Type.MouseButtonPress,
-            QEvent.Type.MouseButtonRelease,
-            QEvent.Type.MouseButtonDblClick,
-            QEvent.Type.MouseMove,
-        }:
+        if event_type not in self.DISCLOSURE_EVENTS:
             return super().eventFilter(watched, event)
         view = self.parent()
         if watched is not view.viewport():
             return super().eventFilter(watched, event)
-        if event.type() == QEvent.Type.MouseMove and self._pressed_disclosure.isValid():
+        if event_type == QEvent.Type.MouseMove and self._pressed_disclosure.isValid():
             return True
         if event.button() != Qt.MouseButton.LeftButton:
             return super().eventFilter(watched, event)
@@ -633,7 +641,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         hit = PreviewWrapMode.interactive(view, index) and self.disclosure_rect(
             option, index
         ).contains(event.position().toPoint())
-        if event.type() != QEvent.Type.MouseButtonRelease:
+        if event_type != QEvent.Type.MouseButtonRelease:
             if hit:
                 self._pressed_disclosure = QPersistentModelIndex(index)
             return hit
@@ -652,16 +660,19 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
     def _prepared_text(self, option: QStyleOptionViewItem, index) -> PreparedTextLayout:
         """Use identical fonts, field markers and available width in both passes. The row's
         text is laid out once for a selection state and a width, and kept with the row."""
-        painting, selected = self._painting
+        painting, selected, row, wraps = self._painting
         if painting is not option:
             selected = bool(option.state.value & self.SELECTED)
-        row = self.prepared_row(index)
+            row = self.prepared_row(index)
+            wraps = self.parent().wordWrap() if row.wrap_mode is None else row.wrap_mode.wrapped
         width = None
-        view = self.parent()
-        if view.wordWrap() if row.wrap_mode is None else row.wrap_mode.wrapped:
+        if wraps:
+            gutter = self.DISCLOSURE_WIDTH if row.disclosure else 0
+            if row.leading_marker is not None:
+                gutter += get_scope_visual_config().LIST_ITEM_LEADING_MARKER_GUTTER_WIDTH_PX
             width = max(
                 1,
-                view.viewport().width() - self.TEXT_INSET_X * 2 - self._text_gutter(index),
+                self.parent().viewport().width() - self.TEXT_INSET_X * 2 - gutter,
             )
         texts = row.texts
         text = texts.get((selected, width))
