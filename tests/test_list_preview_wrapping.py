@@ -642,3 +642,37 @@ def test_a_row_is_read_from_its_model_once_until_the_model_says_it_changed(qtbot
     delegate.name_color = QColor("blue")
     drawn()
     assert (len(read), len(laid)) == (3, 3)
+
+
+def test_paint_reuses_prepared_row_without_second_lookup_and_event_filter_reads_type_once(
+    qtbot, preview_list
+):
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QImage, QPainter
+
+    view = preview_list
+    delegate = view.itemDelegate()
+    item = QListWidgetItem("hello world")
+    view.addItem(item)
+    index = view.model().index(0, 0)
+    option = QStyleOptionViewItem()
+    option.initFrom(view)
+    option.rect = view.visualRect(index)
+    image = QImage(view.viewport().size(), QImage.Format.Format_ARGB32)
+    painter = QPainter(image)
+    delegate.paint(painter, option, index)
+
+    lookups = []
+    real_prepared_row = delegate.prepared_row
+    delegate.prepared_row = lambda idx: (lookups.append(idx), real_prepared_row(idx))[1]
+    fresh_index = view.model().index(0, 0)
+    delegate.paint(painter, option, fresh_index)
+    painter.end()
+    assert len(lookups) == 1
+
+    # Non-disclosure event should pass through eventFilter cleanly without invalidating rows.
+    assert not delegate.eventFilter(view.viewport(), QEvent(QEvent.Type.UpdateRequest))
+    assert delegate._rows
+    # FontChange should invalidate cached rows.
+    delegate.eventFilter(view, QEvent(QEvent.Type.FontChange))
+    assert not delegate._rows

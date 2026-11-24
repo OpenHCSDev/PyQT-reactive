@@ -67,8 +67,16 @@ class PreparedTextLayout:
         the format ranges drawn over that paragraph's own formats. They are applied as the
         glyphs are drawn, so the text is not laid out again: a colour that changes on every
         frame (a band moving along a name) costs a draw of text that is already shaped."""
-        for number, paragraph in enumerate(self.paragraphs):
-            paragraph.draw(painter, origin, list(inks[number]) if number < len(inks) else [])
+        if not inks:
+            for paragraph in self.paragraphs:
+                paragraph.draw(painter, origin)
+        else:
+            ink_count = len(inks)
+            for number, paragraph in enumerate(self.paragraphs):
+                if number < ink_count and inks[number]:
+                    paragraph.draw(painter, origin, inks[number])
+                else:
+                    paragraph.draw(painter, origin)
         for guide in self.line_guides:
             guide.paint(painter, origin)
 
