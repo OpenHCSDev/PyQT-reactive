@@ -79,5 +79,45 @@ def test_wrapped_text_updates_alignment_flags_and_measures_height(qtbot):
     flags, text = widget.drawn(widget.contentsRect())
     assert flags == int(WrappedText.WRAP | Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
     assert text == widget.text()
-    assert widget.heightForWidth(120) > widget.minimumSizeHint().height()
+    first_height = widget.heightForWidth(120)
+    assert first_height > widget.minimumSizeHint().height()
     assert not widget.grab().isNull()
+
+    # Repeated heightForWidth(120) hits cache without recomputing text_rect.
+    text_rect_calls = 0
+    orig_text_rect = widget.text_rect
+
+    def counting_text_rect(width: int):
+        nonlocal text_rect_calls
+        text_rect_calls += 1
+        return orig_text_rect(width)
+
+    widget.text_rect = counting_text_rect
+    assert widget.heightForWidth(120) == first_height
+    assert text_rect_calls == 0
+
+    # Same text is a no-op (keeps cache warm and avoids layout churn).
+    widget.setText("word " * 40)
+    assert widget.heightForWidth(120) == first_height
+    assert text_rect_calls == 0
+
+    # Margin change invalidates heightForWidth and minimumSizeHint caches.
+    widget.setContentsMargins(0, 10, 0, 10)
+    taller = widget.heightForWidth(120)
+    assert text_rect_calls == 1
+    assert taller == first_height + 20
+
+    # Font change invalidates heightForWidth cache.
+    big = QFont(widget.font())
+    big.setPointSize(24)
+    widget.setFont(big)
+    bigger = widget.heightForWidth(120)
+    assert text_rect_calls == 2
+    assert bigger > taller
+
+    # Text change invalidates heightForWidth and sizeHint caches.
+    widget.setText("short")
+    shorter = widget.heightForWidth(120)
+    assert text_rect_calls == 3
+    assert shorter < bigger
+    assert widget.sizeHint().height() <= bigger
