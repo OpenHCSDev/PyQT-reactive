@@ -126,3 +126,24 @@ def test_wrapped_text_updates_alignment_flags_and_measures_height(qtbot):
     assert text_rect_calls == 3
     assert shorter < bigger
     assert widget.sizeHint().height() <= bigger
+
+
+def test_wrapped_text_height_matches_painted_qtextlayout_without_clipping(qtbot):
+    """heightForWidth and paintEvent share QTextLayout so narrow punctuation-heavy text
+    never wraps into more lines during paint than heightForWidth reserved."""
+    text = (
+        "Objective: Ship Android/Qt Toad mobile UX fixes (IME adjustResize/safe-area, "
+        "tab close, sidebar bands), profile & fix Pixel 8a scroll FPS with FrameProbe, "
+        "and keep Qt/Textual shared-frontend hoists & NRA Toad bench moving"
+    )
+    widget = WrappedText(text)
+    qtbot.addWidget(widget)
+    for width in (140, 180, 207, 260, 360):
+        height = widget.heightForWidth(width)
+        widget.resize(width, height)
+        widget.grab()
+        cached = widget._text_layouts
+        assert cached is not None
+        _rect, _layouts, origin, needs_clip = cached
+        assert not needs_clip, f"WrappedText clipped at width={width} height={height}"
+        assert origin.y() >= 0.0
