@@ -20,25 +20,41 @@ class FittedText(QLabel):
         QEvent.Type.EnabledChange,
         QEvent.Type.ApplicationPaletteChange,
     })
+    REMEASURES_ON = frozenset({
+        QEvent.Type.FontChange,
+        QEvent.Type.StyleChange,
+        QEvent.Type.ApplicationFontChange,
+        QEvent.Type.ContentsRectChange,
+    })
 
     def __init__(self, text: str = "") -> None:
         super().__init__()
         self._alignment_flags = int(self.alignment())
         self._text_color: QColor | None = None
+        self._min_size_hint: QSize | None = None
         self.setText(text)
+
+    def _clear_metrics_cache(self) -> None:
+        self._min_size_hint = None
 
     def setAlignment(self, alignment) -> None:  # noqa: N802 - Qt method name
         super().setAlignment(alignment)
         self._alignment_flags = int(alignment)
 
     def setText(self, text: str) -> None:  # noqa: N802 - Qt method name
+        if text == self.text():
+            return
+        self._clear_metrics_cache()
         super().setText(text)
         self.setToolTip(text)
         self.updateGeometry()
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt virtual method name
-        if event.type() in self.RECOLORS_ON:
+        event_type = event.type()
+        if event_type in self.RECOLORS_ON:
             self._text_color = None
+        if event_type in self.REMEASURES_ON:
+            self._clear_metrics_cache()
         super().changeEvent(event)
 
     def drawn(self, rect: QRect) -> tuple[int, str]:
@@ -46,9 +62,14 @@ class FittedText(QLabel):
         raise NotImplementedError
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt virtual method name
+        cached = self._min_size_hint
+        if cached is not None:
+            return QSize(cached)
         margins = self.contentsMargins()
-        return QSize(margins.left() + margins.right(),
+        hint = QSize(margins.left() + margins.right(),
                      self.fontMetrics().height() + margins.top() + margins.bottom())
+        self._min_size_hint = hint
+        return QSize(hint)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt virtual method name
         rect = self.contentsRect()
@@ -64,25 +85,14 @@ class FittedText(QLabel):
 class ElidedLine(FittedText):
     """One line; what does not fit ends in an ellipsis."""
 
-    REELIDES_ON = frozenset({
-        QEvent.Type.FontChange,
-        QEvent.Type.StyleChange,
-        QEvent.Type.ApplicationFontChange,
-    })
-
     def __init__(self, text: str = "") -> None:
         self._elided: tuple[int, str] | None = None
         super().__init__(text)
         self.setWordWrap(False)
 
-    def setText(self, text: str) -> None:  # noqa: N802 - Qt method name
+    def _clear_metrics_cache(self) -> None:
         self._elided = None
-        super().setText(text)
-
-    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt virtual method name
-        if event.type() in self.REELIDES_ON:
-            self._elided = None
-        super().changeEvent(event)
+        super()._clear_metrics_cache()
 
     def drawn(self, rect: QRect) -> tuple[int, str]:
         width = rect.width()
@@ -102,8 +112,15 @@ class WrappedText(FittedText):
     WRAP_FLAGS = int(WRAP)
 
     def __init__(self, text: str = "") -> None:
+        self._height_for_width: tuple[int, int] | None = None
+        self._size_hint: QSize | None = None
         super().__init__(text)
         self.setWordWrap(True)
+
+    def _clear_metrics_cache(self) -> None:
+        self._height_for_width = None
+        self._size_hint = None
+        super()._clear_metrics_cache()
 
     def text_rect(self, width: int) -> QRect:
         margins = self.contentsMargins()
@@ -111,14 +128,24 @@ class WrappedText(FittedText):
         return self.fontMetrics().boundingRect(QRect(0, 0, inner, 1 << 20), self.WRAP_FLAGS, self.text())
 
     def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt virtual method name
+        cached = self._height_for_width
+        if cached is not None and cached[0] == width:
+            return cached[1]
         margins = self.contentsMargins()
-        return self.text_rect(width).height() + margins.top() + margins.bottom()
+        height = self.text_rect(width).height() + margins.top() + margins.bottom()
+        self._height_for_width = (width, height)
+        return height
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt virtual method name
+        cached = self._size_hint
+        if cached is not None:
+            return QSize(cached)
         margins = self.contentsMargins()
         width = self.fontMetrics().boundingRect(QRect(0, 0, 1 << 20, 1 << 20), 0, self.text()).width()
         width += margins.left() + margins.right()
-        return QSize(width, self.heightForWidth(width))
+        hint = QSize(width, self.heightForWidth(width))
+        self._size_hint = hint
+        return QSize(hint)
 
     def drawn(self, rect: QRect) -> tuple[int, str]:
         return self._alignment_flags | self.WRAP_FLAGS, self.text()
