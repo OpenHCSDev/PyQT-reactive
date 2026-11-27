@@ -148,6 +148,10 @@ class PreparedRow:
     texts: dict[tuple[bool, int | None], PreparedTextLayout] = field(default_factory=dict)
     """The row's laid-out text, by whether it is selected and the width it wraps to."""
 
+    def wraps(self, view: QAbstractItemView) -> bool:
+        """Whether this row wraps in ``view``: its own choice, or the view's default."""
+        return view.wordWrap() if self.wrap_mode is None else self.wrap_mode.wrapped
+
 
 class MultilinePreviewItemDelegate(QStyledItemDelegate):
     """Custom delegate to render multiline items with grey preview text.
@@ -263,7 +267,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         row = self._rows.get(key)
         if row is None:
             if len(self._rows) >= self.KEPT_ROWS:
-                self._rows.clear()
+                self.forget_rows()
             row = self._rows[key] = self.prepare_row(index)
         self._asked = (index, row)
         return row
@@ -285,12 +289,60 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         self._rows.clear()
         self._asked = (None, None)
 
+    def _rows_forgotten(self, rows: Sequence[PreparedRow]) -> None:
+        """Hook for subclasses holding per-row caches derived from ``PreparedRow``."""
+
+    def forget_range(
+        self, top_left: QModelIndex, bottom_right: QModelIndex, *_roles
+    ) -> None:
+        """Drop only the kept rows in ``[top_left, bottom_right]`` when ``dataChanged``
+        fires; fall back to ``forget_rows`` for invalid, cross-parent, or oversized ranges."""
+        if not self._rows:
+            self._asked = (None, None)
+            return
+        if (
+            not top_left.isValid()
+            or not bottom_right.isValid()
+            or top_left.parent() != bottom_right.parent()
+        ):
+            self.forget_rows()
+            return
+        r0, r1 = top_left.row(), bottom_right.row()
+        c0, c1 = top_left.column(), bottom_right.column()
+        if r0 > r1 or c0 > c1:
+            self.forget_rows()
+            return
+        dropped: list[PreparedRow] = []
+        if r0 == r1 and c0 == c1:
+            row = self._rows.pop((r0, c0, top_left.internalId()), None)
+            if row is not None:
+                dropped.append(row)
+        else:
+            if (r1 - r0 + 1) * (c1 - c0 + 1) > len(self._rows):
+                self.forget_rows()
+                return
+            model = top_left.model()
+            if model is None:
+                self.forget_rows()
+                return
+            parent = top_left.parent()
+            for r in range(r0, r1 + 1):
+                for c in range(c0, c1 + 1):
+                    idx = model.index(r, c, parent)
+                    row = self._rows.pop((r, c, idx.internalId()), None)
+                    if row is not None:
+                        dropped.append(row)
+        if dropped:
+            self._asked = (None, None)
+            self._rows_forgotten(dropped)
+
     def _follow(self, model) -> None:
         """Drop the kept rows whenever ``model`` says its rows or their data changed."""
         self.forget_rows()
         self._rows_model = model
+        model.dataChanged.connect(self.forget_range)
         for changed in (
-            model.dataChanged, model.rowsInserted, model.rowsRemoved, model.rowsMoved,
+            model.rowsInserted, model.rowsRemoved, model.rowsMoved,
             model.columnsInserted, model.columnsRemoved, model.layoutChanged, model.modelReset,
         ):
             changed.connect(self.forget_rows)
@@ -304,7 +356,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         # A wrapped row owns one viewport-anchored paint frame for native style,
         # flash/background, marker and text, independent of other rows' overflow.
         view = self.parent()
-        wraps = view.wordWrap() if row.wrap_mode is None else row.wrap_mode.wrapped
+        wraps = row.wraps(view)
         if wraps:
             frame = QRect(option.rect)
             frame.setLeft(0)
@@ -591,8 +643,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
     def _row_wraps(self, index: QModelIndex) -> bool:
         """`PreviewWrapMode.for_index`, from the kept row: its own choice, or the view's
         default, which the view can change without its model saying so and is read now."""
-        mode = self.prepared_row(index).wrap_mode
-        return self.parent().wordWrap() if mode is None else mode.wrapped
+        return self.prepared_row(index).wraps(self.parent())
 
     def _row_rect(self, option: QStyleOptionViewItem, index: QModelIndex) -> QRect:
         """One row frame for native decoration, flash, content and disclosure hits."""
@@ -664,7 +715,7 @@ class MultilinePreviewItemDelegate(QStyledItemDelegate):
         if painting is not option:
             selected = bool(option.state.value & self.SELECTED)
             row = self.prepared_row(index)
-            wraps = self.parent().wordWrap() if row.wrap_mode is None else row.wrap_mode.wrapped
+            wraps = row.wraps(self.parent())
         width = None
         if wraps:
             gutter = self.DISCLOSURE_WIDTH if row.disclosure else 0

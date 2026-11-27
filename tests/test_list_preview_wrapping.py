@@ -676,3 +676,55 @@ def test_paint_reuses_prepared_row_without_second_lookup_and_event_filter_reads_
     # FontChange should invalidate cached rows.
     delegate.eventFilter(view, QEvent(QEvent.Type.FontChange))
     assert not delegate._rows
+
+
+def test_data_changed_invalidates_only_modified_rows_in_list_and_tree(qtbot):
+    from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+
+    forgotten: list[list[object]] = []
+
+    class TrackingDelegate(MultilinePreviewItemDelegate):
+        def _rows_forgotten(self, rows):
+            forgotten.append(list(rows))
+
+    # Flat QListWidget: editing one item preserves sibling PreparedRows.
+    list_view = ReorderableListWidget()
+    qtbot.addWidget(list_view)
+    list_delegate = TrackingDelegate(QColor("black"), QColor("gray"), QColor("white"), parent=list_view)
+    list_view.setItemDelegate(list_delegate)
+    items = [QListWidgetItem(f"row {i}") for i in range(4)]
+    for it in items:
+        list_view.addItem(it)
+    list_rows = [list_delegate.prepared_row(list_view.indexFromItem(it)) for it in items]
+
+    items[1].setText("row 1 updated")
+    assert len(forgotten) == 1 and forgotten[0] == [list_rows[1]]
+    assert list_delegate.prepared_row(list_view.indexFromItem(items[0])) is list_rows[0]
+    assert list_delegate.prepared_row(list_view.indexFromItem(items[1])) is not list_rows[1]
+    assert list_delegate.prepared_row(list_view.indexFromItem(items[2])) is list_rows[2]
+    assert list_delegate.prepared_row(list_view.indexFromItem(items[3])) is list_rows[3]
+
+    # Hierarchical QTreeWidget: editing one child preserves parent and sibling PreparedRows.
+    forgotten.clear()
+    tree = QTreeWidget()
+    qtbot.addWidget(tree)
+    tree.setColumnCount(1)
+    tree_delegate = TrackingDelegate(QColor("black"), QColor("gray"), QColor("white"), parent=tree)
+    tree.setItemDelegateForColumn(0, tree_delegate)
+    channel = QTreeWidgetItem(["#comms"])
+    tree.addTopLevelItem(channel)
+    child_a = QTreeWidgetItem(["toad-qt"])
+    child_b = QTreeWidgetItem(["comms-a"])
+    channel.addChild(child_a)
+    channel.addChild(child_b)
+
+    ch_row = tree_delegate.prepared_row(tree.indexFromItem(channel, 0))
+    a_row = tree_delegate.prepared_row(tree.indexFromItem(child_a, 0))
+    b_row = tree_delegate.prepared_row(tree.indexFromItem(child_b, 0))
+
+    child_b.setText(0, "comms-a active")
+    assert len(forgotten) == 1 and forgotten[0] == [b_row]
+    assert tree_delegate.prepared_row(tree.indexFromItem(channel, 0)) is ch_row
+    assert tree_delegate.prepared_row(tree.indexFromItem(child_a, 0)) is a_row
+    assert tree_delegate.prepared_row(tree.indexFromItem(child_b, 0)) is not b_row
+
