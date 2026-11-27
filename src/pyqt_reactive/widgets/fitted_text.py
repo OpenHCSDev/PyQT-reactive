@@ -6,6 +6,8 @@ ancestor up to the window, and on a phone the window then ran past the screen. F
 asks for its text's width but needs only its margins; each member decides how text that
 does not fit is shown, and the whole text stays the tooltip."""
 
+import math
+
 from PySide6.QtCore import QEvent, QPointF, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPalette, QTextLayout, QTextOption
 from PySide6.QtWidgets import QLabel
@@ -79,16 +81,12 @@ class FittedText(QLabel):
         self._min_size_hint = hint
         return QSize(hint)
 
-    def _prepare_text_layouts(self, rect: QRect) -> tuple[QRect, tuple[QTextLayout, ...], QPointF, bool]:
-        flags, text = self.drawn(rect)
-        if not text or rect.width() <= 0 or rect.height() <= 0:
-            cached = (QRect(rect), (), QPointF(), False)
-            self._text_layouts = cached
-            return cached
+    def _layout_text(self, text: str, width: int) -> tuple[tuple[QTextLayout, ...], float]:
+        """Lay out `text` into `width` pixels with the single QTextLayout engine used for both
+        painting and wrapped height measurement."""
         font = self.font()
         option = QTextOption(self.alignment())
         option.setWrapMode(self.WRAP_MODE)
-        width = rect.width()
         layouts: list[QTextLayout] = []
         y = 0.0
         for paragraph in text.split("\n"):
@@ -105,6 +103,15 @@ class FittedText(QLabel):
                 y += line.height()
             layout.endLayout()
             layouts.append(layout)
+        return tuple(layouts), y
+
+    def _prepare_text_layouts(self, rect: QRect) -> tuple[QRect, tuple[QTextLayout, ...], QPointF, bool]:
+        flags, text = self.drawn(rect)
+        if not text or rect.width() <= 0 or rect.height() <= 0:
+            cached = (QRect(rect), (), QPointF(), False)
+            self._text_layouts = cached
+            return cached
+        layouts, y = self._layout_text(text, rect.width())
         if flags & self.ALIGN_VCENTER:
             top = rect.top() + (rect.height() - y) / 2.0
         elif flags & self.ALIGN_BOTTOM:
@@ -112,7 +119,7 @@ class FittedText(QLabel):
         else:
             top = float(rect.top())
         needs_clip = y > rect.height() or rect != self.rect()
-        cached = (QRect(rect), tuple(layouts), QPointF(float(rect.left()), top), needs_clip)
+        cached = (QRect(rect), layouts, QPointF(float(rect.left()), top), needs_clip)
         self._text_layouts = cached
         return cached
 
@@ -180,7 +187,8 @@ class WrappedText(FittedText):
     def text_rect(self, width: int) -> QRect:
         margins = self.contentsMargins()
         inner = max(width - margins.left() - margins.right(), 1)
-        return self.fontMetrics().boundingRect(QRect(0, 0, inner, 1 << 20), self.WRAP_FLAGS, self.text())
+        _, y = self._layout_text(self.text(), inner)
+        return QRect(0, 0, inner, math.ceil(y))
 
     def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt virtual method name
         cached = self._height_for_width
