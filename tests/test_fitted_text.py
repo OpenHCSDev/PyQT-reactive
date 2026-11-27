@@ -22,7 +22,7 @@ def test_elided_line_caches_per_width_and_invalidates_on_text_font_palette_and_a
     assert flags == int(widget.alignment())
     widget.grab()
 
-    # Subsequent paint at same width/text/font/palette enters only paintEvent + drawn (no enum/elide churn).
+    # Subsequent paint at same width/text/font/palette hits cached QTextLayout in one Python call.
     calls = []
 
     def trace(frame, event, _arg):
@@ -32,12 +32,17 @@ def test_elided_line_caches_per_width_and_invalidates_on_text_font_palette_and_a
     sys.setprofile(trace)
     widget.grab()
     sys.setprofile(None)
-    assert calls == ["FittedText.paintEvent", "ElidedLine.drawn"]
+    assert calls == ["FittedText.paintEvent"]
+    first_layouts = widget._text_layouts[1]
+    assert len(first_layouts) == 1
 
-    # Resize updates cached elision.
+    # Resize updates cached elision and invalidates cached QTextLayout on next paint.
     widget.resize(600, 28)
     _, wide = widget.drawn(widget.contentsRect())
     assert wide == widget.text()
+    widget.grab()
+    assert widget._text_layouts[1] is not first_layouts
+    assert widget._text_layouts[1][0].text() == wide
 
     # Text change invalidates cached elision.
     widget.resize(120, 28)

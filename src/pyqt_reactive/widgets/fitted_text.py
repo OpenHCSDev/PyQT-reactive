@@ -6,13 +6,17 @@ ancestor up to the window, and on a phone the window then ran past the screen. F
 asks for its text's width but needs only its margins; each member decides how text that
 does not fit is shown, and the whole text stays the tooltip."""
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6.QtCore import QEvent, QPointF, QRect, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette, QTextLayout, QTextOption
 from PySide6.QtWidgets import QLabel
 
 
 class FittedText(QLabel):
     """Text that takes the width it is given; members draw what does not fit."""
+
+    WRAP_MODE = QTextOption.WrapMode.NoWrap
+    ALIGN_VCENTER = int(Qt.AlignmentFlag.AlignVCenter)
+    ALIGN_BOTTOM = int(Qt.AlignmentFlag.AlignBottom)
 
     RECOLORS_ON = frozenset({
         QEvent.Type.PaletteChange,
@@ -25,6 +29,7 @@ class FittedText(QLabel):
         QEvent.Type.StyleChange,
         QEvent.Type.ApplicationFontChange,
         QEvent.Type.ContentsRectChange,
+        QEvent.Type.DevicePixelRatioChange,
     })
 
     def __init__(self, text: str = "") -> None:
@@ -32,14 +37,17 @@ class FittedText(QLabel):
         self._alignment_flags = int(self.alignment())
         self._text_color: QColor | None = None
         self._min_size_hint: QSize | None = None
+        self._text_layouts: tuple[QRect, tuple[QTextLayout, ...], QPointF, bool] | None = None
         self.setText(text)
 
     def _clear_metrics_cache(self) -> None:
         self._min_size_hint = None
+        self._text_layouts = None
 
     def setAlignment(self, alignment) -> None:  # noqa: N802 - Qt method name
         super().setAlignment(alignment)
         self._alignment_flags = int(alignment)
+        self._text_layouts = None
 
     def setText(self, text: str) -> None:  # noqa: N802 - Qt method name
         if text == self.text():
@@ -71,15 +79,61 @@ class FittedText(QLabel):
         self._min_size_hint = hint
         return QSize(hint)
 
+    def _prepare_text_layouts(self, rect: QRect) -> tuple[QRect, tuple[QTextLayout, ...], QPointF, bool]:
+        flags, text = self.drawn(rect)
+        if not text or rect.width() <= 0 or rect.height() <= 0:
+            cached = (QRect(rect), (), QPointF(), False)
+            self._text_layouts = cached
+            return cached
+        font = self.font()
+        option = QTextOption(self.alignment())
+        option.setWrapMode(self.WRAP_MODE)
+        width = rect.width()
+        layouts: list[QTextLayout] = []
+        y = 0.0
+        for paragraph in text.split("\n"):
+            layout = QTextLayout(paragraph, font)
+            layout.setCacheEnabled(True)
+            layout.setTextOption(option)
+            layout.beginLayout()
+            while True:
+                line = layout.createLine()
+                if not line.isValid():
+                    break
+                line.setLineWidth(width)
+                line.setPosition(QPointF(0.0, y))
+                y += line.height()
+            layout.endLayout()
+            layouts.append(layout)
+        if flags & self.ALIGN_VCENTER:
+            top = rect.top() + (rect.height() - y) / 2.0
+        elif flags & self.ALIGN_BOTTOM:
+            top = rect.bottom() + 1.0 - y
+        else:
+            top = float(rect.top())
+        needs_clip = y > rect.height() or rect != self.rect()
+        cached = (QRect(rect), tuple(layouts), QPointF(float(rect.left()), top), needs_clip)
+        self._text_layouts = cached
+        return cached
+
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt virtual method name
         rect = self.contentsRect()
-        flags, text = self.drawn(rect)
+        cached = self._text_layouts
+        if cached is None or cached[0] != rect:
+            cached = self._prepare_text_layouts(rect)
+        layouts = cached[1]
+        if not layouts:
+            return
         color = self._text_color
         if color is None:
             color = self._text_color = self.palette().color(QPalette.ColorRole.WindowText)
         painter = QPainter(self)
+        if cached[3]:
+            painter.setClipRect(rect)
         painter.setPen(color)
-        painter.drawText(rect, flags, text)
+        origin = cached[2]
+        for layout in layouts:
+            layout.draw(painter, origin)
 
 
 class ElidedLine(FittedText):
@@ -110,6 +164,7 @@ class WrappedText(FittedText):
 
     WRAP = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
     WRAP_FLAGS = int(WRAP)
+    WRAP_MODE = QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
 
     def __init__(self, text: str = "") -> None:
         self._height_for_width: tuple[int, int] | None = None
