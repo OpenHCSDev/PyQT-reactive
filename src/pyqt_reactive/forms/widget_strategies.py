@@ -1295,9 +1295,11 @@ def _item_matches_value(widget: QComboBox, index: int, target_value: str) -> boo
         if str(item_data.value).upper() == target_normalized:
             return True
 
-    # Declared non-enum choices: match the trailing segment of their repr
+    # Declared non-enum choices: match either full str(item_data) (e.g. class reprs)
+    # or the trailing segment after '.' (e.g. qualified names).
     if item_data is not None and not isinstance(item_data, Enum):
-        if str(item_data).rsplit(".", 1)[-1].upper() == target_normalized:
+        item_str = str(item_data)
+        if item_str.upper() == target_normalized or item_str.rsplit(".", 1)[-1].upper() == target_normalized:
             return True
 
     # Tertiary: Match display text (case-insensitive)
