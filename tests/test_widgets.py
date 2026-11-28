@@ -2222,9 +2222,9 @@ def test_widget_rect_flash_element_paints_visible_pixels_over_children(qapp) -> 
     if coordinator._timer is not None:
         coordinator._timer.stop()
     baseline = overlay.grab().toImage().pixelColor(table_center)
-    from pyqt_reactive.animation.flash_config import FlashPlayback, FlashPhase
+    from pyqt_reactive.animation.flash_config import HOLD_PHASE, FlashPlayback
     import time
-    coordinator._playbacks["section"] = FlashPlayback(time.perf_counter(), phase=FlashPhase.HOLD)
+    coordinator._playbacks["section"] = FlashPlayback(time.perf_counter(), phase=HOLD_PHASE)
     coordinator._key_base_colors["section"] = QColor(255, 0, 0)
     coordinator._computed_colors["section"] = QColor(255, 0, 0, 180)
     overlay._invalidate_geometry_cache()
@@ -2992,9 +2992,9 @@ def test_dynamic_flash_registration_rebuilds_valid_geometry_cache(qapp) -> None:
 
     table_center = table.mapTo(dialog, table.rect().center())
     baseline = overlay.grab().toImage().pixelColor(table_center)
-    from pyqt_reactive.animation.flash_config import FlashPlayback, FlashPhase
+    from pyqt_reactive.animation.flash_config import HOLD_PHASE, FlashPlayback
     import time
-    coordinator._playbacks["section"] = FlashPlayback(time.perf_counter(), phase=FlashPhase.HOLD)
+    coordinator._playbacks["section"] = FlashPlayback(time.perf_counter(), phase=HOLD_PHASE)
     coordinator._key_base_colors["section"] = QColor(255, 0, 0)
     coordinator._computed_colors["section"] = QColor(255, 0, 0, 180)
     overlay.repaint()
@@ -3132,9 +3132,9 @@ def test_table_cell_flash_element_paints_visible_cell_pixels(qapp) -> None:
     assert flash_rect.contains(cell_center)
 
     baseline = overlay.grab().toImage().pixelColor(cell_center)
-    from pyqt_reactive.animation.flash_config import FlashPlayback, FlashPhase
+    from pyqt_reactive.animation.flash_config import HOLD_PHASE, FlashPlayback
     import time
-    coordinator._playbacks["cell"] = FlashPlayback(time.perf_counter(), phase=FlashPhase.HOLD)
+    coordinator._playbacks["cell"] = FlashPlayback(time.perf_counter(), phase=HOLD_PHASE)
     coordinator._key_base_colors["cell"] = QColor(255, 0, 0)
     coordinator._computed_colors["cell"] = QColor(255, 0, 0, 180)
     overlay._invalidate_geometry_cache()

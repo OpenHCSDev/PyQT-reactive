@@ -81,7 +81,13 @@ from PySide6.QtGui import (
 import shiboken6
 
 from objectstate.time_travel_profile import TimeTravelProfiler
-from pyqt_reactive.animation.flash_config import FlashConfig, FlashPlayback, FlashPhase, get_flash_config
+from pyqt_reactive.animation.flash_config import (
+    FADE_IN_PHASE,
+    FlashConfig,
+    FlashPhase,
+    FlashPlayback,
+    get_flash_config,
+)
 from formbridge.forms.layout_constants import default_container_corner_radius_px
 from formbridge.services.window_snapshot import FlashPaintElement, FlashPaintFrame
 
@@ -299,7 +305,7 @@ def compute_flash_color_at_time(
     elapsed = now - start_time
     if elapsed < 0 or elapsed >= cfg.total_duration_s:
         return None
-    for phase in FlashPhase:
+    for phase in FlashPhase.sequence(FADE_IN_PHASE):
         duration = phase.duration(cfg)
         if elapsed < duration:
             color = QColor(base_color) if base_color is not None else _base_color(cfg)
@@ -3092,7 +3098,7 @@ class _GlobalFlashCoordinator(QObject):
                 expired_keys.append(key)
                 continue
             color = self._sample_color(key, now)
-            if playback.phase is FlashPhase.COMPLETE:
+            if playback.is_complete:
                 expired_keys.append(key)
                 continue
             if color and color.alpha() > 0:

@@ -101,9 +101,9 @@ def test_nested_flash_paint_has_opaque_context_and_complete_clear_holes(nested_f
     coordinator._computed_colors.clear()
     keys = {f"child.{name}" for name in fields}
     import time
-    from pyqt_reactive.animation.flash_config import FlashPlayback, FlashPhase
+    from pyqt_reactive.animation.flash_config import HOLD_PHASE, FlashPlayback
     coordinator._playbacks.clear()
-    coordinator._playbacks.update({key: FlashPlayback(time.perf_counter(), phase=FlashPhase.HOLD) for key in keys})
+    coordinator._playbacks.update({key: FlashPlayback(time.perf_counter(), phase=HOLD_PHASE) for key in keys})
     coordinator._key_base_colors.update({key: QColor(255, 0, 0) for key in keys})
     coordinator._computed_colors.update({key: QColor(255, 0, 0, 255) for key in keys})
     overlay._rebuild_geometry_cache([], keys)

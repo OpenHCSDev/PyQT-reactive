@@ -5,7 +5,7 @@ Game-engine inspired flash animation system with O(1) per-window
 performance for visual feedback on value changes.
 """
 
-from .flash_config import FlashConfig, get_flash_config
+from pyqt_reactive.animation.flash_config import FlashConfig, get_flash_config
 from .flash_mixin import (
     FlashMixin,
     WindowFlashOverlay,

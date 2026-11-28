@@ -733,7 +733,7 @@ def test_two_actual_windows_both_present_maximum_before_shared_hold(
     flash_clock,
 ):
     from PySide6.QtWidgets import QDialog, QVBoxLayout
-    from pyqt_reactive.animation.flash_config import FlashPhase
+    from pyqt_reactive.animation.flash_config import FADE_IN_PHASE, HOLD_PHASE
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay, _GlobalFlashCoordinator
     from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig, ParameterFormManager
     from pyqt_reactive.theming import ColorScheme
@@ -782,8 +782,8 @@ def test_two_actual_windows_both_present_maximum_before_shared_hold(
             id(second),
         }
         assert all(result.observation.frame.has_maximum_alpha for result in completed)
-        assert phases_after_first_maximum[0] is FlashPhase.FADE_IN
-        assert coordinator._playbacks["number"].phase is FlashPhase.HOLD
+        assert phases_after_first_maximum[0] is FADE_IN_PHASE
+        assert coordinator._playbacks["number"].phase is HOLD_PHASE
     finally:
         overlay.frame_painted.disconnect(actual_first_paint)
         WindowFlashOverlay.cleanup_window(second)
