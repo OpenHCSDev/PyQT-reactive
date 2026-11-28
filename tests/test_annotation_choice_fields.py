@@ -70,3 +70,13 @@ def test_choice_values_convert_from_choices_and_labels() -> None:
     ]
     with pytest.raises(ValueError):
         service.convert_value_to_type("gamma", SCALAR, "kind")
+
+
+def test_scalar_class_choice_placeholder_shows_declared_label(qapp):
+    from pyqt_reactive.forms.widget_strategies import PLACEHOLDER_RENDERER, create_pyqt6_widget
+
+    widget = create_pyqt6_widget("kind", SCALAR, None, "kind")
+    PLACEHOLDER_RENDERER.apply_combobox(widget, f"Default: {_Beta}")
+
+    assert widget.currentIndex() == -1
+    assert widget._placeholder == "beta"
