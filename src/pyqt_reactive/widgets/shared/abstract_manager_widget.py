@@ -53,24 +53,26 @@ from pyqt_reactive.widgets.shared.manager_list_updater import (
     ManagerListUpdateOperations,
 )
 from formbridge.managers.time_travel_binding import ManagerTimeTravelBinding
-from pyqt_reactive.widgets.shared.manager_action_controller import (
+from formbridge.managers.action_controller import (
     CodeEditorPayload,
-    ManagerActionHandler,
     ManagerActionController,
-    ManagerDynamicActionHandler,
+    ManagerActionHandler,
     ManagerActionOperations,
+    ManagerDynamicActionHandler,
 )
-from pyqt_reactive.widgets.shared.manager_list_visual_state import ManagerListVisualState
-from pyqt_reactive.widgets.shared.manager_item_display_builder import (
-    ListItemFormat,
-    _ManagerItemDisplayBuilder,
-)
-from pyqt_reactive.widgets.shared.manager_selection_controller import (
+from formbridge.managers.selection_controller import (
     ItemIdSelectionPayloadProjection,
     ManagerSelectionController,
     ManagerSelectionOperations,
     SelectionPayloadProjection,
 )
+from pyqt_reactive.widgets.shared.manager_action_controller import QtCodeEditorSurface
+from pyqt_reactive.widgets.shared.manager_list_visual_state import ManagerListVisualState
+from pyqt_reactive.widgets.shared.manager_item_display_builder import (
+    ListItemFormat,
+    _ManagerItemDisplayBuilder,
+)
+from pyqt_reactive.widgets.shared.manager_selection_controller import QtManagerListSurface
 from formbridge.managers.reorder_controller import (
     ManagerReorderController,
     ManagerReorderOperations,
@@ -235,7 +237,7 @@ class ManagerActionWorkflowMixin:
             )
 
         return ManagerActionOperations(
-            widget=self,
+            code_editor=QtCodeEditorSurface(self),
             action_handlers=self._action_handlers(),
             dynamic_action_handlers=self._dynamic_action_handlers(),
             run_async=self.service_adapter.execute_async_operation,
@@ -344,7 +346,7 @@ class ManagerSelectionWorkflowMixin:
                 self._selection_operations(), item_id
             ),
             has_navigation_items=lambda: self.item_list.count() > 0,
-            contains_item=lambda item_id: self._selection_controller.list_item_for_id(
+            contains_item=lambda item_id: self._selection_controller.row_item_for_id(
                 self._selection_operations(), item_id
             )
             is not None,
@@ -364,7 +366,7 @@ class ManagerSelectionWorkflowMixin:
 
     def _on_item_double_clicked(self, list_item: QListWidgetItem) -> None:
         """Handle list item double-click activation."""
-        self._selection_controller.handle_item_double_clicked(
+        self._selection_controller.handle_item_activated(
             self._selection_operations(),
             list_item,
         )
@@ -372,19 +374,20 @@ class ManagerSelectionWorkflowMixin:
     def _selection_operations(self) -> ManagerSelectionOperations:
         """Return the nominal operation port consumed by ManagerSelectionController."""
         return ManagerSelectionOperations(
-            list_widget=self.item_list,
-            selected_items=self.get_selected_items,
-            item_from_list_item=self._item_access.item_from_list_item,
+            surface=QtManagerListSurface(
+                self.item_list,
+                lambda: self._item_access.state_binding.selection_signal(self),
+            ),
+            item_from_row_data=self._item_access.item_from_list_item,
             item_id=self._item_access.item_hooks.item_id,
             should_preserve_selection=lambda: self._item_access.item_hooks.should_preserve_selection(self),
             current_selection_id=lambda: self._item_access.state_binding.current_selection_id(self),
             set_selection_id=lambda item_id: self._item_access.state_binding.set_selection_id(self, item_id),
-            selection_signal=lambda: self._item_access.state_binding.selection_signal(self),
             selected_payload=self.SELECTION_PAYLOAD_PROJECTION.selected,
             cleared_payload=self.SELECTION_CLEARED_PAYLOAD,
             in_time_travel=lambda: self._time_travel_binding.in_time_travel,
             update_button_states=self.update_button_states,
-            handle_item_double_click=lambda item: self.action_edit(),
+            handle_item_activated=lambda item: self.action_edit(),
         )
 
     def _on_items_reordered(self, from_index: int, to_index: int) -> None:

@@ -2,7 +2,15 @@
 
 import pytest
 
-from pyqt_reactive.animation.flash_config import FlashConfig, FlashPhase, FlashPlayback
+from pyqt_reactive.animation.flash_config import (
+    COMPLETE_PHASE,
+    FADE_IN_PHASE,
+    FADE_OUT_PHASE,
+    HOLD_PHASE,
+    FlashConfig,
+    FlashPhase,
+    FlashPlayback,
+)
 
 
 @pytest.fixture
@@ -14,16 +22,16 @@ def test_slow_first_frame_cannot_consume_the_maximum_or_hold(config):
     source = (10, "container:20")
     playback = FlashPlayback(1.0, {source})
     assert playback.sample_alpha(4.0, config) == 255
-    assert playback.phase is FlashPhase.FADE_IN
+    assert playback.phase is FADE_IN_PHASE
     playback.acknowledge(source, 254, 4.0, config)
-    assert playback.phase is FlashPhase.FADE_IN
+    assert playback.phase is FADE_IN_PHASE
     playback.acknowledge(source, 255, 4.1, config)
-    assert playback.phase is FlashPhase.HOLD
+    assert playback.phase is HOLD_PHASE
     assert playback.sample_alpha(4.149, config) == 255
     assert playback.sample_alpha(4.151, config) == 255
-    assert playback.phase is FlashPhase.FADE_OUT
+    assert playback.phase is FADE_OUT_PHASE
     assert playback.sample_alpha(4.751, config) == 0
-    assert playback.phase is FlashPhase.COMPLETE
+    assert playback.phase is COMPLETE_PHASE
     assert config.total_duration_s == pytest.approx(0.85)
 
 
@@ -31,11 +39,11 @@ def test_every_visible_source_must_present_maximum_even_in_the_same_window(confi
     group, row = (10, "container:20"), (10, "source:tree:30")
     playback = FlashPlayback(0.0, {group, row})
     playback.acknowledge(row, 255, 1.0, config)
-    assert playback.phase is FlashPhase.FADE_IN
+    assert playback.phase is FADE_IN_PHASE
     assert playback.sample_alpha(2.0, config) == 255
     playback.acknowledge(group, 255, 2.0, config)
     assert playback.phase_started_at == 2.0
-    assert playback.phase is FlashPhase.HOLD
+    assert playback.phase is HOLD_PHASE
 
 
 def test_hidden_or_disposed_source_does_not_block_remaining_presentation(config):
@@ -43,7 +51,7 @@ def test_hidden_or_disposed_source_does_not_block_remaining_presentation(config)
     playback = FlashPlayback(0.0, {visible, disappeared})
     playback.retain_recipients({visible})
     playback.acknowledge(visible, 255, 1.0, config)
-    assert playback.phase is FlashPhase.HOLD
+    assert playback.phase is HOLD_PHASE
 
 
 def test_retrigger_has_a_fresh_phase_and_recipient_contract(config):
@@ -52,11 +60,11 @@ def test_retrigger_has_a_fresh_phase_and_recipient_contract(config):
     old.acknowledge(source, 255, 1.0, config)
     retrigger = FlashPlayback(2.0, {source})
     assert retrigger.sample_alpha(2.0, config) == 0
-    assert retrigger.phase is FlashPhase.FADE_IN
+    assert retrigger.phase is FADE_IN_PHASE
     assert retrigger.pending_recipients == {source}
 
 
-@pytest.mark.parametrize("phase", tuple(FlashPhase))
+@pytest.mark.parametrize("phase", FlashPhase.sequence(FADE_IN_PHASE))
 def test_phase_leaves_own_duration_and_opacity(config, phase):
     assert phase.duration(config) >= 0
     assert 0 <= phase.alpha(0.5, config.flash_alpha) <= config.flash_alpha
@@ -122,7 +130,7 @@ def test_native_subset_retrigger_drops_former_only_recipients_from_old_cohort(ac
     assert len(old.pending_recipients) == 1
     assert len(retrigger.pending_recipients) == 1
     clock.advance(coordinator._config.fade_in_s)
-    qtbot.waitUntil(lambda: old.phase is FlashPhase.HOLD and retrigger.phase is FlashPhase.HOLD, timeout=1500)
+    qtbot.waitUntil(lambda: old.phase is HOLD_PHASE and retrigger.phase is HOLD_PHASE, timeout=1500)
     assert any(element.key == "second" and element.rgba[3] == 255
                for frame in painted for element in frame.elements)
 
@@ -146,6 +154,6 @@ def test_native_hidden_or_disposed_window_cannot_block_exposed_peer(actual_surfa
         second.deleteLater()
         qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     clock.advance(coordinator._config.fade_in_s)
-    qtbot.waitUntil(lambda: playback.phase is FlashPhase.HOLD, timeout=1500)
+    qtbot.waitUntil(lambda: playback.phase is HOLD_PHASE, timeout=1500)
     assert "second" not in coordinator._playbacks
     assert any(frame.has_maximum_alpha for frame in painted)
